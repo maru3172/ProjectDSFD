@@ -1,0 +1,44 @@
+Plugins/Developer/
+
+# Visual Studio
+.vs/
+
+# Content Folder
+Content/Collections/
+Content/Developers/
+Content/Fab
+Plugins/Developer/
+# Unreal Engine build artifacts
+Build/
+Builds/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vscode/
+.idea/
+FileOpenOrder/
+Binaries/*
+Plugins/*/Binaries/*
+Plugins/*/Intermediate/
+
+# User-specific files
+*.sln
+*.suo
+*.user
+*.userprefs
+*.opensdf
+*.sdf
+*.ipch
+*.log
+*.tlog
+
+# Build results
+*.obj
+*.pch
+*.pdb
+*.exe
+*.dll
+*.lib
+*.app
+*.dylib
+*.so
