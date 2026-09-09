@@ -19,6 +19,14 @@ public:
 	// Sets default values for this character's properties
 	APlayerCharacter();
 
+	// AI가 직접 추격을 시작할 내부 반경(cm)이다.
+	UFUNCTION(BlueprintPure, Category = "AI|Range")
+	float GetDirectChaseRadius() const;
+
+	// AI가 배회할 고리 영역의 외부 반경(cm)이다.
+	UFUNCTION(BlueprintPure, Category = "AI|Range")
+	float GetRoamingOuterRadius() const;
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -47,4 +55,21 @@ private:
 	// 입력 이벤트 발생 시 실행할 함수
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
+
+	// 작은 원: 이 반경 안에서는 마네킹 AI가 직접 추격하는 용도로 사용한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
+	float DirectChaseRadius = 500.0f;
+
+	// 큰 원: DirectChaseRadius와 이 반경 사이를 마네킹 AI의 랜덤 이동 영역으로 사용한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
+	float RoamingOuterRadius = 1500.0f;
+
+	// PIE/Development 플레이 중 두 범위를 디버그 원으로 표시한다.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Range|Debug",
+		meta = (AllowPrivateAccess = "true"))
+	bool bShowAIRangeDebug = true;
+
+	void DrawAIRangeDebug() const;
 };
