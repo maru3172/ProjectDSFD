@@ -7,6 +7,9 @@
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Components/CapsuleComponent.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 
 // Sets default values
 APlayerCharacter::APlayerCharacter()
@@ -51,7 +54,13 @@ void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// 디버그 원 그리기
+	DrawAIRangeDebug();
 }
+
+// =========================================================================================================================
+// 플레이어 입력 함수 관련
+// =========================================================================================================================
 
 // Called to bind functionality to input
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -85,3 +94,47 @@ void APlayerCharacter::Look(const FInputActionValue& Value)
 	AddControllerPitchInput(LookVector.Y);
 }
 
+// =========================================================================================================================
+// 디버그 원 그리기
+// =========================================================================================================================
+
+float APlayerCharacter::GetDirectChaseRadius() const
+{
+	return FMath::Max(0.0f, DirectChaseRadius);
+}
+
+float APlayerCharacter::GetRoamingOuterRadius() const
+{
+	return FMath::Max(GetDirectChaseRadius(), RoamingOuterRadius);
+}
+
+void APlayerCharacter::DrawAIRangeDebug() const
+{
+	if (!bShowAIRangeDebug)
+	{
+		return;
+	}
+
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	if (!IsValid(GetWorld()) || !IsValid(Capsule))
+	{
+		return;
+	}
+
+	// 바닥과의 Z-fighting을 줄이기 위해 캡슐 바닥보다 약간 위에 수평 원을 그린다.
+	FVector CircleCenter = GetActorLocation();
+	CircleCenter.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	CircleCenter.Z += 5.0f;
+
+	constexpr int32 CircleSegments = 64;
+	constexpr float LineThickness = 3.0f;
+	const FVector CircleAxisX = FVector::ForwardVector;
+	const FVector CircleAxisY = FVector::RightVector;
+
+	DrawDebugCircle(
+		GetWorld(), CircleCenter, GetDirectChaseRadius(), CircleSegments, FColor::Red,
+		false, 0.0f, 0, /*LineThickness*/ 7.5f, CircleAxisX, CircleAxisY, false);
+	DrawDebugCircle(
+		GetWorld(), CircleCenter, GetRoamingOuterRadius(), CircleSegments, FColor::Blue,
+		false, 0.0f, 0, /*LineThickness*/ 7.5f, CircleAxisX, CircleAxisY, false);
+}
