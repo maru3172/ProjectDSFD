@@ -31,6 +31,8 @@ protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
@@ -72,4 +74,36 @@ private:
 	bool bShowAIRangeDebug = true;
 
 	void DrawAIRangeDebug() const;
+
+	// =========================================================================================================================
+	// 카메라 B 키 디버깅 관련
+	// =========================================================================================================================
+
+	// PIE 표시 화면만 탑뷰로 전환한다. AI 시야 카메라는 변경하지 않는다.
+    UPROPERTY(VisibleInstanceOnly, Transient, Category = "Debug|Top View")
+    bool bUseTopViewInPIE = false;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> IA_Player_DebugCamera;
+
+    UPROPERTY(VisibleAnywhere, Category = "Debug|Top View")
+    TObjectPtr<class UCameraComponent> DebugTopViewCamera;
+
+	friend class FProjectProject01TopViewExtension;
+    void ToggleDebugCamera();
+    void RestoreDebugControls();
+    void UpdateDebugCursorAim();
+    TWeakObjectPtr<class APlayerController> DebugInputController;
+    FMatrix DebugClipToWorld = FMatrix::Identity;
+    FIntRect DebugViewRect = FIntRect(0, 0, 0, 0);
+    FRotator SavedControlRotation = FRotator::ZeroRotator;
+    FRotator SavedCameraRelativeRotation = FRotator::ZeroRotator;
+    bool bHasDebugView = false;
+    bool bDebugControlsActive = false;
+    bool bSkipNextLookInput = false;
+    bool bSavedUseControllerRotationYaw = false;
+    bool bSavedOrientRotationToMovement = false;
+    bool bSavedUseControllerDesiredRotation = false;
+    bool bSavedCameraUsePawnControlRotation = false;
+    TSharedPtr<class FProjectProject01TopViewExtension, ESPMode::ThreadSafe> TopViewExtension;
 };
