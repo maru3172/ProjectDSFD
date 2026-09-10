@@ -4,6 +4,7 @@
 #include "WeepingAngelCharacter.h"
 
 #include "WeepingAngelPath.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 
 // Sets default values
@@ -62,5 +63,8 @@ void AWeepingAngelCharacter::SetupPlayerInputComponent(UInputComponent* PlayerIn
 
 void AWeepingAngelCharacter::SetFrozen(bool bFrozen)
 {
-	GetMesh()->bPauseAnims = bFrozen;
+	if (USkeletalMeshComponent* AngelMesh = GetMesh())
+	{
+		AngelMesh->bPauseAnims = bFrozen;
+	}
 }
