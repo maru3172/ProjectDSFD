@@ -14,14 +14,14 @@ AHelperRearGuardCharacter::AHelperRearGuardCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	if (UCapsuleComponent* CapsuleComponent = GetCapsuleComponent())
+	if (UCapsuleComponent* HelperCapsule = GetCapsuleComponent())
 	{
-		CapsuleComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		HelperCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 
-	if (UCharacterMovementComponent* CharacterMovement = GetCharacterMovement())
+	if (UCharacterMovementComponent* HelperCharacterMovement = GetCharacterMovement())
 	{
-		CharacterMovement->DisableMovement();
+		HelperCharacterMovement->DisableMovement();
 	}
 }
 
@@ -37,7 +37,7 @@ void AHelperRearGuardCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (!IsValid(GuardedPlayer))
+	if (!GuardedPlayer.IsValid())
 	{
 		RefreshGuardedPlayer();
 	}
@@ -48,7 +48,7 @@ void AHelperRearGuardCharacter::Tick(float DeltaTime)
 
 bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 {
-	if (!IsValid(TargetActor) || !IsValid(GuardedPlayer) || GuardSightRadius <= 0.0f)
+	if (!IsValid(TargetActor) || !GuardedPlayer.IsValid() || GuardSightRadius <= 0.0f)
 	{
 		return false;
 	}
@@ -132,7 +132,7 @@ bool AHelperRearGuardCharacter::RefreshGuardedPlayer()
 
 FVector AHelperRearGuardCharacter::GetPlayerViewForward() const
 {
-	if (!IsValid(GuardedPlayer))
+	if (!GuardedPlayer.IsValid())
 	{
 		return GetActorForwardVector().GetSafeNormal2D();
 	}
@@ -151,7 +151,7 @@ FVector AHelperRearGuardCharacter::GetPlayerViewForward() const
 
 void AHelperRearGuardCharacter::UpdateFollowTransform()
 {
-	if (!IsValid(GuardedPlayer))
+	if (!GuardedPlayer.IsValid())
 	{
 		return;
 	}
