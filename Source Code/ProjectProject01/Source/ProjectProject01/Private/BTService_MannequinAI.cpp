@@ -9,6 +9,7 @@
 #include "AIController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "MannequinAICharacter.h"
+#include "HelperRearGuardCharacter.h"
 
 #include "PlayerCharacter.h"
 #include "NavigationSystem.h"
@@ -132,23 +133,21 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     FVector CameraLocation = CameraManager->GetCameraLocation();
     FRotator CameraRotation = CameraManager->GetCameraRotation();
 
-    // 현재 AI Controller가 조종하고 있는 Pawn(AI 캐릭터)
-    APawn* MannequinPawn = OwnerComp.GetAIOwner()->GetPawn();
-    if (MannequinPawn == nullptr)
-    {
-        return;
-    }
-
-    // AMannequinAICharacter
-    AMannequinAICharacter* Mannequin = Cast<AMannequinAICharacter>(MannequinPawn);
-    if (Mannequin == nullptr)
-    {
-        return;
-    }
-
-    // Mannequin 의 AI 컨트롤러
+    // Mannequin의 AIController와 제어 중인 Pawn을 안전하게 가져온다.
     AAIController* AIController = OwnerComp.GetAIOwner();
-    if (AIController == nullptr)
+    if (!IsValid(AIController))
+    {
+        return;
+    }
+
+    APawn* MannequinPawn = AIController->GetPawn();
+    if (!IsValid(MannequinPawn))
+    {
+        return;
+    }
+
+    AMannequinAICharacter* Mannequin = Cast<AMannequinAICharacter>(MannequinPawn);
+    if (!IsValid(Mannequin))
     {
         return;
     }
@@ -391,11 +390,18 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 
     // 플레이어가 현재 Mannequin 을 바라보고 있는지 여부를 Blackboard의 PlayerLookingAtMannequin Key에 저장한다.
     // bInScreen 이 true 라면 Mannequin 이 현재 화면의 판정 범위 안에 있다는 의미이고, false 라면 Mannequin 이 화면의 판정 범위 밖에 있다는 의미이다.
-    Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), bInScreen);
+    AHelperRearGuardCharacter* HelperRearGuard = Cast<AHelperRearGuardCharacter>(
+        UGameplayStatics::GetActorOfClass(GetWorld(), AHelperRearGuardCharacter::StaticClass())
+    );
+    const bool bInHelperRearGuardSight =
+        IsValid(HelperRearGuard) && HelperRearGuard->CanObserveActor(Mannequin);
+    const bool bObservedByPlayerOrHelper = bInScreen || bInHelperRearGuardSight;
 
-    if (bInScreen)
+    Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), bObservedByPlayerOrHelper);
+
+    if (bObservedByPlayerOrHelper)
     {
-        // 정지용 여유 영역이 보이는 순간 현재 이동 요청을 중단한다.
+        // 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
         AIController->StopMovement();
         // 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
         Mannequin->SetFrozen(true);

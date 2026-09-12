@@ -32,6 +32,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Helper Rear Guard")
 	FVector GetGuardViewOrigin() const;
 
+	/** AIController가 NavMesh 이동에 사용할 플레이어 후방 목표 위치를 반환합니다. */
+	UFUNCTION(BlueprintPure, Category = "Helper Rear Guard")
+	bool GetFollowTargetLocation(FVector& OutFollowTarget) const;
+
 protected:
 	/** 플레이어와 유지할 수평 거리(cm)입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "0.0", UIMin = "0.0"))
@@ -52,7 +56,6 @@ protected:
 private:
 	bool RefreshGuardedPlayer();
 	FVector GetPlayerViewForward() const;
-	void UpdateFollowTransform();
 	void DrawGuardDebug() const;
 
 	UPROPERTY(Transient)

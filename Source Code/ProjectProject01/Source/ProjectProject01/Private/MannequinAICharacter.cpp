@@ -3,6 +3,8 @@
 
 #include "MannequinAICharacter.h"
 
+#include "Components/SkeletalMeshComponent.h"
+
 // Sets default values
 AMannequinAICharacter::AMannequinAICharacter()
 {
@@ -34,5 +36,8 @@ void AMannequinAICharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 
 void AMannequinAICharacter::SetFrozen(bool bFrozen)
 {
-	GetMesh()->bPauseAnims = bFrozen;
+	if (USkeletalMeshComponent* MannequinMesh = GetMesh())
+	{
+		MannequinMesh->bPauseAnims = bFrozen;
+	}
 }

@@ -20,7 +20,6 @@
 #include "WeepingAngelPath.h"
 
 #include "WeepingAngelSurroundManager.h"
-#include "HelperRearGuardCharacter.h"
 
 
 UBTService_WeepingAngelExample02::UBTService_WeepingAngelExample02()
@@ -307,34 +306,16 @@ void UBTService_WeepingAngelExample02::TickNode(UBehaviorTreeComponent& OwnerCom
         }
     }
 
-    // 조력자는 플레이어와 별개인 월드 액터다. 조력자의 시야는 플레이어의 후방만 감시한다.
-    AHelperRearGuardCharacter* HelperRearGuard = Cast<AHelperRearGuardCharacter>(
-        UGameplayStatics::GetActorOfClass(GetWorld(), AHelperRearGuardCharacter::StaticClass())
-    );
+    Blackboard->SetValueAsBool(TEXT("PlayerLookingAtAngel"), bInScreen);
 
-    const bool bInHelperRearGuardSight =
-        IsValid(HelperRearGuard) && HelperRearGuard->CanObserveActor(Angel);
-
-    // 기존 Behavior Tree는 PlayerLookingAtAngel 키를 정지 분기 조건으로 사용한다.
-    // 조력자 감지 결과도 이 키에 반영하되, PlayerSeeAngel은 실제 플레이어 화면 감지에서만 시작한다.
-    const bool bObservedByPlayerOrHelper = bInScreen || bInHelperRearGuardSight;
-    Blackboard->SetValueAsBool(TEXT("PlayerLookingAtAngel"), bObservedByPlayerOrHelper);
-
-    if (bObservedByPlayerOrHelper)
+    if (bInScreen)
     {
-        // Move To가 이미 실행 중인 프레임에도 이동을 즉시 멈추고 애니메이션을 정지한다.
         AIController->StopMovement();
         Angel->SetFrozen(true);
-
-        if (bInScreen)
-        {
-            // 플레이어의 화면에 보이지도 않고, 천사가 플레이어를 감지하기만 하면 쫓아오는 건 불합리한 죽음을 당할 수 있기 때문에 이도 조건에 포함했다.
-            PlayerSeeAngel = true;
-        }
+        PlayerSeeAngel = true;
     }
     else
     {
-        // 플레이어와 조력자 어느 쪽에도 감지되지 않은 경우에만 애니메이션 정지를 해제한다.
         Angel->SetFrozen(false);
     }
 

@@ -4,6 +4,7 @@
 #include "ProjectPracticeGameModeBase.h"
 
 #include "HelperRearGuardCharacter.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
 void AProjectPracticeGameModeBase::BeginPlay()
@@ -28,10 +29,18 @@ void AProjectPracticeGameModeBase::BeginPlay()
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
+	APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0);
+	const FVector SpawnLocation = IsValid(PlayerPawn)
+		? PlayerPawn->GetActorLocation()
+		: FVector::ZeroVector;
+	const FRotator SpawnRotation = IsValid(PlayerPawn)
+		? PlayerPawn->GetActorRotation()
+		: FRotator::ZeroRotator;
+
 	SpawnedHelperRearGuard = World->SpawnActor<AHelperRearGuardCharacter>(
 		AHelperRearGuardCharacter::StaticClass(),
-		FVector::ZeroVector,
-		FRotator::ZeroRotator,
+		SpawnLocation,
+		SpawnRotation,
 		SpawnParameters
 	);
 

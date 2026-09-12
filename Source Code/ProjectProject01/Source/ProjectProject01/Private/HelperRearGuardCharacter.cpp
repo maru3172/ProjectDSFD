@@ -1,5 +1,5 @@
 ﻿// File: Source/ProjectProject01/Private/HelperRearGuardCharacter.cpp
-// Target: ProjectProject01Editor Win64, Unreal Engine 5.8
+// Target: ProjectProject01Editor Win64 DebugGame, Unreal Engine 5.8
 
 #include "HelperRearGuardCharacter.h"
 
@@ -7,30 +7,34 @@
 #include "DrawDebugHelpers.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "HelperRearGuardAIController.h"
 #include "Kismet/GameplayStatics.h"
-#include "WeepingAngelCharacter.h"
+#include "MannequinAICharacter.h"
 
 AHelperRearGuardCharacter::AHelperRearGuardCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
+	AIControllerClass = AHelperRearGuardAIController::StaticClass();
+	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+
 	if (UCapsuleComponent* HelperCapsule = GetCapsuleComponent())
 	{
-		HelperCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		HelperCapsule->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		HelperCapsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 	}
 
-	if (UCharacterMovementComponent* HelperCharacterMovement = GetCharacterMovement())
+	if (UCharacterMovementComponent* HelperMovementComponent = GetCharacterMovement())
 	{
-		HelperCharacterMovement->DisableMovement();
+		HelperMovementComponent->bOrientRotationToMovement = true;
+		HelperMovementComponent->bUseControllerDesiredRotation = false;
 	}
 }
 
 void AHelperRearGuardCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-
 	RefreshGuardedPlayer();
-	UpdateFollowTransform();
 }
 
 void AHelperRearGuardCharacter::Tick(float DeltaTime)
@@ -42,7 +46,6 @@ void AHelperRearGuardCharacter::Tick(float DeltaTime)
 		RefreshGuardedPlayer();
 	}
 
-	UpdateFollowTransform();
 	DrawGuardDebug();
 }
 
@@ -66,7 +69,6 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 	const FVector RearDirection = -GetPlayerViewForward();
 	const FVector DirectionToTarget = ToTarget.GetSafeNormal();
 	const float MinimumDot = FMath::Cos(FMath::DegreesToRadians(GuardHalfAngleDegrees));
-
 	if (FVector::DotProduct(RearDirection, DirectionToTarget) < MinimumDot)
 	{
 		return false;
@@ -82,14 +84,13 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 	QueryParams.AddIgnoredActor(this);
 	QueryParams.AddIgnoredActor(GuardedPlayer.Get());
 
-	TArray<AActor*> AllAngels;
-	UGameplayStatics::GetAllActorsOfClass(World, AWeepingAngelCharacter::StaticClass(), AllAngels);
-
-	for (AActor* OtherAngel : AllAngels)
+	TArray<AActor*> AllMannequins;
+	UGameplayStatics::GetAllActorsOfClass(World, AMannequinAICharacter::StaticClass(), AllMannequins);
+	for (AActor* OtherMannequin : AllMannequins)
 	{
-		if (IsValid(OtherAngel) && OtherAngel != TargetActor)
+		if (IsValid(OtherMannequin) && OtherMannequin != TargetActor)
 		{
-			QueryParams.AddIgnoredActor(OtherAngel);
+			QueryParams.AddIgnoredActor(OtherMannequin);
 		}
 	}
 
@@ -108,6 +109,24 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 FVector AHelperRearGuardCharacter::GetGuardViewOrigin() const
 {
 	return GetActorLocation() + FVector(0.0f, 0.0f, BaseEyeHeight);
+}
+
+bool AHelperRearGuardCharacter::GetFollowTargetLocation(FVector& OutFollowTarget) const
+{
+	if (!GuardedPlayer.IsValid())
+	{
+		return false;
+	}
+
+	const FVector PlayerForward = GetPlayerViewForward();
+	if (PlayerForward.IsNearlyZero())
+	{
+		return false;
+	}
+
+	OutFollowTarget = GuardedPlayer->GetActorLocation() - (PlayerForward * FollowDistance);
+	OutFollowTarget.Z = GuardedPlayer->GetActorLocation().Z;
+	return true;
 }
 
 bool AHelperRearGuardCharacter::RefreshGuardedPlayer()
@@ -147,26 +166,6 @@ FVector AHelperRearGuardCharacter::GetPlayerViewForward() const
 	}
 
 	return GuardedPlayer->GetActorForwardVector().GetSafeNormal2D();
-}
-
-void AHelperRearGuardCharacter::UpdateFollowTransform()
-{
-	if (!GuardedPlayer.IsValid())
-	{
-		return;
-	}
-
-	const FVector PlayerForward = GetPlayerViewForward();
-	if (PlayerForward.IsNearlyZero())
-	{
-		return;
-	}
-
-	FVector DesiredLocation = GuardedPlayer->GetActorLocation() - (PlayerForward * FollowDistance);
-	DesiredLocation.Z = GuardedPlayer->GetActorLocation().Z;
-
-	SetActorLocation(DesiredLocation, false, nullptr, ETeleportType::TeleportPhysics);
-	SetActorRotation(PlayerForward.Rotation(), ETeleportType::TeleportPhysics);
 }
 
 void AHelperRearGuardCharacter::DrawGuardDebug() const
