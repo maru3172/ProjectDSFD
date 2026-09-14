@@ -441,11 +441,11 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
 
     // 현재 Mannequin 이 아닌 다른 Mannequin 들을 Line Trace에서 제외한다.
-    for (AActor* OtherAngel : AllMannequins)
+    for (AActor* OtherMannequin : AllMannequins)
     {
-        if (OtherAngel != MannequinPawn)
+        if (OtherMannequin != MannequinPawn)
         {
-            QueryParams.AddIgnoredActor(OtherAngel);
+            QueryParams.AddIgnoredActor(OtherMannequin);
         }
     }
 
