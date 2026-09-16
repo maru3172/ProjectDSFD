@@ -1,28 +1,29 @@
-Plugins/Developer/
+Plugins/Developer/*
 
 # Visual Studio
-.vs/
+.vs/*
 
 # Content Folder
-Content/Collections/
-Content/Developers/
+Content/Collections/*
+Content/Developers/*
 Content/Fab
-Plugins/Developer/
+Plugins/Developer/*
 # Unreal Engine build artifacts
-Build/
-Builds/
-DerivedDataCache/
-Intermediate/
-Saved/
-.vscode/
-.idea/
-FileOpenOrder/
+Build/*
+Builds/*
+DerivedDataCache/*
+Intermediate/*
+Saved/*
+.vscode/*
+.idea/*
+FileOpenOrder/*
 Binaries/*
 Plugins/*/Binaries/*
-Plugins/*/Intermediate/
+Plugins/*/Intermediate/*
 
 # User-specific files
 *.sln
+*.vsconfig
 *.slnx
 *.suo
 *.user
@@ -44,4 +45,3 @@ Plugins/*/Intermediate/
 *.app
 *.dylib
 *.so
-Work/2022184042_HSW/WorkLog/~$우_작업일지_2주차.docx
