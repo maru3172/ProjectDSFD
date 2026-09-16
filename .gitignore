@@ -16,6 +16,7 @@ Intermediate/*
 Saved/*
 .vscode/*
 .idea/*
+.codex/*
 FileOpenOrder/*
 Binaries/*
 Plugins/*/Binaries/*
