@@ -23,11 +23,13 @@ Plugins/*/Intermediate/
 
 # User-specific files
 *.sln
+*.slnx
 *.suo
 *.user
 *.userprefs
 *.opensdf
 *.sdf
+*.code-workspace
 *.ipch
 *.log
 *.tlog
