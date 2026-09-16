@@ -1,48 +1,75 @@
-Plugins/Developer/*
+# Unreal Engine generated folders
+**/Binaries/**
+**/Build/**
+!**/Build/**/
+!**/Build/**/PakBlacklist*.txt
+!**/Build/**/*.ico
+**/Builds/**
+**/DerivedDataCache/**
+**/Intermediate/**
+**/Saved/**
+**/FileOpenOrder/**
 
-# Visual Studio
-.vs/*
+# Unreal Engine plugin generated folders
+**/Plugins/**/Binaries/**
+**/Plugins/**/Intermediate/**
+**/Plugins/Developer/**
 
-# Content Folder
-Content/Collections/*
-Content/Developers/*
-Content/Fab
-Plugins/Developer/*
-# Unreal Engine build artifacts
-Build/*
-Builds/*
-DerivedDataCache/*
-Intermediate/*
-Saved/*
-.vscode/*
-.idea/*
-.codex/*
-FileOpenOrder/*
-Binaries/*
-Plugins/*/Binaries/*
-Plugins/*/Intermediate/*
+# Unreal Engine local/editor-only content
+**/Content/Collections/**
+**/Content/Developers/**
+**/Content/Fab/**
 
-# User-specific files
+# IDE and editor folders
+**/.codex/**
+**/.vs/**
+**/.vscode/**
+**/.idea/**
+
+# IDE and user-specific project files
 *.sln
-*.vsconfig
 *.slnx
+*.xcodeproj
+*.xcworkspace
 *.suo
 *.user
 *.userprefs
+*.vsconfig
 *.opensdf
 *.sdf
 *.code-workspace
 *.ipch
+*.VC.db
+*.VC.opendb
+
+# Logs and temporary build traces
 *.log
 *.tlog
 
-# Build results
+# Build products
+*.app
+*.a
+*.dll
+*.dylib
+*.exe
+*.gch
+*.ipa
+*.la
+*.lai
+*.lib
+*.lo
+*.mod
+*.o
 *.obj
+*.out
 *.pch
 *.pdb
-*.exe
-*.dll
-*.lib
-*.app
-*.dylib
+*.slo
 *.so
+
+# Generated map build data
+*_BuiltData.uasset
+
+# Optional source art scratch files
+**/SourceArt/**/*.png
+**/SourceArt/**/*.tga
