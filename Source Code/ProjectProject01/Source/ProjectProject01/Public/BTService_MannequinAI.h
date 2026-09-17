@@ -46,7 +46,6 @@ private:
 	FVector RoamingDestination = FVector::ZeroVector;
 	bool bHasRoamingDestination = false;
 	bool bRoamingCommitted = false;
-	bool bRoamingTriggerArmed = true;
 	bool bLoggedRoamingQueryFailure = false;
 	double NextRoamingQueryTime = 0.0;
 };

@@ -91,6 +91,7 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
     bRoamingCommitted = false;
     bLoggedRoamingQueryFailure = false;
     NextRoamingQueryTime = 0.0;
+    RoamingDestination = FVector::ZeroVector;
 
     Blackboard.ClearValue(TEXT("RoamingLocation"));
 }
@@ -485,7 +486,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
         ClearRoamingState(*Blackboard);
-        bRoamingTriggerArmed = true;
         return;
     }
     
@@ -493,7 +493,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
         ClearRoamingState(*Blackboard);
-        bRoamingTriggerArmed = true;
         return;
     }
 
@@ -502,7 +501,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     {
         Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
         ClearRoamingState(*Blackboard);
-        bRoamingTriggerArmed = true;
         return;
     }
     
@@ -511,10 +509,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     {
         Blackboard->SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
         ClearRoamingState(*Blackboard);
-        
-        // 완료 후 새로운 랜덤 이동을 다시 허용한다.
-        bRoamingTriggerArmed = true;
-        
+
         // 여기서 return하지 않는다!
         // 현재 조건에 따라 추격 또는 새 랜덤 이동을 다시 결정한다.
     }
@@ -579,19 +574,14 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     }
 
     const int32 SafeRequiredCount = FMath::Max(1, RequiredMannequinCount);
-    if (NearbyMannequinCount < SafeRequiredCount)
-    {
-        // 3명 미만이 된 뒤에만 다음 집결 시 배회 1회를 다시 허용한다.
-        bRoamingTriggerArmed = true;
-        Blackboard->ClearValue(TEXT("RoamingLocation"));
-        Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
-        return;
-    }
+    const bool bHasGatheredMannequins = NearbyMannequinCount >= SafeRequiredCount;
 
-    if (!bRoamingTriggerArmed)
+    // 후방은 인원수와 관계없이 랜덤 이동한다.
+    // 전방은 3인 이상 모였을 때만 랜덤 이동하여 서로 흩어진다.
+    const bool bShouldRoam = bIsInRearHalf || bHasGatheredMannequins;
+    if (!bShouldRoam)
     {
-        // 같은 집결 상태에서 배회를 반복하지 않고 플레이어를 추격한다.
-        Blackboard->ClearValue(TEXT("RoamingLocation"));
+        ClearRoamingState(*Blackboard);
         Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
         return;
     }
@@ -614,7 +604,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     if (bHasRoamingDestination)
     {
         bRoamingCommitted = true;
-        bRoamingTriggerArmed = false;
         bLoggedRoamingQueryFailure = false;
         
         Blackboard->SetValueAsVector(TEXT("RoamingLocation"), RoamingDestination);
