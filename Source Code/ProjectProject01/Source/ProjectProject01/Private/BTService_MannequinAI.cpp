@@ -484,6 +484,9 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 외부원 밖에서는 멈추도록 설정!
     if (bIsOutsideOuterRange)
     {
+        AIController->StopMovement();
+        Mannequin->SetFrozen(true);
+        
         Blackboard->ClearValue(TEXT("TargetActor"));
         ClearRoamingState(*Blackboard);
         return;
