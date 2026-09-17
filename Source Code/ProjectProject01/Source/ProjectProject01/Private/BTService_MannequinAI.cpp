@@ -90,9 +90,8 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
     bHasRoamingDestination = false;
     bRoamingCommitted = false;
     bLoggedRoamingQueryFailure = false;
-    bIsRoamingWaiting = false;
     NextRoamingQueryTime = 0.0;
-    RoamingResumeTime = 0.0;
+
     Blackboard.ClearValue(TEXT("RoamingLocation"));
 }
 
@@ -502,29 +501,8 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         {
             // 플레이어 이동으로 목적지가 고리 밖이 되면 배회 약속은 유지한 채 목적지만 다시 찾는다.
             bHasRoamingDestination = false;
-            bIsRoamingWaiting = false;
-            RoamingResumeTime = 0.0;
+
             Blackboard->ClearValue(TEXT("RoamingLocation"));
-        }
-
-        const bool bReachedDestination = bHasRoamingDestination &&
-            FVector::DistSquared2D(MannequinLocation, RoamingDestination) <= FMath::Square(100.0);
-        if (bReachedDestination && !bIsRoamingWaiting)
-        {
-            const float SafeMinWaitTime = FMath::Max(0.0f, MinRoamingWaitTime);
-            const float SafeMaxWaitTime = FMath::Max(SafeMinWaitTime, MaxRoamingWaitTime);
-            bIsRoamingWaiting = true;
-            RoamingResumeTime = CurrentTime + FMath::FRandRange(SafeMinWaitTime, SafeMaxWaitTime);
-        }
-
-        if (bIsRoamingWaiting)
-        {
-            if (CurrentTime >= RoamingResumeTime)
-            {
-                ClearRoamingState(*Blackboard);
-                Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
-            }
-            return;
         }
 
         if (!bHasRoamingDestination && CurrentTime >= NextRoamingQueryTime)
