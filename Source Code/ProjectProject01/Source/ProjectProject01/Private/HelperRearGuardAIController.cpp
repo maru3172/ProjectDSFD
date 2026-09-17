@@ -89,7 +89,11 @@ void AHelperRearGuardAIController::Tick(float DeltaSeconds)
 		return;
 	}
 
-	MoveToLocation(FollowTarget, AcceptanceRadius, true, true, true, true);
+	const float EffectiveAcceptanceRadius = FMath::Min(
+		FMath::Max(AcceptanceRadius, 0.0f),
+		ControlledHelper->GetMaximumFollowAcceptanceRadius()
+	);
+	MoveToLocation(FollowTarget, EffectiveAcceptanceRadius, true, true, true, true);
 
 	LastMoveTarget = FollowTarget;
 	LastProgressLocation = CurrentLocation;

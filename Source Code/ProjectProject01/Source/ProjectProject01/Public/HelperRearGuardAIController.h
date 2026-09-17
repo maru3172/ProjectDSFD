@@ -26,10 +26,10 @@ private:
 	float RepathInterval = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Helper Rear Guard|Navigation", meta = (ClampMin = "1.0", UIMin = "1.0", Units = "cm"))
-	float RepathDistance = 100.0f;
+	float RepathDistance = 25.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Helper Rear Guard|Navigation", meta = (ClampMin = "1.0", UIMin = "1.0", Units = "cm"))
-	float AcceptanceRadius = 75.0f;
+	float AcceptanceRadius = 25.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Helper Rear Guard|Navigation", meta = (ClampMin = "0.1", UIMin = "0.1", Units = "s"))
 	float StuckTimeout = 1.5f;

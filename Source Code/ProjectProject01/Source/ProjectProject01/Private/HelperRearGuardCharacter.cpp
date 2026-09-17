@@ -46,6 +46,8 @@ void AHelperRearGuardCharacter::Tick(float DeltaTime)
 		RefreshGuardedPlayer();
 	}
 
+	UpdateLastPlayerMovementDirection();
+
 	DrawGuardDebug();
 }
 
@@ -66,7 +68,13 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 		return false;
 	}
 
-	const FVector RearDirection = -GetPlayerViewForward();
+	FVector PlayerMovementDirection;
+	if (!GetPlayerMovementDirection(PlayerMovementDirection))
+	{
+		return false;
+	}
+
+	const FVector RearDirection = -PlayerMovementDirection;
 	const FVector DirectionToTarget = ToTarget.GetSafeNormal();
 	const float MinimumDot = FMath::Cos(FMath::DegreesToRadians(GuardHalfAngleDegrees));
 	if (FVector::DotProduct(RearDirection, DirectionToTarget) < MinimumDot)
@@ -118,15 +126,21 @@ bool AHelperRearGuardCharacter::GetFollowTargetLocation(FVector& OutFollowTarget
 		return false;
 	}
 
-	const FVector PlayerForward = GetPlayerViewForward();
-	if (PlayerForward.IsNearlyZero())
+	FVector PlayerMovementDirection;
+	if (!GetPlayerMovementDirection(PlayerMovementDirection))
 	{
 		return false;
 	}
 
-	OutFollowTarget = GuardedPlayer->GetActorLocation() - (PlayerForward * FollowDistance);
+	const float DesiredFollowDistance = FMath::Max(FollowDistance, MinimumFollowSeparation);
+	OutFollowTarget = GuardedPlayer->GetActorLocation() - (PlayerMovementDirection * DesiredFollowDistance);
 	OutFollowTarget.Z = GuardedPlayer->GetActorLocation().Z;
 	return true;
+}
+
+float AHelperRearGuardCharacter::GetMaximumFollowAcceptanceRadius() const
+{
+	return FMath::Max(0.0f, FMath::Max(FollowDistance, MinimumFollowSeparation) - MinimumFollowSeparation);
 }
 
 bool AHelperRearGuardCharacter::RefreshGuardedPlayer()
@@ -135,6 +149,7 @@ bool AHelperRearGuardCharacter::RefreshGuardedPlayer()
 	if (!IsValid(World))
 	{
 		GuardedPlayer.Reset();
+		LastPlayerMovementDirection = FVector::ZeroVector;
 		return false;
 	}
 
@@ -142,30 +157,56 @@ bool AHelperRearGuardCharacter::RefreshGuardedPlayer()
 	if (!IsValid(PlayerPawn))
 	{
 		GuardedPlayer.Reset();
+		LastPlayerMovementDirection = FVector::ZeroVector;
 		return false;
+	}
+
+	if (GuardedPlayer.Get() != PlayerPawn)
+	{
+		LastPlayerMovementDirection = FVector::ZeroVector;
 	}
 
 	GuardedPlayer = PlayerPawn;
 	return true;
 }
 
-FVector AHelperRearGuardCharacter::GetPlayerViewForward() const
+bool AHelperRearGuardCharacter::GetPlayerMovementDirection(FVector& OutMovementDirection) const
 {
 	if (!GuardedPlayer.IsValid())
 	{
-		return GetActorForwardVector().GetSafeNormal2D();
+		return false;
 	}
 
-	if (const AController* PlayerController = GuardedPlayer->GetController())
+	FVector CurrentMovementDirection = GuardedPlayer->GetVelocity();
+	CurrentMovementDirection.Z = 0.0f;
+	if (!CurrentMovementDirection.IsNearlyZero())
 	{
-		const FVector ControlForward = PlayerController->GetControlRotation().Vector().GetSafeNormal2D();
-		if (!ControlForward.IsNearlyZero())
-		{
-			return ControlForward;
-		}
+		OutMovementDirection = CurrentMovementDirection.GetSafeNormal();
+		return true;
 	}
 
-	return GuardedPlayer->GetActorForwardVector().GetSafeNormal2D();
+	if (!LastPlayerMovementDirection.IsNearlyZero())
+	{
+		OutMovementDirection = LastPlayerMovementDirection.GetSafeNormal();
+		return true;
+	}
+
+	return false;
+}
+
+void AHelperRearGuardCharacter::UpdateLastPlayerMovementDirection()
+{
+	if (!GuardedPlayer.IsValid())
+	{
+		return;
+	}
+
+	FVector CurrentMovementDirection = GuardedPlayer->GetVelocity();
+	CurrentMovementDirection.Z = 0.0f;
+	if (!CurrentMovementDirection.IsNearlyZero())
+	{
+		LastPlayerMovementDirection = CurrentMovementDirection.GetSafeNormal();
+	}
 }
 
 void AHelperRearGuardCharacter::DrawGuardDebug() const
@@ -181,11 +222,13 @@ void AHelperRearGuardCharacter::DrawGuardDebug() const
 		return;
 	}
 
-	const FVector RearDirection = -GetPlayerViewForward();
-	if (RearDirection.IsNearlyZero())
+	FVector PlayerMovementDirection;
+	if (!GetPlayerMovementDirection(PlayerMovementDirection))
 	{
 		return;
 	}
+
+	const FVector RearDirection = -PlayerMovementDirection;
 
 	const FVector RightDirection = FVector::CrossProduct(FVector::UpVector, RearDirection).GetSafeNormal();
 	const FVector DrawOrigin = GetActorLocation() + FVector(0.0f, 0.0f, 10.0f);

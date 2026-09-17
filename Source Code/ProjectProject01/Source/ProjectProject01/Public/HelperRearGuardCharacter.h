@@ -32,14 +32,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Helper Rear Guard")
 	FVector GetGuardViewOrigin() const;
 
-	/** AIController가 NavMesh 이동에 사용할 플레이어 후방 목표 위치를 반환합니다. */
+	/** AIController가 NavMesh 이동에 사용할 플레이어 이동 방향 반대편 목표 위치를 반환합니다. */
 	UFUNCTION(BlueprintPure, Category = "Helper Rear Guard")
 	bool GetFollowTargetLocation(FVector& OutFollowTarget) const;
 
+	/** 최소 이격 거리를 지키기 위해 AIController가 사용할 수 있는 최대 도착 허용 반경입니다. */
+	UFUNCTION(BlueprintPure, Category = "Helper Rear Guard")
+	float GetMaximumFollowAcceptanceRadius() const;
+
 protected:
-	/** 플레이어와 유지할 수평 거리(cm)입니다. */
+	/** 최소 50m 이격을 위한 목표 수평 거리(cm)입니다. 50cm 도착 허용 여유를 포함합니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "0.0", UIMin = "0.0"))
-	float FollowDistance = 200.0f;
+	float FollowDistance = 5050.0f;
+
+	/** 조력자가 플레이어에게 접근할 수 있는 최소 수평 거리(cm)입니다. 5000cm는 50m입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float MinimumFollowSeparation = 5000.0f;
 
 	/** 조력자 시야의 최대 거리(cm)입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "1.0", UIMin = "1.0"))
@@ -55,9 +63,13 @@ protected:
 
 private:
 	bool RefreshGuardedPlayer();
-	FVector GetPlayerViewForward() const;
+	bool GetPlayerMovementDirection(FVector& OutMovementDirection) const;
+	void UpdateLastPlayerMovementDirection();
 	void DrawGuardDebug() const;
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APawn> GuardedPlayer;
+
+	/** 플레이어가 정지했을 때 사용할 마지막 유효 수평 이동 방향입니다. */
+	FVector LastPlayerMovementDirection = FVector::ZeroVector;
 };
