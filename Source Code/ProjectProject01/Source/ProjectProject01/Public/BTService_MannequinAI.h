@@ -31,12 +31,6 @@ private:
 
 	void ClearRoamingState(class UBlackboardComponent& Blackboard);
 
-	UPROPERTY(EditAnywhere, Category = "AI|Roaming", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "s"))
-	float MinRoamingWaitTime = 2.0f;
-
-	UPROPERTY(EditAnywhere, Category = "AI|Roaming", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "s"))
-	float MaxRoamingWaitTime = 5.0f;
-
 	UPROPERTY(EditAnywhere, Category = "AI|Roaming", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
 	float MannequinGatherRadius = 500.0f;
 
@@ -52,9 +46,6 @@ private:
 	FVector RoamingDestination = FVector::ZeroVector;
 	bool bHasRoamingDestination = false;
 	bool bRoamingCommitted = false;
-	bool bRoamingTriggerArmed = true;
 	bool bLoggedRoamingQueryFailure = false;
-	bool bIsRoamingWaiting = false;
 	double NextRoamingQueryTime = 0.0;
-	double RoamingResumeTime = 0.0;	
 };

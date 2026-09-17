@@ -90,9 +90,9 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
     bHasRoamingDestination = false;
     bRoamingCommitted = false;
     bLoggedRoamingQueryFailure = false;
-    bIsRoamingWaiting = false;
     NextRoamingQueryTime = 0.0;
-    RoamingResumeTime = 0.0;
+    RoamingDestination = FVector::ZeroVector;
+
     Blackboard.ClearValue(TEXT("RoamingLocation"));
 }
 
@@ -426,6 +426,15 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     const bool bIsBetweenPlayerRanges = !bIsInsideInnerRange &&
         PlayerDistanceSquared <= FMath::Square(static_cast<double>(RoamingOuterRadius));
     const bool bIsOutsideOuterRange = !bIsInsideInnerRange && !bIsBetweenPlayerRanges;
+    
+    // 플레이어의 좌우 방향 인식
+    const FVector PlayerViewForward = CameraRotation.Vector().GetSafeNormal2D();
+    const FVector PlayerToMannequin = (MannequinLocation - PlayerLocation).GetSafeNormal2D();
+    const float ViewDirectionDot = FVector::DotProduct(PlayerViewForward, PlayerToMannequin);
+    
+    // 정확한 양옆 경계를 기준으로 앞뒤 분리
+    const bool bIsInFrontHalf = bIsBetweenPlayerRanges && ViewDirectionDot >= 0.0f;
+    const bool bIsInRearHalf = bIsBetweenPlayerRanges && ViewDirectionDot < 0.0f;
 
     // Line Trace의 충돌 정보를 저장할 변수이다.
     FHitResult HitResult;
@@ -465,30 +474,51 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     }
 
     const bool bMutuallyDetected = PlayerSeeMannequin && MannequinSeePlayer;
-    Blackboard->SetValueAsBool(TEXT("IsOutsideOuterRange"), bMutuallyDetected && bIsOutsideOuterRange);
-    Blackboard->SetValueAsBool(TEXT("IsBetweenPlayerRanges"), bMutuallyDetected && bIsBetweenPlayerRanges);
-    Blackboard->SetValueAsBool(TEXT("IsInsideInnerRange"), bMutuallyDetected && bIsInsideInnerRange);
+    Blackboard->SetValueAsBool(TEXT("IsOutsideOuterRange"), bIsOutsideOuterRange);
+    Blackboard->SetValueAsBool(TEXT("IsBetweenPlayerRanges"), bIsBetweenPlayerRanges);
+    Blackboard->SetValueAsBool(TEXT("IsInsideInnerRange"), bIsInsideInnerRange);
+    
+    Blackboard->SetValueAsBool(TEXT("IsInFrontHalf"), bIsInFrontHalf);
+    Blackboard->SetValueAsBool(TEXT("IsInRearHalf"), bIsInRearHalf);
 
+    // 외부원 밖에서는 멈추도록 설정!
+    if (bIsOutsideOuterRange)
+    {
+        Blackboard->ClearValue(TEXT("TargetActor"));
+        ClearRoamingState(*Blackboard);
+        return;
+    }
+    
     if (!bMutuallyDetected)
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
         ClearRoamingState(*Blackboard);
-        bRoamingTriggerArmed = true;
         return;
     }
 
-    if (bIsInsideInnerRange || bIsOutsideOuterRange)
+    // 내부원 안에서는 무조건 추격 설정!
+    if (bIsInsideInnerRange)
     {
         Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
         ClearRoamingState(*Blackboard);
         return;
     }
+    
+    const bool bRoamingSequenceCompleted = Blackboard->GetValueAsBool(TEXT("RoamingSequenceCompleted"));
+    if (bRoamingSequenceCompleted)
+    {
+        Blackboard->SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
+        ClearRoamingState(*Blackboard);
 
+        // 여기서 return하지 않는다!
+        // 현재 조건에 따라 추격 또는 새 랜덤 이동을 다시 결정한다.
+    }
+    
     const double CurrentTime = GetWorld()->GetTimeSeconds();
     const double InnerRadiusSquared = FMath::Square(static_cast<double>(DirectChaseRadius));
     const double OuterRadiusSquared = FMath::Square(static_cast<double>(RoamingOuterRadius));
 
-    // 한 번 시작한 배회는 주변 마네킹 수가 줄어도 목적지 도착과 휴식 완료까지 유지한다.
+    // 한 번 시작한 배회는 주변 마네킹 수가 줄어도 목적지 도착을 유지한다.
     if (bRoamingCommitted)
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
@@ -498,33 +528,13 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
             : 0.0;
         const bool bDestinationOutsideRing = bHasRoamingDestination &&
             (DestinationDistanceSquared <= InnerRadiusSquared || DestinationDistanceSquared > OuterRadiusSquared);
+        
         if (bDestinationOutsideRing)
         {
             // 플레이어 이동으로 목적지가 고리 밖이 되면 배회 약속은 유지한 채 목적지만 다시 찾는다.
             bHasRoamingDestination = false;
-            bIsRoamingWaiting = false;
-            RoamingResumeTime = 0.0;
+
             Blackboard->ClearValue(TEXT("RoamingLocation"));
-        }
-
-        const bool bReachedDestination = bHasRoamingDestination &&
-            FVector::DistSquared2D(MannequinLocation, RoamingDestination) <= FMath::Square(100.0);
-        if (bReachedDestination && !bIsRoamingWaiting)
-        {
-            const float SafeMinWaitTime = FMath::Max(0.0f, MinRoamingWaitTime);
-            const float SafeMaxWaitTime = FMath::Max(SafeMinWaitTime, MaxRoamingWaitTime);
-            bIsRoamingWaiting = true;
-            RoamingResumeTime = CurrentTime + FMath::FRandRange(SafeMinWaitTime, SafeMaxWaitTime);
-        }
-
-        if (bIsRoamingWaiting)
-        {
-            if (CurrentTime >= RoamingResumeTime)
-            {
-                ClearRoamingState(*Blackboard);
-                Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
-            }
-            return;
         }
 
         if (!bHasRoamingDestination && CurrentTime >= NextRoamingQueryTime)
@@ -545,13 +555,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
             else
             {
                 NextRoamingQueryTime = CurrentTime + 1.0;
-                if (!bLoggedRoamingQueryFailure)
-                {
-                    UE_LOG(LogTemp, Warning,
-                        TEXT("Committed mannequin roaming destination unavailable for %s: check NavMesh coverage and player range settings."),
-                        *GetNameSafe(MannequinPawn));
-                    bLoggedRoamingQueryFailure = true;
-                }
             }
         }
         return;
@@ -571,24 +574,20 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     }
 
     const int32 SafeRequiredCount = FMath::Max(1, RequiredMannequinCount);
-    if (NearbyMannequinCount < SafeRequiredCount)
-    {
-        // 3명 미만이 된 뒤에만 다음 집결 시 배회 1회를 다시 허용한다.
-        bRoamingTriggerArmed = true;
-        Blackboard->ClearValue(TEXT("RoamingLocation"));
-        Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
-        return;
-    }
+    const bool bHasGatheredMannequins = NearbyMannequinCount >= SafeRequiredCount;
 
-    if (!bRoamingTriggerArmed)
+    // 후방은 인원수와 관계없이 랜덤 이동한다.
+    // 전방은 3인 이상 모였을 때만 랜덤 이동하여 서로 흩어진다.
+    const bool bShouldRoam = bIsInRearHalf || bHasGatheredMannequins;
+    if (!bShouldRoam)
     {
-        // 같은 집결 상태에서 배회를 반복하지 않고 플레이어를 추격한다.
-        Blackboard->ClearValue(TEXT("RoamingLocation"));
+        ClearRoamingState(*Blackboard);
         Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
         return;
     }
 
     Blackboard->ClearValue(TEXT("TargetActor"));
+    
     if (CurrentTime < NextRoamingQueryTime)
     {
         return;
@@ -601,17 +600,19 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         RoamingOuterRadius,
         *MannequinPawn,
         RoamingDestination);
+    
     if (bHasRoamingDestination)
     {
         bRoamingCommitted = true;
-        bRoamingTriggerArmed = false;
         bLoggedRoamingQueryFailure = false;
+        
         Blackboard->SetValueAsVector(TEXT("RoamingLocation"), RoamingDestination);
     }
     else
     {
         NextRoamingQueryTime = CurrentTime + 1.0;
         Blackboard->ClearValue(TEXT("RoamingLocation"));
+        
         if (!bLoggedRoamingQueryFailure)
         {
             UE_LOG(LogTemp, Warning,
