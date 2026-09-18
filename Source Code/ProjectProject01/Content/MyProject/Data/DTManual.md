@@ -4,6 +4,12 @@
 2. Tools > ProjectProject01 Tuning > Reimport and Validate Tuning DataTables
 3. 이미 PIE 중이면 즉시 반영, 아니면 다음 PIE 시작 때 자동 반영
 
+## 주의사항
+※ 첫 행은 반드시 Field,Value
+※ 필드 이름은 바꾸지 않기
+※ 각 필드는 한 번만 쓰기
+※ 숫자 소수점은 0.25처럼 점을 사용하기
+※ 엔진 DataTable 에셋을 직접 열면 엔진 구조상 가로 표로 보일 수 있음, 편집 원본은 세로 CSV임.
 
 
 사용되는 변수
