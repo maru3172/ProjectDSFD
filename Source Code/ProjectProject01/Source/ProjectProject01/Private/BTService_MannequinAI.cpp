@@ -100,20 +100,18 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
 
-    // 플레이어 캐릭터
-    APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
-    APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(PlayerPawn);
-    if (!IsValid(PlayerCharacter))
+    // MultiplayTest에서는 첫 접속자가 마네킹 조종자이므로 PlayerPawn(0)을 생존자로 가정하지 않는다.
+    // 실제 생존자 캐릭터를 사용해 기존 BT 활동을 유지한다.
+    APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(
+        UGameplayStatics::GetActorOfClass(GetWorld(), APlayerCharacter::StaticClass()));
+    APlayerController* PlayerController = IsValid(PlayerCharacter)
+        ? Cast<APlayerController>(PlayerCharacter->GetController())
+        : nullptr;
+    if (!IsValid(PlayerController))
     {
         return;
     }
-
-    // 플레이어 컨트롤러
-    APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
-    if (PlayerController == nullptr)
-    {
-        return;
-    }
+    APawn* PlayerPawn = PlayerCharacter;
 
     // Blackboard
     UBlackboardComponent* Blackboard = OwnerComp.GetBlackboardComponent();
@@ -122,16 +120,25 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         return;
     }
 
-    // PlayerController가 사용하는 CameraManager
-    APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager;
-    if (CameraManager == nullptr)
+    // 서버에도 클라이언트의 화면 해상도는 존재하지 않는다. 뷰포트 좌표 대신
+    // PlayerController가 제공하는 동기화된 시점과 카메라 FOV로 같은 시야 판정을 수행한다.
+    FVector CameraLocation = FVector::ZeroVector;
+    FRotator CameraRotation = FRotator::ZeroRotator;
+    PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+    if (CameraLocation.ContainsNaN() || CameraRotation.ContainsNaN())
     {
+        ensureMsgf(false, TEXT("Player view point is invalid for %s."), *GetNameSafe(PlayerController));
         return;
     }
 
-    // 현재 플레이어 카메라의 월드 위치, 카메라가 바라보는 방향을 가져온다.
-    FVector CameraLocation = CameraManager->GetCameraLocation();
-    FRotator CameraRotation = CameraManager->GetCameraRotation();
+    APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager;
+    const float CameraFOVDegrees = IsValid(CameraManager)
+        ? CameraManager->GetFOVAngle()
+        : 90.0f;
+    // 기존 화면 가장자리 15% 여유를 FOV에 적용한다. 수직 해상도에 의존하지 않아 서버에서도 동일하다.
+    const float ExpandedHalfFOVDegrees = FMath::Clamp(CameraFOVDegrees * 0.5f * 1.15f, 1.0f, 89.0f);
+    const float ViewConeMinimumDot = FMath::Cos(FMath::DegreesToRadians(ExpandedHalfFOVDegrees));
+    const FVector CameraForward = CameraRotation.Vector().GetSafeNormal();
 
     // Mannequin의 AIController와 제어 중인 Pawn을 안전하게 가져온다.
     AAIController* AIController = OwnerComp.GetAIOwner();
@@ -228,86 +235,36 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // Mannequin 이 화면에 보이는지 여부를 저장한다.
     bool bInScreen = false;
 
-    // 현재 화면의 크기를 가져옴
-    int32 SizeX = 0;
-    int32 SizeY = 0;
-    PlayerController->GetViewportSize(SizeX, SizeY);
-    if (SizeX <= 0 || SizeY <= 0)
-    {
-        return;
-    }
-
-    // 화면의 15%를 여유 공간으로 설정
-    const float ScreenMarginRaito = 0.15f;
-    const float MarginX = SizeX * ScreenMarginRaito;
-    const float MarginY = SizeY * ScreenMarginRaito;
-
-    // 화면의 실제 영역 + 15% 의 여유 영역 안에 AI가 있는지 확인
+    // 화면 좌표가 없는 서버에서도 같은 방향 시야를 판정한다.
     for (const FVector& Point : Points)
     {
-        // AI의 월드 좌표를 화면 좌표(X, Y)로 변환한 값을 저장한다.
-        FVector2D ScreenPosition;
-
-        // AI의 월드 위치를 화면 좌표로 변환
-        bool bProjected = PlayerController->ProjectWorldLocationToScreen(Point, ScreenPosition);
-
-        // 화면 뒤에 있으면 다음 점 검사
-        if (!bProjected)
+        const FVector CameraToPoint = (Point - CameraLocation).GetSafeNormal();
+        if (CameraToPoint.IsNearlyZero() || FVector::DotProduct(CameraForward, CameraToPoint) < ViewConeMinimumDot)
         {
             continue;
         }
 
-        // 화면 안에 있는지 검사
-        bool bThisPointInScreen = 
-            ScreenPosition.X >= -MarginX && 
-            ScreenPosition.X <= SizeX + MarginX && 
-            ScreenPosition.Y >= -MarginY && 
-            ScreenPosition.Y <= SizeY + MarginY;
+        // 카메라에서 Mannequin 의 지점까지 Line Trace를 했을 때, 어떤 물체에 먼저 부딪혔는지에 대한 정보를 저장한다.
+        FHitResult HitResult;
+        FCollisionQueryParams QueryParams;
+        QueryParams.AddIgnoredActor(PlayerPawn);
 
-        // 하나라도 화면에 있으면
-        if (bThisPointInScreen)
+        TArray<AActor*> AllMannequins;
+        UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
+        for (AActor* OtherMannequin : AllMannequins)
         {
-            // 카메라에서 Mannequin 의 지점까지 Line Trace를 했을 때, 어떤 물체에 먼저 부딪혔는지에 대한 정보를 저장한다.
-            FHitResult HitResult;
-
-            // Line Trace를 수행할 때 사용할 충돌 설정을 만든다.
-            FCollisionQueryParams QueryParams;
-            // 플레이어 캐릭터 자신은 Line Trace의 충돌 대상에서 제외한다.
-            // 카메라가 플레이어 캐릭터의 충돌에 먼저 걸리는 것을 방지한다.
-            QueryParams.AddIgnoredActor(PlayerPawn);
-
-            // 현재 월드에 존재하는 모든 Mannequin 을 가져온다.
-            TArray<AActor*> AllMannequins;
-            UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
-
-            // 현재 Mannequin 이 아닌 다른 Mannequin 들을 Line Trace에서 제외한다.
-            for (AActor* OtherMannequin : AllMannequins)
+            if (OtherMannequin != Mannequin)
             {
-                if (OtherMannequin != Mannequin)
-                {
-                    QueryParams.AddIgnoredActor(OtherMannequin);
-                }
+                QueryParams.AddIgnoredActor(OtherMannequin);
             }
+        }
 
-            // 플레이어 카메라에서 현재 검사 중인 Mannequin 의 지점까지 직선으로 Line Trace 를 수행한다.
-            bool bHit = GetWorld()->LineTraceSingleByChannel(
-                HitResult,
-                CameraManager->GetCameraLocation(),
-                Point,
-                ECC_GameTraceChannel1,
-                QueryParams
-            );
-
-            // Line Trace가 무언가에 부딪혔고, 가장 먼저 부딪힌 대상이 Mannequin 라면 플레이어가 실제로 Mannequin 을 볼 수 있다고 판단한다.
-            // 만약 Mannequin 와 플레이어 사이에 벽이 있다면 Line Trace는 Mannequin 보다 벽에 먼저 부딪히므로 HitResult.GetActor() == MannequinPawn 조건이 false가 된다.
-            if (bHit && HitResult.GetActor() == MannequinPawn)
-            {
-                // Mannequin 이 화면에 있고, Mannequin 까지의 시야도 막혀 있지 않으므로 플레이어가 Mannequin 을 바라보고 있다고 판단한다.
-                bInScreen = true;
-
-                // 이미 Mannequin 을 볼 수 있는 지점을 하나 찾았으므로 나머지 지점은 검사할 필요가 없다.
-                break;
-            }
+        const bool bHit = GetWorld()->LineTraceSingleByChannel(
+            HitResult, CameraLocation, Point, ECC_GameTraceChannel1, QueryParams);
+        if (bHit && HitResult.GetActor() == MannequinPawn)
+        {
+            bInScreen = true;
+            break;
         }
     }
 
@@ -365,13 +322,9 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 
         for (const FVector& GuardPoint : GuardPoints)
         {
-            FVector2D GuardScreenPosition;
-            if (!PlayerController->ProjectWorldLocationToScreen(GuardPoint, GuardScreenPosition))
-            {
-                continue;
-            }
-            if (GuardScreenPosition.X < -MarginX || GuardScreenPosition.X > SizeX + MarginX ||
-                GuardScreenPosition.Y < -MarginY || GuardScreenPosition.Y > SizeY + MarginY)
+            const FVector CameraToGuardPoint = (GuardPoint - CameraLocation).GetSafeNormal();
+            if (CameraToGuardPoint.IsNearlyZero() ||
+                FVector::DotProduct(CameraForward, CameraToGuardPoint) < ViewConeMinimumDot)
             {
                 continue;
             }

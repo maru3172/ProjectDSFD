@@ -1,0 +1,347 @@
+// File: Source/ProjectProject01/Private/MultiplayTestGameMode.cpp
+// Build target: ProjectProject01Server / ProjectProject01
+
+#include "MultiplayTestGameMode.h"
+
+#include "MannequinAICharacter.h"
+#include "MultiplayTestPlayerController.h"
+#include "PlayerCharacter.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "UObject/ConstructorHelpers.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
+
+DEFINE_LOG_CATEGORY(LogProjectProject01Multiplayer);
+
+namespace
+{
+	bool IsPointInsideVisionCone(
+		const FVector& ViewOrigin,
+		const FVector& ViewDirection,
+		const FVector& TargetPoint,
+		const float HalfAngleDegrees)
+	{
+		const FVector ToTarget = TargetPoint - ViewOrigin;
+		if (ToTarget.IsNearlyZero() || ViewDirection.IsNearlyZero() || ToTarget.ContainsNaN() || ViewDirection.ContainsNaN())
+		{
+			return false;
+		}
+
+		const float MinimumDotProduct = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(HalfAngleDegrees, 1.0f, 89.0f)));
+		return FVector::DotProduct(ViewDirection.GetSafeNormal(), ToTarget.GetSafeNormal()) >= MinimumDotProduct;
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01SurvivorVisionConeTest,
+	"ProjectProject01.Multiplayer.SurvivorVisionCone",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01SurvivorVisionConeTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("A point directly ahead is inside the vision cone"),
+		IsPointInsideVisionCone(FVector::ZeroVector, FVector::ForwardVector, FVector(100.0f, 0.0f, 0.0f), 55.0f));
+	TestFalse(TEXT("A point directly behind is outside the vision cone"),
+		IsPointInsideVisionCone(FVector::ZeroVector, FVector::ForwardVector, FVector(-100.0f, 0.0f, 0.0f), 55.0f));
+	TestFalse(TEXT("An invalid zero-distance target is rejected"),
+		IsPointInsideVisionCone(FVector::ZeroVector, FVector::ForwardVector, FVector::ZeroVector, 55.0f));
+	return true;
+}
+#endif
+
+AMultiplayTestGameMode::AMultiplayTestGameMode()
+{
+	PrimaryActorTick.bCanEverTick = true;
+
+	// 콘텐츠 Blueprint를 불러오지 못해도 네트워크 이동이 가능한 네이티브 Pawn으로 안전하게 대체한다.
+	DefaultPawnClass = APlayerCharacter::StaticClass();
+
+	static ConstructorHelpers::FClassFinder<APawn> PlayerPawnClassFinder(
+		TEXT("/Game/MyProject/BP_PlayerCharacter"));
+	if (PlayerPawnClassFinder.Succeeded())
+	{
+		DefaultPawnClass = PlayerPawnClassFinder.Class;
+	}
+	else
+	{
+		ensureMsgf(false,
+			TEXT("MultiplayTestGameMode could not load /Game/MyProject/BP_PlayerCharacter. Falling back to APlayerCharacter."));
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("MultiplayTestGameMode could not load /Game/MyProject/BP_PlayerCharacter; using APlayerCharacter."));
+	}
+
+	PlayerControllerClass = AMultiplayTestPlayerController::StaticClass();
+}
+
+void AMultiplayTestGameMode::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!HasAuthority() || DeltaSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	SurvivorVisionCheckAccumulatorSeconds += DeltaSeconds;
+	if (SurvivorVisionCheckAccumulatorSeconds < FMath::Max(SurvivorVisionCheckIntervalSeconds, 0.01f))
+	{
+		return;
+	}
+
+	SurvivorVisionCheckAccumulatorSeconds = 0.0f;
+	UpdateSurvivorVisionFrozenStates();
+}
+
+void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
+{
+	AMultiplayTestPlayerController* NewMultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayer);
+	if (IsValid(NewMultiplayController) && !MannequinController.IsValid())
+	{
+		MannequinController = NewMultiplayController;
+		UE_LOG(LogProjectProject01Multiplayer, Log,
+			TEXT("%s was assigned as the prototype mannequin controller."), *NewMultiplayController->GetName());
+	}
+	else if (!IsValid(NewMultiplayController))
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("MultiplayTest requires AMultiplayTestPlayerController, but %s connected."), *GetNameSafe(NewPlayer));
+	}
+
+	Super::PostLogin(NewPlayer);
+}
+
+void AMultiplayTestGameMode::Logout(AController* Exiting)
+{
+	AMultiplayTestPlayerController* ExitingMultiplayController = Cast<AMultiplayTestPlayerController>(Exiting);
+	if (IsMannequinController(ExitingMultiplayController))
+	{
+		if (AMannequinAICharacter* ControlledMannequin = Cast<AMannequinAICharacter>(ExitingMultiplayController->GetPawn());
+			IsValid(ControlledMannequin))
+		{
+			ExitingMultiplayController->UnPossess();
+			ControlledMannequin->SpawnDefaultController();
+		}
+
+		MannequinController.Reset();
+		UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("The mannequin controller disconnected."));
+	}
+
+	Super::Logout(Exiting);
+}
+
+bool AMultiplayTestGameMode::MustSpectate_Implementation(APlayerController* NewPlayerController) const
+{
+	return IsMannequinController(Cast<AMultiplayTestPlayerController>(NewPlayerController)) ||
+		Super::MustSpectate_Implementation(NewPlayerController);
+}
+
+bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController* RequestingController, int32 Slot)
+{
+	if (!HasAuthority() || !IsValid(RequestingController) || !IsMannequinController(RequestingController))
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Rejected mannequin slot request %d from %s."), Slot, *GetNameSafe(RequestingController));
+		return false;
+	}
+
+	AMannequinAICharacter* TargetMannequin = FindMannequinBySlot(Slot);
+	if (!IsValid(TargetMannequin))
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("No unique mannequin was found for control slot %d."), Slot);
+		return false;
+	}
+
+	AMannequinAICharacter* PreviousMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
+	if (PreviousMannequin == TargetMannequin)
+	{
+		return true;
+	}
+
+	if (APlayerController* ExistingPlayerController = Cast<APlayerController>(TargetMannequin->GetController());
+		IsValid(ExistingPlayerController) && ExistingPlayerController != RequestingController)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Rejected mannequin slot %d because %s is already player-controlled."), Slot, *GetNameSafe(TargetMannequin));
+		return false;
+	}
+
+	if (IsValid(PreviousMannequin))
+	{
+		RequestingController->UnPossess();
+		if (!IsValid(PreviousMannequin->GetController()))
+		{
+			PreviousMannequin->SpawnDefaultController();
+		}
+	}
+
+	if (UCharacterMovementComponent* Movement = TargetMannequin->GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+	}
+
+	RequestingController->Possess(TargetMannequin);
+	if (!ensureMsgf(RequestingController->GetPawn() == TargetMannequin,
+		TEXT("Failed to possess mannequin control slot %d."), Slot))
+	{
+		return false;
+	}
+
+	TargetMannequin->ForceNetUpdate();
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("%s now controls mannequin slot %d (%s)."),
+		*RequestingController->GetName(), Slot, *TargetMannequin->GetName());
+	return true;
+}
+
+AMannequinAICharacter* AMultiplayTestGameMode::FindMannequinBySlot(int32 Slot) const
+{
+	if (Slot < 0 || Slot > 9 || !IsValid(GetWorld()))
+	{
+		return nullptr;
+	}
+
+	TArray<AActor*> MannequinActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), MannequinActors);
+
+	AMannequinAICharacter* MatchingMannequin = nullptr;
+	for (AActor* Actor : MannequinActors)
+	{
+		AMannequinAICharacter* Mannequin = Cast<AMannequinAICharacter>(Actor);
+		if (!IsValid(Mannequin) || Mannequin->GetControlSlot() != Slot)
+		{
+			continue;
+		}
+
+		if (IsValid(MatchingMannequin))
+		{
+			UE_LOG(LogProjectProject01Multiplayer, Error,
+				TEXT("Duplicate mannequin control slot %d found on %s and %s."),
+				Slot, *MatchingMannequin->GetName(), *Mannequin->GetName());
+			return nullptr;
+		}
+
+		MatchingMannequin = Mannequin;
+	}
+
+	return MatchingMannequin;
+}
+
+bool AMultiplayTestGameMode::IsMannequinController(const AMultiplayTestPlayerController* Controller) const
+{
+	return IsValid(Controller) && MannequinController.Get() == Controller;
+}
+
+bool AMultiplayTestGameMode::IsSurvivorController(const APlayerController* Controller) const
+{
+	const APawn* ControlledPawn = IsValid(Controller) ? Controller->GetPawn() : nullptr;
+	return IsValid(ControlledPawn) && !IsMannequinController(Cast<AMultiplayTestPlayerController>(Controller)) &&
+		!ControlledPawn->IsA<AMannequinAICharacter>();
+}
+
+bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
+	const APlayerController* SurvivorController,
+	const AMannequinAICharacter* Mannequin) const
+{
+	if (!IsValid(SurvivorController) || !IsValid(Mannequin) || !IsValid(GetWorld()))
+	{
+		return false;
+	}
+
+	const APawn* SurvivorPawn = SurvivorController->GetPawn();
+	const UCapsuleComponent* MannequinCapsule = Mannequin->GetCapsuleComponent();
+	if (!IsValid(SurvivorPawn) || !IsValid(MannequinCapsule))
+	{
+		return false;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	SurvivorController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+	if (ViewLocation.ContainsNaN() || ViewRotation.ContainsNaN())
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Rejected invalid survivor view data from %s."), *GetNameSafe(SurvivorController));
+		return false;
+	}
+
+	const FVector CapsuleCenter = MannequinCapsule->GetComponentLocation();
+	const FVector CapsuleUp = MannequinCapsule->GetUpVector();
+	const float CapsuleHalfHeight = MannequinCapsule->GetScaledCapsuleHalfHeight();
+	const FVector TargetPoints[] =
+	{
+		CapsuleCenter,
+		CapsuleCenter + CapsuleUp * (CapsuleHalfHeight * 0.55f),
+		CapsuleCenter - CapsuleUp * (CapsuleHalfHeight * 0.35f)
+	};
+
+	FCollisionQueryParams TraceParameters(SCENE_QUERY_STAT(SurvivorVision), true, SurvivorPawn);
+	TraceParameters.AddIgnoredActor(SurvivorController);
+	for (const FVector& TargetPoint : TargetPoints)
+	{
+		if (!IsPointInsideVisionCone(ViewLocation, ViewRotation.Vector(), TargetPoint, SurvivorVisionHalfAngleDegrees))
+		{
+			continue;
+		}
+
+		FHitResult HitResult;
+		const bool bReachedMannequin = GetWorld()->LineTraceSingleByChannel(
+			HitResult, ViewLocation, TargetPoint, ECC_GameTraceChannel1, TraceParameters) && HitResult.GetActor() == Mannequin;
+		if (bReachedMannequin)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
+{
+	if (!HasAuthority() || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	TArray<APlayerController*> SurvivorControllers;
+	for (FConstPlayerControllerIterator ControllerIterator = GetWorld()->GetPlayerControllerIterator(); ControllerIterator; ++ControllerIterator)
+	{
+		APlayerController* Controller = ControllerIterator->Get();
+		if (IsSurvivorController(Controller))
+		{
+			SurvivorControllers.Add(Controller);
+		}
+	}
+
+	TArray<AActor*> MannequinActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), MannequinActors);
+	for (AActor* Actor : MannequinActors)
+	{
+		AMannequinAICharacter* Mannequin = Cast<AMannequinAICharacter>(Actor);
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+
+		bool bObservedByAnySurvivor = false;
+		for (const APlayerController* SurvivorController : SurvivorControllers)
+		{
+			if (CanSurvivorSeeMannequin(SurvivorController, Mannequin))
+			{
+				bObservedByAnySurvivor = true;
+				break;
+			}
+		}
+
+		Mannequin->SetFrozenBySurvivorVision(bObservedByAnySurvivor);
+	}
+}
