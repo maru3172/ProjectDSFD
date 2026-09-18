@@ -10,6 +10,7 @@
 #include "Camera/PlayerCameraManager.h"
 #include "MannequinAICharacter.h"
 #include "HelperRearGuardCharacter.h"
+#include "MultiplayTestGameMode.h"
 
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
@@ -457,7 +458,14 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         return;
     }
     
-    if (!bMutuallyDetected)
+    // MultiplayTest는 생존자 시야 정지를 GameMode가 별도로 판정한다.
+    // 따라서 마네킹을 플레이어가 풀어 준 직후처럼 감지 상태가 초기화되어도
+    // 상호 감지 실패만으로 AI의 기존 추격/배회 로직을 중단하지 않는다.
+    // 다른 게임모드는 기존 상호 감지 규칙을 그대로 유지한다.
+    const AGameModeBase* ActiveGameMode = IsValid(GetWorld()) ? GetWorld()->GetAuthGameMode() : nullptr;
+    const bool bRequiresMutualDetection =
+        !IsValid(ActiveGameMode) || !ActiveGameMode->IsA<AMultiplayTestGameMode>();
+    if (bRequiresMutualDetection && !bMutuallyDetected)
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
         ClearRoamingState(*Blackboard);

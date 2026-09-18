@@ -4,6 +4,7 @@
 #include "MultiplayTestGameMode.h"
 
 #include "MannequinAICharacter.h"
+#include "MannequinAIController.h"
 #include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
@@ -14,6 +15,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -152,7 +154,7 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 			IsValid(ControlledMannequin))
 		{
 			ExitingMultiplayController->UnPossess();
-			ControlledMannequin->SpawnDefaultController();
+			QueueDefaultAIControllerRestore(ControlledMannequin);
 		}
 
 		MannequinController.Reset();
@@ -202,10 +204,7 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 	if (IsValid(PreviousMannequin))
 	{
 		RequestingController->UnPossess();
-		if (!IsValid(PreviousMannequin->GetController()))
-		{
-			PreviousMannequin->SpawnDefaultController();
-		}
+		QueueDefaultAIControllerRestore(PreviousMannequin);
 	}
 
 	if (UCharacterMovementComponent* Movement = TargetMannequin->GetCharacterMovement(); IsValid(Movement))
@@ -225,6 +224,48 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 		TEXT("%s now controls mannequin slot %d (%s)."),
 		*RequestingController->GetName(), Slot, *TargetMannequin->GetName());
 	return true;
+}
+
+void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !IsValid(World) || !IsValid(Mannequin))
+	{
+		return;
+	}
+
+	const TWeakObjectPtr<AMannequinAICharacter> WeakMannequin(Mannequin);
+	World->GetTimerManager().SetTimerForNextTick([WeakMannequin]()
+	{
+		AMannequinAICharacter* RestoredMannequin = WeakMannequin.Get();
+		if (!IsValid(RestoredMannequin) || !RestoredMannequin->HasAuthority())
+		{
+			return;
+		}
+
+		// 슬롯을 빠르게 전환해 이 마네킹을 다시 플레이어가 잡은 경우에는 AI를 덮어쓰지 않는다.
+		if (IsValid(RestoredMannequin->GetController()))
+		{
+			return;
+		}
+
+		RestoredMannequin->SpawnDefaultController();
+		AMannequinAIController* RestoredAIController = Cast<AMannequinAIController>(RestoredMannequin->GetController());
+		if (!ensureMsgf(IsValid(RestoredAIController),
+			TEXT("Mannequin %s could not restore its default AIController after player possession."),
+			*GetNameSafe(RestoredMannequin)))
+		{
+			UE_LOG(LogProjectProject01Multiplayer, Error,
+				TEXT("Mannequin %s has no valid default AIController after control transfer."),
+				*GetNameSafe(RestoredMannequin));
+			return;
+		}
+
+		RestoredMannequin->ForceNetUpdate();
+		UE_LOG(LogProjectProject01Multiplayer, Verbose,
+			TEXT("Restored AI control for mannequin %s after player control transfer."),
+			*GetNameSafe(RestoredMannequin));
+	});
 }
 
 AMannequinAICharacter* AMultiplayTestGameMode::FindMannequinBySlot(int32 Slot) const

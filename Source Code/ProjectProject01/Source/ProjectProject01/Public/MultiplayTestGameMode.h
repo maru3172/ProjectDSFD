@@ -36,6 +36,7 @@ public:
 
 private:
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;
+	void QueueDefaultAIControllerRestore(class AMannequinAICharacter* Mannequin) const;
 	bool IsMannequinController(const class AMultiplayTestPlayerController* Controller) const;
 	bool IsSurvivorController(const APlayerController* Controller) const;
 	bool CanSurvivorSeeMannequin(const APlayerController* SurvivorController,

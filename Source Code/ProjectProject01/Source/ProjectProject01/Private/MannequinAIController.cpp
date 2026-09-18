@@ -8,9 +8,16 @@
 void AMannequinAIController::BeginPlay()
 {
     Super::BeginPlay();
+}
+
+void AMannequinAIController::OnPossess(APawn* InPawn)
+{
+    Super::OnPossess(InPawn);
 
     if (BehaviorTree != nullptr)
     {
-        RunBehaviorTree(BehaviorTree);
+        ensureMsgf(RunBehaviorTree(BehaviorTree),
+            TEXT("Mannequin AI controller could not start its Behavior Tree after possessing %s."),
+            *GetNameSafe(InPawn));
     }
 }
