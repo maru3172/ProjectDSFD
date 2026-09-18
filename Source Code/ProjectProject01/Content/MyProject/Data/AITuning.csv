@@ -1,0 +1,9 @@
+Field,Value
+DirectChaseRadius,500
+RoamingOuterRadius,1500
+MannequinGatherRadius,500
+RequiredMannequinCount,3
+SurvivorVisionCheckIntervalSeconds,0.05
+SurvivorVisionHalfAngleDegrees,55
+DetectionMargin,30
+VisionFovMarginMultiplier,1.15

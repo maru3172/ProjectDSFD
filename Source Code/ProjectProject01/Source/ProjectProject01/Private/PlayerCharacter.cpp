@@ -2,6 +2,7 @@
 
 
 #include "PlayerCharacter.h"
+#include "ProjectProject01TuningData.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -120,6 +121,18 @@ APlayerCharacter::APlayerCharacter()
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
+	{
+		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
+		{
+			FMannequinAITuningRow Tuning;
+			if (TuningSubsystem->GetMannequinTuning(Tuning))
+			{
+				ApplyMannequinTuning(Tuning);
+			}
+		}
+	}
 	
 	// 현재 플레이어가 소유한 컨트롤러를 가져온다.
 	//APlayerController* PlayerController = GetWorld()->GetFirstPlayerController();
@@ -266,7 +279,13 @@ float APlayerCharacter::GetDirectChaseRadius() const
 
 float APlayerCharacter::GetRoamingOuterRadius() const
 {
-	return FMath::Max(GetDirectChaseRadius(), RoamingOuterRadius);
+	return FMath::Max(0.0f, RoamingOuterRadius);
+}
+
+void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
+{
+	DirectChaseRadius = FMath::Max(0.0f, Tuning.DirectChaseRadius);
+	RoamingOuterRadius = FMath::Max(0.0f, Tuning.RoamingOuterRadius);
 }
 
 void APlayerCharacter::DrawAIRangeDebug() const

@@ -1,0 +1,11 @@
+Field,Value
+FollowDistance,100
+MinimumFollowSeparation,5000
+GuardSightRadius,1500
+GuardHalfAngleDegrees,70
+RepathInterval,0.25
+RepathDistance,25
+AcceptanceRadius,25
+StuckTimeout,1.5
+StuckWaitTime,0.5
+ProgressDistance,20

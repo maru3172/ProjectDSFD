@@ -8,6 +8,7 @@
 #include "HelperRearGuardAIController.generated.h"
 
 class AHelperRearGuardCharacter;
+struct FHelperTuningRow;
 
 /** 플레이어 후방을 NavMesh 경로로 지키는 조력자 전용 AIController입니다. */
 UCLASS()
@@ -17,6 +18,9 @@ class PROJECTPROJECT01_API AHelperRearGuardAIController : public AAIController
 
 public:
 	AHelperRearGuardAIController();
+
+	/** 서버가 검증된 조력자 이동 보정값을 적용한다. */
+	void ApplyHelperNavigationTuning(const FHelperTuningRow& Tuning);
 
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void Tick(float DeltaSeconds) override;

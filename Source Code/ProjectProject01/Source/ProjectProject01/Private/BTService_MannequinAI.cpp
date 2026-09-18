@@ -12,6 +12,7 @@
 #include "HelperRearGuardCharacter.h"
 
 #include "PlayerCharacter.h"
+#include "ProjectProject01TuningData.h"
 #include "NavigationSystem.h"
 #include "NavigationData.h"
 
@@ -100,6 +101,12 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
 
+	FMannequinAITuningRow ActiveTuning;
+	const UProjectProject01TuningSubsystem* TuningSubsystem = IsValid(GetWorld())
+		? GetWorld()->GetSubsystem<UProjectProject01TuningSubsystem>()
+		: nullptr;
+	const bool bHasActiveTuning = IsValid(TuningSubsystem) && TuningSubsystem->GetMannequinTuning(ActiveTuning);
+
     // MultiplayTest에서는 첫 접속자가 마네킹 조종자이므로 PlayerPawn(0)을 생존자로 가정하지 않는다.
     // 실제 생존자 캐릭터를 사용해 기존 BT 활동을 유지한다.
     APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(
@@ -136,7 +143,8 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         ? CameraManager->GetFOVAngle()
         : 90.0f;
     // 기존 화면 가장자리 15% 여유를 FOV에 적용한다. 수직 해상도에 의존하지 않아 서버에서도 동일하다.
-    const float ExpandedHalfFOVDegrees = FMath::Clamp(CameraFOVDegrees * 0.5f * 1.15f, 1.0f, 89.0f);
+    const float VisionFovMarginMultiplier = bHasActiveTuning ? ActiveTuning.VisionFovMarginMultiplier : 1.15f;
+    const float ExpandedHalfFOVDegrees = FMath::Max(0.0f, CameraFOVDegrees * 0.5f * VisionFovMarginMultiplier);
     const float ViewConeMinimumDot = FMath::Cos(FMath::DegreesToRadians(ExpandedHalfFOVDegrees));
     const FVector CameraForward = CameraRotation.Vector().GetSafeNormal();
 
@@ -172,7 +180,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     float Radius = MannequinCapsule->GetScaledCapsuleRadius();
 
     // 화면 판정을 위한 캡슐의 여유 범위
-    const float DetectionMargin = 30.0f;
+    const float DetectionMargin = bHasActiveTuning ? ActiveTuning.DetectionMargin : 30.0f;
 
     // 캡슐의 판정 반지름과 높이에 여유를 추가한다.
     const float DetectionRadius = Radius + DetectionMargin;           // 사용하려면 해도 좋다.
@@ -371,8 +379,12 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     FVector MannequinLocation = Mannequin->GetActorLocation();
     FVector PlayerLocation = PlayerPawn->GetActorLocation();
 
-    const float DirectChaseRadius = PlayerCharacter->GetDirectChaseRadius();
-    const float RoamingOuterRadius = PlayerCharacter->GetRoamingOuterRadius();
+    const float DirectChaseRadius = bHasActiveTuning
+        ? FMath::Max(0.0f, ActiveTuning.DirectChaseRadius)
+        : PlayerCharacter->GetDirectChaseRadius();
+    const float RoamingOuterRadius = bHasActiveTuning
+        ? FMath::Max(0.0f, ActiveTuning.RoamingOuterRadius)
+        : PlayerCharacter->GetRoamingOuterRadius();
     const double PlayerDistanceSquared = FVector::DistSquared2D(MannequinLocation, PlayerLocation);
     const bool bIsInsideInnerRange =
         PlayerDistanceSquared <= FMath::Square(static_cast<double>(DirectChaseRadius));
@@ -516,7 +528,9 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         return;
     }
 
-    const float SafeGatherRadius = FMath::Max(0.0f, MannequinGatherRadius);
+    const float SafeGatherRadius = bHasActiveTuning
+        ? FMath::Max(0.0f, ActiveTuning.MannequinGatherRadius)
+        : FMath::Max(0.0f, MannequinGatherRadius);
     const double GatherRadiusSquared = FMath::Square(static_cast<double>(SafeGatherRadius));
     int32 NearbyMannequinCount = 0;
     for (AActor* OtherMannequin : AllMannequins)
@@ -529,7 +543,9 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         }
     }
 
-    const int32 SafeRequiredCount = FMath::Max(1, RequiredMannequinCount);
+    const int32 SafeRequiredCount = bHasActiveTuning
+        ? FMath::Max(1, ActiveTuning.RequiredMannequinCount)
+        : FMath::Max(1, RequiredMannequinCount);
     const bool bHasGatheredMannequins = NearbyMannequinCount >= SafeRequiredCount;
 
     // 후방은 인원수와 관계없이 랜덤 이동한다.

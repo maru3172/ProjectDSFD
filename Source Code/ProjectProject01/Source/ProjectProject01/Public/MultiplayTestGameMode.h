@@ -8,6 +8,7 @@
 #include "MultiplayTestGameMode.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Multiplayer, Log, All);
+struct FMannequinAITuningRow;
 
 /**
  * MultiplayTest 전용 게임 모드입니다.
@@ -20,6 +21,10 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode final : public AGameModeBase
 
 public:
 	AMultiplayTestGameMode();
+	virtual void BeginPlay() override;
+
+	/** 서버가 DataTable의 검증된 생존자 시야 수치를 적용한다. */
+	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
 
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
 

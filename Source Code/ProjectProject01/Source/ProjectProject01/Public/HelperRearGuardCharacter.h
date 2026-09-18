@@ -8,6 +8,7 @@
 #include "HelperRearGuardCharacter.generated.h"
 
 class APawn;
+struct FHelperTuningRow;
 
 /**
  * 모델이 연결되기 전에도 독립적으로 동작하는 후방 경계 조력자 프로토타입입니다.
@@ -20,6 +21,9 @@ class PROJECTPROJECT01_API AHelperRearGuardCharacter : public ACharacter
 
 public:
 	AHelperRearGuardCharacter();
+
+	/** 서버가 DataTable의 검증된 조력자 수치를 적용한다. */
+	void ApplyHelperTuning(const FHelperTuningRow& Tuning);
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;

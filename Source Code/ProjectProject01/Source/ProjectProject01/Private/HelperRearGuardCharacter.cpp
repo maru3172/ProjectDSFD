@@ -10,6 +10,7 @@
 #include "HelperRearGuardAIController.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
+#include "ProjectProject01TuningData.h"
 
 AHelperRearGuardCharacter::AHelperRearGuardCharacter()
 {
@@ -34,7 +35,32 @@ AHelperRearGuardCharacter::AHelperRearGuardCharacter()
 void AHelperRearGuardCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
+	{
+		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
+		{
+			FHelperTuningRow Tuning;
+			if (TuningSubsystem->GetHelperTuning(Tuning))
+			{
+				ApplyHelperTuning(Tuning);
+			}
+		}
+	}
 	RefreshGuardedPlayer();
+}
+
+void AHelperRearGuardCharacter::ApplyHelperTuning(const FHelperTuningRow& Tuning)
+{
+	MinimumFollowSeparation = FMath::Max(0.0f, Tuning.MinimumFollowSeparation);
+	FollowDistance = FMath::Max(0.0f, Tuning.FollowDistance);
+	GuardSightRadius = FMath::Max(0.0f, Tuning.GuardSightRadius);
+	GuardHalfAngleDegrees = FMath::Max(0.0f, Tuning.GuardHalfAngleDegrees);
+
+	if (AHelperRearGuardAIController* HelperController = Cast<AHelperRearGuardAIController>(GetController()))
+	{
+		HelperController->ApplyHelperNavigationTuning(Tuning);
+	}
 }
 
 void AHelperRearGuardCharacter::Tick(float DeltaTime)
@@ -132,7 +158,7 @@ bool AHelperRearGuardCharacter::GetFollowTargetLocation(FVector& OutFollowTarget
 		return false;
 	}
 
-	const float DesiredFollowDistance = FMath::Max(FollowDistance, MinimumFollowSeparation);
+	const float DesiredFollowDistance = FMath::Max(0.0f, FollowDistance);
 	OutFollowTarget = GuardedPlayer->GetActorLocation() - (PlayerMovementDirection * DesiredFollowDistance);
 	OutFollowTarget.Z = GuardedPlayer->GetActorLocation().Z;
 	return true;
@@ -140,7 +166,7 @@ bool AHelperRearGuardCharacter::GetFollowTargetLocation(FVector& OutFollowTarget
 
 float AHelperRearGuardCharacter::GetMaximumFollowAcceptanceRadius() const
 {
-	return FMath::Max(0.0f, FMath::Max(FollowDistance, MinimumFollowSeparation) - MinimumFollowSeparation);
+	return FMath::Max(0.0f, FollowDistance - MinimumFollowSeparation);
 }
 
 bool AHelperRearGuardCharacter::RefreshGuardedPlayer()

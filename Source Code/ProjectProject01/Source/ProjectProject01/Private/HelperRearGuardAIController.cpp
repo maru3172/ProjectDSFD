@@ -4,10 +4,21 @@
 #include "HelperRearGuardAIController.h"
 
 #include "HelperRearGuardCharacter.h"
+#include "ProjectProject01TuningData.h"
 
 AHelperRearGuardAIController::AHelperRearGuardAIController()
 {
 	PrimaryActorTick.bCanEverTick = true;
+}
+
+void AHelperRearGuardAIController::ApplyHelperNavigationTuning(const FHelperTuningRow& Tuning)
+{
+	RepathInterval = FMath::Max(0.0f, Tuning.RepathInterval);
+	RepathDistance = FMath::Max(0.0f, Tuning.RepathDistance);
+	AcceptanceRadius = FMath::Max(0.0f, Tuning.AcceptanceRadius);
+	StuckTimeout = FMath::Max(0.0f, Tuning.StuckTimeout);
+	StuckWaitTime = FMath::Max(0.0f, Tuning.StuckWaitTime);
+	ProgressDistance = FMath::Max(0.0f, Tuning.ProgressDistance);
 }
 
 void AHelperRearGuardAIController::OnPossess(APawn* InPawn)
@@ -19,6 +30,18 @@ void AHelperRearGuardAIController::OnPossess(APawn* InPawn)
 	bHasMoveTarget = false;
 	bWaitingForRepath = false;
 	LastProgressTime = 0.0;
+
+	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
+	{
+		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
+		{
+			FHelperTuningRow Tuning;
+			if (TuningSubsystem->GetHelperTuning(Tuning))
+			{
+				ApplyHelperNavigationTuning(Tuning);
+			}
+		}
+	}
 }
 
 void AHelperRearGuardAIController::Tick(float DeltaSeconds)

@@ -6,6 +6,7 @@
 #include "MannequinAICharacter.h"
 #include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
+#include "ProjectProject01TuningData.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -35,7 +36,7 @@ namespace
 			return false;
 		}
 
-		const float MinimumDotProduct = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(HalfAngleDegrees, 1.0f, 89.0f)));
+		const float MinimumDotProduct = FMath::Cos(FMath::DegreesToRadians(FMath::Max(0.0f, HalfAngleDegrees)));
 		return FVector::DotProduct(ViewDirection.GetSafeNormal(), ToTarget.GetSafeNormal()) >= MinimumDotProduct;
 	}
 }
@@ -80,6 +81,29 @@ AMultiplayTestGameMode::AMultiplayTestGameMode()
 	}
 
 	PlayerControllerClass = AMultiplayTestPlayerController::StaticClass();
+}
+
+void AMultiplayTestGameMode::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
+		{
+			FMannequinAITuningRow Tuning;
+			if (TuningSubsystem->GetMannequinTuning(Tuning))
+			{
+				ApplyMannequinTuning(Tuning);
+			}
+		}
+	}
+}
+
+void AMultiplayTestGameMode::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
+{
+	SurvivorVisionCheckIntervalSeconds = FMath::Max(0.0f, Tuning.SurvivorVisionCheckIntervalSeconds);
+	SurvivorVisionHalfAngleDegrees = FMath::Max(0.0f, Tuning.SurvivorVisionHalfAngleDegrees);
 }
 
 void AMultiplayTestGameMode::Tick(float DeltaSeconds)

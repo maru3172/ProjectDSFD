@@ -9,6 +9,7 @@
 
 class UInputAction;
 class UInputMappingContext;
+struct FMannequinAITuningRow;
 
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
@@ -26,6 +27,9 @@ public:
 	// AI가 배회할 고리 영역의 외부 반경(cm)이다.
 	UFUNCTION(BlueprintPure, Category = "AI|Range")
 	float GetRoamingOuterRadius() const;
+
+	/** 서버가 DataTable의 검증된 마네킹 추적 값을 적용한다. */
+	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
 
 protected:
 	// Called when the game starts or when spawned
