@@ -394,28 +394,19 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     const bool bIsOutsideOuterRange = !bIsInsideInnerRange && !bIsBetweenPlayerRanges;
     
     // 플레이어의 실제 이동 방향을 가져오기
-    FVector PlayerMovementDirection = PlayerPawn->GetVelocity().GetSafeNormal2D();
-    
-    if (!PlayerMovementDirection.IsNearlyZero())
-    {
-        // 플레이어가 현재 이동 중이라면 현재 이동 방향을 저장한다.
-        LastPlayerMovementDirection = PlayerMovementDirection;
-    }
-    else if (LastPlayerMovementDirection.IsNearlyZero())
-    {
-        // 게임 시작 직후에 아직 이동한 적이 없다면 캐릭터의 정면을 바라보도록 설정한다.
-        LastPlayerMovementDirection = PlayerPawn->GetActorForwardVector().GetSafeNormal2D();
-    }
-    
+    const FVector PlayerMovementDirection = PlayerCharacter->GetAIMovementDirection();
     const FVector PlayerToMannequin = (MannequinLocation - PlayerLocation).GetSafeNormal2D();
-    const float MovementDirectionDot = FVector::DotProduct(LastPlayerMovementDirection, PlayerToMannequin);
+    const float MovementDirectionDot = FVector::DotProduct(PlayerMovementDirection, PlayerToMannequin);
     
-    // 이동 방향 쪽 반원:
+    const float ChaseHalfAngleDegrees = PlayerCharacter->GetDirectChaseHalfAngleDegrees();
+    const float ChaseMinimumDot = FMath::Cos(FMath::DegreesToRadians(ChaseHalfAngleDegrees));
+    
+    // 이동 방향 쪽 부채꼴:
     // 플레이어가 왼쪽으로 이동하면 플레이어 왼쪽에 있는 마네킹이다.
-    const bool bIsInFrontHalf = bIsBetweenPlayerRanges && MovementDirectionDot >= 0.0f;
-    // 이동 반대 방향 쪽 반원:
+    const bool bIsInChaseSector = bIsBetweenPlayerRanges && MovementDirectionDot >= ChaseMinimumDot;
+    // 이동 반대 방향 쪽 부채꼴:
     // 플레이어가 왼쪽으로 이동하면 플레이어 오른쪽에 있는 마네킹이다.
-    const bool bIsInRearHalf = bIsBetweenPlayerRanges && MovementDirectionDot < 0.0f;
+    const bool bIsInRoamingSector = bIsBetweenPlayerRanges && MovementDirectionDot < ChaseMinimumDot;
 
     // Line Trace의 충돌 정보를 저장할 변수이다.
     FHitResult HitResult;
@@ -459,8 +450,8 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     Blackboard->SetValueAsBool(TEXT("IsBetweenPlayerRanges"), bIsBetweenPlayerRanges);
     Blackboard->SetValueAsBool(TEXT("IsInsideInnerRange"), bIsInsideInnerRange);
     
-    Blackboard->SetValueAsBool(TEXT("IsInFrontHalf"), bIsInFrontHalf);
-    Blackboard->SetValueAsBool(TEXT("IsInRearHalf"), bIsInRearHalf);
+    Blackboard->SetValueAsBool(TEXT("IsInChaseSector"), bIsInChaseSector);
+    Blackboard->SetValueAsBool(TEXT("IsInRoamingSector"), bIsInRoamingSector);
 
     // 외부원 밖에서는 멈추도록 설정!
     if (bIsOutsideOuterRange)
@@ -573,7 +564,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 
     // 후방은 인원수와 관계없이 랜덤 이동한다.
     // 전방은 3인 이상 모였을 때만 랜덤 이동하여 서로 흩어진다.
-    const bool bShouldRoam = bIsInRearHalf || bHasGatheredMannequins;
+    const bool bShouldRoam = bIsInRoamingSector || bHasGatheredMannequins;
     if (!bShouldRoam)
     {
         ClearRoamingState(*Blackboard);
