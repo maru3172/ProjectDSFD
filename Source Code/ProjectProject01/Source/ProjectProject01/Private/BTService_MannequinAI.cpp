@@ -393,14 +393,29 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         PlayerDistanceSquared <= FMath::Square(static_cast<double>(RoamingOuterRadius));
     const bool bIsOutsideOuterRange = !bIsInsideInnerRange && !bIsBetweenPlayerRanges;
     
-    // 플레이어의 좌우 방향 인식
-    const FVector PlayerViewForward = CameraRotation.Vector().GetSafeNormal2D();
-    const FVector PlayerToMannequin = (MannequinLocation - PlayerLocation).GetSafeNormal2D();
-    const float ViewDirectionDot = FVector::DotProduct(PlayerViewForward, PlayerToMannequin);
+    // 플레이어의 실제 이동 방향을 가져오기
+    FVector PlayerMovementDirection = PlayerPawn->GetVelocity().GetSafeNormal2D();
     
-    // 정확한 양옆 경계를 기준으로 앞뒤 분리
-    const bool bIsInFrontHalf = bIsBetweenPlayerRanges && ViewDirectionDot >= 0.0f;
-    const bool bIsInRearHalf = bIsBetweenPlayerRanges && ViewDirectionDot < 0.0f;
+    if (!PlayerMovementDirection.IsNearlyZero())
+    {
+        // 플레이어가 현재 이동 중이라면 현재 이동 방향을 저장한다.
+        LastPlayerMovementDirection = PlayerMovementDirection;
+    }
+    else if (LastPlayerMovementDirection.IsNearlyZero())
+    {
+        // 게임 시작 직후에 아직 이동한 적이 없다면 캐릭터의 정면을 바라보도록 설정한다.
+        LastPlayerMovementDirection = PlayerPawn->GetActorForwardVector().GetSafeNormal2D();
+    }
+    
+    const FVector PlayerToMannequin = (MannequinLocation - PlayerLocation).GetSafeNormal2D();
+    const float MovementDirectionDot = FVector::DotProduct(LastPlayerMovementDirection, PlayerToMannequin);
+    
+    // 이동 방향 쪽 반원:
+    // 플레이어가 왼쪽으로 이동하면 플레이어 왼쪽에 있는 마네킹이다.
+    const bool bIsInFrontHalf = bIsBetweenPlayerRanges && MovementDirectionDot >= 0.0f;
+    // 이동 반대 방향 쪽 반원:
+    // 플레이어가 왼쪽으로 이동하면 플레이어 오른쪽에 있는 마네킹이다.
+    const bool bIsInRearHalf = bIsBetweenPlayerRanges && MovementDirectionDot < 0.0f;
 
     // Line Trace의 충돌 정보를 저장할 변수이다.
     FHitResult HitResult;

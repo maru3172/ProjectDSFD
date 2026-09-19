@@ -48,4 +48,7 @@ private:
 	bool bRoamingCommitted = false;
 	bool bLoggedRoamingQueryFailure = false;
 	double NextRoamingQueryTime = 0.0;
+	
+	// 플레이어가 정지해도 마지막 이동 방향을 유지하도록 설정함.
+	FVector LastPlayerMovementDirection = FVector::ZeroVector;
 };
