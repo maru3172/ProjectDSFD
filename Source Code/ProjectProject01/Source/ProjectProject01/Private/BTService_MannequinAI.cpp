@@ -92,6 +92,8 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
     bHasRoamingDestination = false;
     bRoamingCommitted = false;
     bLoggedRoamingQueryFailure = false;
+    bRoamingStartedFromRoamingSector = false;
+    
     NextRoamingQueryTime = 0.0;
     RoamingDestination = FVector::ZeroVector;
 
@@ -500,6 +502,54 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     const double InnerRadiusSquared = FMath::Square(static_cast<double>(DirectChaseRadius));
     const double OuterRadiusSquared = FMath::Square(static_cast<double>(RoamingOuterRadius));
 
+    const float SafeGatherRadius = bHasActiveTuning
+        ? FMath::Max(0.0f, ActiveTuning.MannequinGatherRadius)
+        : FMath::Max(0.0f, MannequinGatherRadius);
+    const double GatherRadiusSquared = FMath::Square(static_cast<double>(SafeGatherRadius));
+    int32 NearbyMannequinCount = 0;
+    for (AActor* OtherMannequin : AllMannequins)
+    {
+        if (IsValid(OtherMannequin) &&
+            FVector::DistSquared2D(MannequinLocation, OtherMannequin->GetActorLocation()) <= GatherRadiusSquared)
+        {
+            // 현재 Mannequin 자신도 집결 인원에 포함한다.
+            ++NearbyMannequinCount;
+        }
+    }
+
+    const int32 SafeRequiredCount = bHasActiveTuning
+        ? FMath::Max(1, ActiveTuning.RequiredMannequinCount)
+        : FMath::Max(1, RequiredMannequinCount);
+    
+    // 1. 현재 주변 마네킹 수 계산
+    const bool bHasGatheredMannequins = NearbyMannequinCount >= SafeRequiredCount;
+
+    // 2. 현재 위치와 집결 상태로 이번 틱의 행동 결정
+    // 전방은 3인 이상 모였을 때만 랜덤 이동하여 서로 흩어진다.
+    const bool bShouldRoam = bIsInRoamingSector || bHasGatheredMannequins;
+    
+    // 후방 영역에서 시작한 랜덤 이동 중 전방 추격 영역으로 들어왔다면
+    // 기존 랜덤 이동을 즉시 취소하고 플레이어를 추격한다.
+    const bool bEnteredChaseSectorWhileSectorRoaming = bRoamingCommitted && bRoamingStartedFromRoamingSector && bIsInRoamingSector;
+    if (bEnteredChaseSectorWhileSectorRoaming)
+    {
+        AIController->StopMovement();
+        ClearRoamingState(*Blackboard);
+        Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
+        return;
+    }
+    
+    // 3. 아직 랜덤 이동을 시작하지 않았고 현재 랜덤 이동 조건도 아니라면
+    // 플레이어를 직접 추격한다.
+    if (!bRoamingCommitted && !bShouldRoam)
+    {
+        AIController->StopMovement();
+        ClearRoamingState(*Blackboard);
+        Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
+        return;
+    }
+    
+    // 4. 현재도 랜덤 이동 조건이라면 기존 목적지를 유지
     // 한 번 시작한 배회는 주변 마네킹 수가 줄어도 목적지 도착을 유지한다.
     if (bRoamingCommitted)
     {
@@ -542,36 +592,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         return;
     }
 
-    const float SafeGatherRadius = bHasActiveTuning
-        ? FMath::Max(0.0f, ActiveTuning.MannequinGatherRadius)
-        : FMath::Max(0.0f, MannequinGatherRadius);
-    const double GatherRadiusSquared = FMath::Square(static_cast<double>(SafeGatherRadius));
-    int32 NearbyMannequinCount = 0;
-    for (AActor* OtherMannequin : AllMannequins)
-    {
-        if (IsValid(OtherMannequin) &&
-            FVector::DistSquared2D(MannequinLocation, OtherMannequin->GetActorLocation()) <= GatherRadiusSquared)
-        {
-            // 현재 Mannequin 자신도 집결 인원에 포함한다.
-            ++NearbyMannequinCount;
-        }
-    }
-
-    const int32 SafeRequiredCount = bHasActiveTuning
-        ? FMath::Max(1, ActiveTuning.RequiredMannequinCount)
-        : FMath::Max(1, RequiredMannequinCount);
-    const bool bHasGatheredMannequins = NearbyMannequinCount >= SafeRequiredCount;
-
-    // 후방은 인원수와 관계없이 랜덤 이동한다.
-    // 전방은 3인 이상 모였을 때만 랜덤 이동하여 서로 흩어진다.
-    const bool bShouldRoam = bIsInRoamingSector || bHasGatheredMannequins;
-    if (!bShouldRoam)
-    {
-        ClearRoamingState(*Blackboard);
-        Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
-        return;
-    }
-
     Blackboard->ClearValue(TEXT("TargetActor"));
     
     if (CurrentTime < NextRoamingQueryTime)
@@ -591,6 +611,10 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     {
         bRoamingCommitted = true;
         bLoggedRoamingQueryFailure = false;
+        
+        // 후방 영역에서 시작했으면 전방 진입 시 배회를 취소한다.
+        // 전방 집결로 시작했으면 인원수가 줄어도 분열 이동을 유지한다.
+        bRoamingStartedFromRoamingSector = bIsInRoamingSector;
         
         Blackboard->SetValueAsVector(TEXT("RoamingLocation"), RoamingDestination);
     }

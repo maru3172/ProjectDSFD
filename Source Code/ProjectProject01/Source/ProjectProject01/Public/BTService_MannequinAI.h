@@ -48,4 +48,9 @@ private:
 	bool bRoamingCommitted = false;
 	bool bLoggedRoamingQueryFailure = false;
 	double NextRoamingQueryTime = 0.0;
+	
+	// 후방 배회 영역에서 시작된 랜덤 이동인지 구분한다.
+	// true :	후방 영역에 있어서 랜덤 이동을 시작함
+	// false :	전방에서 마네킹 집결로 분열 이동을 시작함
+	bool bRoamingStartedFromRoamingSector = false;
 };
