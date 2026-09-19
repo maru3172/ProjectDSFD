@@ -11,6 +11,7 @@
 #include "MannequinAICharacter.h"
 #include "HelperRearGuardCharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "MultiplayTestPlayerController.h"
 
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
@@ -19,6 +20,13 @@
 
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+
+
+DEFINE_LOG_CATEGORY_STATIC(
+    LogMannequinAI,
+    Log,
+    All
+)
 
 UBTService_MannequinAI::UBTService_MannequinAI()
 {
@@ -409,6 +417,39 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 이동 반대 방향 쪽 부채꼴:
     // 플레이어가 왼쪽으로 이동하면 플레이어 오른쪽에 있는 마네킹이다.
     const bool bIsInRoamingSector = bIsBetweenPlayerRanges && MovementDirectionDot < ChaseMinimumDot;
+    
+    // =========================================================================================================================
+    // Mannequin AI 플레이어 원 반경 내 디버깅 출력 관련 코드
+    EMannequinRangeRegion CurrentRangeRegion = EMannequinRangeRegion::Unknown;
+    
+    const TCHAR* CurrentRangeDescription = TEXT("Unknown");
+    if (bIsOutsideOuterRange)
+    {
+        CurrentRangeRegion = EMannequinRangeRegion::OutsideOuterRange;
+        CurrentRangeDescription = TEXT("Outside outer range");
+    }
+    else if (bIsInChaseSector)
+    {
+        CurrentRangeRegion = EMannequinRangeRegion::BetweenRangesChaseSector;
+        CurrentRangeDescription = TEXT("Between ranges - Chase sector");
+    }
+    else if (bIsInRoamingSector)
+    {
+        CurrentRangeRegion = EMannequinRangeRegion::BetweenRangesRoamingSector;
+        CurrentRangeDescription = TEXT("Between ranges - Roaming sector");
+    }
+    else if (bIsInsideInnerRange)
+    {
+        CurrentRangeRegion = EMannequinRangeRegion::InsideInnerRange;
+        CurrentRangeDescription = TEXT("Inside inner range");
+    }
+    
+    if (CurrentRangeRegion != LastLoggedRangeRegion)
+    {
+        UE_LOG(LogMannequinAI, Log, TEXT("[%s] Region changed: %s"), *GetNameSafe(Mannequin), CurrentRangeDescription);
+        LastLoggedRangeRegion = CurrentRangeRegion;
+    }
+    // =========================================================================================================================
 
     // Line Trace의 충돌 정보를 저장할 변수이다.
     FHitResult HitResult;

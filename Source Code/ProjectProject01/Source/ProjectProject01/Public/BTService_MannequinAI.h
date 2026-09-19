@@ -6,6 +6,16 @@
 #include "BehaviorTree/Services/BTService_BlackboardBase.h"
 #include "BTService_MannequinAI.generated.h"
 
+
+enum class EMannequinRangeRegion : uint8
+{
+	Unknown,
+	OutsideOuterRange,
+	BetweenRangesChaseSector,
+	BetweenRangesRoamingSector,
+	InsideInnerRange
+};
+
 /**
  * 
  */
@@ -53,4 +63,7 @@ private:
 	// true :	후방 영역에 있어서 랜덤 이동을 시작함
 	// false :	전방에서 마네킹 집결로 분열 이동을 시작함
 	bool bRoamingStartedFromRoamingSector = false;
+	
+	// 마네킹의 마지막 상태를 저장하기
+	EMannequinRangeRegion LastLoggedRangeRegion = EMannequinRangeRegion::Unknown;
 };
