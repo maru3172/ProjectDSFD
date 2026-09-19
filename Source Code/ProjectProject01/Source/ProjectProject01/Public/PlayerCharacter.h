@@ -77,7 +77,10 @@ private:
 		meta = (AllowPrivateAccess = "true"))
 	bool bShowAIRangeDebug = true;
 
-	void DrawAIRangeDebug() const;
+	void DrawAIRangeDebug();
+
+	// AI의 전후 영역 경계를 표시할 때 사용할 마지막 유효 이동 방향이다.
+	FVector LastAIRangeMovementDirection = FVector::ZeroVector;
 
 	// =========================================================================================================================
 	// 카메라 B 키 디버깅 관련

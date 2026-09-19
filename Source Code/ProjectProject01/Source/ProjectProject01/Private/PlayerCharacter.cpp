@@ -288,7 +288,7 @@ void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 	RoamingOuterRadius = FMath::Max(0.0f, Tuning.RoamingOuterRadius);
 }
 
-void APlayerCharacter::DrawAIRangeDebug() const
+void APlayerCharacter::DrawAIRangeDebug()
 {
 	if (!bShowAIRangeDebug)
 	{
@@ -307,16 +307,41 @@ void APlayerCharacter::DrawAIRangeDebug() const
 	CircleCenter.Z += 5.0f;
 
 	constexpr int32 CircleSegments = 64;
-	constexpr float LineThickness = 3.0f;
+	constexpr float LineThickness = 7.5f;
 	const FVector CircleAxisX = FVector::ForwardVector;
 	const FVector CircleAxisY = FVector::RightVector;
+	const FColor OuterRangeColor = FColor::Blue;
 
 	DrawDebugCircle(
 		GetWorld(), CircleCenter, GetDirectChaseRadius(), CircleSegments, FColor::Red,
-		false, 0.0f, 0, /*LineThickness*/ 7.5f, CircleAxisX, CircleAxisY, false);
+		false, 0.0f, 0, LineThickness, CircleAxisX, CircleAxisY, false);
 	DrawDebugCircle(
-		GetWorld(), CircleCenter, GetRoamingOuterRadius(), CircleSegments, FColor::Blue,
-		false, 0.0f, 0, /*LineThickness*/ 7.5f, CircleAxisX, CircleAxisY, false);
+		GetWorld(), CircleCenter, GetRoamingOuterRadius(), CircleSegments, OuterRangeColor,
+		false, 0.0f, 0, LineThickness, CircleAxisX, CircleAxisY, false);
+
+	// 이동 중에는 현재 방향을 사용하고, 정지 중에는 마지막 이동 방향을 유지한다.
+	const FVector CurrentMovementDirection = GetVelocity().GetSafeNormal2D();
+	if (!CurrentMovementDirection.IsNearlyZero())
+	{
+		LastAIRangeMovementDirection = CurrentMovementDirection;
+	}
+	else if (LastAIRangeMovementDirection.IsNearlyZero())
+	{
+		LastAIRangeMovementDirection = GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	// 이동 방향에 수직인 좌우 경계선을 플레이어 중심부터 외부원까지 그린다.
+	const FVector MovementRight = FVector::CrossProduct(
+		FVector::UpVector,
+		LastAIRangeMovementDirection).GetSafeNormal2D();
+	const float OuterRadius = GetRoamingOuterRadius();
+
+	DrawDebugLine(
+		GetWorld(), CircleCenter, CircleCenter + MovementRight * OuterRadius,
+		OuterRangeColor, false, 0.0f, 0, LineThickness);
+	DrawDebugLine(
+		GetWorld(), CircleCenter, CircleCenter - MovementRight * OuterRadius,
+		OuterRangeColor, false, 0.0f, 0, LineThickness);
 }
 
 // =========================================================================================================================
