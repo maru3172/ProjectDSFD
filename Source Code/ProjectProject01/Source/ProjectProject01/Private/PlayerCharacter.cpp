@@ -185,11 +185,17 @@ void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	
-	const FVector CurrentMovementDirection = GetVelocity().GetSafeNormal2D();
-	
-	if (!CurrentMovementDirection.IsNearlyZero())
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!IsValid(MovementComponent))
 	{
-		LastAIMovementDirection = CurrentMovementDirection;
+		return;
+	}
+	
+	// 플레이어의 방향키 입력을 기준으로 디버그 원 방향 조절 가능하도록 설정하기
+	const FVector InputMovementDirection = MovementComponent->GetCurrentAcceleration().GetSafeNormal2D();
+	if (!InputMovementDirection.IsNearlyZero())
+	{
+		LastAIMovementDirection = InputMovementDirection;
 	}
 
 	// 디버그 원 그리기
