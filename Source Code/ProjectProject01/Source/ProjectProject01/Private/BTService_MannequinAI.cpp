@@ -530,7 +530,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     
     // 후방 영역에서 시작한 랜덤 이동 중 전방 추격 영역으로 들어왔다면
     // 기존 랜덤 이동을 즉시 취소하고 플레이어를 추격한다.
-    const bool bEnteredChaseSectorWhileSectorRoaming = bRoamingCommitted && bRoamingStartedFromRoamingSector && bIsInRoamingSector;
+    const bool bEnteredChaseSectorWhileSectorRoaming = bRoamingCommitted && bRoamingStartedFromRoamingSector && bIsInChaseSector;
     if (bEnteredChaseSectorWhileSectorRoaming)
     {
         AIController->StopMovement();
@@ -543,7 +543,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 플레이어를 직접 추격한다.
     if (!bRoamingCommitted && !bShouldRoam)
     {
-        AIController->StopMovement();
         ClearRoamingState(*Blackboard);
         Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
         return;
