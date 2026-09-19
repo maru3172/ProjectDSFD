@@ -184,6 +184,13 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	
+	const FVector CurrentMovementDirection = GetVelocity().GetSafeNormal2D();
+	
+	if (!CurrentMovementDirection.IsNearlyZero())
+	{
+		LastAIMovementDirection = CurrentMovementDirection;
+	}
 
 	// 디버그 원 그리기
 	DrawAIRangeDebug();
@@ -282,6 +289,21 @@ float APlayerCharacter::GetRoamingOuterRadius() const
 	return FMath::Max(0.0f, RoamingOuterRadius);
 }
 
+float APlayerCharacter::GetDirectChaseHalfAngleDegrees() const
+{
+	return FMath::Clamp(DirectChaseHalfAngleDegrees, 0.0f, 180.0f);
+}
+
+FVector APlayerCharacter::GetAIMovementDirection() const
+{
+	if (!LastAIMovementDirection.IsNearlyZero())
+	{
+		return LastAIMovementDirection;
+	}
+	
+	return GetActorForwardVector().GetSafeNormal2D();
+}
+
 void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 {
 	DirectChaseRadius = FMath::Max(0.0f, Tuning.DirectChaseRadius);
@@ -318,29 +340,20 @@ void APlayerCharacter::DrawAIRangeDebug()
 	DrawDebugCircle(
 		GetWorld(), CircleCenter, GetRoamingOuterRadius(), CircleSegments, OuterRangeColor,
 		false, 0.0f, 0, LineThickness, CircleAxisX, CircleAxisY, false);
-
-	// 이동 중에는 현재 방향을 사용하고, 정지 중에는 마지막 이동 방향을 유지한다.
-	const FVector CurrentMovementDirection = GetVelocity().GetSafeNormal2D();
-	if (!CurrentMovementDirection.IsNearlyZero())
-	{
-		LastAIRangeMovementDirection = CurrentMovementDirection;
-	}
-	else if (LastAIRangeMovementDirection.IsNearlyZero())
-	{
-		LastAIRangeMovementDirection = GetActorForwardVector().GetSafeNormal2D();
-	}
-
-	// 이동 방향에 수직인 좌우 경계선을 플레이어 중심부터 외부원까지 그린다.
-	const FVector MovementRight = FVector::CrossProduct(
-		FVector::UpVector,
-		LastAIRangeMovementDirection).GetSafeNormal2D();
+	
+	const FVector MovementDirection = GetAIMovementDirection();
+	const float HalfAngleDegrees = GetDirectChaseHalfAngleDegrees();
+	
+	const FVector LeftBoundaryDirection = MovementDirection.RotateAngleAxis(-HalfAngleDegrees, FVector::UpVector).GetSafeNormal2D();
+	const FVector RightBoundaryDirection = MovementDirection.RotateAngleAxis(HalfAngleDegrees, FVector::UpVector).GetSafeNormal2D();
+	
 	const float OuterRadius = GetRoamingOuterRadius();
-
+	
 	DrawDebugLine(
-		GetWorld(), CircleCenter, CircleCenter + MovementRight * OuterRadius,
+		GetWorld(), CircleCenter, CircleCenter + LeftBoundaryDirection * OuterRadius,
 		OuterRangeColor, false, 0.0f, 0, LineThickness);
 	DrawDebugLine(
-		GetWorld(), CircleCenter, CircleCenter - MovementRight * OuterRadius,
+		GetWorld(), CircleCenter, CircleCenter + RightBoundaryDirection * OuterRadius,
 		OuterRangeColor, false, 0.0f, 0, LineThickness);
 }
 

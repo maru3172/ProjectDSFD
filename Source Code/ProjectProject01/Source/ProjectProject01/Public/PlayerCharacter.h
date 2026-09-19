@@ -27,6 +27,12 @@ public:
 	// AI가 배회할 고리 영역의 외부 반경(cm)이다.
 	UFUNCTION(BlueprintPure, Category = "AI|Range")
 	float GetRoamingOuterRadius() const;
+	
+	UFUNCTION(BlueprintPure, Category = "AI|Direction")
+	float GetDirectChaseHalfAngleDegrees() const;
+	
+	UFUNCTION(BlueprintPure, Category = "AI|Direction")
+	FVector GetAIMovementDirection() const;
 
 	/** 서버가 DataTable의 검증된 마네킹 추적 값을 적용한다. */
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
@@ -78,9 +84,21 @@ private:
 	bool bShowAIRangeDebug = true;
 
 	void DrawAIRangeDebug();
-
-	// AI의 전후 영역 경계를 표시할 때 사용할 마지막 유효 이동 방향이다.
-	FVector LastAIRangeMovementDirection = FVector::ZeroVector;
+	
+	// 이동 방향을 중심으로 직접 추격 영역이 펼쳐지는 좌우 반각이다.
+	// 90도면 현재와 동일하게 앞뒤 반원으로 나뉜다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Direction", 
+		meta = (
+			AllowPrivateAccess = "true",
+			ClampMin = "0.0",
+			ClampMax = "180.0",
+			UIMin = "0.0",
+			UIMax = "180.0",
+			Units = "deg"
+		))
+	float DirectChaseHalfAngleDegrees = 90.0f;
+	
+	FVector LastAIMovementDirection = FVector::ZeroVector;
 
 	// =========================================================================================================================
 	// 카메라 B 키 디버깅 관련
