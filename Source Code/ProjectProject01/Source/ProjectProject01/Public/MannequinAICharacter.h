@@ -10,6 +10,7 @@
 
 class UInputAction;
 class UInputMappingContext;
+struct FMannequinAITuningRow;
 
 UCLASS()
 class PROJECTPROJECT01_API AMannequinAICharacter : public ACharacter
@@ -40,6 +41,9 @@ public:
 	// 기존 AI 서비스가 사용하는 애니메이션 정지 상태다. 이동 권한은 변경하지 않는다.
 	void SetFrozen(bool bFrozen);
 
+	/** 서버가 DataTable의 검증된 마네킹 수치를 적용한다. */
+	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
+
 	// MultiplayTest 서버만 호출한다. 생존자 시야 정지는 이동 권한까지 중지하고 모든 클라이언트에 복제한다.
 	void SetFrozenBySurvivorVision(bool bFrozen);
 
@@ -64,6 +68,11 @@ private:
 		Category = "Multiplayer|Mannequin")
 	bool bFrozenBySurvivorVision = false;
 
+	// 서버에서 DataTable로 설정하고, 조종 중인 클라이언트에도 복제하는 이동 속도(cm/s)다.
+	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed, VisibleInstanceOnly,
+		Category = "Multiplayer|Mannequin", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float MannequinWalkSpeed = 600.0f;
+
 	UPROPERTY(Transient)
 	bool bLegacyAnimationFrozen = false;
 
@@ -77,7 +86,11 @@ private:
 	void Look(const FInputActionValue& Value);
 	void RegisterLocalInputMapping();
 	void RefreshFrozenAnimationState();
+	void ApplyMannequinWalkSpeed();
 
 	UFUNCTION()
 	void OnRep_SurvivorVisionFrozen();
+
+	UFUNCTION()
+	void OnRep_MannequinWalkSpeed();
 };

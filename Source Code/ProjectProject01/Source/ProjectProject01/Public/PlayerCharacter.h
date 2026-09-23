@@ -49,6 +49,7 @@ public:
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
 	UPROPERTY(VisibleAnywhere, Category = "Component")
@@ -69,14 +70,19 @@ private:
 	void Look(const FInputActionValue& Value);
 
 	// 작은 원: 이 반경 안에서는 마네킹 AI가 직접 추격하는 용도로 사용한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
 	float DirectChaseRadius = 500.0f;
 
 	// 큰 원: DirectChaseRadius와 이 반경 사이를 마네킹 AI의 랜덤 이동 영역으로 사용한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
 	float RoamingOuterRadius = 1500.0f;
+
+	// 서버에서 DataTable로 설정하고 소유 클라이언트에도 복제하는 이동 속도(cm/s)다.
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerWalkSpeed, VisibleInstanceOnly, Category = "Player",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm/s"))
+	float PlayerWalkSpeed = 600.0f;
 
 	// PIE/Development 플레이 중 두 범위를 디버그 원으로 표시한다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Range|Debug",
@@ -87,7 +93,7 @@ private:
 	
 	// 이동 방향을 중심으로 직접 추격 영역이 펼쳐지는 좌우 반각이다.
 	// 90도면 현재와 동일하게 앞뒤 반원으로 나뉜다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Direction", 
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "AI|Direction", 
 		meta = (
 			AllowPrivateAccess = "true",
 			ClampMin = "0.0",
@@ -97,6 +103,11 @@ private:
 			Units = "deg"
 		))
 	float DirectChaseHalfAngleDegrees = 90.0f;
+
+	void ApplyPlayerWalkSpeed();
+
+	UFUNCTION()
+	void OnRep_PlayerWalkSpeed();
 	
 	FVector LastAIMovementDirection = FVector::ZeroVector;
 

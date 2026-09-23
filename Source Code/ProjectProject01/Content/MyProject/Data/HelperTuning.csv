@@ -1,4 +1,5 @@
 Field,Value
+HelperWalkSpeed,600
 FollowDistance,100
 MinimumFollowSeparation,5000
 GuardSightRadius,1500

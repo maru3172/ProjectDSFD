@@ -50,8 +50,11 @@ namespace ProjectProject01TuningEditor
 	{
 		static const TArray<FString> FieldNames =
 		{
+			TEXT("PlayerWalkSpeed"),
+			TEXT("MannequinWalkSpeed"),
 			TEXT("DirectChaseRadius"),
 			TEXT("RoamingOuterRadius"),
+			TEXT("DirectChaseHalfAngleDegrees"),
 			TEXT("MannequinGatherRadius"),
 			TEXT("RequiredMannequinCount"),
 			TEXT("SurvivorVisionCheckIntervalSeconds"),
@@ -67,6 +70,7 @@ namespace ProjectProject01TuningEditor
 	{
 		static const TArray<FString> FieldNames =
 		{
+			TEXT("HelperWalkSpeed"),
 			TEXT("FollowDistance"),
 			TEXT("MinimumFollowSeparation"),
 			TEXT("GuardSightRadius"),

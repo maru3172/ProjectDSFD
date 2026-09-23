@@ -17,11 +17,20 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 {
 	GENERATED_BODY()
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float PlayerWalkSpeed = 600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float MannequinWalkSpeed = 600.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
 	float DirectChaseRadius = 500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
 	float RoamingOuterRadius = 1500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "deg"))
+	float DirectChaseHalfAngleDegrees = 90.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
 	float MannequinGatherRadius = 500.0f;
@@ -48,6 +57,9 @@ USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FHelperTuningRow : public FTableRowBase
 {
 	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float HelperWalkSpeed = 600.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper", meta = (ClampMin = "0.0", Units = "cm"))
 	float FollowDistance = 5050.0f;

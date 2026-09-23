@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "HelperRearGuardCharacter.h"
 #include "Kismet/GameplayStatics.h"
+#include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
 #include "PlayerCharacter.h"
 
@@ -56,12 +57,15 @@ namespace ProjectProject01Tuning
 
 bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 {
-	if (!FMath::IsFinite(DirectChaseRadius) || !FMath::IsFinite(RoamingOuterRadius) ||
+	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(MannequinWalkSpeed) ||
+		!FMath::IsFinite(DirectChaseRadius) || !FMath::IsFinite(RoamingOuterRadius) ||
+		!FMath::IsFinite(DirectChaseHalfAngleDegrees) ||
 		!FMath::IsFinite(MannequinGatherRadius) || !FMath::IsFinite(SurvivorVisionCheckIntervalSeconds) ||
 		!FMath::IsFinite(SurvivorVisionHalfAngleDegrees) || !FMath::IsFinite(DetectionMargin) ||
-		!FMath::IsFinite(VisionFovMarginMultiplier) || DirectChaseRadius < 0.0f ||
+		!FMath::IsFinite(VisionFovMarginMultiplier) || PlayerWalkSpeed < 0.0f || MannequinWalkSpeed < 0.0f ||
+		DirectChaseRadius < 0.0f ||
 		RoamingOuterRadius < 0.0f || MannequinGatherRadius < 0.0f || RequiredMannequinCount < 0 ||
-		SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
+		DirectChaseHalfAngleDegrees < 0.0f || SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
 		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f)
 	{
 		OutError = TEXT("DT_AITuning Default row must contain finite, non-negative numeric values.");
@@ -74,12 +78,12 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 
 bool FHelperTuningRow::IsValidForApplication(FString& OutError) const
 {
-	if (!FMath::IsFinite(FollowDistance) || !FMath::IsFinite(MinimumFollowSeparation) ||
+	if (!FMath::IsFinite(HelperWalkSpeed) || !FMath::IsFinite(FollowDistance) || !FMath::IsFinite(MinimumFollowSeparation) ||
 		!FMath::IsFinite(GuardSightRadius) || !FMath::IsFinite(GuardHalfAngleDegrees) ||
 		!FMath::IsFinite(RepathInterval) || !FMath::IsFinite(RepathDistance) ||
 		!FMath::IsFinite(AcceptanceRadius) || !FMath::IsFinite(StuckTimeout) ||
 		!FMath::IsFinite(StuckWaitTime) || !FMath::IsFinite(ProgressDistance) ||
-		FollowDistance < 0.0f || MinimumFollowSeparation < 0.0f || GuardSightRadius < 0.0f ||
+		HelperWalkSpeed < 0.0f || FollowDistance < 0.0f || MinimumFollowSeparation < 0.0f || GuardSightRadius < 0.0f ||
 		GuardHalfAngleDegrees < 0.0f || RepathInterval < 0.0f || RepathDistance < 0.0f ||
 		AcceptanceRadius < 0.0f || StuckTimeout < 0.0f || StuckWaitTime < 0.0f || ProgressDistance < 0.0f)
 	{
@@ -161,6 +165,16 @@ bool UProjectProject01TuningSubsystem::ApplyToCurrentWorld(FString& OutError)
 		if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(Actor))
 		{
 			PlayerCharacter->ApplyMannequinTuning(CachedMannequinTuning);
+		}
+	}
+
+	TArray<AActor*> MannequinActors;
+	UGameplayStatics::GetAllActorsOfClass(World, AMannequinAICharacter::StaticClass(), MannequinActors);
+	for (AActor* Actor : MannequinActors)
+	{
+		if (AMannequinAICharacter* MannequinCharacter = Cast<AMannequinAICharacter>(Actor))
+		{
+			MannequinCharacter->ApplyMannequinTuning(CachedMannequinTuning);
 		}
 	}
 

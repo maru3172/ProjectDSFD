@@ -57,6 +57,15 @@ void AHelperRearGuardCharacter::ApplyHelperTuning(const FHelperTuningRow& Tuning
 	GuardSightRadius = FMath::Max(0.0f, Tuning.GuardSightRadius);
 	GuardHalfAngleDegrees = FMath::Max(0.0f, Tuning.GuardHalfAngleDegrees);
 
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->MaxWalkSpeed = FMath::Max(0.0f, Tuning.HelperWalkSpeed);
+	}
+	else
+	{
+		ensureMsgf(false, TEXT("Helper %s has no CharacterMovementComponent."), *GetName());
+	}
+
 	if (AHelperRearGuardAIController* HelperController = Cast<AHelperRearGuardAIController>(GetController()))
 	{
 		HelperController->ApplyHelperNavigationTuning(Tuning);

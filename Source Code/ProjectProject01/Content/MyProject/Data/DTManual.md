@@ -14,15 +14,23 @@
 
 사용되는 변수
 
-HelperTuning: 파트너
+## HelperTuning: 파트너
+
+`HelperWalkSpeed`
+
+파트너의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 600은 UE 5.8.2 `UCharacterMovementComponent`의 기본 걷기 속도다.
 
 `FollowDistance` 조력자가 플레이어 뒤에서 목표로 삼는 거리
 
 `MinimumFollowSeparation` 플레이어에게 절대 가까워지지 않는 최소 거리
 
-`GuardSightRadius` 조력자의 후방 감시 거리
+`GuardSightRadius`
 
-`GuardHalfAngleDegrees` 후방 감시 시야. 총 시야각은 140도
+파트너가 마네킹을 감시할 수 있는 최대 거리다. 단위는 cm이다. 거리를 넘으면 각도와 장애물 조건을 만족해도 감지하지 않는다.
+
+`GuardHalfAngleDegrees`
+
+파트너 후방 감시 부채꼴의 한쪽 각도다. 단위는 도이며 실제 총 시야각은 값의 두 배다. 예를 들어 70이면 총 140도다.
 
 `RepathInterval` 새 이동 경로 요청 간격
 
@@ -38,11 +46,27 @@ HelperTuning: 파트너
 
 
 
-AITuning: 기본 적
+## AITuning: 생존자와 마네킹
 
-DirectChaseRadius 이 거리 안이면 직접 추격
+`PlayerWalkSpeed`
 
-RoamingOuterRadius 이 거리 밖이면 현재 AI가 멈추는 외부 한계
+생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
+
+`MannequinWalkSpeed`
+
+AI 상태와 플레이어가 조종 중인 상태 모두의 마네킹 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 조종 중인 클라이언트에도 복제한다.
+
+`DirectChaseRadius`
+
+빨간 원의 반경이다. 마네킹이 이 거리 안에 있으면 방향·집결 조건과 무관하게 생존자를 직접 추격한다. 단위는 cm다.
+
+`RoamingOuterRadius`
+
+바깥 원의 반경이자 랜덤 배회와 중간 부채꼴 판정의 최대 길이다. 이 거리 밖의 마네킹은 기존 규칙대로 이동을 중단한다. 단위는 cm다.
+
+`DirectChaseHalfAngleDegrees`
+
+중간 고리에서 플레이어의 이동 방향을 기준으로 직접 추격과 반대편 랜덤 배회를 나누는 부채꼴의 한쪽 각도다. 단위는 도이며, 부채꼴의 총 각도는 값의 두 배다. 부채꼴의 길이는 `RoamingOuterRadius`를 사용한다. 이 값은 각도이므로 실제 동작은 0~180도 범위로 제한된다.
 
 MannequinGatherRadius 마네킹들이 집결한 것으로 판단하는 거리
 

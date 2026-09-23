@@ -16,6 +16,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
+#include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 #include "SceneView.h"
 #include "SceneViewExtension.h"
@@ -312,8 +313,41 @@ FVector APlayerCharacter::GetAIMovementDirection() const
 
 void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 {
+	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
 	DirectChaseRadius = FMath::Max(0.0f, Tuning.DirectChaseRadius);
 	RoamingOuterRadius = FMath::Max(0.0f, Tuning.RoamingOuterRadius);
+	DirectChaseHalfAngleDegrees = FMath::Max(0.0f, Tuning.DirectChaseHalfAngleDegrees);
+	ApplyPlayerWalkSpeed();
+
+	if (HasAuthority())
+	{
+		ForceNetUpdate();
+	}
+}
+
+void APlayerCharacter::ApplyPlayerWalkSpeed()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!ensureMsgf(IsValid(Movement), TEXT("Player %s has no CharacterMovementComponent."), *GetName()))
+	{
+		return;
+	}
+
+	Movement->MaxWalkSpeed = FMath::Max(0.0f, PlayerWalkSpeed);
+}
+
+void APlayerCharacter::OnRep_PlayerWalkSpeed()
+{
+	ApplyPlayerWalkSpeed();
+}
+
+void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(APlayerCharacter, DirectChaseRadius);
+	DOREPLIFETIME(APlayerCharacter, RoamingOuterRadius);
+	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
+	DOREPLIFETIME(APlayerCharacter, DirectChaseHalfAngleDegrees);
 }
 
 void APlayerCharacter::DrawAIRangeDebug()

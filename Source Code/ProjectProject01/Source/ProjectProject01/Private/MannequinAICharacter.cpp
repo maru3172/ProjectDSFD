@@ -4,12 +4,15 @@
 #include "MannequinAICharacter.h"
 
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Net/UnrealNetwork.h"
+#include "ProjectProject01TuningData.h"
 #include "UObject/ConstructorHelpers.h"
 
 // Sets default values
@@ -45,7 +48,18 @@ AMannequinAICharacter::AMannequinAICharacter()
 void AMannequinAICharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
+	{
+		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
+		{
+			FMannequinAITuningRow Tuning;
+			if (TuningSubsystem->GetMannequinTuning(Tuning))
+			{
+				ApplyMannequinTuning(Tuning);
+			}
+		}
+	}
 }
 
 // Called every frame
@@ -82,6 +96,17 @@ void AMannequinAICharacter::SetFrozen(bool bFrozen)
 {
 	bLegacyAnimationFrozen = bFrozen;
 	RefreshFrozenAnimationState();
+}
+
+void AMannequinAICharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
+{
+	MannequinWalkSpeed = FMath::Max(0.0f, Tuning.MannequinWalkSpeed);
+	ApplyMannequinWalkSpeed();
+
+	if (HasAuthority())
+	{
+		ForceNetUpdate();
+	}
 }
 
 void AMannequinAICharacter::SetFrozenBySurvivorVision(bool bFrozen)
@@ -124,6 +149,22 @@ void AMannequinAICharacter::OnRep_SurvivorVisionFrozen()
 		Movement->StopMovementImmediately();
 	}
 	RefreshFrozenAnimationState();
+}
+
+void AMannequinAICharacter::OnRep_MannequinWalkSpeed()
+{
+	ApplyMannequinWalkSpeed();
+}
+
+void AMannequinAICharacter::ApplyMannequinWalkSpeed()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!ensureMsgf(IsValid(Movement), TEXT("Mannequin %s has no CharacterMovementComponent."), *GetName()))
+	{
+		return;
+	}
+
+	Movement->MaxWalkSpeed = FMath::Max(0.0f, MannequinWalkSpeed);
 }
 
 void AMannequinAICharacter::RefreshFrozenAnimationState()
@@ -197,4 +238,5 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
+	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
 }
