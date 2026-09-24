@@ -11,8 +11,8 @@ enum class EMannequinRangeRegion : uint8
 {
 	Unknown,
 	OutsideOuterRange,
-	BetweenRangesChaseSector,
-	BetweenRangesRoamingSector,
+	BetweenRangesDirectChaseSector,
+	BetweenRangesOuterRoamingArea,
 	InsideInnerRange
 };
 
@@ -59,10 +59,9 @@ private:
 	bool bLoggedRoamingQueryFailure = false;
 	double NextRoamingQueryTime = 0.0;
 	
-	// 후방 배회 영역에서 시작된 랜덤 이동인지 구분한다.
-	// true :	후방 영역에 있어서 랜덤 이동을 시작함
-	// false :	전방에서 마네킹 집결로 분열 이동을 시작함
-	bool bRoamingStartedFromRoamingSector = false;
+	// 직접 추격 부채꼴 밖에서 시작된 랜덤 이동인지 구분한다.
+	// false면 부채꼴 안에서 집결로 인해 시작된 분열 이동이다.
+	bool bRoamingStartedOutsideChaseSector = false;
 	
 	// 마네킹의 마지막 상태를 저장하기
 	EMannequinRangeRegion LastLoggedRangeRegion = EMannequinRangeRegion::Unknown;

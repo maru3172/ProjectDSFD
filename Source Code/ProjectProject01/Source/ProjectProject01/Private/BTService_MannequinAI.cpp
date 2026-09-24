@@ -100,7 +100,7 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
     bHasRoamingDestination = false;
     bRoamingCommitted = false;
     bLoggedRoamingQueryFailure = false;
-    bRoamingStartedFromRoamingSector = false;
+    bRoamingStartedOutsideChaseSector = false;
     
     NextRoamingQueryTime = 0.0;
     RoamingDestination = FVector::ZeroVector;
@@ -410,13 +410,18 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     
     const float ChaseHalfAngleDegrees = PlayerCharacter->GetDirectChaseHalfAngleDegrees();
     const float ChaseMinimumDot = FMath::Cos(FMath::DegreesToRadians(ChaseHalfAngleDegrees));
-    
-    // 이동 방향 쪽 부채꼴:
-    // 플레이어가 왼쪽으로 이동하면 플레이어 왼쪽에 있는 마네킹이다.
-    const bool bIsInChaseSector = bIsBetweenPlayerRanges && MovementDirectionDot >= ChaseMinimumDot;
-    // 이동 반대 방향 쪽 부채꼴:
-    // 플레이어가 왼쪽으로 이동하면 플레이어 오른쪽에 있는 마네킹이다.
-    const bool bIsInRoamingSector = bIsBetweenPlayerRanges && MovementDirectionDot < ChaseMinimumDot;
+    const float DirectChaseSectorRadius = PlayerCharacter->GetDirectChaseSectorRadius();
+    const double DirectChaseSectorRadiusSquared =
+        FMath::Square(static_cast<double>(DirectChaseSectorRadius));
+
+    // 직접 추격 부채꼴은 내부원 밖에서 시작하며 플레이어가 설정한 반경까지만 이어진다.
+    const bool bIsInsideDirectChaseSectorDistance =
+        bIsBetweenPlayerRanges && PlayerDistanceSquared <= DirectChaseSectorRadiusSquared;
+    const bool bIsInChaseSector =
+        bIsInsideDirectChaseSectorDistance && MovementDirectionDot >= ChaseMinimumDot;
+
+    // 내부원과 외부원 사이에서 직접 추격 부채꼴을 제외한 모든 영역은 랜덤 이동 영역이다.
+    const bool bIsInRoamingSector = bIsBetweenPlayerRanges && !bIsInChaseSector;
     
     // =========================================================================================================================
     // Mannequin AI 플레이어 원 반경 내 디버깅 출력 관련 코드
@@ -430,13 +435,13 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     }
     else if (bIsInChaseSector)
     {
-        CurrentRangeRegion = EMannequinRangeRegion::BetweenRangesChaseSector;
-        CurrentRangeDescription = TEXT("Between ranges - Chase sector");
+        CurrentRangeRegion = EMannequinRangeRegion::BetweenRangesDirectChaseSector;
+        CurrentRangeDescription = TEXT("Between ranges - Direct chase sector");
     }
     else if (bIsInRoamingSector)
     {
-        CurrentRangeRegion = EMannequinRangeRegion::BetweenRangesRoamingSector;
-        CurrentRangeDescription = TEXT("Between ranges - Roaming sector");
+        CurrentRangeRegion = EMannequinRangeRegion::BetweenRangesOuterRoamingArea;
+        CurrentRangeDescription = TEXT("Between ranges - Outer roaming area");
     }
     else if (bIsInsideInnerRange)
     {
@@ -565,14 +570,16 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 1. 현재 주변 마네킹 수 계산
     const bool bHasGatheredMannequins = NearbyMannequinCount >= SafeRequiredCount;
 
-    // 2. 현재 위치와 집결 상태로 이번 틱의 행동 결정
-    // 전방은 3인 이상 모였을 때만 랜덤 이동하여 서로 흩어진다.
+    // 부채꼴 밖은 항상 랜덤 이동하고, 부채꼴 안에서도 집결하면 랜덤 이동으로 분산한다.
     const bool bShouldRoam = bIsInRoamingSector || bHasGatheredMannequins;
     
-    // 후방 영역에서 시작한 랜덤 이동 중 전방 추격 영역으로 들어왔다면
-    // 기존 랜덤 이동을 즉시 취소하고 플레이어를 추격한다.
-    const bool bEnteredChaseSectorWhileSectorRoaming = bRoamingCommitted && bRoamingStartedFromRoamingSector && bIsInChaseSector;
-    if (bEnteredChaseSectorWhileSectorRoaming)
+    // 부채꼴 밖에서 시작한 배회 중 집결하지 않은 채 직접 추격 부채꼴로 들어오면 즉시 추격한다.
+    const bool bEnteredChaseSectorWhileOuterRoaming =
+        bRoamingCommitted &&
+        bRoamingStartedOutsideChaseSector &&
+        bIsInChaseSector &&
+        !bHasGatheredMannequins;
+    if (bEnteredChaseSectorWhileOuterRoaming)
     {
         AIController->StopMovement();
         ClearRoamingState(*Blackboard);
@@ -652,9 +659,8 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         bRoamingCommitted = true;
         bLoggedRoamingQueryFailure = false;
         
-        // 후방 영역에서 시작했으면 전방 진입 시 배회를 취소한다.
-        // 전방 집결로 시작했으면 인원수가 줄어도 분열 이동을 유지한다.
-        bRoamingStartedFromRoamingSector = bIsInRoamingSector;
+        // 부채꼴 밖의 일반 배회인지, 부채꼴 안에서 시작한 집결 분열인지 기억한다.
+        bRoamingStartedOutsideChaseSector = bIsInRoamingSector;
         
         Blackboard->SetValueAsVector(TEXT("RoamingLocation"), RoamingDestination);
     }
