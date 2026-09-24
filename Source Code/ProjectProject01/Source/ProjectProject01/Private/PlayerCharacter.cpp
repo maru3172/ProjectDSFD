@@ -301,6 +301,17 @@ float APlayerCharacter::GetDirectChaseHalfAngleDegrees() const
 	return FMath::Clamp(DirectChaseHalfAngleDegrees, 0.0f, 180.0f);
 }
 
+float APlayerCharacter::GetDirectChaseSectorRadius() const
+{
+	const float InnerRadius = GetDirectChaseRadius();
+	const float OuterRadius = FMath::Max(InnerRadius, GetRoamingOuterRadius());
+
+	return FMath::Clamp(
+		DirectChaseSectorRadius,
+		InnerRadius,
+		OuterRadius);
+}
+
 FVector APlayerCharacter::GetAIMovementDirection() const
 {
 	if (!LastAIMovementDirection.IsNearlyZero())
@@ -373,6 +384,7 @@ void APlayerCharacter::DrawAIRangeDebug()
 	const FVector CircleAxisX = FVector::ForwardVector;
 	const FVector CircleAxisY = FVector::RightVector;
 	const FColor OuterRangeColor = FColor::Blue;
+	const FColor SectorArcColor = FColor::Green;
 
 	DrawDebugCircle(
 		GetWorld(), CircleCenter, GetDirectChaseRadius(), CircleSegments, FColor::Red,
@@ -383,18 +395,39 @@ void APlayerCharacter::DrawAIRangeDebug()
 	
 	const FVector MovementDirection = GetAIMovementDirection();
 	const float HalfAngleDegrees = GetDirectChaseHalfAngleDegrees();
+	const float InnerRadius = GetDirectChaseRadius();
+	const float SectorRadius = GetDirectChaseSectorRadius();
 	
 	const FVector LeftBoundaryDirection = MovementDirection.RotateAngleAxis(-HalfAngleDegrees, FVector::UpVector).GetSafeNormal2D();
 	const FVector RightBoundaryDirection = MovementDirection.RotateAngleAxis(HalfAngleDegrees, FVector::UpVector).GetSafeNormal2D();
-	
-	const float OuterRadius = GetRoamingOuterRadius();
-	
+
+	// 내부원 경계부터 설정한 부채꼴 반경까지만 좌우 경계선을 그린다.
 	DrawDebugLine(
-		GetWorld(), CircleCenter, CircleCenter + LeftBoundaryDirection * OuterRadius,
-		OuterRangeColor, false, 0.0f, 0, LineThickness);
+		GetWorld(), CircleCenter + LeftBoundaryDirection * InnerRadius,
+		CircleCenter + LeftBoundaryDirection * SectorRadius,
+		SectorArcColor, false, 0.0f, 0, LineThickness);
 	DrawDebugLine(
-		GetWorld(), CircleCenter, CircleCenter + RightBoundaryDirection * OuterRadius,
-		OuterRangeColor, false, 0.0f, 0, LineThickness);
+		GetWorld(), CircleCenter + RightBoundaryDirection * InnerRadius,
+		CircleCenter + RightBoundaryDirection * SectorRadius,
+		SectorArcColor, false, 0.0f, 0, LineThickness);
+
+	// 부채꼴의 끝 반경을 확인할 수 있도록 바깥쪽 원호를 그린다.
+	constexpr int32 SectorArcSegments = 24;
+	FVector PreviousArcPoint = CircleCenter + LeftBoundaryDirection * SectorRadius;
+	for (int32 SegmentIndex = 1; SegmentIndex <= SectorArcSegments; ++SegmentIndex)
+	{
+		const float Alpha = static_cast<float>(SegmentIndex) / static_cast<float>(SectorArcSegments);
+		const float AngleDegrees = FMath::Lerp(-HalfAngleDegrees, HalfAngleDegrees, Alpha);
+		const FVector ArcDirection = MovementDirection.RotateAngleAxis(
+			AngleDegrees, FVector::UpVector).GetSafeNormal2D();
+		const FVector CurrentArcPoint = CircleCenter + ArcDirection * SectorRadius;
+
+		DrawDebugLine(
+			GetWorld(), PreviousArcPoint, CurrentArcPoint,
+			SectorArcColor, false, 0.0f, 0, LineThickness);
+
+		PreviousArcPoint = CurrentArcPoint;
+	}
 }
 
 // =========================================================================================================================

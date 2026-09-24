@@ -30,6 +30,10 @@ public:
 	
 	UFUNCTION(BlueprintPure, Category = "AI|Direction")
 	float GetDirectChaseHalfAngleDegrees() const;
+
+	// 플레이어 중심에서 직접 추격 부채꼴 끝까지의 반경(cm)이다.
+	UFUNCTION(BlueprintPure, Category = "AI|Direction")
+	float GetDirectChaseSectorRadius() const;
 	
 	UFUNCTION(BlueprintPure, Category = "AI|Direction")
 	FVector GetAIMovementDirection() const;
@@ -103,6 +107,17 @@ private:
 			Units = "deg"
 		))
 	float DirectChaseHalfAngleDegrees = 90.0f;
+
+	// 직접 추격 부채꼴은 내부원 밖에서 시작해 이 반경까지 이어진다.
+	// 네트워크 설정은 변경하지 않고 Player BP의 클래스 기본값으로 사용한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Direction",
+		meta = (
+			AllowPrivateAccess = "true",
+			ClampMin = "0.0",
+			UIMin = "0.0",
+			Units = "cm"
+		))
+	float DirectChaseSectorRadius = 1000.0f;
 
 	void ApplyPlayerWalkSpeed();
 
