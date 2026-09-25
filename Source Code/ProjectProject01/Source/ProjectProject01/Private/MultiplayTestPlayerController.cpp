@@ -72,6 +72,10 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 		return;
 	}
 
+	// 번호키로 선택한 시점은 Possess/UnPossess 직후의 자동 Pawn 카메라 갱신보다 우선한다.
+	// 이 함수는 마네킹 조종자로 지정된 컨트롤러에서만 서버가 호출한다.
+	bAutoManageActiveCameraTarget = false;
+
 	const FViewTargetTransitionParams TransitionParams;
 	SetViewTarget(Mannequin, TransitionParams);
 }
