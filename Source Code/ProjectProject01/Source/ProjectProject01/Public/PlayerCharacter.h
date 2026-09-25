@@ -54,6 +54,9 @@ public:
 	/** 마네킹 서버가 물리 접촉 포획을 확정할 때만 호출합니다. */
 	bool HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin);
 
+	/** 서버 GameMode가 게임 규칙별 시작 데스카운트를 설정한다. */
+	void SetRemainingDeathCountForGameMode(int32 NewDeathCount);
+
 	/** 파트너 후방 이격 경로가 플레이어를 밀어낼 때 서버가 한 번만 호출합니다. 게임 오버는 발생시키지 않습니다. */
 	bool HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper);
 

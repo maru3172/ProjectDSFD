@@ -33,6 +33,7 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
+	virtual void SetPlayerDefaults(APawn* PlayerPawn) override;
 
 	virtual bool MustSpectate_Implementation(APlayerController* NewPlayerController) const override;
 

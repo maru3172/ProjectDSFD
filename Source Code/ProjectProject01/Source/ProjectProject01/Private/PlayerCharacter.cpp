@@ -396,6 +396,17 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	return true;
 }
 
+void APlayerCharacter::SetRemainingDeathCountForGameMode(int32 NewDeathCount)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	RemainingDeathCount = FMath::Max(0, NewDeathCount);
+	ForceNetUpdate();
+}
+
 bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper)
 {
 	if (!HasAuthority() || !IsValid(PushingHelper) || bGameOver || RemainingDeathCount <= 0)

@@ -164,6 +164,17 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 	Super::Logout(Exiting);
 }
 
+void AMultiplayTestGameMode::SetPlayerDefaults(APawn* PlayerPawn)
+{
+	Super::SetPlayerDefaults(PlayerPawn);
+
+	if (APlayerCharacter* SurvivorPlayer = Cast<APlayerCharacter>(PlayerPawn))
+	{
+		// MultiplayTest에는 조력자가 없으므로 생존자는 추가 포획 허용 횟수 없이 시작한다.
+		SurvivorPlayer->SetRemainingDeathCountForGameMode(0);
+	}
+}
+
 bool AMultiplayTestGameMode::MustSpectate_Implementation(APlayerController* NewPlayerController) const
 {
 	return IsMannequinController(Cast<AMultiplayTestPlayerController>(NewPlayerController)) ||
