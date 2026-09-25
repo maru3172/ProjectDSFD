@@ -13,8 +13,14 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 {
 	GENERATED_BODY()
 
+public:
+	class AMannequinAICharacter* GetViewedMannequin() const;
+	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 protected:
 	virtual void SetupInputComponent() override;
+	virtual void OnRep_Pawn() override;
 
 private:
 	void SelectMannequinSlot0();
@@ -28,7 +34,27 @@ private:
 	void SelectMannequinSlot8();
 	void SelectMannequinSlot9();
 	void RequestMannequinSlot(int32 Slot);
+	void RequestMannequinManualControl();
+	void RequestPostPossessionChaseCommand();
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestMannequinSlot(int32 Slot);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestMannequinManualControl();
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestPostPossessionChaseCommand();
+
+	UFUNCTION(Client, Reliable)
+	void ClientApplyViewedMannequin(class AMannequinAICharacter* Mannequin);
+
+	UFUNCTION()
+	void OnRep_ViewedMannequin();
+
+	void ApplyViewedMannequinCamera(class AMannequinAICharacter* Mannequin);
+
+	/** 소유 클라이언트가 Pawn 복제 이후에도 다시 적용할 수 있는 마지막 선택 시점 대상입니다. */
+	UPROPERTY(ReplicatedUsing = OnRep_ViewedMannequin)
+	TObjectPtr<class AMannequinAICharacter> ViewedMannequin;
 };

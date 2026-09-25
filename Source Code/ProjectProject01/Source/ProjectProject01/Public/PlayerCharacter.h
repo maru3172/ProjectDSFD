@@ -9,6 +9,8 @@
 
 class UInputAction;
 class UInputMappingContext;
+class AMannequinAICharacter;
+class AHelperRearGuardCharacter;
 struct FMannequinAITuningRow;
 
 UCLASS()
@@ -40,6 +42,20 @@ public:
 
 	/** 서버가 DataTable의 검증된 마네킹 추적 값을 적용한다. */
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
+
+	/** 남은 포획 허용 횟수입니다. 0이면 파트너가 제거된 상태입니다. */
+	UFUNCTION(BlueprintPure, Category = "Player|Death")
+	int32 GetRemainingDeathCount() const { return RemainingDeathCount; }
+
+	/** 데스카운트가 0인 상태에서 다시 포획돼 게임 오버가 되었는지 반환합니다. */
+	UFUNCTION(BlueprintPure, Category = "Player|Death")
+	bool IsGameOver() const { return bGameOver; }
+
+	/** 마네킹 서버가 물리 접촉 포획을 확정할 때만 호출합니다. */
+	bool HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin);
+
+	/** 파트너 후방 이격 경로가 플레이어를 밀어낼 때 서버가 한 번만 호출합니다. 게임 오버는 발생시키지 않습니다. */
+	bool HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper);
 
 protected:
 	// Called when the game starts or when spawned
@@ -109,8 +125,8 @@ private:
 	float DirectChaseHalfAngleDegrees = 90.0f;
 
 	// 직접 추격 부채꼴은 내부원 밖에서 시작해 이 반경까지 이어진다.
-	// 네트워크 설정은 변경하지 않고 Player BP의 클래스 기본값으로 사용한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Direction",
+	// 서버 DataTable 값을 모든 클라이언트에 일관되게 표시·판정하도록 복제한다.
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "AI|Direction",
 		meta = (
 			AllowPrivateAccess = "true",
 			ClampMin = "0.0",
@@ -120,9 +136,22 @@ private:
 	float DirectChaseSectorRadius = 1000.0f;
 
 	void ApplyPlayerWalkSpeed();
+	void ApplyGameOverState();
+	void RemoveGuardingHelpers();
 
 	UFUNCTION()
 	void OnRep_PlayerWalkSpeed();
+
+	UFUNCTION()
+	void OnRep_GameOver();
+
+	/** 세 번의 포획까지 차감되는 생존자별 카운트입니다. 서버가 변경하고 모든 클라이언트에 복제합니다. */
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Player|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	int32 RemainingDeathCount = 3;
+
+	/** 카운트 0 이후 다음 포획에서 서버가 확정하는 게임 오버 상태입니다. */
+	UPROPERTY(ReplicatedUsing = OnRep_GameOver, VisibleInstanceOnly, Category = "Player|Death", meta = (AllowPrivateAccess = "true"))
+	bool bGameOver = false;
 	
 	FVector LastAIMovementDirection = FVector::ZeroVector;
 

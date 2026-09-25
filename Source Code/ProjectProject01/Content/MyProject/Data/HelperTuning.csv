@@ -3,7 +3,11 @@ HelperWalkSpeed,600
 FollowDistance,100
 MinimumFollowSeparation,5000
 GuardSightRadius,1500
-GuardHalfAngleDegrees,70
+GuardHalfAngleDegrees,60
+GuardSearchHalfAngleDegrees,90
+VisionDirectionChangeWindowSeconds,3
+VisionDirectionChangeRequiredCount,5
+VisionDirectionChangeThresholdDegrees,5
 RepathInterval,0.25
 RepathDistance,25
 AcceptanceRadius,25

@@ -4,7 +4,9 @@
 #include "MultiplayTestPlayerController.h"
 
 #include "InputCoreTypes.h"
+#include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "Net/UnrealNetwork.h"
 
 void AMultiplayTestPlayerController::SetupInputComponent()
 {
@@ -25,6 +27,53 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot7);
 	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot8);
 	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot9);
+	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
+	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AMultiplayTestPlayerController::RequestPostPossessionChaseCommand);
+}
+
+AMannequinAICharacter* AMultiplayTestPlayerController::GetViewedMannequin() const
+{
+	return IsValid(ViewedMannequin) ? ViewedMannequin.Get() : nullptr;
+}
+
+void AMultiplayTestPlayerController::SetViewedMannequin(AMannequinAICharacter* Mannequin)
+{
+	if (!HasAuthority() || !IsValid(Mannequin))
+	{
+		return;
+	}
+
+	ViewedMannequin = Mannequin;
+	ApplyViewedMannequinCamera(Mannequin);
+	ForceNetUpdate();
+	ClientApplyViewedMannequin(Mannequin);
+}
+
+void AMultiplayTestPlayerController::OnRep_Pawn()
+{
+	Super::OnRep_Pawn();
+	ApplyViewedMannequinCamera(GetViewedMannequin());
+}
+
+void AMultiplayTestPlayerController::ClientApplyViewedMannequin_Implementation(AMannequinAICharacter* Mannequin)
+{
+	ApplyViewedMannequinCamera(Mannequin);
+}
+
+void AMultiplayTestPlayerController::OnRep_ViewedMannequin()
+{
+	ApplyViewedMannequinCamera(GetViewedMannequin());
+}
+
+void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAICharacter* Mannequin)
+{
+	if (!IsLocalController() || !IsValid(Mannequin))
+	{
+		return;
+	}
+
+	const FViewTargetTransitionParams TransitionParams;
+	SetViewTarget(Mannequin, TransitionParams);
 }
 
 void AMultiplayTestPlayerController::SelectMannequinSlot0() { RequestMannequinSlot(0); }
@@ -48,6 +97,22 @@ void AMultiplayTestPlayerController::RequestMannequinSlot(int32 Slot)
 	ServerRequestMannequinSlot(Slot);
 }
 
+void AMultiplayTestPlayerController::RequestMannequinManualControl()
+{
+	if (IsLocalController())
+	{
+		ServerRequestMannequinManualControl();
+	}
+}
+
+void AMultiplayTestPlayerController::RequestPostPossessionChaseCommand()
+{
+	if (IsLocalController())
+	{
+		ServerRequestPostPossessionChaseCommand();
+	}
+}
+
 void AMultiplayTestPlayerController::ServerRequestMannequinSlot_Implementation(int32 Slot)
 {
 	if (Slot < 0 || Slot > 9)
@@ -67,4 +132,38 @@ void AMultiplayTestPlayerController::ServerRequestMannequinSlot_Implementation(i
 	}
 
 	GameMode->TryPossessMannequin(this, Slot);
+}
+
+void AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Implementation()
+{
+	UWorld* World = GetWorld();
+	AMultiplayTestGameMode* GameMode = IsValid(World)
+		? World->GetAuthGameMode<AMultiplayTestGameMode>()
+		: nullptr;
+	if (!ensureMsgf(IsValid(GameMode), TEXT("Mannequin manual-control request requires AMultiplayTestGameMode.")))
+	{
+		return;
+	}
+
+	GameMode->TryEnableMannequinManualControl(this);
+}
+
+void AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Implementation()
+{
+	UWorld* World = GetWorld();
+	AMultiplayTestGameMode* GameMode = IsValid(World)
+		? World->GetAuthGameMode<AMultiplayTestGameMode>()
+		: nullptr;
+	if (!ensureMsgf(IsValid(GameMode), TEXT("Mannequin post-possession command requires AMultiplayTestGameMode.")))
+	{
+		return;
+	}
+
+	GameMode->TryQueuePostPossessionChaseCommand(this);
+}
+
+void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, ViewedMannequin, COND_OwnerOnly);
 }

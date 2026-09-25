@@ -27,6 +27,8 @@ public:
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
 
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
+	bool TryEnableMannequinManualControl(class AMultiplayTestPlayerController* RequestingController);
+	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;

@@ -33,6 +33,10 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	FlexibleMannequinRow.RoamingOuterRadius = 0.0f;
 	TestTrue(TEXT("Non-negative mannequin values are accepted for tuning"), FlexibleMannequinRow.IsValidForApplication(Error));
 
+	FlexibleMannequinRow = ValidMannequinRow;
+	FlexibleMannequinRow.PostPossessionCommandDurationSeconds = -1.0f;
+	TestFalse(TEXT("Negative post-possession command duration is rejected"), FlexibleMannequinRow.IsValidForApplication(Error));
+
 	FHelperTuningRow ValidHelperRow;
 	TestTrue(TEXT("Default helper tuning is accepted"), ValidHelperRow.IsValidForApplication(Error));
 
@@ -44,6 +48,10 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	FHelperTuningRow InvalidHelperRow = ValidHelperRow;
 	InvalidHelperRow.FollowDistance = -1.0f;
 	TestFalse(TEXT("Negative helper values are rejected"), InvalidHelperRow.IsValidForApplication(Error));
+
+	InvalidHelperRow = ValidHelperRow;
+	InvalidHelperRow.VisionDirectionChangeRequiredCount = 0;
+	TestFalse(TEXT("Vision retreat requires at least one direction change"), InvalidHelperRow.IsValidForApplication(Error));
 	return true;
 }
 #endif
@@ -59,13 +67,14 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 {
 	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(MannequinWalkSpeed) ||
 		!FMath::IsFinite(DirectChaseRadius) || !FMath::IsFinite(RoamingOuterRadius) ||
-		!FMath::IsFinite(DirectChaseHalfAngleDegrees) ||
+		!FMath::IsFinite(PostPossessionCommandDurationSeconds) ||
+		!FMath::IsFinite(DirectChaseHalfAngleDegrees) || !FMath::IsFinite(DirectChaseSectorRadius) ||
 		!FMath::IsFinite(MannequinGatherRadius) || !FMath::IsFinite(SurvivorVisionCheckIntervalSeconds) ||
 		!FMath::IsFinite(SurvivorVisionHalfAngleDegrees) || !FMath::IsFinite(DetectionMargin) ||
 		!FMath::IsFinite(VisionFovMarginMultiplier) || PlayerWalkSpeed < 0.0f || MannequinWalkSpeed < 0.0f ||
-		DirectChaseRadius < 0.0f ||
+		DirectChaseRadius < 0.0f || PostPossessionCommandDurationSeconds < 0.0f ||
 		RoamingOuterRadius < 0.0f || MannequinGatherRadius < 0.0f || RequiredMannequinCount < 0 ||
-		DirectChaseHalfAngleDegrees < 0.0f || SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
+		DirectChaseHalfAngleDegrees < 0.0f || DirectChaseSectorRadius < 0.0f || SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
 		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f)
 	{
 		OutError = TEXT("DT_AITuning Default row must contain finite, non-negative numeric values.");
@@ -80,11 +89,15 @@ bool FHelperTuningRow::IsValidForApplication(FString& OutError) const
 {
 	if (!FMath::IsFinite(HelperWalkSpeed) || !FMath::IsFinite(FollowDistance) || !FMath::IsFinite(MinimumFollowSeparation) ||
 		!FMath::IsFinite(GuardSightRadius) || !FMath::IsFinite(GuardHalfAngleDegrees) ||
+		!FMath::IsFinite(GuardSearchHalfAngleDegrees) ||
+		!FMath::IsFinite(VisionDirectionChangeWindowSeconds) || !FMath::IsFinite(VisionDirectionChangeThresholdDegrees) ||
 		!FMath::IsFinite(RepathInterval) || !FMath::IsFinite(RepathDistance) ||
 		!FMath::IsFinite(AcceptanceRadius) || !FMath::IsFinite(StuckTimeout) ||
 		!FMath::IsFinite(StuckWaitTime) || !FMath::IsFinite(ProgressDistance) ||
 		HelperWalkSpeed < 0.0f || FollowDistance < 0.0f || MinimumFollowSeparation < 0.0f || GuardSightRadius < 0.0f ||
-		GuardHalfAngleDegrees < 0.0f || RepathInterval < 0.0f || RepathDistance < 0.0f ||
+		GuardHalfAngleDegrees < 0.0f || GuardSearchHalfAngleDegrees < 0.0f ||
+		VisionDirectionChangeWindowSeconds < 0.0f || VisionDirectionChangeRequiredCount < 1 || VisionDirectionChangeThresholdDegrees < 0.0f ||
+		RepathInterval < 0.0f || RepathDistance < 0.0f ||
 		AcceptanceRadius < 0.0f || StuckTimeout < 0.0f || StuckWaitTime < 0.0f || ProgressDistance < 0.0f)
 	{
 		OutError = TEXT("DT_HelperTuning Default row must contain finite, non-negative numeric values.");

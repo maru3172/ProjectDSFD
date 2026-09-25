@@ -10,6 +10,8 @@
 
 class UInputAction;
 class UInputMappingContext;
+class APlayerCharacter;
+class UPrimitiveComponent;
 struct FMannequinAITuningRow;
 
 UCLASS()
@@ -32,6 +34,8 @@ protected:
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+	virtual void NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp,
+		bool bSelfMoved, FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit) override;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -49,6 +53,21 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	bool IsFrozenBySurvivorVision() const { return bFrozenBySurvivorVision; }
+
+	/** MultiplayTest 서버가 직접 조작 시작과 종료를 관리합니다. */
+	void SetManualControlEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
+	bool IsManualControlEnabled() const { return bManualControlEnabled; }
+
+	/** 직접 조작 중 E 입력으로, 다음 빙의 해제 시 실행할 추격 명령을 기록합니다. */
+	bool QueuePostPossessionChaseCommand();
+
+	/** 빙의 해제 직후 서버가 기록된 추격 또는 정지 명령을 활성화합니다. */
+	void ActivatePostPossessionCommand();
+
+	bool ShouldHoldPostPossessionCommand(double ServerTimeSeconds) const;
+	bool ShouldChasePostPossessionCommand(double ServerTimeSeconds) const;
 
 private:
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",
@@ -73,6 +92,23 @@ private:
 		Category = "Multiplayer|Mannequin", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float MannequinWalkSpeed = 600.0f;
 
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
+	bool bManualControlEnabled = false;
+
+	enum class EPostPossessionCommand : uint8
+	{
+		None,
+		HoldPosition,
+		ChaseNearestSurvivor
+	};
+
+	/** E 입력이 있었는지 서버에서만 보관하는 다음 빙의 해제용 명령입니다. */
+	bool bPostPossessionChaseCommandQueued = false;
+	EPostPossessionCommand ActivePostPossessionCommand = EPostPossessionCommand::None;
+	double PostPossessionCommandStartTimeSeconds = 0.0;
+	double PostPossessionCommandEndTimeSeconds = 0.0;
+	float PostPossessionCommandDurationSeconds = 5.0f;
+
 	UPROPERTY(Transient)
 	bool bLegacyAnimationFrozen = false;
 
@@ -87,10 +123,16 @@ private:
 	void RegisterLocalInputMapping();
 	void RefreshFrozenAnimationState();
 	void ApplyMannequinWalkSpeed();
+	void TryCatchSurvivor(AActor* OtherActor);
+	void RemoveSeparatedCatchContacts();
+	bool IsPostPossessionCommandActive(double ServerTimeSeconds) const;
 
 	UFUNCTION()
 	void OnRep_SurvivorVisionFrozen();
 
 	UFUNCTION()
 	void OnRep_MannequinWalkSpeed();
+
+	/** 같은 접촉 동안 포획이 반복 차감되지 않도록 서버에서만 보관합니다. */
+	TArray<TWeakObjectPtr<APlayerCharacter>> CaughtSurvivorsInCurrentContact;
 };

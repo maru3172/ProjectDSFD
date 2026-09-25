@@ -28,6 +28,44 @@ DEFINE_LOG_CATEGORY_STATIC(
     All
 )
 
+namespace
+{
+    /** MultiplayTest 서버에서 AI 추격 기준으로 사용할 가장 가까운 유효 생존자를 찾는다. */
+    APlayerCharacter* FindClosestMultiplaySurvivor(const UWorld* World, const FVector& Origin)
+    {
+        if (!IsValid(World))
+        {
+            return nullptr;
+        }
+
+        TArray<AActor*> SurvivorActors;
+        UGameplayStatics::GetAllActorsOfClass(World, APlayerCharacter::StaticClass(), SurvivorActors);
+
+        APlayerCharacter* ClosestSurvivor = nullptr;
+        double ClosestDistanceSquared = TNumericLimits<double>::Max();
+        for (AActor* SurvivorActor : SurvivorActors)
+        {
+            APlayerCharacter* Candidate = Cast<APlayerCharacter>(SurvivorActor);
+            APlayerController* CandidateController = IsValid(Candidate)
+                ? Cast<APlayerController>(Candidate->GetController())
+                : nullptr;
+            if (!IsValid(CandidateController))
+            {
+                continue;
+            }
+
+            const double CandidateDistanceSquared = FVector::DistSquared2D(Origin, Candidate->GetActorLocation());
+            if (CandidateDistanceSquared < ClosestDistanceSquared)
+            {
+                ClosestSurvivor = Candidate;
+                ClosestDistanceSquared = CandidateDistanceSquared;
+            }
+        }
+
+        return ClosestSurvivor;
+    }
+}
+
 UBTService_MannequinAI::UBTService_MannequinAI()
 {
 	NodeName = TEXT("Mannequin AI Behavior");
@@ -118,10 +156,27 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 		: nullptr;
 	const bool bHasActiveTuning = IsValid(TuningSubsystem) && TuningSubsystem->GetMannequinTuning(ActiveTuning);
 
-    // MultiplayTest에서는 첫 접속자가 마네킹 조종자이므로 PlayerPawn(0)을 생존자로 가정하지 않는다.
-    // 실제 생존자 캐릭터를 사용해 기존 BT 활동을 유지한다.
-    APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(
-        UGameplayStatics::GetActorOfClass(GetWorld(), APlayerCharacter::StaticClass()));
+    // MultiplayTest에서는 첫 접속자가 마네킹 조종자이므로 생존자를 번호나 생성 순서로 고정하지 않는다.
+    // 모든 유효 생존자 중 현재 마네킹과 가장 가까운 대상을 선택한다.
+    const AGameModeBase* ActiveGameMode = IsValid(GetWorld()) ? GetWorld()->GetAuthGameMode() : nullptr;
+    const bool bIsMultiplayTest = IsValid(ActiveGameMode) && ActiveGameMode->IsA<AMultiplayTestGameMode>();
+
+    APlayerCharacter* PlayerCharacter = nullptr;
+    if (bIsMultiplayTest)
+    {
+        const AAIController* TargetSelectionAIController = OwnerComp.GetAIOwner();
+        const APawn* TargetSelectionMannequin = IsValid(TargetSelectionAIController)
+            ? TargetSelectionAIController->GetPawn()
+            : nullptr;
+        PlayerCharacter = IsValid(TargetSelectionMannequin)
+            ? FindClosestMultiplaySurvivor(GetWorld(), TargetSelectionMannequin->GetActorLocation())
+            : nullptr;
+    }
+    else
+    {
+        PlayerCharacter = Cast<APlayerCharacter>(
+            UGameplayStatics::GetActorOfClass(GetWorld(), APlayerCharacter::StaticClass()));
+    }
     APlayerController* PlayerController = IsValid(PlayerCharacter)
         ? Cast<APlayerController>(PlayerCharacter->GetController())
         : nullptr;
@@ -501,6 +556,37 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     Blackboard->SetValueAsBool(TEXT("IsInChaseSector"), bIsInChaseSector);
     Blackboard->SetValueAsBool(TEXT("IsInRoamingSector"), bIsInRoamingSector);
 
+    const double CurrentTime = GetWorld()->GetTimeSeconds();
+    // 빙의 해제 때 남겨진 명령은 기존 AI 반경/배회 판단보다 우선한다.
+    // 단, 생존자 시야 정지 상태는 MultiplayTest GameMode가 별도로 이동 권한을 막는다.
+    if (Mannequin->ShouldHoldPostPossessionCommand(CurrentTime))
+    {
+        AIController->StopMovement();
+        Mannequin->SetFrozen(true);
+        Blackboard->ClearValue(TEXT("TargetActor"));
+        ClearRoamingState(*Blackboard);
+        return;
+    }
+
+    if (Mannequin->ShouldChasePostPossessionCommand(CurrentTime))
+    {
+        const bool bCommandTargetInRange =
+            PlayerDistanceSquared <= FMath::Square(static_cast<double>(RoamingOuterRadius));
+        if (bCommandTargetInRange)
+        {
+            Mannequin->SetFrozen(false);
+            Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
+            ClearRoamingState(*Blackboard);
+            return;
+        }
+
+        // E 명령이 유효한 동안 사정거리 안에 생존자가 없으면 기존 AI를 실행하지 않고 대기한다.
+        AIController->StopMovement();
+        Blackboard->ClearValue(TEXT("TargetActor"));
+        ClearRoamingState(*Blackboard);
+        return;
+    }
+
     // 외부원 밖에서는 멈추도록 설정!
     if (bIsOutsideOuterRange)
     {
@@ -516,9 +602,8 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 따라서 마네킹을 플레이어가 풀어 준 직후처럼 감지 상태가 초기화되어도
     // 상호 감지 실패만으로 AI의 기존 추격/배회 로직을 중단하지 않는다.
     // 다른 게임모드는 기존 상호 감지 규칙을 그대로 유지한다.
-    const AGameModeBase* ActiveGameMode = IsValid(GetWorld()) ? GetWorld()->GetAuthGameMode() : nullptr;
     const bool bRequiresMutualDetection =
-        !IsValid(ActiveGameMode) || !ActiveGameMode->IsA<AMultiplayTestGameMode>();
+        !bIsMultiplayTest;
     if (bRequiresMutualDetection && !bMutuallyDetected)
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
@@ -544,7 +629,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         // 현재 조건에 따라 추격 또는 새 랜덤 이동을 다시 결정한다.
     }
     
-    const double CurrentTime = GetWorld()->GetTimeSeconds();
     const double InnerRadiusSquared = FMath::Square(static_cast<double>(DirectChaseRadius));
     const double OuterRadiusSquared = FMath::Square(static_cast<double>(RoamingOuterRadius));
 

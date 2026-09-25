@@ -3,6 +3,8 @@
 
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
+#include "HelperRearGuardCharacter.h"
+#include "MannequinAICharacter.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -11,6 +13,7 @@
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 
 // 카메라 B 키 디버깅 관련
 #include "GameFramework/PlayerController.h"
@@ -242,6 +245,11 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 void APlayerCharacter::Move(const FInputActionValue& Value)
 {
+	if (bGameOver)
+	{
+		return;
+	}
+
 	const FVector2D MovementVector = Value.Get<FVector2D>();
 
     // 카메라 B 키 디버깅 관련
@@ -264,6 +272,11 @@ void APlayerCharacter::Move(const FInputActionValue& Value)
 
 void APlayerCharacter::Look(const FInputActionValue& Value)
 {
+	if (bGameOver)
+	{
+		return;
+	}
+
     const FVector2D LookVector = Value.Get<FVector2D>();
 
     // 카메라 B 키 디버깅 관련
@@ -328,6 +341,7 @@ void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 	DirectChaseRadius = FMath::Max(0.0f, Tuning.DirectChaseRadius);
 	RoamingOuterRadius = FMath::Max(0.0f, Tuning.RoamingOuterRadius);
 	DirectChaseHalfAngleDegrees = FMath::Max(0.0f, Tuning.DirectChaseHalfAngleDegrees);
+	DirectChaseSectorRadius = FMath::Max(0.0f, Tuning.DirectChaseSectorRadius);
 	ApplyPlayerWalkSpeed();
 
 	if (HasAuthority())
@@ -352,6 +366,97 @@ void APlayerCharacter::OnRep_PlayerWalkSpeed()
 	ApplyPlayerWalkSpeed();
 }
 
+bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin)
+{
+	if (!HasAuthority() || !IsValid(CatchingMannequin) || bGameOver)
+	{
+		return false;
+	}
+
+	if (RemainingDeathCount > 0)
+	{
+		--RemainingDeathCount;
+		UE_LOG(LogTemp, Log, TEXT("Player %s was caught by mannequin %s. Remaining death count: %d."),
+			*GetName(), *CatchingMannequin->GetName(), RemainingDeathCount);
+
+		if (RemainingDeathCount == 0)
+		{
+			RemoveGuardingHelpers();
+		}
+
+		ForceNetUpdate();
+		return true;
+	}
+
+	bGameOver = true;
+	ApplyGameOverState();
+	ForceNetUpdate();
+	UE_LOG(LogTemp, Warning, TEXT("Player %s reached game over after being caught by mannequin %s."),
+		*GetName(), *CatchingMannequin->GetName());
+	return true;
+}
+
+bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper)
+{
+	if (!HasAuthority() || !IsValid(PushingHelper) || bGameOver || RemainingDeathCount <= 0)
+	{
+		return false;
+	}
+
+	--RemainingDeathCount;
+	UE_LOG(LogTemp, Warning, TEXT("Player %s lost one death count after being pushed by helper %s. Remaining death count: %d."),
+		*GetName(), *PushingHelper->GetName(), RemainingDeathCount);
+	if (RemainingDeathCount == 0)
+	{
+		RemoveGuardingHelpers();
+	}
+
+	ForceNetUpdate();
+	return true;
+}
+
+void APlayerCharacter::RemoveGuardingHelpers()
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		ensureMsgf(false, TEXT("Player %s could not remove its partner because its world is unavailable."), *GetName());
+		return;
+	}
+
+	TArray<AActor*> HelperActors;
+	UGameplayStatics::GetAllActorsOfClass(World, AHelperRearGuardCharacter::StaticClass(), HelperActors);
+	for (AActor* HelperActor : HelperActors)
+	{
+		if (AHelperRearGuardCharacter* Helper = Cast<AHelperRearGuardCharacter>(HelperActor);
+			IsValid(Helper) && Helper->IsGuardingPlayer(this))
+		{
+			Helper->Destroy();
+		}
+	}
+}
+
+void APlayerCharacter::ApplyGameOverState()
+{
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+	else
+	{
+		ensureMsgf(false, TEXT("Player %s has no CharacterMovementComponent for game over."), *GetName());
+	}
+}
+
+void APlayerCharacter::OnRep_GameOver()
+{
+	if (bGameOver)
+	{
+		ApplyGameOverState();
+	}
+}
+
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -359,6 +464,9 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, RoamingOuterRadius);
 	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
 	DOREPLIFETIME(APlayerCharacter, DirectChaseHalfAngleDegrees);
+	DOREPLIFETIME(APlayerCharacter, DirectChaseSectorRadius);
+	DOREPLIFETIME(APlayerCharacter, RemainingDeathCount);
+	DOREPLIFETIME(APlayerCharacter, bGameOver);
 }
 
 void APlayerCharacter::DrawAIRangeDebug()

@@ -187,8 +187,8 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 		return false;
 	}
 
-	AMannequinAICharacter* PreviousMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
-	if (PreviousMannequin == TargetMannequin)
+	AMannequinAICharacter* PreviousViewedMannequin = RequestingController->GetViewedMannequin();
+	if (PreviousViewedMannequin == TargetMannequin)
 	{
 		return true;
 	}
@@ -201,10 +201,52 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 		return false;
 	}
 
-	if (IsValid(PreviousMannequin))
+	AMannequinAICharacter* PreviousManuallyControlledMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
+	if (IsValid(PreviousManuallyControlledMannequin))
 	{
+		PreviousManuallyControlledMannequin->SetManualControlEnabled(false);
+		PreviousManuallyControlledMannequin->ActivatePostPossessionCommand();
 		RequestingController->UnPossess();
-		QueueDefaultAIControllerRestore(PreviousMannequin);
+		QueueDefaultAIControllerRestore(PreviousManuallyControlledMannequin);
+	}
+
+	// 번호키 단계에서는 AIController를 유지하고, 플레이어는 시점만 공유한다.
+	RequestingController->SetViewedMannequin(TargetMannequin);
+	TargetMannequin->ForceNetUpdate();
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("%s now views mannequin slot %d (%s) while its AI remains active."),
+		*RequestingController->GetName(), Slot, *TargetMannequin->GetName());
+	return true;
+}
+
+bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlayerController* RequestingController)
+{
+	if (!HasAuthority() || !IsValid(RequestingController) || !IsMannequinController(RequestingController))
+	{
+		return false;
+	}
+
+	AMannequinAICharacter* TargetMannequin = RequestingController->GetViewedMannequin();
+	if (!IsValid(TargetMannequin))
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Rejected manual-control request from %s because no viewed mannequin is available."),
+			*GetNameSafe(RequestingController));
+		return false;
+	}
+
+	if (APlayerController* ExistingPlayerController = Cast<APlayerController>(TargetMannequin->GetController());
+		IsValid(ExistingPlayerController) && ExistingPlayerController != RequestingController)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Rejected manual control of %s because it is already player-controlled."), *GetNameSafe(TargetMannequin));
+		return false;
+	}
+
+	if (RequestingController->GetPawn() == TargetMannequin)
+	{
+		TargetMannequin->SetManualControlEnabled(true);
+		return true;
 	}
 
 	if (UCharacterMovementComponent* Movement = TargetMannequin->GetCharacterMovement(); IsValid(Movement))
@@ -214,16 +256,38 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 
 	RequestingController->Possess(TargetMannequin);
 	if (!ensureMsgf(RequestingController->GetPawn() == TargetMannequin,
-		TEXT("Failed to possess mannequin control slot %d."), Slot))
+		TEXT("Failed to enable manual control for mannequin %s."), *GetNameSafe(TargetMannequin)))
+	{
+		QueueDefaultAIControllerRestore(TargetMannequin);
+		RequestingController->SetViewedMannequin(TargetMannequin);
+		return false;
+	}
+
+	TargetMannequin->SetManualControlEnabled(true);
+	TargetMannequin->ForceNetUpdate();
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("%s enabled manual control of mannequin %s."),
+		*RequestingController->GetName(), *TargetMannequin->GetName());
+	return true;
+}
+
+bool AMultiplayTestGameMode::TryQueuePostPossessionChaseCommand(AMultiplayTestPlayerController* RequestingController)
+{
+	if (!HasAuthority() || !IsValid(RequestingController) || !IsMannequinController(RequestingController))
 	{
 		return false;
 	}
 
-	TargetMannequin->ForceNetUpdate();
-	UE_LOG(LogProjectProject01Multiplayer, Log,
-		TEXT("%s now controls mannequin slot %d (%s)."),
-		*RequestingController->GetName(), Slot, *TargetMannequin->GetName());
-	return true;
+	AMannequinAICharacter* ManuallyControlledMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
+	if (!IsValid(ManuallyControlledMannequin) || !ManuallyControlledMannequin->IsManualControlEnabled())
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Rejected post-possession chase command from %s because manual control is not active."),
+			*GetNameSafe(RequestingController));
+		return false;
+	}
+
+	return ManuallyControlledMannequin->QueuePostPossessionChaseCommand();
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const

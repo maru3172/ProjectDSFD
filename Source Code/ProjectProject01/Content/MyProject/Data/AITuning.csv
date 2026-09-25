@@ -3,7 +3,9 @@ PlayerWalkSpeed,600
 MannequinWalkSpeed,600
 DirectChaseRadius,500
 RoamingOuterRadius,1500
+PostPossessionCommandDurationSeconds,5
 DirectChaseHalfAngleDegrees,90
+DirectChaseSectorRadius,1000
 MannequinGatherRadius,500
 RequiredMannequinCount,3
 SurvivorVisionCheckIntervalSeconds,0.05

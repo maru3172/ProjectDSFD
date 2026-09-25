@@ -29,8 +29,16 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
 	float RoamingOuterRadius = 1500.0f;
 
+	/** 마네킹 플레이어가 남긴 정지 또는 추격 명령을 AI보다 우선하는 시간입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Player Command", meta = (ClampMin = "0.0", Units = "s"))
+	float PostPossessionCommandDurationSeconds = 5.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "deg"))
 	float DirectChaseHalfAngleDegrees = 90.0f;
+
+	/** 플레이어 중심에서 직접 추격 부채꼴 끝까지의 반경입니다. 내부 빨간 원보다 작으면 내부 반경으로, 바깥 배회 반경보다 크면 바깥 반경으로 적용됩니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
+	float DirectChaseSectorRadius = 1000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
 	float MannequinGatherRadius = 500.0f;
@@ -71,7 +79,22 @@ struct PROJECTPROJECT01_API FHelperTuningRow : public FTableRowBase
 	float GuardSightRadius = 1500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision", meta = (ClampMin = "0.0", Units = "deg"))
-	float GuardHalfAngleDegrees = 70.0f;
+	float GuardHalfAngleDegrees = 60.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision", meta = (ClampMin = "0.0", Units = "deg"))
+	float GuardSearchHalfAngleDegrees = 90.0f;
+
+	/** 실제 시야 중심 변경을 누적하는 시간창입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision Retreat", meta = (ClampMin = "0.0", Units = "s"))
+	float VisionDirectionChangeWindowSeconds = 3.0f;
+
+	/** 시간창 안에서 후방 이격을 발동할 최소 유효 시야 중심 변경 횟수입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision Retreat", meta = (ClampMin = "1"))
+	int32 VisionDirectionChangeRequiredCount = 5;
+
+	/** 이 각도 이상 실제 시야 중심이 달라져야 유효 변경 한 번으로 기록합니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision Retreat", meta = (ClampMin = "0.0", Units = "deg"))
+	float VisionDirectionChangeThresholdDegrees = 5.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Navigation", meta = (ClampMin = "0.0", Units = "s"))
 	float RepathInterval = 0.25f;

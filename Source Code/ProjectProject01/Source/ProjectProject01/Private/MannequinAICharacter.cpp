@@ -3,6 +3,7 @@
 
 #include "MannequinAICharacter.h"
 
+#include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputComponent.h"
@@ -13,6 +14,7 @@
 #include "InputMappingContext.h"
 #include "Net/UnrealNetwork.h"
 #include "ProjectProject01TuningData.h"
+#include "PlayerCharacter.h"
 #include "UObject/ConstructorHelpers.h"
 
 // Sets default values
@@ -66,7 +68,17 @@ void AMannequinAICharacter::BeginPlay()
 void AMannequinAICharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (HasAuthority())
+	{
+		RemoveSeparatedCatchContacts();
+	}
+}
 
+void AMannequinAICharacter::NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp,
+	const bool bSelfMoved, FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit)
+{
+	Super::NotifyHit(MyComp, Other, OtherComp, bSelfMoved, HitLocation, HitNormal, NormalImpulse, Hit);
+	TryCatchSurvivor(Other);
 }
 
 // Called to bind functionality to input
@@ -101,6 +113,11 @@ void AMannequinAICharacter::SetFrozen(bool bFrozen)
 void AMannequinAICharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 {
 	MannequinWalkSpeed = FMath::Max(0.0f, Tuning.MannequinWalkSpeed);
+	PostPossessionCommandDurationSeconds = FMath::Max(0.0f, Tuning.PostPossessionCommandDurationSeconds);
+	if (ActivePostPossessionCommand != EPostPossessionCommand::None)
+	{
+		PostPossessionCommandEndTimeSeconds = PostPossessionCommandStartTimeSeconds + PostPossessionCommandDurationSeconds;
+	}
 	ApplyMannequinWalkSpeed();
 
 	if (HasAuthority())
@@ -167,6 +184,127 @@ void AMannequinAICharacter::ApplyMannequinWalkSpeed()
 	Movement->MaxWalkSpeed = FMath::Max(0.0f, MannequinWalkSpeed);
 }
 
+void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	bManualControlEnabled = bEnabled;
+	if (bManualControlEnabled)
+	{
+		bPostPossessionChaseCommandQueued = false;
+		ActivePostPossessionCommand = EPostPossessionCommand::None;
+		PostPossessionCommandStartTimeSeconds = 0.0;
+		PostPossessionCommandEndTimeSeconds = 0.0;
+	}
+	ForceNetUpdate();
+}
+
+bool AMannequinAICharacter::QueuePostPossessionChaseCommand()
+{
+	if (!HasAuthority() || !bManualControlEnabled)
+	{
+		return false;
+	}
+
+	bPostPossessionChaseCommandQueued = true;
+	return true;
+}
+
+void AMannequinAICharacter::ActivatePostPossessionCommand()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const double CurrentTimeSeconds = IsValid(World) ? World->GetTimeSeconds() : 0.0;
+	PostPossessionCommandStartTimeSeconds = CurrentTimeSeconds;
+	PostPossessionCommandEndTimeSeconds = CurrentTimeSeconds + FMath::Max(0.0f, PostPossessionCommandDurationSeconds);
+	ActivePostPossessionCommand = bPostPossessionChaseCommandQueued
+		? EPostPossessionCommand::ChaseNearestSurvivor
+		: EPostPossessionCommand::HoldPosition;
+	bPostPossessionChaseCommandQueued = false;
+}
+
+bool AMannequinAICharacter::IsPostPossessionCommandActive(double ServerTimeSeconds) const
+{
+	return ActivePostPossessionCommand != EPostPossessionCommand::None &&
+		ServerTimeSeconds < PostPossessionCommandEndTimeSeconds;
+}
+
+bool AMannequinAICharacter::ShouldHoldPostPossessionCommand(double ServerTimeSeconds) const
+{
+	return IsPostPossessionCommandActive(ServerTimeSeconds) &&
+		ActivePostPossessionCommand == EPostPossessionCommand::HoldPosition;
+}
+
+bool AMannequinAICharacter::ShouldChasePostPossessionCommand(double ServerTimeSeconds) const
+{
+	return IsPostPossessionCommandActive(ServerTimeSeconds) &&
+		ActivePostPossessionCommand == EPostPossessionCommand::ChaseNearestSurvivor;
+}
+
+void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(OtherActor);
+	if (!IsValid(PlayerCharacter) || PlayerCharacter->IsGameOver())
+	{
+		return;
+	}
+
+	const bool bAlreadyCaughtInCurrentContact = CaughtSurvivorsInCurrentContact.ContainsByPredicate(
+		[PlayerCharacter](const TWeakObjectPtr<APlayerCharacter>& ExistingPlayer)
+		{
+			return ExistingPlayer.Get() == PlayerCharacter;
+		});
+	if (bAlreadyCaughtInCurrentContact)
+	{
+		return;
+	}
+
+	CaughtSurvivorsInCurrentContact.Add(PlayerCharacter);
+	if (!PlayerCharacter->HandleMannequinCatch(this))
+	{
+		CaughtSurvivorsInCurrentContact.RemoveSingleSwap(PlayerCharacter);
+	}
+}
+
+void AMannequinAICharacter::RemoveSeparatedCatchContacts()
+{
+	const UCapsuleComponent* MannequinCapsule = GetCapsuleComponent();
+	if (!IsValid(MannequinCapsule))
+	{
+		ensureMsgf(false, TEXT("Mannequin %s has no capsule for catch-contact cleanup."), *GetName());
+		CaughtSurvivorsInCurrentContact.Reset();
+		return;
+	}
+
+	const float MannequinRadius = MannequinCapsule->GetScaledCapsuleRadius();
+	CaughtSurvivorsInCurrentContact.RemoveAll([this, MannequinRadius](const TWeakObjectPtr<APlayerCharacter>& CaughtPlayer)
+	{
+		const APlayerCharacter* PlayerCharacter = CaughtPlayer.Get();
+		const UCapsuleComponent* PlayerCapsule = IsValid(PlayerCharacter) ? PlayerCharacter->GetCapsuleComponent() : nullptr;
+		if (!IsValid(PlayerCapsule))
+		{
+			return true;
+		}
+
+		FVector HorizontalSeparation = PlayerCharacter->GetActorLocation() - GetActorLocation();
+		HorizontalSeparation.Z = 0.0f;
+		const float RecatchDistance = MannequinRadius + PlayerCapsule->GetScaledCapsuleRadius() + 10.0f;
+		return HorizontalSeparation.SizeSquared() > FMath::Square(RecatchDistance);
+	});
+}
+
 void AMannequinAICharacter::RefreshFrozenAnimationState()
 {
 	if (USkeletalMeshComponent* MannequinMesh = GetMesh())
@@ -188,7 +326,7 @@ void AMannequinAICharacter::PawnClientRestart()
 
 void AMannequinAICharacter::Move(const FInputActionValue& Value)
 {
-	if (!IsLocallyControlled() || bFrozenBySurvivorVision)
+	if (!IsLocallyControlled() || !bManualControlEnabled || bFrozenBySurvivorVision)
 	{
 		return;
 	}
@@ -239,4 +377,5 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
+	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
 }
