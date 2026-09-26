@@ -159,11 +159,31 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 			if (!State.bCurrentlyVisible)
 			{
 				const bool bFirstEncounter = !State.bHasEverBeenRecognized;
-				const bool bCooldownFinished = CurrentTime - State.LastSurpriseTime >= SafeCooldown;
+				const double CooldownElapsed = CurrentTime - State.LastSurpriseTime;
+				const bool bCooldownFinished = CooldownElapsed >= SafeCooldown;
+
+				if (bEnableHeartbeatLog && !bFirstEncounter)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Heartbeat][VisibilityRestored] Mannequin=%s | Armed=%s | CooldownElapsed=%.2fs | CooldownRequired=%.2fs"),
+						*GetNameSafe(Mannequin),
+						State.bSurpriseArmed ? TEXT("true") : TEXT("false"),
+						CooldownElapsed,
+						SafeCooldown);
+				}
+
 				if (bFirstEncounter || (State.bSurpriseArmed && bCooldownFinished))
 				{
 					TriggerSurpriseBPM(*Mannequin, Distance, bFirstEncounter);
 					State.LastSurpriseTime = CurrentTime;
+				}
+				else if (bEnableHeartbeatLog)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Heartbeat][RediscoveryBlocked] Mannequin=%s | Reason=%s%s"),
+						*GetNameSafe(Mannequin),
+						!State.bSurpriseArmed ? TEXT("NotRearmed") : TEXT(""),
+						!bCooldownFinished ? TEXT(" CooldownActive") : TEXT(""));
 				}
 			}
 
@@ -180,12 +200,24 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 			{
 				State.bCurrentlyVisible = false;
 				State.HiddenStartTime = CurrentTime;
+				if (bEnableHeartbeatLog)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Heartbeat][VisibilityLost] Mannequin=%s | RearmAfter=%.2fs"),
+						*GetNameSafe(Mannequin), SafeRearmDelay);
+				}
 			}
 
 			if (State.bHasEverBeenRecognized && !State.bSurpriseArmed &&
 				CurrentTime - State.HiddenStartTime >= SafeRearmDelay)
 			{
 				State.bSurpriseArmed = true;
+				if (bEnableHeartbeatLog)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[Heartbeat][SurpriseArmed] Mannequin=%s | HiddenDuration=%.2fs"),
+						*GetNameSafe(Mannequin), CurrentTime - State.HiddenStartTime);
+				}
 			}
 		}
 
@@ -199,8 +231,19 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 		}
 
 		// 유지 조건을 잃어도 유예시간이 끝나기 전까지 거리 기반 심박을 유지한다.
+		const bool bWasActiveForHeartbeat = State.bActiveForHeartbeat;
 		State.bActiveForHeartbeat = State.bHasEverBeenRecognized &&
 			CurrentTime - State.LastRetentionTime <= SafeGraceSeconds;
+
+		if (bEnableHeartbeatLog && bWasActiveForHeartbeat != State.bActiveForHeartbeat)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[Heartbeat][ActiveChanged] Mannequin=%s | Active=%s | RetentionQualified=%s | SinceLastRetention=%.2fs"),
+				*GetNameSafe(Mannequin),
+				State.bActiveForHeartbeat ? TEXT("true") : TEXT("false"),
+				bRetentionQualified ? TEXT("true") : TEXT("false"),
+				CurrentTime - State.LastRetentionTime);
+		}
 	}
 
 	RemoveInvalidMannequins();
