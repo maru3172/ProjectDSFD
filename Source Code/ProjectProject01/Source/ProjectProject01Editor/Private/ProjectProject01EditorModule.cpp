@@ -13,6 +13,7 @@
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "ProjectProject01TuningData.h"
+#include "Serialization/Csv/CsvParser.h"
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
 #include "UObject/Package.h"
@@ -23,6 +24,7 @@
 namespace ProjectProject01TuningEditor
 {
 	const TCHAR* const DataDirectory = TEXT("/Game/MyProject/Data");
+	const TCHAR* const PlayerAssetName = TEXT("DT_PlayerTuning");
 	const TCHAR* const MannequinAssetName = TEXT("DT_AITuning");
 	const TCHAR* const HelperAssetName = TEXT("DT_HelperTuning");
 
@@ -46,23 +48,11 @@ namespace ProjectProject01TuningEditor
 	const TArray<FString>& GetVerticalFieldNames();
 
 	template <>
-	const TArray<FString>& GetVerticalFieldNames<FMannequinAITuningRow>()
+	const TArray<FString>& GetVerticalFieldNames<FPlayerTuningRow>()
 	{
 		static const TArray<FString> FieldNames =
 		{
 			TEXT("PlayerWalkSpeed"),
-			TEXT("MannequinWalkSpeed"),
-			TEXT("DirectChaseRadius"),
-			TEXT("RoamingOuterRadius"),
-			TEXT("PostPossessionCommandDurationSeconds"),
-			TEXT("DirectChaseHalfAngleDegrees"),
-			TEXT("DirectChaseSectorRadius"),
-			TEXT("MannequinGatherRadius"),
-			TEXT("RequiredMannequinCount"),
-			TEXT("SurvivorVisionCheckIntervalSeconds"),
-			TEXT("SurvivorVisionHalfAngleDegrees"),
-			TEXT("DetectionMargin"),
-			TEXT("VisionFovMarginMultiplier"),
 			TEXT("MinBPM"),
 			TEXT("MaxDistanceBPM"),
 			TEXT("MaxEncounterBPM"),
@@ -82,6 +72,27 @@ namespace ProjectProject01TuningEditor
 			TEXT("MannequinRefreshInterval"),
 			TEXT("bEnableHeartbeatLog"),
 			TEXT("BPMLogThreshold")
+		};
+		return FieldNames;
+	}
+
+	template <>
+	const TArray<FString>& GetVerticalFieldNames<FMannequinAITuningRow>()
+	{
+		static const TArray<FString> FieldNames =
+		{
+			TEXT("MannequinWalkSpeed"),
+			TEXT("DirectChaseRadius"),
+			TEXT("RoamingOuterRadius"),
+			TEXT("PostPossessionCommandDurationSeconds"),
+			TEXT("DirectChaseHalfAngleDegrees"),
+			TEXT("DirectChaseSectorRadius"),
+			TEXT("MannequinGatherRadius"),
+			TEXT("RequiredMannequinCount"),
+			TEXT("SurvivorVisionCheckIntervalSeconds"),
+			TEXT("SurvivorVisionHalfAngleDegrees"),
+			TEXT("DetectionMargin"),
+			TEXT("VisionFovMarginMultiplier")
 		};
 		return FieldNames;
 	}
@@ -120,45 +131,58 @@ namespace ProjectProject01TuningEditor
 			return false;
 		}
 
-		TArray<FString> Lines;
-		SourceCsv.ParseIntoArrayLines(Lines, true);
-		if (Lines.IsEmpty())
+		FCsvParser Parser(MoveTemp(SourceCsv));
+		const FCsvParser::FRows& Rows = Parser.GetRows();
+		if (Rows.IsEmpty())
 		{
-			OutError = TEXT("CSV가 비어 있습니다. 첫 행은 Field,Value여야 합니다.");
+			OutError = TEXT("CSV가 비어 있습니다. 첫 행은 Field,Value,Note여야 합니다.");
 			return false;
 		}
 
-		TArray<FString> HeaderColumns;
-		Lines[0].ParseIntoArray(HeaderColumns, TEXT(","), false);
-		if (HeaderColumns.Num() != 2 || HeaderColumns[0].TrimStartAndEnd() != TEXT("Field") ||
-			HeaderColumns[1].TrimStartAndEnd() != TEXT("Value"))
+		const FCsvParser::FRows::ElementType& HeaderColumns = Rows[0];
+		if (HeaderColumns.Num() != 3 || FString(HeaderColumns[0]).TrimStartAndEnd() != TEXT("Field") ||
+			FString(HeaderColumns[1]).TrimStartAndEnd() != TEXT("Value") ||
+			FString(HeaderColumns[2]).TrimStartAndEnd() != TEXT("Note"))
 		{
-			OutError = TEXT("세로 CSV의 첫 행은 정확히 Field,Value여야 합니다.");
+			OutError = TEXT("세로 CSV의 첫 행은 정확히 Field,Value,Note여야 합니다.");
 			return false;
 		}
 
 		const TArray<FString>& FieldNames = GetVerticalFieldNames<RowType>();
 		TMap<FString, FString> FieldValues;
-		for (int32 LineIndex = 1; LineIndex < Lines.Num(); ++LineIndex)
+		for (int32 RowIndex = 1; RowIndex < Rows.Num(); ++RowIndex)
 		{
-			TArray<FString> Columns;
-			Lines[LineIndex].ParseIntoArray(Columns, TEXT(","), false);
-			if (Columns.Num() != 2)
+			const FCsvParser::FRows::ElementType& Columns = Rows[RowIndex];
+			bool bBlankRow = true;
+			for (const TCHAR* Column : Columns)
 			{
-				OutError = FString::Printf(TEXT("%d번째 행은 Field,Value 두 열만 가져야 합니다."), LineIndex + 1);
+				if (!FString(Column).TrimStartAndEnd().IsEmpty())
+				{
+					bBlankRow = false;
+					break;
+				}
+			}
+			if (bBlankRow)
+			{
+				continue;
+			}
+
+			if (Columns.Num() != 3)
+			{
+				OutError = FString::Printf(TEXT("%d번째 행은 Field,Value,Note 세 열을 가져야 합니다."), RowIndex + 1);
 				return false;
 			}
 
-			const FString FieldName = Columns[0].TrimStartAndEnd();
-			const FString FieldValue = Columns[1].TrimStartAndEnd();
+			const FString FieldName = FString(Columns[0]).TrimStartAndEnd();
+			const FString FieldValue = FString(Columns[1]).TrimStartAndEnd();
 			if (FieldName.IsEmpty() || FieldValue.IsEmpty())
 			{
-				OutError = FString::Printf(TEXT("%d번째 행의 Field 또는 Value가 비어 있습니다."), LineIndex + 1);
+				OutError = FString::Printf(TEXT("%d번째 행의 Field 또는 Value가 비어 있습니다."), RowIndex + 1);
 				return false;
 			}
 			if (!FieldNames.Contains(FieldName))
 			{
-				OutError = FString::Printf(TEXT("%d번째 행의 Field를 인식하지 못했습니다: %s"), LineIndex + 1, *FieldName);
+				OutError = FString::Printf(TEXT("%d번째 행의 Field를 인식하지 못했습니다: %s"), RowIndex + 1, *FieldName);
 				return false;
 			}
 			if (FieldValues.Contains(FieldName))
@@ -311,7 +335,7 @@ private:
 		Section.AddMenuEntry(
 			TEXT("ProjectProject01ReimportTuning"),
 			LOCTEXT("ReimportTuning", "Reimport and Validate Tuning DataTables"),
-			LOCTEXT("ReimportTuningTooltip", "Validate both ProjectProject01 tuning CSV files before updating either DataTable."),
+			LOCTEXT("ReimportTuningTooltip", "Validate all three ProjectProject01 tuning CSV files before updating any DataTable."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateRaw(this, &FProjectProject01EditorModule::ReimportAndValidate)));
 		Section.AddMenuEntry(
@@ -326,10 +350,12 @@ private:
 	{
 		using namespace ProjectProject01TuningEditor;
 
+		FString PlayerCsv;
 		FString MannequinCsv;
 		FString HelperCsv;
 		FString Error;
-		if (!ParseAndValidateCsv<FMannequinAITuningRow>(GetCsvPath(TEXT("AITuning.csv")), MannequinCsv, Error) ||
+		if (!ParseAndValidateCsv<FPlayerTuningRow>(GetCsvPath(TEXT("Player.csv")), PlayerCsv, Error) ||
+			!ParseAndValidateCsv<FMannequinAITuningRow>(GetCsvPath(TEXT("AITuning.csv")), MannequinCsv, Error) ||
 			!ParseAndValidateCsv<FHelperTuningRow>(GetCsvPath(TEXT("HelperTuning.csv")), HelperCsv, Error))
 		{
 			UE_LOG(LogProjectProject01Tuning, Error, TEXT("ProjectProject01 tuning reimport rejected: %s"), *Error);
@@ -337,18 +363,23 @@ private:
 			return;
 		}
 
-		UDataTable* MannequinTable = GetOrCreateDataTable(MannequinAssetName, FMannequinAITuningRow::StaticStruct(), Error);
-		UDataTable* HelperTable = IsValid(MannequinTable)
+		UDataTable* PlayerTable = GetOrCreateDataTable(PlayerAssetName, FPlayerTuningRow::StaticStruct(), Error);
+		UDataTable* MannequinTable = IsValid(PlayerTable)
+			? GetOrCreateDataTable(MannequinAssetName, FMannequinAITuningRow::StaticStruct(), Error)
+			: nullptr;
+		UDataTable* HelperTable = IsValid(PlayerTable) && IsValid(MannequinTable)
 			? GetOrCreateDataTable(HelperAssetName, FHelperTuningRow::StaticStruct(), Error)
 			: nullptr;
-		if (!IsValid(MannequinTable) || !IsValid(HelperTable))
+		if (!IsValid(PlayerTable) || !IsValid(MannequinTable) || !IsValid(HelperTable))
 		{
 			UE_LOG(LogProjectProject01Tuning, Error, TEXT("ProjectProject01 tuning DataTable setup failed: %s"), *Error);
 			ShowResultNotification(Error, false);
 			return;
 		}
 
-		if (!ImportCsvIntoTable(MannequinTable, MannequinCsv, Error) || !ImportCsvIntoTable(HelperTable, HelperCsv, Error))
+		if (!ImportCsvIntoTable(PlayerTable, PlayerCsv, Error) ||
+			!ImportCsvIntoTable(MannequinTable, MannequinCsv, Error) ||
+			!ImportCsvIntoTable(HelperTable, HelperCsv, Error))
 		{
 			UE_LOG(LogProjectProject01Tuning, Error, TEXT("ProjectProject01 tuning DataTable import failed: %s"), *Error);
 			ShowResultNotification(Error, false);
@@ -356,6 +387,7 @@ private:
 		}
 
 		TArray<UPackage*> PackagesToSave;
+		PackagesToSave.Add(PlayerTable->GetOutermost());
 		PackagesToSave.Add(MannequinTable->GetOutermost());
 		PackagesToSave.Add(HelperTable->GetOutermost());
 		UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, false);

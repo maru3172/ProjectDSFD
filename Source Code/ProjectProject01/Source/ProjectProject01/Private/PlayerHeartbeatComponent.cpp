@@ -16,7 +16,7 @@ UPlayerHeartbeatComponent::UPlayerHeartbeatComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 }
 
-void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FMannequinAITuningRow& Tuning)
+void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tuning)
 {
 	FString ValidationError;
 	if (!Tuning.IsValidForApplication(ValidationError))

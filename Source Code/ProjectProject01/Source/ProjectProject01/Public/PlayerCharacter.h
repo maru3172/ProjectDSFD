@@ -41,8 +41,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Direction")
 	FVector GetAIMovementDirection() const;
 
-	/** 서버가 DataTable의 검증된 마네킹 추적 값을 적용한다. */
+	/** 서버가 적 AI DataTable의 검증된 추적 기준값을 적용한다. */
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
+
+	/** 서버가 Player DataTable의 검증된 이동·심박 값을 적용한다. */
+	void ApplyPlayerTuning(const FPlayerTuningRow& Tuning);
 
 	/** 남은 포획 허용 횟수입니다. 0이면 파트너가 제거된 상태입니다. */
 	UFUNCTION(BlueprintPure, Category = "Player|Death")
@@ -77,9 +80,9 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
-	/** 서버가 DataTable 값을 바꾼 뒤 소유 클라이언트의 로컬 심박 계산에도 같은 값을 적용합니다. */
+	/** 서버가 Player DataTable 값을 바꾼 뒤 소유 클라이언트의 로컬 심박 계산에도 같은 값을 적용합니다. */
 	UFUNCTION(Client, Reliable)
-	void ClientApplyHeartbeatTuning(const FMannequinAITuningRow& Tuning);
+	void ClientApplyPlayerTuning(const FPlayerTuningRow& Tuning);
 
 	UPROPERTY(VisibleAnywhere, Category = "Component")
 	class USpringArmComponent* SpringArm;

@@ -1,33 +1,15 @@
-Field,Value
-PlayerWalkSpeed,600
-MannequinWalkSpeed,600
-DirectChaseRadius,500
-RoamingOuterRadius,1500
-PostPossessionCommandDurationSeconds,5
-DirectChaseHalfAngleDegrees,90
-DirectChaseSectorRadius,1000
-MannequinGatherRadius,500
-RequiredMannequinCount,3
-SurvivorVisionCheckIntervalSeconds,0.05
-SurvivorVisionHalfAngleDegrees,55
-DetectionMargin,30
-VisionFovMarginMultiplier,1.15
-MinBPM,60
-MaxDistanceBPM,120
-MaxEncounterBPM,165
-MinEncounterBoost,15
-MaxEncounterBoost,45
-BPMDecayPerSecond,12
-HeartbeatRange,1500
-RetentionRange,1800
-RecognitionHalfAngleDegrees,45
-bUseRetentionRules,false
-RetentionHalfAngleDegrees,80
-LostSightGraceSeconds,1.5
-SurpriseRearmDelay,0.75
-SurpriseCooldown,3
-bEnableRediscovery,false
-VisionCheckInterval,0.05
-MannequinRefreshInterval,1
-bEnableHeartbeatLog,true
-BPMLogThreshold,1
+Field,Value,Note
+,,
+MannequinWalkSpeed,600,AI 상태와 플레이어가 조종 중인 상태 모두의 마네킹 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 조종 중인 클라이언트에도 복제한다.
+,,
+DirectChaseRadius,500,빨간 원의 반경이다. 마네킹이 이 거리 안에 있으면 방향·집결 조건과 무관하게 생존자를 직접 추격한다. 단위는 cm다.
+RoamingOuterRadius,1500,바깥 원의 반경이자 랜덤 배회와 중간 부채꼴 판정의 최대 길이다. 이 거리 밖의 마네킹은 기존 규칙대로 이동을 중단한다. 단위는 cm다.
+DirectChaseHalfAngleDegrees,90,"중간 고리에서 플레이어의 이동 방향을 기준으로 직접 추격과 반대편 랜덤 배회를 나누는 부채꼴의 한쪽 각도다. 단위는 도이며, 부채꼴의 총 각도는 값의 두 배다. 부채꼴의 길이는 `DirectChaseSectorRadius`를 사용한다. 이 값은 각도이므로 실제 동작은 0~180도 범위로 제한된다."
+DirectChaseSectorRadius,1000,"플레이어 이동 방향을 기준으로 한 직접 추격 부채꼴의 끝 반경이다. 단위는 cm이며 기본값 1000이다. 빨간 원(`DirectChaseRadius`) 바깥부터 이 거리까지의 부채꼴에 있는 마네킹은 직접 추격한다. 값이 빨간 원보다 작으면 빨간 원 반경으로, `RoamingOuterRadius`보다 크면 바깥 원 반경으로 안전하게 제한된다."
+MannequinGatherRadius,500,마네킹들이 집결한 것으로 판단하는 거리
+RequiredMannequinCount,3,배회 행동 전환에 필요한 주변 마네킹 수
+SurvivorVisionCheckIntervalSeconds,0.05,시야 정지 판정 주기. 낮을수록 즉각적이지만 서버 검사량 증가
+SurvivorVisionHalfAngleDegrees,55,생존자가 마네킹을 보고 있다고 판정하는 시야각
+DetectionMargin,30,마네킹 신체 외곽까지 시야 감지 여유
+VisionFovMarginMultiplier,1.15,카메라 FOV보다 약간 넓게 “봤다”고 판정하는 보정값
+PostPossessionCommandDurationSeconds,5,"마네킹 플레이어가 다른 마네킹으로 옮겨 이전 마네킹의 빙의가 해제된 뒤, 기록된 명령을 기존 AI보다 우선하는 시간이다. 단위는 초이며 기본값은 5다. 직접 조작 중 `E`를 눌렀다면 이 시간 동안 `RoamingOuterRadius` 안의 가장 가까운 생존자를 추격하고, `E`를 누르지 않았다면 같은 시간 동안 제자리에서 정지한다. 시간이 끝나면 기존 AI 행동 로직으로 복귀한다."

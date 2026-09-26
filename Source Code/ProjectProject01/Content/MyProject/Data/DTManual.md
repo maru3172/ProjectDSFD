@@ -1,14 +1,18 @@
 ## 데이터 테이블 사용 방법
 
-1. AITuning.csv, HelperTuning.csv를 수정
+1. Player.csv, AITuning.csv, HelperTuning.csv를 수정
 2. Tools > ProjectProject01 Tuning > Reimport and Validate Tuning DataTables
-3. 이미 PIE 중이면 즉시 반영, 아니면 다음 PIE 시작 때 자동 반영
+3. 세 파일이 모두 유효하면 DT_PlayerTuning, DT_AITuning, DT_HelperTuning을 함께 저장
+4. 이미 PIE 중이면 즉시 반영, 아니면 다음 PIE 시작 때 자동 반영
 
 ## 주의사항
-※ 첫 행은 반드시 Field,Value
+※ 첫 행은 반드시 Field,Value,Note
 ※ 필드 이름은 바꾸지 않기
 ※ 각 필드는 한 번만 쓰기
 ※ 숫자 소수점은 0.25처럼 점을 사용하기
+※ 빈 행은 기능 구분용이며 무시된다.
+※ Note는 팀 내부 설명용이며 게임 값에는 적용되지 않는다. Note에 쉼표를 쓰려면 셀 전체를 큰따옴표로 감싼다.
+※ 세 파일 중 하나라도 형식 또는 값 검증에 실패하면 어떤 DataTable도 저장하거나 PIE에 적용하지 않는다.
 ※ 엔진 DataTable 에셋을 직접 열면 엔진 구조상 가로 표로 보일 수 있음, 편집 원본은 세로 CSV임.
 
 
@@ -62,11 +66,13 @@
 
 
 
-## AITuning: 생존자와 마네킹
+## Player: 이동
 
 `PlayerWalkSpeed`
 
 생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
+
+## AITuning: 적 AI
 
 `MannequinWalkSpeed`
 
@@ -104,7 +110,7 @@ DetectionMargin	마네킹 신체 외곽까지 시야 감지 여유
 
 VisionFovMarginMultiplier	카메라 FOV보다 약간 넓게 “봤다”고 판정하는 보정값
 
-### AITuning: 플레이어 심박수
+## Player: 심박수
 
 다음 심박 값은 생존자 플레이어의 로컬 `UPlayerHeartbeatComponent`에 적용된다. 멀티플레이에서는 서버가 검증한 값을 각 생존자의 소유 클라이언트로 전달하므로, 서로 다른 생존자의 심박 판정은 각자 시야를 기준으로 독립적으로 계산된다. CSV 저장 후 `Reimport and Validate Tuning DataTables`를 누르면 실행 중인 PIE에는 즉시 적용되며, 심박의 인지·쿨다운 상태는 새 수치로 다시 계산한다.
 
@@ -166,7 +172,7 @@ VisionFovMarginMultiplier	카메라 FOV보다 약간 넓게 “봤다”고 판�
 
 `bEnableRediscovery`
 
-`true`면 최초 발견 이후에도 재발견 BPM 상승을 허용한다. `false`면 최초 발견 상승만 허용한다. 값은 반드시 `true` 또는 `false`다.
+`true`면 최초 발견 이후에도 재발견 BPM 상승을 허용한다. `false`면 최초 발견 상승만 허용한다. 값은 반드시 `true` 또는 `false`다.HelperWalkSpeed
 
 `VisionCheckInterval`
 

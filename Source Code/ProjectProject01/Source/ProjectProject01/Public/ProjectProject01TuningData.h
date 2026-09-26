@@ -13,50 +13,12 @@ class UDataTable;
 PROJECTPROJECT01_API DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Tuning, Log, All);
 
 USTRUCT(BlueprintType)
-struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
+struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 {
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float PlayerWalkSpeed = 600.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm/s"))
-	float MannequinWalkSpeed = 600.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
-	float DirectChaseRadius = 500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
-	float RoamingOuterRadius = 1500.0f;
-
-	/** 마네킹 플레이어가 남긴 정지 또는 추격 명령을 AI보다 우선하는 시간입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Player Command", meta = (ClampMin = "0.0", Units = "s"))
-	float PostPossessionCommandDurationSeconds = 5.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "deg"))
-	float DirectChaseHalfAngleDegrees = 90.0f;
-
-	/** 플레이어 중심에서 직접 추격 부채꼴 끝까지의 반경입니다. 내부 빨간 원보다 작으면 내부 반경으로, 바깥 배회 반경보다 크면 바깥 반경으로 적용됩니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
-	float DirectChaseSectorRadius = 1000.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
-	float MannequinGatherRadius = 500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0"))
-	int32 RequiredMannequinCount = 3;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0", Units = "s"))
-	float SurvivorVisionCheckIntervalSeconds = 0.05f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0", Units = "deg"))
-	float SurvivorVisionHalfAngleDegrees = 55.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0", Units = "cm"))
-	float DetectionMargin = 30.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0"))
-	float VisionFovMarginMultiplier = 1.15f;
 
 	/** 심박 대상이 멀리 있을 때 적용되는 최소 BPM입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
@@ -126,6 +88,52 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
+struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float MannequinWalkSpeed = 600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
+	float DirectChaseRadius = 500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
+	float RoamingOuterRadius = 1500.0f;
+
+	/** 마네킹 플레이어가 남긴 정지 또는 추격 명령을 AI보다 우선하는 시간입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Player Command", meta = (ClampMin = "0.0", Units = "s"))
+	float PostPossessionCommandDurationSeconds = 5.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "deg"))
+	float DirectChaseHalfAngleDegrees = 90.0f;
+
+	/** 플레이어 중심에서 직접 추격 부채꼴 끝까지의 반경입니다. 내부 빨간 원보다 작으면 내부 반경으로, 바깥 배회 반경보다 크면 바깥 반경으로 적용됩니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
+	float DirectChaseSectorRadius = 1000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
+	float MannequinGatherRadius = 500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0"))
+	int32 RequiredMannequinCount = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0", Units = "s"))
+	float SurvivorVisionCheckIntervalSeconds = 0.05f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0", Units = "deg"))
+	float SurvivorVisionHalfAngleDegrees = 55.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0", Units = "cm"))
+	float DetectionMargin = 30.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0"))
+	float VisionFovMarginMultiplier = 1.15f;
+
+	bool IsValidForApplication(FString& OutError) const;
+};
+
+USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FHelperTuningRow : public FTableRowBase
 {
 	GENERATED_BODY()
@@ -181,7 +189,7 @@ struct PROJECTPROJECT01_API FHelperTuningRow : public FTableRowBase
 	bool IsValidForApplication(FString& OutError) const;
 };
 
-/** 서버 권한 월드에서만 밸런스 DataTable을 검증하고 현재 액터에 적용합니다. */
+/** 서버 권한 월드에서만 세 DataTable을 함께 검증하고 현재 액터에 적용합니다. */
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01TuningSubsystem final : public UWorldSubsystem
 {
@@ -192,6 +200,7 @@ public:
 
 	bool ReloadFromDataTables(FString& OutError);
 	bool ApplyToCurrentWorld(FString& OutError);
+	bool GetPlayerTuning(FPlayerTuningRow& OutTuning) const;
 	bool GetMannequinTuning(FMannequinAITuningRow& OutTuning) const;
 	bool GetHelperTuning(FHelperTuningRow& OutTuning) const;
 
@@ -199,13 +208,18 @@ private:
 	bool LoadAndValidateTables(FString& OutError);
 
 	UPROPERTY(Transient)
+	TObjectPtr<UDataTable> PlayerTuningTable;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UDataTable> MannequinTuningTable;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UDataTable> HelperTuningTable;
 
+	FPlayerTuningRow CachedPlayerTuning;
 	FMannequinAITuningRow CachedMannequinTuning;
 	FHelperTuningRow CachedHelperTuning;
+	bool bHasValidPlayerTuning = false;
 	bool bHasValidMannequinTuning = false;
 	bool bHasValidHelperTuning = false;
 };

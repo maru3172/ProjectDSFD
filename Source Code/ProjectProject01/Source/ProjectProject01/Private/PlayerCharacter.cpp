@@ -134,10 +134,16 @@ void APlayerCharacter::BeginPlay()
 	{
 		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
 		{
-			FMannequinAITuningRow Tuning;
-			if (TuningSubsystem->GetMannequinTuning(Tuning))
+			FPlayerTuningRow PlayerTuning;
+			if (TuningSubsystem->GetPlayerTuning(PlayerTuning))
 			{
-				ApplyMannequinTuning(Tuning);
+				ApplyPlayerTuning(PlayerTuning);
+			}
+
+			FMannequinAITuningRow MannequinTuning;
+			if (TuningSubsystem->GetMannequinTuning(MannequinTuning))
+			{
+				ApplyMannequinTuning(MannequinTuning);
 			}
 		}
 	}
@@ -190,11 +196,17 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 	}
 
 	UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>();
-	FMannequinAITuningRow Tuning;
-	if (IsValid(TuningSubsystem) && TuningSubsystem->GetMannequinTuning(Tuning))
+	FPlayerTuningRow PlayerTuning;
+	if (IsValid(TuningSubsystem) && TuningSubsystem->GetPlayerTuning(PlayerTuning))
 	{
 		// PossessedBy 이후에는 소유 클라이언트 RPC가 올바른 연결로 전달된다.
-		ApplyMannequinTuning(Tuning);
+		ApplyPlayerTuning(PlayerTuning);
+	}
+
+	FMannequinAITuningRow MannequinTuning;
+	if (IsValid(TuningSubsystem) && TuningSubsystem->GetMannequinTuning(MannequinTuning))
+	{
+		ApplyMannequinTuning(MannequinTuning);
 	}
 }
 
@@ -360,11 +372,20 @@ FVector APlayerCharacter::GetAIMovementDirection() const
 
 void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 {
-	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
 	DirectChaseRadius = FMath::Max(0.0f, Tuning.DirectChaseRadius);
 	RoamingOuterRadius = FMath::Max(0.0f, Tuning.RoamingOuterRadius);
 	DirectChaseHalfAngleDegrees = FMath::Max(0.0f, Tuning.DirectChaseHalfAngleDegrees);
 	DirectChaseSectorRadius = FMath::Max(0.0f, Tuning.DirectChaseSectorRadius);
+
+	if (HasAuthority())
+	{
+		ForceNetUpdate();
+	}
+}
+
+void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
+{
+	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
 	ApplyPlayerWalkSpeed();
 
 	if (ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent."), *GetName()))
@@ -377,12 +398,12 @@ void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 		ForceNetUpdate();
 		if (!IsLocallyControlled())
 		{
-			ClientApplyHeartbeatTuning(Tuning);
+			ClientApplyPlayerTuning(Tuning);
 		}
 	}
 }
 
-void APlayerCharacter::ClientApplyHeartbeatTuning_Implementation(const FMannequinAITuningRow& Tuning)
+void APlayerCharacter::ClientApplyPlayerTuning_Implementation(const FPlayerTuningRow& Tuning)
 {
 	if (!ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent for client tuning."), *GetName()))
 	{

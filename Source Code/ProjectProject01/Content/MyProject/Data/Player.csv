@@ -1,0 +1,23 @@
+Field,Value,Note
+,,
+PlayerWalkSpeed,600,생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
+,,
+MinBPM,60,심박 대상이 멀리 있을 때 적용되는 최소 BPM이다.
+MaxDistanceBPM,120,심박 대상이 플레이어와 매우 가까울 때 적용되는 거리 기반 최대 BPM이다.
+MaxEncounterBPM,165,최초 발견 및 재발견 상승을 포함한 최종 BPM 상한이다.
+MinEncounterBoost,15,먼 거리에서 마네킹을 갑자기 발견했을 때 추가되는 최소 BPM이다.
+MaxEncounterBoost,45,가까운 거리에서 마네킹을 갑자기 발견했을 때 추가되는 최대 BPM이다.
+BPMDecayPerSecond,12,발견으로 상승한 BPM이 초당 감소하는 양이다.
+RetentionRange,1800,이미 인지한 마네킹을 거리 기반 심박에 계속 반영할 최대 거리다. `bUseRetentionRules`가 `true`일 때만 유지 규칙에 사용된다. 단위는 cm다.
+RecognitionHalfAngleDegrees,45,최초 발견과 재발견을 판정하는 플레이어 시야의 한쪽 각도다. 총 시야각은 값의 두 배다. 단위는 도다.
+bUseRetentionRules,FALSE,"`true`면 이미 인지한 마네킹에 대해 `RetentionRange`, `RetentionHalfAngleDegrees`, `LostSightGraceSeconds`를 사용하는 유지 규칙을 켠다. `false`면 현재 발견 시야와 `HeartbeatRange`만 사용한다. 값은 반드시 `true` 또는 `false`다."
+RetentionHalfAngleDegrees,80,인지한 마네킹의 심박 반응을 유지하는 넓은 범위의 한쪽 각도다. `bUseRetentionRules`가 `true`일 때만 사용한다. 단위는 도다.
+LostSightGraceSeconds,1.5,마네킹이 유지 조건을 벗어난 뒤에도 심박 반응을 유지하는 유예 시간이다. `bUseRetentionRules`가 `true`일 때만 사용한다. 단위는 초다.
+SurpriseRearmDelay,0.75,마네킹이 이 시간 이상 보이지 않아야 재발견 상승이 다시 준비되는 시간이다. `bEnableRediscovery`가 `true`일 때만 사용한다. 단위는 초다.
+SurpriseCooldown,3,마지막 발견 상승 이후 다음 발견 상승을 허용하기까지의 최소 대기 시간이다. `bEnableRediscovery`가 `true`일 때만 사용한다. 단위는 초다.
+bEnableRediscovery,FALSE,`true`면 최초 발견 이후에도 재발견 BPM 상승을 허용한다. `false`면 최초 발견 상승만 허용한다. 값은 반드시 `true` 또는 `false`다.
+VisionCheckInterval,0.05,플레이어 시야와 마네킹 노출 여부를 다시 검사하는 주기다. 낮을수록 반응은 빨라지지만 각 클라이언트의 시야 추적 비용이 늘어난다. 단위는 초다.
+MannequinRefreshInterval,1,월드에 생성되거나 파괴된 마네킹 목록을 다시 찾는 주기다. 단위는 초다.
+bEnableHeartbeatLog,TRUE,`false`면 BPM 계산은 유지하면서 `LogTemp`의 심박 로그만 끈다. 값은 반드시 `true` 또는 `false`다.
+HeartbeatRange,1500,마네킹 거리를 BPM으로 변환하고 최초 발견을 판정하는 기준 거리다. 단위는 cm다.
+BPMLogThreshold,1,직전 로그 출력 BPM과의 차이가 이 값 이상일 때만 상태 로그를 새로 출력한다. 단위는 BPM이다.
