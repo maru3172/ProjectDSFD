@@ -53,6 +53,17 @@ public:
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
 	bool IsHeartbeatActive() const { return bHeartbeatActive; }
 
+	// 거리 BPM과 발견 부채꼴에 사용하는 최대 거리다.
+	UFUNCTION(BlueprintPure, Category="Heartbeat|Detection")
+	float GetHeartbeatRange() const { return FMath::Max(HeartbeatRange, 0.0f); }
+
+	// 마네킹 발견에 사용하는 수평 부채꼴의 반각이다.
+	UFUNCTION(BlueprintPure, Category="Heartbeat|Detection")
+	float GetRecognitionHalfAngleDegrees() const
+	{
+		return FMath::Clamp(RecognitionHalfAngleDegrees, 0.0f, 180.0f);
+	}
+
 	// 최초 인지 기록과 현재 심박 상태를 모두 초기화한다.
 	UFUNCTION(BlueprintCallable, Category="Heartbeat|Runtime")
 	void ResetHeartbeatState();
@@ -128,10 +139,15 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
 	float RetentionRange = 1800.0f;
 
-	// 미인지 마네킹을 최초 등록할 플레이어 시야의 한쪽 각도다.
+	// 마네킹을 발견할 수평 부채꼴의 한쪽 각도다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="deg"))
-	float RecognitionHalfAngleDegrees = 55.0f;
+	float RecognitionHalfAngleDegrees = 45.0f;
+
+	// false면 현재 발견 부채꼴과 거리만으로 심박 활성 여부를 결정한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
+		meta=(AllowPrivateAccess="true"))
+	bool bUseRetentionRules = false;
 
 	// 인지 완료 마네킹을 유지할 더 넓은 시야의 한쪽 각도다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
@@ -152,6 +168,11 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
 	float SurpriseCooldown = 3.0f;
+
+	// false면 최초 발견 상승만 허용하고 재발견 상승은 사용하지 않는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true"))
+	bool bEnableRediscovery = false;
 
 	// 시야 판정 주기다. 낮을수록 즉각적이지만 검사량이 늘어난다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",

@@ -150,8 +150,10 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 
 		FHeartbeatMannequinState& State = MannequinStates.FindOrAdd(WeakMannequin);
 		const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
-		const bool bVisibleNow = IsMannequinActuallyVisible(
+		const bool bActuallyVisible = IsMannequinActuallyVisible(
 			OwnerPawn, *Mannequin, ViewLocation, ViewForward);
+		// 현재 방식은 부채꼴, 장애물, 거리 조건을 모두 만족해야 발견 상태로 인정한다.
+		const bool bVisibleNow = bActuallyVisible && Distance <= FMath::Max(HeartbeatRange, 0.0f);
 
 		if (bVisibleNow)
 		{
@@ -162,7 +164,7 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 				const double CooldownElapsed = CurrentTime - State.LastSurpriseTime;
 				const bool bCooldownFinished = CooldownElapsed >= SafeCooldown;
 
-				if (bEnableHeartbeatLog && !bFirstEncounter)
+				if (bEnableHeartbeatLog && bEnableRediscovery && !bFirstEncounter)
 				{
 					UE_LOG(LogTemp, Warning,
 						TEXT("[Heartbeat][VisibilityRestored] Mannequin=%s | Armed=%s | CooldownElapsed=%.2fs | CooldownRequired=%.2fs"),
@@ -172,12 +174,13 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 						SafeCooldown);
 				}
 
-				if (bFirstEncounter || (State.bSurpriseArmed && bCooldownFinished))
+				if (bFirstEncounter ||
+					(bEnableRediscovery && State.bSurpriseArmed && bCooldownFinished))
 				{
 					TriggerSurpriseBPM(*Mannequin, Distance, bFirstEncounter);
 					State.LastSurpriseTime = CurrentTime;
 				}
-				else if (bEnableHeartbeatLog)
+				else if (bEnableHeartbeatLog && bEnableRediscovery)
 				{
 					UE_LOG(LogTemp, Warning,
 						TEXT("[Heartbeat][RediscoveryBlocked] Mannequin=%s | Reason=%s%s"),
@@ -200,7 +203,7 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 			{
 				State.bCurrentlyVisible = false;
 				State.HiddenStartTime = CurrentTime;
-				if (bEnableHeartbeatLog)
+				if (bEnableHeartbeatLog && bEnableRediscovery)
 				{
 					UE_LOG(LogTemp, Warning,
 						TEXT("[Heartbeat][VisibilityLost] Mannequin=%s | RearmAfter=%.2fs"),
@@ -208,7 +211,7 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 				}
 			}
 
-			if (State.bHasEverBeenRecognized && !State.bSurpriseArmed &&
+			if (bEnableRediscovery && State.bHasEverBeenRecognized && !State.bSurpriseArmed &&
 				CurrentTime - State.HiddenStartTime >= SafeRearmDelay)
 			{
 				State.bSurpriseArmed = true;
@@ -221,19 +224,24 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 			}
 		}
 
-		const bool bRetentionQualified = State.bHasEverBeenRecognized &&
-			Distance <= SafeRetentionRange &&
-			IsInsideRetentionCone(*Mannequin, ViewLocation, ViewForward) &&
-			HasClearLineOfSight(OwnerPawn, *Mannequin, ViewLocation);
-		if (bRetentionQualified)
+		bool bRetentionQualified = false;
+		if (bUseRetentionRules)
 		{
-			State.LastRetentionTime = CurrentTime;
+			bRetentionQualified = State.bHasEverBeenRecognized &&
+				Distance <= SafeRetentionRange &&
+				IsInsideRetentionCone(*Mannequin, ViewLocation, ViewForward) &&
+				HasClearLineOfSight(OwnerPawn, *Mannequin, ViewLocation);
+			if (bRetentionQualified)
+			{
+				State.LastRetentionTime = CurrentTime;
+			}
 		}
 
-		// 유지 조건을 잃어도 유예시간이 끝나기 전까지 거리 기반 심박을 유지한다.
+		// 기존 유지 영역 코드는 보존하고 설정이 켜진 경우에만 사용한다.
 		const bool bWasActiveForHeartbeat = State.bActiveForHeartbeat;
-		State.bActiveForHeartbeat = State.bHasEverBeenRecognized &&
-			CurrentTime - State.LastRetentionTime <= SafeGraceSeconds;
+		State.bActiveForHeartbeat = bUseRetentionRules
+			? State.bHasEverBeenRecognized && CurrentTime - State.LastRetentionTime <= SafeGraceSeconds
+			: State.bHasEverBeenRecognized && bVisibleNow;
 
 		if (bEnableHeartbeatLog && bWasActiveForHeartbeat != State.bActiveForHeartbeat)
 		{
@@ -377,6 +385,13 @@ bool UPlayerHeartbeatComponent::IsMannequinActuallyVisible(
 
 	const float MinimumViewDot = FMath::Cos(FMath::DegreesToRadians(
 		FMath::Clamp(RecognitionHalfAngleDegrees, 0.0f, 180.0f)));
+	FVector HorizontalViewForward = ViewForward;
+	HorizontalViewForward.Z = 0.0f;
+	HorizontalViewForward.Normalize();
+	if (HorizontalViewForward.IsNearlyZero())
+	{
+		return false;
+	}
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PlayerHeartbeatRecognition), true, &OwnerPawn);
 
 	UWorld* World = GetWorld();
@@ -387,8 +402,11 @@ bool UPlayerHeartbeatComponent::IsMannequinActuallyVisible(
 	// 시야각 안의 검사점까지 추적해 마네킹이 직접 맞은 경우만 인정한다.
 	for (const FVector& TestPoint : TestPoints)
 	{
-		const FVector ViewToPoint = (TestPoint - ViewLocation).GetSafeNormal();
-		if (ViewToPoint.IsNearlyZero() || FVector::DotProduct(ViewForward, ViewToPoint) < MinimumViewDot)
+		FVector HorizontalViewToPoint = TestPoint - ViewLocation;
+		HorizontalViewToPoint.Z = 0.0f;
+		HorizontalViewToPoint.Normalize();
+		if (HorizontalViewToPoint.IsNearlyZero() ||
+			FVector::DotProduct(HorizontalViewForward, HorizontalViewToPoint) < MinimumViewDot)
 		{
 			continue;
 		}
