@@ -60,8 +60,7 @@ void UPlayerHeartbeatComponent::TickComponent(
 void UPlayerHeartbeatComponent::ResetHeartbeatState()
 {
 	CachedMannequins.Reset();
-	KnownMannequins.Reset();
-	ActiveMannequins.Reset();
+	MannequinStates.Reset();
 	CurrentBPM = 0.0f;
 	DistanceBPM = 0.0f;
 	EncounterBPM = 0.0f;
@@ -70,6 +69,32 @@ void UPlayerHeartbeatComponent::ResetHeartbeatState()
 	VisionCheckAccumulator = 0.0f;
 	RefreshAccumulator = 0.0f;
 	LastLoggedBPM = 0.0f;
+}
+
+int32 UPlayerHeartbeatComponent::GetKnownMannequinCount() const
+{
+	int32 Count = 0;
+	for (const TPair<TWeakObjectPtr<AMannequinAICharacter>, FHeartbeatMannequinState>& Entry : MannequinStates)
+	{
+		if (Entry.Key.IsValid() && Entry.Value.bHasEverBeenRecognized)
+		{
+			++Count;
+		}
+	}
+	return Count;
+}
+
+int32 UPlayerHeartbeatComponent::GetActiveMannequinCount() const
+{
+	int32 Count = 0;
+	for (const TPair<TWeakObjectPtr<AMannequinAICharacter>, FHeartbeatMannequinState>& Entry : MannequinStates)
+	{
+		if (Entry.Key.IsValid() && Entry.Value.bActiveForHeartbeat)
+		{
+			++Count;
+		}
+	}
+	return Count;
 }
 
 void UPlayerHeartbeatComponent::RefreshMannequinCache()
@@ -110,6 +135,10 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 
 	const double CurrentTime = World->GetTimeSeconds();
 	const float SafeRetentionRange = FMath::Max(0.0f, RetentionRange);
+	const double SafeRearmDelay = FMath::Max(0.0f, SurpriseRearmDelay);
+	const double SafeCooldown = FMath::Max(0.0f, SurpriseCooldown);
+	const double SafeGraceSeconds = FMath::Max(0.0f, LostSightGraceSeconds);
+
 	// 미인지 대상은 실제 시야로만 등록하고, 인지 대상만 넓은 유지 범위를 적용한다.
 	for (const TWeakObjectPtr<AMannequinAICharacter>& WeakMannequin : CachedMannequins)
 	{
@@ -119,52 +148,77 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 			continue;
 		}
 
+		FHeartbeatMannequinState& State = MannequinStates.FindOrAdd(WeakMannequin);
 		const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
-		const bool bWasKnown = KnownMannequins.Contains(WeakMannequin);
-		const bool bActuallyVisible = IsMannequinActuallyVisible(
+		const bool bVisibleNow = IsMannequinActuallyVisible(
 			OwnerPawn, *Mannequin, ViewLocation, ViewForward);
-		if (!bWasKnown && bActuallyVisible)
+
+		if (bVisibleNow)
 		{
-			KnownMannequins.Add(WeakMannequin);
-			RegisterFirstEncounter(*Mannequin, Distance, CurrentTime);
-			continue;
+			// 보이지 않던 마네킹이 실제 시야에 다시 들어온 순간만 놀람을 검사한다.
+			if (!State.bCurrentlyVisible)
+			{
+				const bool bFirstEncounter = !State.bHasEverBeenRecognized;
+				const bool bCooldownFinished = CurrentTime - State.LastSurpriseTime >= SafeCooldown;
+				if (bFirstEncounter || (State.bSurpriseArmed && bCooldownFinished))
+				{
+					TriggerSurpriseBPM(*Mannequin, Distance, bFirstEncounter);
+					State.LastSurpriseTime = CurrentTime;
+				}
+			}
+
+			State.bHasEverBeenRecognized = true;
+			State.bCurrentlyVisible = true;
+			State.bSurpriseArmed = false;
+			// 신체 일부라도 실제로 보였다면 이번 프레임은 활성 대상으로 인정한다.
+			State.LastRetentionTime = CurrentTime;
 		}
-		if (!bWasKnown)
+		else
 		{
-			continue;
+			// 시야를 잃은 최초 시각부터 재발견 준비 시간을 측정한다.
+			if (State.bCurrentlyVisible)
+			{
+				State.bCurrentlyVisible = false;
+				State.HiddenStartTime = CurrentTime;
+			}
+
+			if (State.bHasEverBeenRecognized && !State.bSurpriseArmed &&
+				CurrentTime - State.HiddenStartTime >= SafeRearmDelay)
+			{
+				State.bSurpriseArmed = true;
+			}
 		}
 
-		const bool bRetentionQualified = Distance <= SafeRetentionRange &&
+		const bool bRetentionQualified = State.bHasEverBeenRecognized &&
+			Distance <= SafeRetentionRange &&
 			IsInsideRetentionCone(*Mannequin, ViewLocation, ViewForward) &&
 			HasClearLineOfSight(OwnerPawn, *Mannequin, ViewLocation);
 		if (bRetentionQualified)
 		{
-			ActiveMannequins.FindOrAdd(WeakMannequin) = CurrentTime;
+			State.LastRetentionTime = CurrentTime;
 		}
+
+		// 유지 조건을 잃어도 유예시간이 끝나기 전까지 거리 기반 심박을 유지한다.
+		State.bActiveForHeartbeat = State.bHasEverBeenRecognized &&
+			CurrentTime - State.LastRetentionTime <= SafeGraceSeconds;
 	}
 
-	// 유지 조건을 잃어도 유예시간이 끝나기 전까지는 활성 상태를 보존한다.
-	const double GraceSeconds = FMath::Max(0.0f, LostSightGraceSeconds);
-	for (auto It = ActiveMannequins.CreateIterator(); It; ++It)
-	{
-		if (!It.Key().IsValid() || CurrentTime - It.Value() > GraceSeconds)
-		{
-			It.RemoveCurrent();
-		}
-	}
+	RemoveInvalidMannequins();
 }
 
 void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPawn)
 {
 	// 여러 활성 대상 중 가장 높은 거리 기반 BPM을 하한으로 사용한다.
 	float NewDistanceBPM = 0.0f;
-	for (const TPair<TWeakObjectPtr<AMannequinAICharacter>, double>& Entry : ActiveMannequins)
+	int32 ActiveCount = 0;
+	for (const TPair<TWeakObjectPtr<AMannequinAICharacter>, FHeartbeatMannequinState>& Entry : MannequinStates)
 	{
 		const AMannequinAICharacter* Mannequin = Entry.Key.Get();
-		if (IsValid(Mannequin))
+		if (IsValid(Mannequin) && Entry.Value.bActiveForHeartbeat)
 		{
 			const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
 			NewDistanceBPM = FMath::Max(NewDistanceBPM, CalculateDistanceBPM(Distance));
+			++ActiveCount;
 		}
 	}
 
@@ -195,7 +249,7 @@ void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPaw
 	{
 		UE_LOG(LogTemp, Log,
 			TEXT("[Heartbeat] BPM=%.1f | DistanceFloor=%.1f | Encounter=%.1f | Active=%d"),
-			CurrentBPM, DistanceBPM, EncounterBPM, ActiveMannequins.Num());
+			CurrentBPM, DistanceBPM, EncounterBPM, ActiveCount);
 		LastLoggedBPM = CurrentBPM;
 	}
 }
@@ -223,14 +277,7 @@ void UPlayerHeartbeatComponent::UpdateBeatLog(float DeltaTime)
 
 void UPlayerHeartbeatComponent::RemoveInvalidMannequins()
 {
-	for (auto It = KnownMannequins.CreateIterator(); It; ++It)
-	{
-		if (!It->IsValid())
-		{
-			It.RemoveCurrent();
-		}
-	}
-	for (auto It = ActiveMannequins.CreateIterator(); It; ++It)
+	for (auto It = MannequinStates.CreateIterator(); It; ++It)
 	{
 		if (!It.Key().IsValid())
 		{
@@ -288,14 +335,6 @@ bool UPlayerHeartbeatComponent::IsMannequinActuallyVisible(
 	const float MinimumViewDot = FMath::Cos(FMath::DegreesToRadians(
 		FMath::Clamp(RecognitionHalfAngleDegrees, 0.0f, 180.0f)));
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PlayerHeartbeatRecognition), true, &OwnerPawn);
-	for (const TWeakObjectPtr<AMannequinAICharacter>& OtherWeakMannequin : CachedMannequins)
-	{
-		if (const AMannequinAICharacter* Other = OtherWeakMannequin.Get();
-			IsValid(Other) && Other != &Mannequin)
-		{
-			QueryParams.AddIgnoredActor(Other);
-		}
-	}
 
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
@@ -343,14 +382,6 @@ bool UPlayerHeartbeatComponent::HasClearLineOfSight(
 		return false;
 	}
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PlayerHeartbeatRetention), true, &OwnerPawn);
-	for (const TWeakObjectPtr<AMannequinAICharacter>& OtherWeakMannequin : CachedMannequins)
-	{
-		if (const AMannequinAICharacter* Other = OtherWeakMannequin.Get();
-			IsValid(Other) && Other != &Mannequin)
-		{
-			QueryParams.AddIgnoredActor(Other);
-		}
-	}
 	FHitResult HitResult;
 	return World->LineTraceSingleByChannel(HitResult, ViewLocation, Mannequin.GetActorLocation(),
 		ECC_GameTraceChannel1, QueryParams) && HitResult.GetActor() == &Mannequin;
@@ -369,8 +400,8 @@ float UPlayerHeartbeatComponent::CalculateDistanceBPM(float Distance) const
 	return FMath::Lerp(SafeMinBPM, SafeMaxBPM, FMath::Square(CalculateDistanceAlpha(Distance)));
 }
 
-void UPlayerHeartbeatComponent::RegisterFirstEncounter(
-	AMannequinAICharacter& Mannequin, float Distance, double CurrentTime)
+void UPlayerHeartbeatComponent::TriggerSurpriseBPM(
+	AMannequinAICharacter& Mannequin, float Distance, bool bFirstEncounter)
 {
 	const float NewDistanceBPM = CalculateDistanceBPM(Distance);
 	const float DistanceAlpha = CalculateDistanceAlpha(Distance);
@@ -381,12 +412,12 @@ void UPlayerHeartbeatComponent::RegisterFirstEncounter(
 		FMath::Max(MaxEncounterBPM, NewDistanceBPM));
 
 	EncounterBPM = FMath::Max(EncounterBPM, NewEncounterBPM);
-	ActiveMannequins.FindOrAdd(&Mannequin) = CurrentTime;
 	bHeartbeatActive = true;
 	if (bEnableHeartbeatLog)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[Heartbeat] FIRST ENCOUNTER | Mannequin=%s | Distance=%.0fcm | DistanceBPM=%.1f | Boost=%.1f | EncounterBPM=%.1f"),
+			TEXT("[Heartbeat] %s | Mannequin=%s | Distance=%.0fcm | DistanceBPM=%.1f | Boost=%.1f | EncounterBPM=%.1f"),
+			bFirstEncounter ? TEXT("FIRST ENCOUNTER") : TEXT("REDISCOVERED"),
 			*GetNameSafe(&Mannequin), Distance, NewDistanceBPM, EncounterBoost, NewEncounterBPM);
 	}
 }

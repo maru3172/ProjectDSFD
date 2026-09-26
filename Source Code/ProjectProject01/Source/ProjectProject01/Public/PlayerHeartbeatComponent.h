@@ -9,6 +9,25 @@
 class AMannequinAICharacter;
 class APawn;
 
+// 각 마네킹의 인지, 노출, 재발견 상태를 보관한다.
+struct FHeartbeatMannequinState
+{
+	// 플레이어가 이 마네킹을 한 번이라도 직접 확인했는지 나타낸다.
+	bool bHasEverBeenRecognized = false;
+	// 현재 플레이어 시야 안에서 장애물 없이 보이는지 나타낸다.
+	bool bCurrentlyVisible = false;
+	// 다시 발견했을 때 BPM 상승을 발생시킬 수 있는 상태다.
+	bool bSurpriseArmed = true;
+	// 현재 거리 기반 심박 계산에 반영되는지 나타낸다.
+	bool bActiveForHeartbeat = false;
+	// 마지막으로 시야에서 사라진 시간이다.
+	double HiddenStartTime = 0.0;
+	// 마지막으로 유지 범위 조건을 만족한 시간이다.
+	double LastRetentionTime = 0.0;
+	// 마지막으로 갑작스러운 BPM 상승이 발생한 시간이다.
+	double LastSurpriseTime = -1.0e30;
+};
+
 // 로컬 플레이어가 직접 인지한 마네킹을 기준으로 심박 BPM을 계산한다.
 UCLASS(ClassGroup=(Player), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UPlayerHeartbeatComponent : public UActorComponent
@@ -24,11 +43,11 @@ public:
 
 	// 이번 플레이에서 한 번이라도 직접 본 마네킹 수다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
-	int32 GetKnownMannequinCount() const { return KnownMannequins.Num(); }
+	int32 GetKnownMannequinCount() const;
 
 	// 현재 심박 계산에 반영되는 인지 완료 마네킹 수다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
-	int32 GetActiveMannequinCount() const { return ActiveMannequins.Num(); }
+	int32 GetActiveMannequinCount() const;
 
 	// 현재 심박 로그가 재생 중인지 반환한다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
@@ -69,8 +88,8 @@ private:
 	float CalculateDistanceAlpha(float Distance) const;
 	// 현재 거리를 MinBPM~MaxDistanceBPM 범위로 변환한다.
 	float CalculateDistanceBPM(float Distance) const;
-	// 처음 본 거리에 따른 일시적인 놀람 BPM을 등록한다.
-	void RegisterFirstEncounter(AMannequinAICharacter& Mannequin, float Distance, double CurrentTime);
+	// 최초 발견 또는 재발견에 따른 일시적인 BPM 상승을 발생시킨다.
+	void TriggerSurpriseBPM(AMannequinAICharacter& Mannequin, float Distance, bool bFirstEncounter);
 
 	// 거리 기반 심박의 최소·최대값과 최초 조우 상한이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|BPM",
@@ -123,6 +142,16 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
 	float LostSightGraceSeconds = 1.5f;
+	
+	// 이 시간 이상 연속으로 보이지 않아야 재발견 BPM이 준비된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
+	float SurpriseRearmDelay = 0.75f;
+	
+	// 마지막 BPM 상승 이후 재발견 상승을 막는 최소 시간이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
+	float SurpriseCooldown = 3.0f;
 
 	// 시야 판정 주기다. 낮을수록 즉각적이지만 검사량이 늘어난다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
@@ -160,10 +189,10 @@ private:
 		meta=(AllowPrivateAccess="true"))
 	bool bHeartbeatActive = false;
 
-	// 전체 마네킹, 최초 인지 대상, 현재 활성 대상을 각각 구분해 보관한다.
+	// 전체 마네킹, 최초 인지 대상, 현재 활성 대상을 구분해 보관한다.
 	TArray<TWeakObjectPtr<AMannequinAICharacter>> CachedMannequins;
-	TSet<TWeakObjectPtr<AMannequinAICharacter>> KnownMannequins;
-	TMap<TWeakObjectPtr<AMannequinAICharacter>, double> ActiveMannequins;
+	// 마네킹별 인지, 노출, 재발견 상태를 하나의 Map에서 관리한다.
+	TMap<TWeakObjectPtr<AMannequinAICharacter>, FHeartbeatMannequinState> MannequinStates;
 
 	// 매 프레임 계산 대신 설정된 주기로 처리하기 위한 시간 누적값이다.
 	float BeatAccumulator = 0.0f;
