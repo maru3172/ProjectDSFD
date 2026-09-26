@@ -12,6 +12,7 @@ class UInputMappingContext;
 class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
 struct FMannequinAITuningRow;
+class UPlayerHeartbeatComponent;
 
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
@@ -157,6 +158,10 @@ private:
 	bool bGameOver = false;
 	
 	FVector LastAIMovementDirection = FVector::ZeroVector;
+	
+	// 플레이어 심박수 관련 변수
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UPlayerHeartbeatComponent> HeartbeatComponent;
 
 	// =========================================================================================================================
 	// 카메라 B 키 디버깅 관련

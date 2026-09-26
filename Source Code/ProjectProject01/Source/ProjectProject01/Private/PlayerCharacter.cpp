@@ -23,6 +23,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "SceneView.h"
 #include "SceneViewExtension.h"
+#include "PlayerHeartbeatComponent.h"
 
 
 // =========================================================================================================================
@@ -96,6 +97,9 @@ APlayerCharacter::APlayerCharacter()
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm);
+	
+	// 플레이어 심박수 관련 컴포넌트 연결
+	HeartbeatComponent = CreateDefaultSubobject<UPlayerHeartbeatComponent>(TEXT("Heartbeat Component"));
 
 	// 카메라 B 키 디버깅 관련
 	static ConstructorHelpers::FObjectFinder<UInputAction> DebugCameraAction(
