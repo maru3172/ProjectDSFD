@@ -2,7 +2,7 @@ Field,Value,Note
 ,,
 HelperWalkSpeed,600,파트너의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 600은 UE 5.8.2 `UCharacterMovementComponent`의 기본 걷기 속도다.
 FollowDistance,500,조력자가 플레이어 뒤에서 목표로 삼는 거리
-MinimumFollowSeparation,5000,플레이어에게 절대 가까워지지 않는 최소 거리
+MinimumFollowSeparation,500,플레이어에게 절대 가까워지지 않는 최소 거리
 ,,
 GuardSightRadius,1500,파트너가 마네킹을 감시할 수 있는 최대 거리다. 단위는 cm이다. 거리를 넘으면 각도와 장애물 조건을 만족해도 감지하지 않는다.
 GuardHalfAngleDegrees,60,파트너가 실제로 마네킹을 감시하는 부채꼴의 한쪽 각도다. 단위는 도이며 기본값 60은 총 120도다. 실제 시야의 중심과 양 끝은 `GuardSearchHalfAngleDegrees` 커버 범위를 절대 넘지 않도록 런타임에서 제한된다.
