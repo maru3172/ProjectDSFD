@@ -551,6 +551,50 @@ void APlayerCharacter::DrawAIRangeDebug()
 
 		PreviousArcPoint = CurrentArcPoint;
 	}
+
+	// 심박 컴포넌트의 실제 발견 거리와 각도를 노란색 부채꼴로 표시한다.
+	if (IsValid(HeartbeatComponent))
+	{
+		AController* PlayerController = GetController();
+		if (!IsValid(PlayerController))
+		{
+			return;
+		}
+
+		FVector ViewLocation;
+		FRotator ViewRotation;
+		PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+		FVector HeartbeatDirection = ViewRotation.Vector();
+		HeartbeatDirection.Z = 0.0f;
+		HeartbeatDirection.Normalize();
+		if (HeartbeatDirection.IsNearlyZero())
+		{
+			return;
+		}
+
+		const float HeartbeatRadius = HeartbeatComponent->GetHeartbeatRange();
+		const float HeartbeatHalfAngle = HeartbeatComponent->GetRecognitionHalfAngleDegrees();
+		const FVector HeartbeatLeft = HeartbeatDirection.RotateAngleAxis(-HeartbeatHalfAngle, FVector::UpVector);
+		const FVector HeartbeatRight = HeartbeatDirection.RotateAngleAxis(HeartbeatHalfAngle, FVector::UpVector);
+		const FColor HeartbeatColor = FColor::Yellow;
+
+		DrawDebugLine(GetWorld(), CircleCenter, CircleCenter + HeartbeatLeft * HeartbeatRadius,
+			HeartbeatColor, false, 0.0f, 0, LineThickness);
+		DrawDebugLine(GetWorld(), CircleCenter, CircleCenter + HeartbeatRight * HeartbeatRadius,
+			HeartbeatColor, false, 0.0f, 0, LineThickness);
+
+		FVector PreviousHeartbeatPoint = CircleCenter + HeartbeatLeft * HeartbeatRadius;
+		for (int32 SegmentIndex = 1; SegmentIndex <= SectorArcSegments; ++SegmentIndex)
+		{
+			const float Alpha = static_cast<float>(SegmentIndex) / static_cast<float>(SectorArcSegments);
+			const float Angle = FMath::Lerp(-HeartbeatHalfAngle, HeartbeatHalfAngle, Alpha);
+			const FVector Direction = HeartbeatDirection.RotateAngleAxis(Angle, FVector::UpVector);
+			const FVector CurrentPoint = CircleCenter + Direction * HeartbeatRadius;
+			DrawDebugLine(GetWorld(), PreviousHeartbeatPoint, CurrentPoint,
+				HeartbeatColor, false, 0.0f, 0, LineThickness);
+			PreviousHeartbeatPoint = CurrentPoint;
+		}
+	}
 }
 
 // =========================================================================================================================
