@@ -58,6 +58,70 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0"))
 	float VisionFovMarginMultiplier = 1.15f;
 
+	/** 심박 대상이 멀리 있을 때 적용되는 최소 BPM입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float MinBPM = 60.0f;
+
+	/** 심박 대상이 플레이어와 매우 가까울 때 적용되는 거리 기반 최대 BPM입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float MaxDistanceBPM = 120.0f;
+
+	/** 최초 발견 및 재발견 상승을 포함한 최종 BPM 상한입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float MaxEncounterBPM = 165.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float MinEncounterBoost = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float MaxEncounterBoost = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float BPMDecayPerSecond = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "cm"))
+	float HeartbeatRange = 1500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "cm"))
+	float RetentionRange = 1800.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "deg"))
+	float RecognitionHalfAngleDegrees = 45.0f;
+
+	/** false면 현재 발견 부채꼴과 거리만으로 심박 활성 여부를 결정합니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat")
+	bool bUseRetentionRules = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "deg"))
+	float RetentionHalfAngleDegrees = 80.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
+	float LostSightGraceSeconds = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
+	float SurpriseRearmDelay = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
+	float SurpriseCooldown = 3.0f;
+
+	/** false면 최초 발견 상승만 허용하고 재발견 상승은 사용하지 않습니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat")
+	bool bEnableRediscovery = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
+	float VisionCheckInterval = 0.05f;
+
+	/** 런타임에 생성·삭제되는 마네킹 목록을 다시 찾는 주기입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
+	float MannequinRefreshInterval = 1.0f;
+
+	/** false면 BPM 계산은 유지하면서 로그만 끕니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat")
+	bool bEnableHeartbeatLog = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
+	float BPMLogThreshold = 1.0f;
+
 	bool IsValidForApplication(FString& OutError) const;
 };
 

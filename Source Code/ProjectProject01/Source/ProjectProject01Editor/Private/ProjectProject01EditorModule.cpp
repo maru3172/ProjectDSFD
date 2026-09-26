@@ -62,7 +62,26 @@ namespace ProjectProject01TuningEditor
 			TEXT("SurvivorVisionCheckIntervalSeconds"),
 			TEXT("SurvivorVisionHalfAngleDegrees"),
 			TEXT("DetectionMargin"),
-			TEXT("VisionFovMarginMultiplier")
+			TEXT("VisionFovMarginMultiplier"),
+			TEXT("MinBPM"),
+			TEXT("MaxDistanceBPM"),
+			TEXT("MaxEncounterBPM"),
+			TEXT("MinEncounterBoost"),
+			TEXT("MaxEncounterBoost"),
+			TEXT("BPMDecayPerSecond"),
+			TEXT("HeartbeatRange"),
+			TEXT("RetentionRange"),
+			TEXT("RecognitionHalfAngleDegrees"),
+			TEXT("bUseRetentionRules"),
+			TEXT("RetentionHalfAngleDegrees"),
+			TEXT("LostSightGraceSeconds"),
+			TEXT("SurpriseRearmDelay"),
+			TEXT("SurpriseCooldown"),
+			TEXT("bEnableRediscovery"),
+			TEXT("VisionCheckInterval"),
+			TEXT("MannequinRefreshInterval"),
+			TEXT("bEnableHeartbeatLog"),
+			TEXT("BPMLogThreshold")
 		};
 		return FieldNames;
 	}

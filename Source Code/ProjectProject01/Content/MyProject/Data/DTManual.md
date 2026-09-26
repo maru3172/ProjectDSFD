@@ -104,3 +104,83 @@ DetectionMargin	마네킹 신체 외곽까지 시야 감지 여유
 
 VisionFovMarginMultiplier	카메라 FOV보다 약간 넓게 “봤다”고 판정하는 보정값
 
+### AITuning: 플레이어 심박수
+
+다음 심박 값은 생존자 플레이어의 로컬 `UPlayerHeartbeatComponent`에 적용된다. 멀티플레이에서는 서버가 검증한 값을 각 생존자의 소유 클라이언트로 전달하므로, 서로 다른 생존자의 심박 판정은 각자 시야를 기준으로 독립적으로 계산된다. CSV 저장 후 `Reimport and Validate Tuning DataTables`를 누르면 실행 중인 PIE에는 즉시 적용되며, 심박의 인지·쿨다운 상태는 새 수치로 다시 계산한다.
+
+`MinBPM`
+
+심박 대상이 멀리 있을 때 적용되는 최소 BPM이다.
+
+`MaxDistanceBPM`
+
+심박 대상이 플레이어와 매우 가까울 때 적용되는 거리 기반 최대 BPM이다.
+
+`MaxEncounterBPM`
+
+최초 발견 및 재발견 상승을 포함한 최종 BPM 상한이다.
+
+`MinEncounterBoost`
+
+먼 거리에서 마네킹을 갑자기 발견했을 때 추가되는 최소 BPM이다.
+
+`MaxEncounterBoost`
+
+가까운 거리에서 마네킹을 갑자기 발견했을 때 추가되는 최대 BPM이다.
+
+`BPMDecayPerSecond`
+
+발견으로 상승한 BPM이 초당 감소하는 양이다.
+
+`HeartbeatRange`
+
+마네킹 거리를 BPM으로 변환하고 최초 발견을 판정하는 기준 거리다. 단위는 cm다.
+
+`RetentionRange`
+
+이미 인지한 마네킹을 거리 기반 심박에 계속 반영할 최대 거리다. `bUseRetentionRules`가 `true`일 때만 유지 규칙에 사용된다. 단위는 cm다.
+
+`RecognitionHalfAngleDegrees`
+
+최초 발견과 재발견을 판정하는 플레이어 시야의 한쪽 각도다. 총 시야각은 값의 두 배다. 단위는 도다.
+
+`bUseRetentionRules`
+
+`true`면 이미 인지한 마네킹에 대해 `RetentionRange`, `RetentionHalfAngleDegrees`, `LostSightGraceSeconds`를 사용하는 유지 규칙을 켠다. `false`면 현재 발견 시야와 `HeartbeatRange`만 사용한다. 값은 반드시 `true` 또는 `false`다.
+
+`RetentionHalfAngleDegrees`
+
+인지한 마네킹의 심박 반응을 유지하는 넓은 범위의 한쪽 각도다. `bUseRetentionRules`가 `true`일 때만 사용한다. 단위는 도다.
+
+`LostSightGraceSeconds`
+
+마네킹이 유지 조건을 벗어난 뒤에도 심박 반응을 유지하는 유예 시간이다. `bUseRetentionRules`가 `true`일 때만 사용한다. 단위는 초다.
+
+`SurpriseRearmDelay`
+
+마네킹이 이 시간 이상 보이지 않아야 재발견 상승이 다시 준비되는 시간이다. `bEnableRediscovery`가 `true`일 때만 사용한다. 단위는 초다.
+
+`SurpriseCooldown`
+
+마지막 발견 상승 이후 다음 발견 상승을 허용하기까지의 최소 대기 시간이다. `bEnableRediscovery`가 `true`일 때만 사용한다. 단위는 초다.
+
+`bEnableRediscovery`
+
+`true`면 최초 발견 이후에도 재발견 BPM 상승을 허용한다. `false`면 최초 발견 상승만 허용한다. 값은 반드시 `true` 또는 `false`다.
+
+`VisionCheckInterval`
+
+플레이어 시야와 마네킹 노출 여부를 다시 검사하는 주기다. 낮을수록 반응은 빨라지지만 각 클라이언트의 시야 추적 비용이 늘어난다. 단위는 초다.
+
+`MannequinRefreshInterval`
+
+월드에 생성되거나 파괴된 마네킹 목록을 다시 찾는 주기다. 단위는 초다.
+
+`bEnableHeartbeatLog`
+
+`false`면 BPM 계산은 유지하면서 `LogTemp`의 심박 로그만 끈다. 값은 반드시 `true` 또는 `false`다.
+
+`BPMLogThreshold`
+
+직전 로그 출력 BPM과의 차이가 이 값 이상일 때만 상태 로그를 새로 출력한다. 단위는 BPM이다.
+

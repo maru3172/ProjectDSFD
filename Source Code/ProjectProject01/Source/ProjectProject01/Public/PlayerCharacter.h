@@ -5,13 +5,13 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "InputActionValue.h"
+#include "ProjectProject01TuningData.h"
 #include "PlayerCharacter.generated.h"
 
 class UInputAction;
 class UInputMappingContext;
 class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
-struct FMannequinAITuningRow;
 class UPlayerHeartbeatComponent;
 
 UCLASS()
@@ -64,6 +64,7 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+	virtual void PossessedBy(AController* NewController) override;
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -76,6 +77,10 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
+	/** 서버가 DataTable 값을 바꾼 뒤 소유 클라이언트의 로컬 심박 계산에도 같은 값을 적용합니다. */
+	UFUNCTION(Client, Reliable)
+	void ClientApplyHeartbeatTuning(const FMannequinAITuningRow& Tuning);
+
 	UPROPERTY(VisibleAnywhere, Category = "Component")
 	class USpringArmComponent* SpringArm;
 	UPROPERTY(VisibleAnywhere, Category = "Component")

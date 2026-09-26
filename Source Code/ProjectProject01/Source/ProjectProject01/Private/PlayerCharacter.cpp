@@ -179,6 +179,25 @@ void APlayerCharacter::BeginPlay()
     }
 }
 
+void APlayerCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !IsValid(World))
+	{
+		return;
+	}
+
+	UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>();
+	FMannequinAITuningRow Tuning;
+	if (IsValid(TuningSubsystem) && TuningSubsystem->GetMannequinTuning(Tuning))
+	{
+		// PossessedBy 이후에는 소유 클라이언트 RPC가 올바른 연결로 전달된다.
+		ApplyMannequinTuning(Tuning);
+	}
+}
+
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
@@ -348,10 +367,29 @@ void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 	DirectChaseSectorRadius = FMath::Max(0.0f, Tuning.DirectChaseSectorRadius);
 	ApplyPlayerWalkSpeed();
 
+	if (ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent."), *GetName()))
+	{
+		HeartbeatComponent->ApplyHeartbeatTuning(Tuning);
+	}
+
 	if (HasAuthority())
 	{
 		ForceNetUpdate();
+		if (!IsLocallyControlled())
+		{
+			ClientApplyHeartbeatTuning(Tuning);
+		}
 	}
+}
+
+void APlayerCharacter::ClientApplyHeartbeatTuning_Implementation(const FMannequinAITuningRow& Tuning)
+{
+	if (!ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent for client tuning."), *GetName()))
+	{
+		return;
+	}
+
+	HeartbeatComponent->ApplyHeartbeatTuning(Tuning);
 }
 
 void APlayerCharacter::ApplyPlayerWalkSpeed()

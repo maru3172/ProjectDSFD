@@ -37,6 +37,10 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	FlexibleMannequinRow.PostPossessionCommandDurationSeconds = -1.0f;
 	TestFalse(TEXT("Negative post-possession command duration is rejected"), FlexibleMannequinRow.IsValidForApplication(Error));
 
+	FlexibleMannequinRow = ValidMannequinRow;
+	FlexibleMannequinRow.HeartbeatRange = -1.0f;
+	TestFalse(TEXT("Negative heartbeat range is rejected"), FlexibleMannequinRow.IsValidForApplication(Error));
+
 	FHelperTuningRow ValidHelperRow;
 	TestTrue(TEXT("Default helper tuning is accepted"), ValidHelperRow.IsValidForApplication(Error));
 
@@ -71,11 +75,25 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(DirectChaseHalfAngleDegrees) || !FMath::IsFinite(DirectChaseSectorRadius) ||
 		!FMath::IsFinite(MannequinGatherRadius) || !FMath::IsFinite(SurvivorVisionCheckIntervalSeconds) ||
 		!FMath::IsFinite(SurvivorVisionHalfAngleDegrees) || !FMath::IsFinite(DetectionMargin) ||
-		!FMath::IsFinite(VisionFovMarginMultiplier) || PlayerWalkSpeed < 0.0f || MannequinWalkSpeed < 0.0f ||
+		!FMath::IsFinite(VisionFovMarginMultiplier) || !FMath::IsFinite(MinBPM) ||
+		!FMath::IsFinite(MaxDistanceBPM) || !FMath::IsFinite(MaxEncounterBPM) ||
+		!FMath::IsFinite(MinEncounterBoost) || !FMath::IsFinite(MaxEncounterBoost) ||
+		!FMath::IsFinite(BPMDecayPerSecond) || !FMath::IsFinite(HeartbeatRange) ||
+		!FMath::IsFinite(RetentionRange) || !FMath::IsFinite(RecognitionHalfAngleDegrees) ||
+		!FMath::IsFinite(RetentionHalfAngleDegrees) || !FMath::IsFinite(LostSightGraceSeconds) ||
+		!FMath::IsFinite(SurpriseRearmDelay) || !FMath::IsFinite(SurpriseCooldown) ||
+		!FMath::IsFinite(VisionCheckInterval) || !FMath::IsFinite(MannequinRefreshInterval) ||
+		!FMath::IsFinite(BPMLogThreshold) || PlayerWalkSpeed < 0.0f || MannequinWalkSpeed < 0.0f ||
 		DirectChaseRadius < 0.0f || PostPossessionCommandDurationSeconds < 0.0f ||
 		RoamingOuterRadius < 0.0f || MannequinGatherRadius < 0.0f || RequiredMannequinCount < 0 ||
 		DirectChaseHalfAngleDegrees < 0.0f || DirectChaseSectorRadius < 0.0f || SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
-		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f)
+		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f || MinBPM < 0.0f ||
+		MaxDistanceBPM < 0.0f || MaxEncounterBPM < 0.0f || MinEncounterBoost < 0.0f ||
+		MaxEncounterBoost < 0.0f || BPMDecayPerSecond < 0.0f || HeartbeatRange < 0.0f ||
+		RetentionRange < 0.0f || RecognitionHalfAngleDegrees < 0.0f ||
+		RetentionHalfAngleDegrees < 0.0f || LostSightGraceSeconds < 0.0f ||
+		SurpriseRearmDelay < 0.0f || SurpriseCooldown < 0.0f ||
+		VisionCheckInterval < 0.0f || MannequinRefreshInterval < 0.0f || BPMLogThreshold < 0.0f)
 	{
 		OutError = TEXT("DT_AITuning Default row must contain finite, non-negative numeric values.");
 		return false;

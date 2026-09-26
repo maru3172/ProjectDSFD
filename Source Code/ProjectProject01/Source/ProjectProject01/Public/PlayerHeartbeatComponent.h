@@ -8,6 +8,7 @@
 
 class AMannequinAICharacter;
 class APawn;
+struct FMannequinAITuningRow;
 
 // 각 마네킹의 인지, 노출, 재발견 상태를 보관한다.
 struct FHeartbeatMannequinState
@@ -67,6 +68,9 @@ public:
 	// 최초 인지 기록과 현재 심박 상태를 모두 초기화한다.
 	UFUNCTION(BlueprintCallable, Category="Heartbeat|Runtime")
 	void ResetHeartbeatState();
+
+	/** 서버가 검증한 DataTable의 심박 설정을 로컬 생존자에게 적용합니다. */
+	void ApplyHeartbeatTuning(const FMannequinAITuningRow& Tuning);
 
 protected:
 	virtual void BeginPlay() override;

@@ -9,10 +9,48 @@
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
+#include "ProjectProject01TuningData.h"
 
 UPlayerHeartbeatComponent::UPlayerHeartbeatComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+}
+
+void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FMannequinAITuningRow& Tuning)
+{
+	FString ValidationError;
+	if (!Tuning.IsValidForApplication(ValidationError))
+	{
+		UE_LOG(LogProjectProject01Tuning, Error,
+			TEXT("Heartbeat tuning was rejected for %s: %s"), *GetNameSafe(GetOwner()), *ValidationError);
+		return;
+	}
+
+	MinBPM = FMath::Max(0.0f, Tuning.MinBPM);
+	MaxDistanceBPM = FMath::Max(0.0f, Tuning.MaxDistanceBPM);
+	MaxEncounterBPM = FMath::Max(0.0f, Tuning.MaxEncounterBPM);
+	MinEncounterBoost = FMath::Max(0.0f, Tuning.MinEncounterBoost);
+	MaxEncounterBoost = FMath::Max(0.0f, Tuning.MaxEncounterBoost);
+	BPMDecayPerSecond = FMath::Max(0.0f, Tuning.BPMDecayPerSecond);
+	HeartbeatRange = FMath::Max(0.0f, Tuning.HeartbeatRange);
+	RetentionRange = FMath::Max(0.0f, Tuning.RetentionRange);
+	RecognitionHalfAngleDegrees = FMath::Max(0.0f, Tuning.RecognitionHalfAngleDegrees);
+	bUseRetentionRules = Tuning.bUseRetentionRules;
+	RetentionHalfAngleDegrees = FMath::Max(0.0f, Tuning.RetentionHalfAngleDegrees);
+	LostSightGraceSeconds = FMath::Max(0.0f, Tuning.LostSightGraceSeconds);
+	SurpriseRearmDelay = FMath::Max(0.0f, Tuning.SurpriseRearmDelay);
+	SurpriseCooldown = FMath::Max(0.0f, Tuning.SurpriseCooldown);
+	bEnableRediscovery = Tuning.bEnableRediscovery;
+	VisionCheckInterval = FMath::Max(0.0f, Tuning.VisionCheckInterval);
+	MannequinRefreshInterval = FMath::Max(0.0f, Tuning.MannequinRefreshInterval);
+	bEnableHeartbeatLog = Tuning.bEnableHeartbeatLog;
+	BPMLogThreshold = FMath::Max(0.0f, Tuning.BPMLogThreshold);
+
+	// 재임포트 직후에는 이전 임시 인지·쿨다운 상태를 섞지 않고 새 값으로 다시 계산한다.
+	ResetHeartbeatState();
+	RefreshMannequinCache();
+	UE_LOG(LogProjectProject01Tuning, Log,
+		TEXT("Heartbeat tuning applied to %s."), *GetNameSafe(GetOwner()));
 }
 
 void UPlayerHeartbeatComponent::BeginPlay()
