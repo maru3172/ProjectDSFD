@@ -1,6 +1,6 @@
 Field,Value,Note
 ,,
-PlayerWalkSpeed,600,생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
+PlayerWalkSpeed,1200,생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
 ,,
 MinBPM,60,심박 대상이 멀리 있을 때 적용되는 최소 BPM이다.
 MaxDistanceBPM,120,심박 대상이 플레이어와 매우 가까울 때 적용되는 거리 기반 최대 BPM이다.
