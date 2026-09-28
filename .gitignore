@@ -67,6 +67,10 @@
 *.slo
 *.so
 
+# ProjectProject01 diagnostics dashboard (.NET generated output)
+/Source Code/ProjectProject01/Tools/ProjectProject01DiagnosticsDashboard/bin/
+/Source Code/ProjectProject01/Tools/ProjectProject01DiagnosticsDashboard/obj/
+
 # Generated map build data
 *_BuiltData.uasset
 
