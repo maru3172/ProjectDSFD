@@ -21,6 +21,8 @@
 
 #define LOCTEXT_NAMESPACE "ProjectProject01Editor"
 
+void RegisterProjectProject01DiagnosticsMenus();
+
 namespace ProjectProject01TuningEditor
 {
 	const TCHAR* const DataDirectory = TEXT("/Game/MyProject/Data");
@@ -344,6 +346,8 @@ private:
 			LOCTEXT("ApplyPieTuningTooltip", "Apply the validated DataTables to the server/standalone PIE world."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateRaw(this, &FProjectProject01EditorModule::ApplyToPie)));
+
+		RegisterProjectProject01DiagnosticsMenus();
 	}
 
 	void ReimportAndValidate()

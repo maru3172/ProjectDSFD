@@ -4,6 +4,8 @@
 #include "HelperRearGuardAIController.h"
 
 #include "HelperRearGuardCharacter.h"
+#include "Navigation/PathFollowingComponent.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
 #include "ProjectProject01TuningData.h"
 
 AHelperRearGuardAIController::AHelperRearGuardAIController()
@@ -21,11 +23,32 @@ void AHelperRearGuardAIController::ApplyHelperNavigationTuning(const FHelperTuni
 	ProgressDistance = FMath::Max(0.0f, Tuning.ProgressDistance);
 }
 
+bool AHelperRearGuardAIController::GetDiagnosticMoveState(FVector& OutTarget, bool& bOutHasTarget, bool& bOutWaitingForRepath) const
+{
+	OutTarget = LastMoveTarget;
+	bOutHasTarget = bHasMoveTarget;
+	bOutWaitingForRepath = bWaitingForRepath;
+	return ControlledHelper.IsValid();
+}
+
+void AHelperRearGuardAIController::GetDiagnosticNavigationTuning(float& OutRepathInterval, float& OutRepathDistance,
+	float& OutAcceptanceRadius, float& OutStuckTimeout, float& OutStuckWaitTime, float& OutProgressDistance) const
+{
+	OutRepathInterval = RepathInterval;
+	OutRepathDistance = RepathDistance;
+	OutAcceptanceRadius = AcceptanceRadius;
+	OutStuckTimeout = StuckTimeout;
+	OutStuckWaitTime = StuckWaitTime;
+	OutProgressDistance = ProgressDistance;
+}
+
 void AHelperRearGuardAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
 	ControlledHelper = Cast<AHelperRearGuardCharacter>(InPawn);
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+		TEXT("HelperAIControllerPossess"), FString::Printf(TEXT("Controller=%s Pawn=%s"), *GetName(), *GetNameSafe(InPawn)), InPawn);
 	TimeSinceLastPathRequest = RepathInterval;
 	bHasMoveTarget = false;
 	bWaitingForRepath = false;
@@ -47,6 +70,7 @@ void AHelperRearGuardAIController::OnPossess(APawn* InPawn)
 void AHelperRearGuardAIController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	FProjectProject01DiagnosticWorkScope DiagnosticWork(GetWorld());
 
 	if (!ControlledHelper.IsValid())
 	{
@@ -116,7 +140,13 @@ void AHelperRearGuardAIController::Tick(float DeltaSeconds)
 		FMath::Max(AcceptanceRadius, 0.0f),
 		ControlledHelper->GetMaximumFollowAcceptanceRadius()
 	);
-	MoveToLocation(FollowTarget, EffectiveAcceptanceRadius, true, true, true, true);
+	const EPathFollowingRequestResult::Type RequestResult = MoveToLocation(FollowTarget, EffectiveAcceptanceRadius, true, true, true, true);
+	const EProjectProject01DiagnosticSeverity Severity = RequestResult == EPathFollowingRequestResult::Failed
+		? EProjectProject01DiagnosticSeverity::Risk
+		: EProjectProject01DiagnosticSeverity::Normal;
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(World, Severity, TEXT("HelperPathRequest"), FString::Printf(
+		TEXT("Result=%d Target=(%.1f,%.1f,%.1f) AcceptanceRadius=%.1f"), static_cast<int32>(RequestResult),
+		FollowTarget.X, FollowTarget.Y, FollowTarget.Z, EffectiveAcceptanceRadius), ControlledHelper.Get());
 
 	LastMoveTarget = FollowTarget;
 	LastProgressLocation = CurrentLocation;

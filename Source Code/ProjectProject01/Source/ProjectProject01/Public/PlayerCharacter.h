@@ -63,6 +63,7 @@ public:
 
 	/** 파트너 후방 이격 경로가 플레이어를 밀어낼 때 서버가 한 번만 호출합니다. 게임 오버는 발생시키지 않습니다. */
 	bool HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper);
+	void GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTuning) const;
 
 protected:
 	// Called when the game starts or when spawned

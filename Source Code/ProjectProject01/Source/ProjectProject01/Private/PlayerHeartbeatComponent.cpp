@@ -10,6 +10,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
 
 UPlayerHeartbeatComponent::UPlayerHeartbeatComponent()
 {
@@ -51,6 +52,19 @@ void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tun
 	RefreshMannequinCache();
 	UE_LOG(LogProjectProject01Tuning, Log,
 		TEXT("Heartbeat tuning applied to %s."), *GetNameSafe(GetOwner()));
+}
+
+void UPlayerHeartbeatComponent::GetDiagnosticAppliedTuning(FPlayerTuningRow& OutTuning) const
+{
+	OutTuning.MinBPM = MinBPM; OutTuning.MaxDistanceBPM = MaxDistanceBPM; OutTuning.MaxEncounterBPM = MaxEncounterBPM;
+	OutTuning.MinEncounterBoost = MinEncounterBoost; OutTuning.MaxEncounterBoost = MaxEncounterBoost;
+	OutTuning.BPMDecayPerSecond = BPMDecayPerSecond; OutTuning.HeartbeatRange = HeartbeatRange;
+	OutTuning.RetentionRange = RetentionRange; OutTuning.RecognitionHalfAngleDegrees = RecognitionHalfAngleDegrees;
+	OutTuning.bUseRetentionRules = bUseRetentionRules; OutTuning.RetentionHalfAngleDegrees = RetentionHalfAngleDegrees;
+	OutTuning.LostSightGraceSeconds = LostSightGraceSeconds; OutTuning.SurpriseRearmDelay = SurpriseRearmDelay;
+	OutTuning.SurpriseCooldown = SurpriseCooldown; OutTuning.bEnableRediscovery = bEnableRediscovery;
+	OutTuning.VisionCheckInterval = VisionCheckInterval; OutTuning.MannequinRefreshInterval = MannequinRefreshInterval;
+	OutTuning.bEnableHeartbeatLog = bEnableHeartbeatLog; OutTuning.BPMLogThreshold = BPMLogThreshold;
 }
 
 void UPlayerHeartbeatComponent::BeginPlay()
@@ -163,6 +177,8 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 	{
 		return;
 	}
+	FProjectProject01DiagnosticWorkScope DiagnosticWork(World);
+	DiagnosticWork.AddVisionCheck(CachedMannequins.Num());
 
 	FVector ViewLocation;
 	FVector ViewForward;
@@ -449,6 +465,10 @@ bool UPlayerHeartbeatComponent::IsMannequinActuallyVisible(
 			continue;
 		}
 		FHitResult HitResult;
+		if (UProjectProject01DiagnosticsSubsystem::IsCaptureActiveForWorld(World))
+		{
+			UProjectProject01DiagnosticsSubsystem::AddWorkMetrics(World, 0.0, 0, 1);
+		}
 		if (World->LineTraceSingleByChannel(HitResult, ViewLocation, TestPoint,
 			ECC_GameTraceChannel1, QueryParams) && HitResult.GetActor() == &Mannequin)
 		{
@@ -482,6 +502,10 @@ bool UPlayerHeartbeatComponent::HasClearLineOfSight(
 	}
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PlayerHeartbeatRetention), true, &OwnerPawn);
 	FHitResult HitResult;
+	if (UProjectProject01DiagnosticsSubsystem::IsCaptureActiveForWorld(World))
+	{
+		UProjectProject01DiagnosticsSubsystem::AddWorkMetrics(World, 0.0, 0, 1);
+	}
 	return World->LineTraceSingleByChannel(HitResult, ViewLocation, Mannequin.GetActorLocation(),
 		ECC_GameTraceChannel1, QueryParams) && HitResult.GetActor() == &Mannequin;
 }

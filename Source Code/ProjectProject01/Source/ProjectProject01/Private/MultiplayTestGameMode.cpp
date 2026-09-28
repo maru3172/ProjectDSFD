@@ -8,6 +8,7 @@
 #include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -218,11 +219,17 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 		PreviousManuallyControlledMannequin->SetManualControlEnabled(false);
 		PreviousManuallyControlledMannequin->ActivatePostPossessionCommand();
 		RequestingController->UnPossess();
+		UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+			TEXT("MannequinPlayerUnPossess"), FString::Printf(TEXT("Controller=%s; NextSlot=%d; Command=%s"),
+				*GetNameSafe(RequestingController), Slot, *PreviousManuallyControlledMannequin->GetDiagnosticCommandState(GetWorld()->GetTimeSeconds())),
+			PreviousManuallyControlledMannequin);
 		QueueDefaultAIControllerRestore(PreviousManuallyControlledMannequin);
 	}
 
 	// 번호키 단계에서는 AIController를 유지하고, 플레이어는 시점만 공유한다.
 	RequestingController->SetViewedMannequin(TargetMannequin);
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+		TEXT("MannequinViewSelectionChanged"), FString::Printf(TEXT("Controller=%s; Slot=%d"), *GetNameSafe(RequestingController), Slot), TargetMannequin);
 	TargetMannequin->ForceNetUpdate();
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("%s now views mannequin slot %d (%s) while its AI remains active."),
@@ -275,6 +282,8 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 	}
 
 	TargetMannequin->SetManualControlEnabled(true);
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+		TEXT("MannequinPlayerPossess"), FString::Printf(TEXT("Controller=%s; Slot=%d"), *GetNameSafe(RequestingController), TargetMannequin->GetControlSlot()), TargetMannequin);
 	TargetMannequin->ForceNetUpdate();
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("%s enabled manual control of mannequin %s."),
@@ -298,7 +307,10 @@ bool AMultiplayTestGameMode::TryQueuePostPossessionChaseCommand(AMultiplayTestPl
 		return false;
 	}
 
-	return ManuallyControlledMannequin->QueuePostPossessionChaseCommand();
+	const bool bQueued = ManuallyControlledMannequin->QueuePostPossessionChaseCommand();
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), bQueued ? EProjectProject01DiagnosticSeverity::Normal : EProjectProject01DiagnosticSeverity::Warning,
+		TEXT("MannequinCommandQueued"), FString::Printf(TEXT("Controller=%s; Queued=%s"), *GetNameSafe(RequestingController), bQueued ? TEXT("true") : TEXT("false")), ManuallyControlledMannequin);
+	return bQueued;
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const
@@ -337,6 +349,8 @@ void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharact
 		}
 
 		RestoredMannequin->ForceNetUpdate();
+		UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(RestoredMannequin->GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+			TEXT("MannequinAIControlRestored"), FString::Printf(TEXT("Controller=%s"), *GetNameSafe(RestoredAIController)), RestoredMannequin);
 		UE_LOG(LogProjectProject01Multiplayer, Verbose,
 			TEXT("Restored AI control for mannequin %s after player control transfer."),
 			*GetNameSafe(RestoredMannequin));
@@ -392,6 +406,8 @@ bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
 	const APlayerController* SurvivorController,
 	const AMannequinAICharacter* Mannequin) const
 {
+	FProjectProject01DiagnosticWorkScope DiagnosticScope(GetWorld());
+	DiagnosticScope.AddVisionCheck();
 	if (!IsValid(SurvivorController) || !IsValid(Mannequin) || !IsValid(GetWorld()))
 	{
 		return false;
@@ -434,6 +450,7 @@ bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
 		}
 
 		FHitResult HitResult;
+		DiagnosticScope.AddLineTrace();
 		const bool bReachedMannequin = GetWorld()->LineTraceSingleByChannel(
 			HitResult, ViewLocation, TargetPoint, ECC_GameTraceChannel1, TraceParameters) && HitResult.GetActor() == Mannequin;
 		if (bReachedMannequin)

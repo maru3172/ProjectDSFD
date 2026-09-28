@@ -50,6 +50,8 @@ public:
 
 	/** 지정한 플레이어를 실제로 따르는 조력자인지 반환합니다. */
 	bool IsGuardingPlayer(const APawn* PlayerPawn) const;
+	void GetDiagnosticAppliedTuning(struct FHelperTuningRow& OutTuning) const;
+	bool IsDiagnosticRetreatLocked() const { return bFollowDistanceLocked; }
 
 protected:
 	/** 최소 50m 이격을 위한 목표 수평 거리(cm)입니다. 50cm 도착 허용 여유를 포함합니다. */

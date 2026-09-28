@@ -68,6 +68,8 @@ public:
 
 	bool ShouldHoldPostPossessionCommand(double ServerTimeSeconds) const;
 	bool ShouldChasePostPossessionCommand(double ServerTimeSeconds) const;
+	FString GetDiagnosticCommandState(double ServerTimeSeconds) const;
+	void GetDiagnosticAppliedTuning(struct FMannequinAITuningRow& OutTuning) const;
 
 private:
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",

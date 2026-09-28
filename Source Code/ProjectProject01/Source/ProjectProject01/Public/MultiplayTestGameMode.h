@@ -25,6 +25,11 @@ public:
 
 	/** 서버가 DataTable의 검증된 생존자 시야 수치를 적용한다. */
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
+	void GetDiagnosticSurvivorVisionTuning(float& OutIntervalSeconds, float& OutHalfAngleDegrees) const
+	{
+		OutIntervalSeconds = SurvivorVisionCheckIntervalSeconds;
+		OutHalfAngleDegrees = SurvivorVisionHalfAngleDegrees;
+	}
 
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
 	bool TryEnableMannequinManualControl(class AMultiplayTestPlayerController* RequestingController);

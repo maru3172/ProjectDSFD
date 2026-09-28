@@ -15,6 +15,7 @@
 
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
 #include "NavigationSystem.h"
 #include "NavigationData.h"
 
@@ -149,6 +150,8 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
 void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
+	FProjectProject01DiagnosticWorkScope DiagnosticWork(GetWorld());
+	DiagnosticWork.AddVisionCheck();
 
 	FMannequinAITuningRow ActiveTuning;
 	const UProjectProject01TuningSubsystem* TuningSubsystem = IsValid(GetWorld())
@@ -333,6 +336,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
             }
         }
 
+        DiagnosticWork.AddLineTrace();
         const bool bHit = GetWorld()->LineTraceSingleByChannel(
             HitResult, CameraLocation, Point, ECC_GameTraceChannel1, QueryParams);
         if (bHit && HitResult.GetActor() == MannequinPawn)
@@ -405,6 +409,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 
             FHitResult GuardHit;
             // 가상 검사점에는 충돌체가 없으므로 가로막는 물체가 없는지 확인한다.
+            DiagnosticWork.AddLineTrace();
             const bool bGuardBlocked = GetWorld()->LineTraceSingleByChannel(
                 GuardHit, CameraLocation, GuardPoint, ECC_GameTraceChannel1, GuardQueryParams);
             if (!bGuardBlocked)
@@ -534,6 +539,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     }
 
     // Mannequin 에서 플레이어까지 Line Trace를 수행한다.
+    DiagnosticWork.AddLineTrace();
     bool bHit = GetWorld()->LineTraceSingleByChannel(
         HitResult,
         MannequinLocation,

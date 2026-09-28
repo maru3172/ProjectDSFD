@@ -14,6 +14,7 @@
 #include "NavigationSystem.h"
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -132,6 +133,24 @@ void AHelperRearGuardCharacter::ApplyHelperTuning(const FHelperTuningRow& Tuning
 	}
 }
 
+void AHelperRearGuardCharacter::GetDiagnosticAppliedTuning(FHelperTuningRow& OutTuning) const
+{
+	OutTuning.HelperWalkSpeed = IsValid(GetCharacterMovement()) ? GetCharacterMovement()->MaxWalkSpeed : 0.0f;
+	OutTuning.FollowDistance = FollowDistance;
+	OutTuning.MinimumFollowSeparation = MinimumFollowSeparation;
+	OutTuning.GuardSightRadius = GuardSightRadius;
+	OutTuning.GuardHalfAngleDegrees = GuardHalfAngleDegrees;
+	OutTuning.GuardSearchHalfAngleDegrees = GuardSearchHalfAngleDegrees;
+	OutTuning.VisionDirectionChangeWindowSeconds = VisionDirectionChangeWindowSeconds;
+	OutTuning.VisionDirectionChangeRequiredCount = VisionDirectionChangeRequiredCount;
+	OutTuning.VisionDirectionChangeThresholdDegrees = VisionDirectionChangeThresholdDegrees;
+	if (const AHelperRearGuardAIController* HelperController = Cast<AHelperRearGuardAIController>(GetController()))
+	{
+		HelperController->GetDiagnosticNavigationTuning(OutTuning.RepathInterval, OutTuning.RepathDistance,
+			OutTuning.AcceptanceRadius, OutTuning.StuckTimeout, OutTuning.StuckWaitTime, OutTuning.ProgressDistance);
+	}
+}
+
 void AHelperRearGuardCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -154,6 +173,8 @@ void AHelperRearGuardCharacter::Tick(float DeltaTime)
 
 bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 {
+	FProjectProject01DiagnosticWorkScope DiagnosticWork(GetWorld());
+	DiagnosticWork.AddVisionCheck();
 	if (!IsValid(TargetActor) || !GuardedPlayer.IsValid() || GuardSightRadius <= 0.0f)
 	{
 		return false;
@@ -203,6 +224,7 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 	}
 
 	FHitResult HitResult;
+	DiagnosticWork.AddLineTrace();
 	const bool bHit = World->LineTraceSingleByChannel(
 		HitResult,
 		ViewOrigin,

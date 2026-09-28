@@ -403,6 +403,12 @@ void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
 	}
 }
 
+void APlayerCharacter::GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTuning) const
+{
+	OutTuning.PlayerWalkSpeed = IsValid(GetCharacterMovement()) ? GetCharacterMovement()->MaxWalkSpeed : 0.0f;
+	if (IsValid(HeartbeatComponent)) HeartbeatComponent->GetDiagnosticAppliedTuning(OutTuning);
+}
+
 void APlayerCharacter::ClientApplyPlayerTuning_Implementation(const FPlayerTuningRow& Tuning)
 {
 	if (!ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent for client tuning."), *GetName()))

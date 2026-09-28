@@ -248,6 +248,20 @@ bool AMannequinAICharacter::ShouldChasePostPossessionCommand(double ServerTimeSe
 		ActivePostPossessionCommand == EPostPossessionCommand::ChaseNearestSurvivor;
 }
 
+FString AMannequinAICharacter::GetDiagnosticCommandState(const double ServerTimeSeconds) const
+{
+	if (bPostPossessionChaseCommandQueued) return TEXT("QueuedChase");
+	if (ShouldHoldPostPossessionCommand(ServerTimeSeconds)) return TEXT("HoldPosition");
+	if (ShouldChasePostPossessionCommand(ServerTimeSeconds)) return TEXT("ChaseNearestSurvivor");
+	return TEXT("None");
+}
+
+void AMannequinAICharacter::GetDiagnosticAppliedTuning(FMannequinAITuningRow& OutTuning) const
+{
+	OutTuning.MannequinWalkSpeed = IsValid(GetCharacterMovement()) ? GetCharacterMovement()->MaxWalkSpeed : 0.0f;
+	OutTuning.PostPossessionCommandDurationSeconds = PostPossessionCommandDurationSeconds;
+}
+
 void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)
 {
 	if (!HasAuthority())

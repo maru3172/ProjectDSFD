@@ -24,6 +24,9 @@ public:
 
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void Tick(float DeltaSeconds) override;
+	bool GetDiagnosticMoveState(FVector& OutTarget, bool& bOutHasTarget, bool& bOutWaitingForRepath) const;
+	void GetDiagnosticNavigationTuning(float& OutRepathInterval, float& OutRepathDistance, float& OutAcceptanceRadius,
+		float& OutStuckTimeout, float& OutStuckWaitTime, float& OutProgressDistance) const;
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Helper Rear Guard|Navigation", meta = (ClampMin = "0.05", UIMin = "0.05", Units = "s"))

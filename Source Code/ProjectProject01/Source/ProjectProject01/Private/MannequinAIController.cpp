@@ -4,6 +4,7 @@
 #include "MannequinAIController.h"
 
 #include "BehaviorTree/BlackboardComponent.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
 
 void AMannequinAIController::BeginPlay()
 {
@@ -13,6 +14,9 @@ void AMannequinAIController::BeginPlay()
 void AMannequinAIController::OnPossess(APawn* InPawn)
 {
     Super::OnPossess(InPawn);
+
+    UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+        TEXT("MannequinAIControllerPossess"), FString::Printf(TEXT("Controller=%s Pawn=%s"), *GetName(), *GetNameSafe(InPawn)), InPawn);
 
     if (BehaviorTree != nullptr)
     {

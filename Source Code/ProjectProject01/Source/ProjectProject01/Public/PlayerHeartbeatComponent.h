@@ -71,6 +71,7 @@ public:
 
 	/** 서버가 검증한 DataTable의 심박 설정을 로컬 생존자에게 적용합니다. */
 	void ApplyHeartbeatTuning(const FPlayerTuningRow& Tuning);
+	void GetDiagnosticAppliedTuning(FPlayerTuningRow& OutTuning) const;
 
 protected:
 	virtual void BeginPlay() override;
