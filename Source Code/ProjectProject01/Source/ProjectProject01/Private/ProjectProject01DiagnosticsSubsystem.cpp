@@ -26,6 +26,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/GameModeBase.h"
+#include "AITypes.h"
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "ProjectProject01TuningData.h"
@@ -60,6 +61,16 @@ namespace ProjectProject01Diagnostics
 	FCriticalSection BufferedLogLock;
 	TArray<FBufferedLogRecord> BufferedLogs;
 	int64 NextLogSequence = 1;
+
+	bool ShouldEvaluateAuthoritativeAI(const ENetMode NetMode)
+	{
+		return NetMode != NM_Client;
+	}
+
+	bool IsExpectedHeartbeatTelemetry(const FName& Category, const FString& Message)
+	{
+		return Category == FName(TEXT("LogTemp")) && Message.StartsWith(TEXT("[Heartbeat]"), ESearchCase::CaseSensitive);
+	}
 
 	class FDiagnosticOutputDevice final : public FOutputDevice
 	{
@@ -351,6 +362,10 @@ void UProjectProject01DiagnosticsSubsystem::Tick(float DeltaTime)
 	{
 		LastConsumedGlobalLogSequence = Record.Sequence;
 		const FString Category = Record.Category.ToString();
+		if (ProjectProject01Diagnostics::IsExpectedHeartbeatTelemetry(Record.Category, Record.Text))
+		{
+			continue;
+		}
 		const bool bNetworkLog = Category.Contains(TEXT("Net")) || Record.Text.Contains(TEXT("RPC")) || Record.Text.Contains(TEXT("replic"), ESearchCase::IgnoreCase);
 		const FString LogKey = Category + TEXT("|") + Record.Text;
 		const int32 Count = ++RepeatedLogCounts.FindOrAdd(LogKey);
@@ -462,12 +477,16 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 			const UBlackboardComponent* Blackboard = IsValid(AIController) ? AIController->GetBlackboardComponent() : nullptr;
 			const AActor* TargetActor = IsValid(Blackboard) ? Cast<AActor>(Blackboard->GetValueAsObject(TEXT("TargetActor"))) : nullptr;
 			const FVector RoamingLocation = IsValid(Blackboard) ? Blackboard->GetValueAsVector(TEXT("RoamingLocation")) : FVector::ZeroVector;
-			const bool bHasTarget = IsValid(TargetActor) || !RoamingLocation.IsNearlyZero();
+			const bool bHasRoamingLocation = IsValid(Blackboard) && FAISystem::IsValidLocation(RoamingLocation);
+			const bool bHasTarget = IsValid(TargetActor) || bHasRoamingLocation;
+			const FVector DiagnosticTargetLocation = IsValid(TargetActor)
+				? TargetActor->GetActorLocation()
+				: (bHasRoamingLocation ? RoamingLocation : FVector::ZeroVector);
 			StateSignature = FString::Printf(TEXT("Mannequin;Slot=%d;Manual=%d;Frozen=%d;Command=%s;Controller=%s;TargetActor=%s;TargetLocation=(%.1f,%.1f,%.1f);Location=(%.1f,%.1f,%.1f);Velocity=%.1f;Distance=%.1f"),
 				Mannequin->GetControlSlot(), Mannequin->IsManualControlEnabled(), Mannequin->IsFrozenBySurvivorVision(), *Mannequin->GetDiagnosticCommandState(World->GetTimeSeconds()),
-				*GetNameSafe(Mannequin->GetController()), *GetNameSafe(TargetActor), RoamingLocation.X, RoamingLocation.Y, RoamingLocation.Z,
+				*GetNameSafe(Mannequin->GetController()), *GetNameSafe(TargetActor), DiagnosticTargetLocation.X, DiagnosticTargetLocation.Y, DiagnosticTargetLocation.Z,
 				Location.X, Location.Y, Location.Z, Mannequin->GetVelocity().Size2D(), CumulativeDistance);
-			if (!IsValid(Mannequin->GetController()) && !OneShotRiskKeys.Contains(TEXT("NoController_") + ActorKey)) { OneShotRiskKeys.Add(TEXT("NoController_") + ActorKey); RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("AIControllerMissing"), TEXT("Mannequin has no controller."), Mannequin); }
+			if (Mannequin->HasAuthority() && !IsValid(Mannequin->GetController()) && !OneShotRiskKeys.Contains(TEXT("NoController_") + ActorKey)) { OneShotRiskKeys.Add(TEXT("NoController_") + ActorKey); RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("AIControllerMissing"), TEXT("Authoritative mannequin has no controller."), Mannequin); }
 			const bool bShouldBeMoving = bHasTarget && IsValid(AIController) && !Mannequin->IsManualControlEnabled() && !Mannequin->IsFrozenBySurvivorVision() && !Mannequin->ShouldHoldPostPossessionCommand(World->GetTimeSeconds());
 			if (bShouldBeMoving && Mannequin->GetVelocity().Size2D() < 5.0f)
 			{
@@ -476,7 +495,7 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 				{
 					OneShotRiskKeys.Add(TEXT("Stuck_") + ActorKey);
 					RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("AIStuckWithTarget"), FString::Printf(TEXT("Target=%s; TargetLocation=(%.1f,%.1f,%.1f); Speed=%.1f; StuckSeconds=%.1f"),
-						*GetNameSafe(TargetActor), RoamingLocation.X, RoamingLocation.Y, RoamingLocation.Z, Mannequin->GetVelocity().Size2D(), World->GetTimeSeconds() - StuckStart), Mannequin);
+						*GetNameSafe(TargetActor), DiagnosticTargetLocation.X, DiagnosticTargetLocation.Y, DiagnosticTargetLocation.Z, Mannequin->GetVelocity().Size2D(), World->GetTimeSeconds() - StuckStart), Mannequin);
 				}
 			}
 			else { StuckStartTimes.Remove(ActorKey); OneShotRiskKeys.Remove(TEXT("Stuck_") + ActorKey); }
@@ -488,7 +507,7 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 			const FVector Location = Helper->GetActorLocation();
 			FVector ViewDirection; const bool bHasView = Helper->GetGuardViewDirection(ViewDirection);
 			StateSignature = FString::Printf(TEXT("Helper;Target=%d;TargetLocation=(%.1f,%.1f,%.1f);Waiting=%d;Retreat=%d;View=(%.3f,%.3f,%.3f);Controller=%s;Location=(%.1f,%.1f,%.1f);Velocity=%.1f;Distance=%.1f"), bHasTarget, Target.X, Target.Y, Target.Z, bWaiting, Helper->IsDiagnosticRetreatLocked(), bHasView ? ViewDirection.X : 0.0f, bHasView ? ViewDirection.Y : 0.0f, bHasView ? ViewDirection.Z : 0.0f, *GetNameSafe(Helper->GetController()), Location.X, Location.Y, Location.Z, Helper->GetVelocity().Size2D(), CumulativeDistance);
-			if (!IsValid(Helper->GetController()) && !OneShotRiskKeys.Contains(TEXT("NoController_") + ActorKey)) { OneShotRiskKeys.Add(TEXT("NoController_") + ActorKey); RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("AIControllerMissing"), TEXT("Helper has no controller."), Helper); }
+			if (Helper->HasAuthority() && !IsValid(Helper->GetController()) && !OneShotRiskKeys.Contains(TEXT("NoController_") + ActorKey)) { OneShotRiskKeys.Add(TEXT("NoController_") + ActorKey); RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("AIControllerMissing"), TEXT("Authoritative helper has no controller."), Helper); }
 			if (bHasTarget && !bWaiting && Helper->GetVelocity().Size2D() < 5.0f)
 			{
 				double& StuckStart = StuckStartTimes.FindOrAdd(ActorKey, World->GetTimeSeconds());
@@ -574,7 +593,9 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 
 void UProjectProject01DiagnosticsSubsystem::DetectObservableRisks(const int32 PlayerCount, const int32 MannequinCount, const int32 HelperCount, const bool bHasNavigationData)
 {
-	if ((MannequinCount > 0 || HelperCount > 0) && !bHasNavigationData && !OneShotRiskKeys.Contains(TEXT("MissingNavData")))
+	const UWorld* World = GetWorld();
+	const bool bShouldEvaluateAuthoritativeAI = IsValid(World) && ProjectProject01Diagnostics::ShouldEvaluateAuthoritativeAI(World->GetNetMode());
+	if (bShouldEvaluateAuthoritativeAI && (MannequinCount > 0 || HelperCount > 0) && !bHasNavigationData && !OneShotRiskKeys.Contains(TEXT("MissingNavData")))
 	{
 		OneShotRiskKeys.Add(TEXT("MissingNavData"));
 		RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("MissingNavData"), TEXT("AI-like actors exist but no navigation data was found in this world."));
@@ -873,6 +894,14 @@ bool FProjectProject01DiagnosticsContractTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("Diagnostic sample interval must remain lightweight."), ProjectProject01Diagnostics::SampleIntervalSeconds, 1.0f);
 	TestTrue(TEXT("Risk severity enum is available for report consumers."),
 		static_cast<uint8>(EProjectProject01DiagnosticSeverity::Risk) > static_cast<uint8>(EProjectProject01DiagnosticSeverity::Warning));
+	TestFalse(TEXT("Client proxy worlds must not require authoritative AI state."), ProjectProject01Diagnostics::ShouldEvaluateAuthoritativeAI(NM_Client));
+	TestTrue(TEXT("Dedicated server worlds must evaluate authoritative AI state."), ProjectProject01Diagnostics::ShouldEvaluateAuthoritativeAI(NM_DedicatedServer));
+	TestTrue(TEXT("Heartbeat telemetry must not be interpreted as a warning or risk."),
+		ProjectProject01Diagnostics::IsExpectedHeartbeatTelemetry(FName(TEXT("LogTemp")), TEXT("[Heartbeat] THUMP | BPM=73.3")));
+	TestFalse(TEXT("Unrelated warnings must remain observable."),
+		ProjectProject01Diagnostics::IsExpectedHeartbeatTelemetry(FName(TEXT("LogTemp")), TEXT("A real warning")));
+	TestFalse(TEXT("An unset Blackboard vector must not count as a valid target."), FAISystem::IsValidLocation(FAISystem::InvalidLocation));
+	TestTrue(TEXT("A finite Blackboard vector must remain a valid target."), FAISystem::IsValidLocation(FVector::ZeroVector));
 	FString CsvError;
 	FPlayerTuningRow PlayerCsv;
 	FMannequinAITuningRow MannequinCsv;

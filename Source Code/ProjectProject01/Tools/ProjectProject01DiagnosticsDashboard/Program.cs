@@ -39,6 +39,12 @@ internal static class DashboardSelfTest
         var sample = new PerformanceSample("2026-01-01T00:00:00Z", report.Role, report.NetMode, 1, 60, 16.7, 5, 4, 3, 100, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0.1, 1);
         DashboardForm.GenerateMergedArtifacts(directory, [report], [sample], [server, client]);
         if (!File.Exists(Path.Combine(directory, "CombinedReport.xml")) || !File.Exists(Path.Combine(directory, "MergedEvents.csv")) || !File.Exists(Path.Combine(directory, "MergedPerformance.csv"))) return 3;
+        var batchDirectory = Path.Combine(directory, "Batch Path With Spaces");
+        Directory.CreateDirectory(batchDirectory);
+        var batchPath = Path.Combine(batchDirectory, "verify arguments.cmd");
+        File.WriteAllText(batchPath, "@echo off\r\nif \"%~1\"==\"argument with spaces\" exit /b 0\r\nexit /b 9\r\n", Encoding.ASCII);
+        var batchResult = DashboardForm.RunProcessAsync(batchPath, ["argument with spaces"]).GetAwaiter().GetResult();
+        if (batchResult.ExitCode != 0) return 4;
         Console.WriteLine("ProjectProject01 diagnostics dashboard self-test passed.");
         return 0;
     }
@@ -392,16 +398,17 @@ internal sealed class DashboardForm : Form
         finally { button.Enabled = true; }
     }
 
-    private static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments)
+    internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         if (Path.GetExtension(fileName).Equals(".bat", StringComparison.OrdinalIgnoreCase))
         {
             startInfo.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
-            startInfo.ArgumentList.Add("/d");
-            startInfo.ArgumentList.Add("/s");
-            startInfo.ArgumentList.Add("/c");
-            startInfo.ArgumentList.Add(string.Join(' ', new[] { fileName }.Concat(arguments).Select(QuoteCommandArgument)));
+            var command = string.Join(' ', new[] { fileName }.Concat(arguments).Select(QuoteCommandArgument));
+            // cmd.exe requires the entire /c command to be wrapped in an additional pair of quotes
+            // when the executable batch path itself is quoted. ArgumentList escapes those quotes as
+            // literal characters, so use the raw Arguments form for this Windows-specific invocation.
+            startInfo.Arguments = $"/d /s /c \"{command}\"";
         }
         else
         {
@@ -635,5 +642,5 @@ internal sealed class DashboardForm : Form
     private static double ParseDouble(string? value) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
     private static string EscapeCsv(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
     private static string Format(double value) => value.ToString("F3", CultureInfo.InvariantCulture);
-    private sealed record ProcessResult(int ExitCode, string Output);
+    internal sealed record ProcessResult(int ExitCode, string Output);
 }
