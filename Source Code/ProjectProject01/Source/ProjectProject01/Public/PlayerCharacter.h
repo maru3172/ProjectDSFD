@@ -97,10 +97,17 @@ private:
 	UInputAction* IA_Move;
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	UInputAction* IA_Look;
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UInputAction* IA_Sprint;
 
 	// 입력 이벤트 발생 시 실행할 함수
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
+	void StartSprint();
+	void StopSprint();
+	
+	// 플레이어가 달리고 있는가 여부 변수
+	bool bIsSprinting = false;
 
 	// 작은 원: 이 반경 안에서는 마네킹 AI가 직접 추격하는 용도로 사용한다.
 	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "AI|Range",
@@ -116,6 +123,11 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerWalkSpeed, VisibleInstanceOnly, Category = "Player",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm/s"))
 	float PlayerWalkSpeed = 600.0f;
+	
+	// 플레이어 달리기 Sprint 시 이동 속도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Player",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm/s"))
+	float PlayerSprintSpeed = 750.0f;
 
 	// PIE/Development 플레이 중 두 범위를 디버그 원으로 표시한다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Range|Debug",

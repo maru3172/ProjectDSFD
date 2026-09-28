@@ -261,6 +261,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		//EnhancedInputComponent->BindAction(IA_Move, ETriggerEvent::Completed, this, &APlayerCharacter::Move);
 		EnhancedInputComponent->BindAction(IA_Look, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 		//EnhancedInputComponent->BindAction(IA_Look, ETriggerEvent::Completed, this, &APlayerCharacter::Look);
+		
+		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
+		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
+		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Canceled, this, &APlayerCharacter::StopSprint);
 
 		if (IsValid(GetWorld()) && GetWorld()->WorldType == EWorldType::PIE)
         {
@@ -328,6 +332,23 @@ void APlayerCharacter::Look(const FInputActionValue& Value)
 
 	AddControllerYawInput(LookVector.X);
 	AddControllerPitchInput(LookVector.Y);
+}
+
+void APlayerCharacter::StartSprint()
+{
+	if (bGameOver)
+	{
+		return;
+	}
+	
+	bIsSprinting = true;
+	GetCharacterMovement()->MaxWalkSpeed = PlayerSprintSpeed;
+}
+
+void APlayerCharacter::StopSprint()
+{
+	bIsSprinting = false;
+	GetCharacterMovement()->MaxWalkSpeed = PlayerWalkSpeed;
 }
 
 // =========================================================================================================================
@@ -427,7 +448,7 @@ void APlayerCharacter::ApplyPlayerWalkSpeed()
 		return;
 	}
 
-	Movement->MaxWalkSpeed = FMath::Max(0.0f, PlayerWalkSpeed);
+	Movement->MaxWalkSpeed = bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed;
 }
 
 void APlayerCharacter::OnRep_PlayerWalkSpeed()
