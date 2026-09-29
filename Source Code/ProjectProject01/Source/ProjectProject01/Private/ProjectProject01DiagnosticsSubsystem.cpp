@@ -18,10 +18,13 @@
 #include "Misc/ScopeLock.h"
 #include "Misc/Paths.h"
 #include "Serialization/Csv/CsvParser.h"
+#include "UObject/UObjectArray.h"
+#include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "UObject/Package.h"
 #include "RenderTimer.h"
 #include "DynamicRHI.h"
+#include "RHIStats.h"
 #include "NavigationSystem.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/GameStateBase.h"
@@ -191,6 +194,8 @@ namespace ProjectProject01Diagnostics
 void UProjectProject01DiagnosticsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	PreGarbageCollectHandle = FCoreUObjectDelegates::GetPreGarbageCollectDelegate().AddUObject(this, &UProjectProject01DiagnosticsSubsystem::HandlePreGarbageCollect);
+	GarbageCollectCompleteHandle = FCoreUObjectDelegates::GarbageCollectComplete.AddUObject(this, &UProjectProject01DiagnosticsSubsystem::HandleGarbageCollectComplete);
 }
 
 void UProjectProject01DiagnosticsSubsystem::Deinitialize()
@@ -199,6 +204,9 @@ void UProjectProject01DiagnosticsSubsystem::Deinitialize()
 	{
 		StopCapture(TEXT("Inconclusive: world ended before the operator stopped the diagnostic capture."));
 	}
+	FCoreUObjectDelegates::GetPreGarbageCollectDelegate().Remove(PreGarbageCollectHandle);
+	FCoreUObjectDelegates::GarbageCollectComplete.Remove(GarbageCollectCompleteHandle);
+	bHasPreGarbageCollectSample = false;
 	Super::Deinitialize();
 }
 
@@ -235,12 +243,14 @@ void UProjectProject01DiagnosticsSubsystem::StartCapture(const FString& InTestRu
 	RepeatedLogCounts.Reset();
 	LastNetworkStateSignature.Reset();
 	ConsecutiveMemoryGrowthSamples = 0;
+	bHasPreGarbageCollectSample = false;
 	PathRequestCountSinceLastSample = 0;
 	PathFailureCountSinceLastSample = 0;
 	PossessionEventCountSinceLastSample = 0;
 	VisionCheckCountSinceLastSample = 0;
 	LineTraceCountSinceLastSample = 0;
 	AITickMillisecondsSinceLastSample = 0.0;
+	DiagnosticsDynamicStringBytes = 0;
 	bCaptureActive = true;
 	if (!ProjectProject01Diagnostics::bOutputDeviceRegistered && GLog != nullptr)
 	{
@@ -335,6 +345,42 @@ void UProjectProject01DiagnosticsSubsystem::StopCapture(const FString& Outcome)
 	RecordEvent(EProjectProject01DiagnosticSeverity::Normal, TEXT("CaptureStopped"), FinalOutcome);
 	WriteCaptureFiles(FinalOutcome);
 	bCaptureActive = false;
+	bHasPreGarbageCollectSample = false;
+}
+
+void UProjectProject01DiagnosticsSubsystem::HandlePreGarbageCollect()
+{
+	if (!bCaptureActive)
+	{
+		return;
+	}
+
+	const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
+	PreGarbageCollectPhysicalBytes = MemoryStats.UsedPhysical;
+	PreGarbageCollectVirtualBytes = MemoryStats.UsedVirtual;
+	PreGarbageCollectUObjectCount = GUObjectArray.GetObjectArrayNumMinusAvailable();
+	bHasPreGarbageCollectSample = true;
+}
+
+void UProjectProject01DiagnosticsSubsystem::HandleGarbageCollectComplete()
+{
+	if (!bCaptureActive || !bHasPreGarbageCollectSample)
+	{
+		bHasPreGarbageCollectSample = false;
+		return;
+	}
+
+	const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
+	const int32 UObjectCount = GUObjectArray.GetObjectArrayNumMinusAvailable();
+	const int64 PhysicalDelta = static_cast<int64>(MemoryStats.UsedPhysical) - static_cast<int64>(PreGarbageCollectPhysicalBytes);
+	const int64 VirtualDelta = static_cast<int64>(MemoryStats.UsedVirtual) - static_cast<int64>(PreGarbageCollectVirtualBytes);
+	const int32 UObjectDelta = UObjectCount - PreGarbageCollectUObjectCount;
+	RecordEvent(EProjectProject01DiagnosticSeverity::Normal, TEXT("GarbageCollectionMemoryDelta"), FString::Printf(
+		TEXT("PhysicalBeforeBytes=%llu;PhysicalAfterBytes=%llu;PhysicalDeltaBytes=%lld;VirtualBeforeBytes=%llu;VirtualAfterBytes=%llu;VirtualDeltaBytes=%lld;UObjectsBefore=%d;UObjectsAfter=%d;UObjectDelta=%d"),
+		PreGarbageCollectPhysicalBytes, MemoryStats.UsedPhysical, PhysicalDelta,
+		PreGarbageCollectVirtualBytes, MemoryStats.UsedVirtual, VirtualDelta,
+		PreGarbageCollectUObjectCount, UObjectCount, UObjectDelta));
+	bHasPreGarbageCollectSample = false;
 }
 
 void UProjectProject01DiagnosticsSubsystem::Tick(float DeltaTime)
@@ -393,6 +439,8 @@ void UProjectProject01DiagnosticsSubsystem::RecordEvent(
 	Event.Code = Code;
 	Event.Message = Message;
 	Event.ActorName = IsValid(Actor) ? Actor->GetPathName() : TEXT("");
+	DiagnosticsDynamicStringBytes += Event.UtcTime.GetAllocatedSize() + Event.Code.GetAllocatedSize()
+		+ Event.Message.GetAllocatedSize() + Event.ActorName.GetAllocatedSize();
 }
 
 void UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(
@@ -440,15 +488,18 @@ void UProjectProject01DiagnosticsSubsystem::AddWorkMetrics(UWorld* World, const 
 
 void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 {
+	const double DiagnosticsSampleStartSeconds = FPlatformTime::Seconds();
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
 	{
 		return;
 	}
 
+	const double ActorAIStartSeconds = FPlatformTime::Seconds();
 	int32 PlayerCount = 0;
 	int32 MannequinCount = 0;
 	int32 HelperCount = 0;
+	int32 ActorCount = 0;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		const AActor* Actor = *It;
@@ -456,6 +507,7 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 		{
 			continue;
 		}
+		++ActorCount;
 		const FString ClassName = Actor->GetClass()->GetName();
 		PlayerCount += ClassName.Contains(TEXT("PlayerCharacter")) ? 1 : 0;
 		MannequinCount += ClassName.Contains(TEXT("Mannequin")) ? 1 : 0;
@@ -525,9 +577,13 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 			RecordEvent(EProjectProject01DiagnosticSeverity::Normal, TEXT("ActorStateChanged"), StateSignature, Actor);
 		}
 	}
+	const double ActorAIOverheadMilliseconds = (FPlatformTime::Seconds() - ActorAIStartSeconds) * 1000.0;
 
+	const double NavigationStartSeconds = FPlatformTime::Seconds();
 	UNavigationSystemV1* NavigationSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
 	const bool bHasNavigationData = IsValid(NavigationSystem) && NavigationSystem->GetDefaultNavDataInstance(FNavigationSystem::DontCreate) != nullptr;
+	const double NavigationOverheadMilliseconds = (FPlatformTime::Seconds() - NavigationStartSeconds) * 1000.0;
+	const double NetworkStartSeconds = FPlatformTime::Seconds();
 	UNetDriver* NetDriver = World->GetNetDriver();
 	const int32 NetworkConnectionCount = IsValid(NetDriver) ? NetDriver->ClientConnections.Num() + (IsValid(NetDriver->ServerConnection) ? 1 : 0) : 0;
 	const FString NetworkStateSignature = FString::Printf(TEXT("HasNetDriver=%s; Driver=%s; ClientConnections=%d; HasServerConnection=%s; State=%s"),
@@ -540,20 +596,40 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 		RecordEvent(World->GetNetMode() != NM_Standalone && !IsValid(NetDriver) ? EProjectProject01DiagnosticSeverity::Risk : EProjectProject01DiagnosticSeverity::Normal,
 			TEXT("NetworkConnectionStateChanged"), NetworkStateSignature);
 	}
+	const double NetworkOverheadMilliseconds = (FPlatformTime::Seconds() - NetworkStartSeconds) * 1000.0;
 
+	const double FrameTimingStartSeconds = FPlatformTime::Seconds();
 	FProjectProject01DiagnosticSample& Sample = Samples.AddDefaulted_GetRef();
 	Sample.UtcTime = FDateTime::UtcNow().ToIso8601();
+	DiagnosticsDynamicStringBytes += Sample.UtcTime.GetAllocatedSize();
 	Sample.GameSeconds = World->GetTimeSeconds() - CaptureStartSeconds;
 	Sample.FrameMilliseconds = FMath::Max(0.0f, DeltaTime) * 1000.0f;
 	Sample.FramesPerSecond = Sample.FrameMilliseconds > KINDA_SMALL_NUMBER ? 1000.0f / Sample.FrameMilliseconds : 0.0f;
 	Sample.GameThreadMilliseconds = FPlatformTime::ToMilliseconds(GGameThreadTime);
 	Sample.DrawThreadMilliseconds = FPlatformTime::ToMilliseconds(GRenderThreadTime);
 	Sample.GpuMilliseconds = FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
-	Sample.UsedPhysicalBytes = FPlatformMemory::GetStats().UsedPhysical;
+	const double FrameTimingOverheadMilliseconds = (FPlatformTime::Seconds() - FrameTimingStartSeconds) * 1000.0;
+	const double MemoryStartSeconds = FPlatformTime::Seconds();
+	const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
+	Sample.UsedPhysicalBytes = MemoryStats.UsedPhysical;
+	Sample.UsedVirtualBytes = MemoryStats.UsedVirtual;
+	Sample.UObjectCount = GUObjectArray.GetObjectArrayNumMinusAvailable();
+	Sample.ActorCount = ActorCount;
+	const double MemoryOverheadMilliseconds = (FPlatformTime::Seconds() - MemoryStartSeconds) * 1000.0;
+	const double TextureRHIStartSeconds = FPlatformTime::Seconds();
+	if (GDynamicRHI != nullptr)
+	{
+		FTextureMemoryStats TextureMemoryStats;
+		RHIGetTextureMemoryStats(TextureMemoryStats);
+		Sample.StreamingTextureMemoryBytes = TextureMemoryStats.StreamingMemorySize;
+		Sample.NonStreamingTextureMemoryBytes = TextureMemoryStats.NonStreamingMemorySize;
+		Sample.TexturePoolSizeBytes = static_cast<uint64>(FMath::Max<int64>(0, TextureMemoryStats.TexturePoolSize));
+	}
+	const double TextureRHIOverheadMilliseconds = (FPlatformTime::Seconds() - TextureRHIStartSeconds) * 1000.0;
 	if (const FProjectProject01DiagnosticSample* PreviousSample = Samples.Num() > 1 ? &Samples[Samples.Num() - 2] : nullptr)
 	{
 		const double TimeDelta = FMath::Max(0.001, Sample.GameSeconds - PreviousSample->GameSeconds);
-		Sample.MemoryBytesPerSecondDelta = static_cast<double>(Sample.UsedPhysicalBytes) / TimeDelta - static_cast<double>(PreviousSample->UsedPhysicalBytes) / TimeDelta;
+		Sample.MemoryBytesPerSecondDelta = (static_cast<double>(Sample.UsedPhysicalBytes) - static_cast<double>(PreviousSample->UsedPhysicalBytes)) / TimeDelta;
 		ConsecutiveMemoryGrowthSamples = Sample.MemoryBytesPerSecondDelta > 4.0 * 1024.0 * 1024.0 ? ConsecutiveMemoryGrowthSamples + 1 : 0;
 		if (ConsecutiveMemoryGrowthSamples >= 5 && !OneShotRiskKeys.Contains(TEXT("SustainedMemoryGrowth")))
 		{
@@ -589,6 +665,17 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 	PossessionEventCountSinceLastSample = 0;
 	PathFailureCountSinceLastSample = 0; VisionCheckCountSinceLastSample = 0; LineTraceCountSinceLastSample = 0; AITickMillisecondsSinceLastSample = 0.0;
 	DetectObservableRisks(PlayerCount, MannequinCount, HelperCount, bHasNavigationData);
+	Sample.DiagnosticsActorAIOverheadMilliseconds = ActorAIOverheadMilliseconds;
+	Sample.DiagnosticsNavigationOverheadMilliseconds = NavigationOverheadMilliseconds;
+	Sample.DiagnosticsNetworkOverheadMilliseconds = NetworkOverheadMilliseconds;
+	Sample.DiagnosticsFrameTimingOverheadMilliseconds = FrameTimingOverheadMilliseconds;
+	Sample.DiagnosticsMemoryOverheadMilliseconds = MemoryOverheadMilliseconds;
+	Sample.DiagnosticsTextureRHIOverheadMilliseconds = TextureRHIOverheadMilliseconds;
+	Sample.DiagnosticsBufferedMemoryBytes = Samples.GetAllocatedSize() + Events.GetAllocatedSize() + DiagnosticsDynamicStringBytes;
+	Sample.DiagnosticsOverheadMilliseconds = (FPlatformTime::Seconds() - DiagnosticsSampleStartSeconds) * 1000.0;
+	const double MeasuredSectionsMilliseconds = ActorAIOverheadMilliseconds + NavigationOverheadMilliseconds + NetworkOverheadMilliseconds
+		+ FrameTimingOverheadMilliseconds + MemoryOverheadMilliseconds + TextureRHIOverheadMilliseconds;
+	Sample.DiagnosticsBookkeepingOverheadMilliseconds = FMath::Max(0.0, Sample.DiagnosticsOverheadMilliseconds - MeasuredSectionsMilliseconds);
 }
 
 void UProjectProject01DiagnosticsSubsystem::DetectObservableRisks(const int32 PlayerCount, const int32 MannequinCount, const int32 HelperCount, const bool bHasNavigationData)
@@ -835,13 +922,18 @@ void UProjectProject01DiagnosticsSubsystem::WriteCaptureFiles(const FString& Out
 	const FString Role = GetRoleInstanceLabel();
 	const FString NetMode = GetRoleLabel();
 	const int32 LocalPlayerNumber = GetLocalPlayerNumber();
-	FString PerformanceCsv = TEXT("UtcTime,Role,NetMode,LocalPlayerNumber,GameSeconds,FrameMilliseconds,FramesPerSecond,GameThreadMilliseconds,DrawThreadMilliseconds,GpuMilliseconds,UsedPhysicalBytes,MemoryBytesPerSecondDelta,InBytesPerSecond,OutBytesPerSecond,PlayerCount,MannequinCount,HelperCount,PathRequestCount,PathFailureCount,PossessionEventCount,VisionCheckCount,LineTraceCount,AITickMilliseconds,NetworkConnectionCount,HasNetDriver,HasNavigationData\n");
+	FString PerformanceCsv = TEXT("UtcTime,Role,NetMode,LocalPlayerNumber,GameSeconds,FrameMilliseconds,FramesPerSecond,GameThreadMilliseconds,DrawThreadMilliseconds,GpuMilliseconds,UsedPhysicalBytes,UsedVirtualBytes,MemoryBytesPerSecondDelta,UObjectCount,ActorCount,StreamingTextureMemoryBytes,NonStreamingTextureMemoryBytes,TexturePoolSizeBytes,InBytesPerSecond,OutBytesPerSecond,PlayerCount,MannequinCount,HelperCount,PathRequestCount,PathFailureCount,PossessionEventCount,VisionCheckCount,LineTraceCount,AITickMilliseconds,DiagnosticsOverheadMilliseconds,DiagnosticsActorAIOverheadMilliseconds,DiagnosticsNavigationOverheadMilliseconds,DiagnosticsNetworkOverheadMilliseconds,DiagnosticsFrameTimingOverheadMilliseconds,DiagnosticsMemoryOverheadMilliseconds,DiagnosticsTextureRHIOverheadMilliseconds,DiagnosticsBookkeepingOverheadMilliseconds,DiagnosticsBufferedMemoryBytes,NetworkConnectionCount,HasNetDriver,HasNavigationData\n");
 	for (const FProjectProject01DiagnosticSample& Sample : Samples)
 	{
-		PerformanceCsv += FString::Printf(TEXT("%s,%s,%s,%d,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%llu,%.2f,%u,%u,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%d,%s,%s\n"),
-			*Sample.UtcTime, *Role, *NetMode, LocalPlayerNumber, Sample.GameSeconds, Sample.FrameMilliseconds, Sample.FramesPerSecond, Sample.GameThreadMilliseconds, Sample.DrawThreadMilliseconds, Sample.GpuMilliseconds, Sample.UsedPhysicalBytes, Sample.MemoryBytesPerSecondDelta,
+		PerformanceCsv += FString::Printf(TEXT("%s,%s,%s,%d,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%llu,%llu,%.2f,%d,%d,%llu,%llu,%llu,%u,%u,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%d,%s,%s\n"),
+			*Sample.UtcTime, *Role, *NetMode, LocalPlayerNumber, Sample.GameSeconds, Sample.FrameMilliseconds, Sample.FramesPerSecond, Sample.GameThreadMilliseconds, Sample.DrawThreadMilliseconds, Sample.GpuMilliseconds,
+			Sample.UsedPhysicalBytes, Sample.UsedVirtualBytes, Sample.MemoryBytesPerSecondDelta, Sample.UObjectCount, Sample.ActorCount,
+			Sample.StreamingTextureMemoryBytes, Sample.NonStreamingTextureMemoryBytes, Sample.TexturePoolSizeBytes,
 			Sample.InBytesPerSecond, Sample.OutBytesPerSecond, Sample.PlayerCount, Sample.MannequinCount, Sample.HelperCount, Sample.PathRequestCount, Sample.PathFailureCount, Sample.PossessionEventCount,
-			Sample.VisionCheckCount, Sample.LineTraceCount, Sample.AITickMilliseconds, Sample.NetworkConnectionCount, Sample.bHasNetDriver ? TEXT("true") : TEXT("false"),
+			Sample.VisionCheckCount, Sample.LineTraceCount, Sample.AITickMilliseconds, Sample.DiagnosticsOverheadMilliseconds,
+			Sample.DiagnosticsActorAIOverheadMilliseconds, Sample.DiagnosticsNavigationOverheadMilliseconds, Sample.DiagnosticsNetworkOverheadMilliseconds,
+			Sample.DiagnosticsFrameTimingOverheadMilliseconds, Sample.DiagnosticsMemoryOverheadMilliseconds, Sample.DiagnosticsTextureRHIOverheadMilliseconds,
+			Sample.DiagnosticsBookkeepingOverheadMilliseconds, Sample.DiagnosticsBufferedMemoryBytes, Sample.NetworkConnectionCount, Sample.bHasNetDriver ? TEXT("true") : TEXT("false"),
 			Sample.bHasNavigationData ? TEXT("true") : TEXT("false"));
 	}
 

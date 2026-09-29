@@ -54,6 +54,8 @@ public:
 
 private:
 	void CollectSample(float DeltaTime);
+	void HandlePreGarbageCollect();
+	void HandleGarbageCollectComplete();
 	void WriteCaptureFiles(const FString& Outcome);
 	void DetectObservableRisks(int32 PlayerCount, int32 MannequinCount, int32 HelperCount, bool bHasNavigationData);
 	void LoadTestDefinition();
@@ -82,6 +84,7 @@ private:
 	int32 VisionCheckCountSinceLastSample = 0;
 	int32 LineTraceCountSinceLastSample = 0;
 	double AITickMillisecondsSinceLastSample = 0.0;
+	uint64 DiagnosticsDynamicStringBytes = 0;
 	int64 LastConsumedGlobalLogSequence = 0;
 	TMap<FString, FString> LastActorStateSignatures;
 	TMap<FString, double> StuckStartTimes;
@@ -90,4 +93,10 @@ private:
 	int32 ConsecutiveMemoryGrowthSamples = 0;
 	TMap<FString, int32> RepeatedLogCounts;
 	FString LastNetworkStateSignature;
+	FDelegateHandle PreGarbageCollectHandle;
+	FDelegateHandle GarbageCollectCompleteHandle;
+	uint64 PreGarbageCollectPhysicalBytes = 0;
+	uint64 PreGarbageCollectVirtualBytes = 0;
+	int32 PreGarbageCollectUObjectCount = 0;
+	bool bHasPreGarbageCollectSample = false;
 };
