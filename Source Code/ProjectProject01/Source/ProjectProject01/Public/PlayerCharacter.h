@@ -10,6 +10,7 @@
 
 class UInputAction;
 class UInputMappingContext;
+class UEnhancedInputLocalPlayerSubsystem;
 class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
 class UPlayerHeartbeatComponent;
@@ -99,14 +100,23 @@ private:
 	UInputAction* IA_Look;
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	UInputAction* IA_Sprint;
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> RuntimeSprintInputContext;
 
 	// 입력 이벤트 발생 시 실행할 함수
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void StartSprint();
 	void StopSprint();
+	void SetSprinting(bool bNewSprinting);
+	void RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetSprinting(bool bNewSprinting);
 	
-	// 플레이어가 달리고 있는가 여부 변수
+	// 서버가 권한을 가지며 모든 클라이언트에 복제하는 달리기 상태다.
+	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting, VisibleInstanceOnly, Category = "Player",
+		meta = (AllowPrivateAccess = "true"))
 	bool bIsSprinting = false;
 
 	// 작은 원: 이 반경 안에서는 마네킹 AI가 직접 추격하는 용도로 사용한다.
@@ -124,8 +134,8 @@ private:
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm/s"))
 	float PlayerWalkSpeed = 600.0f;
 	
-	// 플레이어 달리기 Sprint 시 이동 속도
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Player",
+	// 서버 DataTable로 설정하고 모든 클라이언트에 복제하는 달리기 최대 속도(cm/s)다.
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerSprintSpeed, VisibleInstanceOnly, Category = "Player",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm/s"))
 	float PlayerSprintSpeed = 750.0f;
 
@@ -166,6 +176,12 @@ private:
 
 	UFUNCTION()
 	void OnRep_PlayerWalkSpeed();
+
+	UFUNCTION()
+	void OnRep_PlayerSprintSpeed();
+
+	UFUNCTION()
+	void OnRep_IsSprinting();
 
 	UFUNCTION()
 	void OnRep_GameOver();

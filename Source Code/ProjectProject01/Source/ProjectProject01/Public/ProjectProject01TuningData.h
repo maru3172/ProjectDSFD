@@ -20,6 +20,10 @@ struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float PlayerWalkSpeed = 600.0f;
 
+	/** LShift를 누르는 동안 적용하는 플레이어 달리기 최대 속도입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float PlayerSprintSpeed = 750.0f;
+
 	/** 심박 대상이 멀리 있을 때 적용되는 최소 BPM입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
 	float MinBPM = 60.0f;

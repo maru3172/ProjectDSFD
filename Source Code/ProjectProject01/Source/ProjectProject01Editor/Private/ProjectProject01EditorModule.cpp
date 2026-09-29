@@ -55,6 +55,7 @@ namespace ProjectProject01TuningEditor
 		static const TArray<FString> FieldNames =
 		{
 			TEXT("PlayerWalkSpeed"),
+			TEXT("PlayerSprintSpeed"),
 			TEXT("MinBPM"),
 			TEXT("MaxDistanceBPM"),
 			TEXT("MaxEncounterBPM"),

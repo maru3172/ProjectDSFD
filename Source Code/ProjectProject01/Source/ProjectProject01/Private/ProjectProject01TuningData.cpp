@@ -33,6 +33,10 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	InvalidPlayerRow.HeartbeatRange = -1.0f;
 	TestFalse(TEXT("Negative player heartbeat range is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
 
+	InvalidPlayerRow = ValidPlayerRow;
+	InvalidPlayerRow.PlayerSprintSpeed = -1.0f;
+	TestFalse(TEXT("Negative player sprint speed is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
+
 	FMannequinAITuningRow ValidMannequinRow;
 	TestTrue(TEXT("Default mannequin tuning is accepted"), ValidMannequinRow.IsValidForApplication(Error));
 
@@ -73,7 +77,7 @@ namespace ProjectProject01Tuning
 
 bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 {
-	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(MinBPM) ||
+	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(PlayerSprintSpeed) || !FMath::IsFinite(MinBPM) ||
 		!FMath::IsFinite(MaxDistanceBPM) || !FMath::IsFinite(MaxEncounterBPM) ||
 		!FMath::IsFinite(MinEncounterBoost) || !FMath::IsFinite(MaxEncounterBoost) ||
 		!FMath::IsFinite(BPMDecayPerSecond) || !FMath::IsFinite(HeartbeatRange) ||
@@ -81,7 +85,7 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(RetentionHalfAngleDegrees) || !FMath::IsFinite(LostSightGraceSeconds) ||
 		!FMath::IsFinite(SurpriseRearmDelay) || !FMath::IsFinite(SurpriseCooldown) ||
 		!FMath::IsFinite(VisionCheckInterval) || !FMath::IsFinite(MannequinRefreshInterval) ||
-		!FMath::IsFinite(BPMLogThreshold) || PlayerWalkSpeed < 0.0f || MinBPM < 0.0f ||
+		!FMath::IsFinite(BPMLogThreshold) || PlayerWalkSpeed < 0.0f || PlayerSprintSpeed < 0.0f || MinBPM < 0.0f ||
 		MaxDistanceBPM < 0.0f || MaxEncounterBPM < 0.0f || MinEncounterBoost < 0.0f ||
 		MaxEncounterBoost < 0.0f || BPMDecayPerSecond < 0.0f || HeartbeatRange < 0.0f ||
 		RetentionRange < 0.0f || RecognitionHalfAngleDegrees < 0.0f ||

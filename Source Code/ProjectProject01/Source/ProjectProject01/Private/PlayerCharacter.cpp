@@ -10,6 +10,7 @@
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "InputMappingContext.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -19,6 +20,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
+#include "InputCoreTypes.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 #include "SceneView.h"
@@ -164,6 +166,7 @@ void APlayerCharacter::BeginPlay()
 		{
 			// 입력 서브 시스템에 IMC 파일 변수를 연결한다.
 			Subsystem->AddMappingContext(IMC_PlayerInput, 0);
+			RegisterRuntimeSprintMapping(Subsystem);
 		}
 	}
 
@@ -252,6 +255,10 @@ void APlayerCharacter::Tick(float DeltaTime)
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+	if (!ensureMsgf(IsValid(PlayerInputComponent), TEXT("Player %s has no InputComponent for sprint binding."), *GetName()))
+	{
+		return;
+	}
 
 	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 
@@ -261,7 +268,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		//EnhancedInputComponent->BindAction(IA_Move, ETriggerEvent::Completed, this, &APlayerCharacter::Move);
 		EnhancedInputComponent->BindAction(IA_Look, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 		//EnhancedInputComponent->BindAction(IA_Look, ETriggerEvent::Completed, this, &APlayerCharacter::Look);
-		
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Canceled, this, &APlayerCharacter::StopSprint);
@@ -336,19 +342,69 @@ void APlayerCharacter::Look(const FInputActionValue& Value)
 
 void APlayerCharacter::StartSprint()
 {
-	if (bGameOver)
-	{
-		return;
-	}
-	
-	bIsSprinting = true;
-	GetCharacterMovement()->MaxWalkSpeed = PlayerSprintSpeed;
+	SetSprinting(true);
 }
 
 void APlayerCharacter::StopSprint()
 {
-	bIsSprinting = false;
-	GetCharacterMovement()->MaxWalkSpeed = PlayerWalkSpeed;
+	SetSprinting(false);
+}
+
+void APlayerCharacter::SetSprinting(const bool bNewSprinting)
+{
+	const bool bAllowedSprinting = bNewSprinting && !bGameOver;
+	if (bIsSprinting == bAllowedSprinting)
+	{
+		return;
+	}
+
+	bIsSprinting = bAllowedSprinting;
+	ApplyPlayerWalkSpeed();
+	UE_LOG(LogProjectProject01Tuning, Log, TEXT("Player %s sprint=%s; speed=%.1f cm/s."),
+		*GetName(), bIsSprinting ? TEXT("true") : TEXT("false"), bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed);
+
+	if (HasAuthority())
+	{
+		ForceNetUpdate();
+	}
+	else
+	{
+		ServerSetSprinting(bIsSprinting);
+	}
+}
+
+void APlayerCharacter::ServerSetSprinting_Implementation(const bool bNewSprinting)
+{
+	const bool bAllowedSprinting = bNewSprinting && !bGameOver;
+	if (bIsSprinting == bAllowedSprinting)
+	{
+		return;
+	}
+
+	bIsSprinting = bAllowedSprinting;
+	ApplyPlayerWalkSpeed();
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem)
+{
+	if (!ensureMsgf(IsValid(InputSubsystem) && IsValid(IA_Sprint),
+		TEXT("Player %s cannot register LShift sprint: input subsystem or IA_Sprint is missing."), *GetName()))
+	{
+		return;
+	}
+
+	if (!IsValid(RuntimeSprintInputContext))
+	{
+		RuntimeSprintInputContext = NewObject<UInputMappingContext>(this, TEXT("RuntimeSprintInputContext"));
+		if (!ensureMsgf(IsValid(RuntimeSprintInputContext), TEXT("Player %s could not create LShift sprint mapping context."), *GetName()))
+		{
+			return;
+		}
+		RuntimeSprintInputContext->MapKey(IA_Sprint, EKeys::LeftShift);
+	}
+
+	InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 1);
 }
 
 // =========================================================================================================================
@@ -407,6 +463,7 @@ void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
 {
 	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
+	PlayerSprintSpeed = FMath::Max(0.0f, Tuning.PlayerSprintSpeed);
 	ApplyPlayerWalkSpeed();
 
 	if (ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent."), *GetName()))
@@ -426,12 +483,18 @@ void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
 
 void APlayerCharacter::GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTuning) const
 {
-	OutTuning.PlayerWalkSpeed = IsValid(GetCharacterMovement()) ? GetCharacterMovement()->MaxWalkSpeed : 0.0f;
+	// 달리는 중 MaxWalkSpeed는 PlayerSprintSpeed이므로, 현재 이동 컴포넌트 값 대신 실제 적용 설정을 비교한다.
+	OutTuning.PlayerWalkSpeed = PlayerWalkSpeed;
+	OutTuning.PlayerSprintSpeed = PlayerSprintSpeed;
 	if (IsValid(HeartbeatComponent)) HeartbeatComponent->GetDiagnosticAppliedTuning(OutTuning);
 }
 
 void APlayerCharacter::ClientApplyPlayerTuning_Implementation(const FPlayerTuningRow& Tuning)
 {
+	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
+	PlayerSprintSpeed = FMath::Max(0.0f, Tuning.PlayerSprintSpeed);
+	ApplyPlayerWalkSpeed();
+
 	if (!ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent for client tuning."), *GetName()))
 	{
 		return;
@@ -452,6 +515,16 @@ void APlayerCharacter::ApplyPlayerWalkSpeed()
 }
 
 void APlayerCharacter::OnRep_PlayerWalkSpeed()
+{
+	ApplyPlayerWalkSpeed();
+}
+
+void APlayerCharacter::OnRep_PlayerSprintSpeed()
+{
+	ApplyPlayerWalkSpeed();
+}
+
+void APlayerCharacter::OnRep_IsSprinting()
 {
 	ApplyPlayerWalkSpeed();
 }
@@ -564,6 +637,8 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, DirectChaseRadius);
 	DOREPLIFETIME(APlayerCharacter, RoamingOuterRadius);
 	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
+	DOREPLIFETIME(APlayerCharacter, PlayerSprintSpeed);
+	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 	DOREPLIFETIME(APlayerCharacter, DirectChaseHalfAngleDegrees);
 	DOREPLIFETIME(APlayerCharacter, DirectChaseSectorRadius);
 	DOREPLIFETIME(APlayerCharacter, RemainingDeathCount);
