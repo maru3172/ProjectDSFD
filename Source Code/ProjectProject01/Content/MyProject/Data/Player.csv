@@ -2,6 +2,9 @@ Field,Value,Note
 ,,
 PlayerWalkSpeed,600,생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
 PlayerSprintSpeed,1600,Maximum movement speed while holding LShift; unit cm/s.
+MaxStamina,100,플레이어가 시작할 때 보유하며 초과할 수 없는 최대 스태미나다.
+StaminaDrainPerSecond,5,실제로 달리는 동안 초당 소모하는 스태미나다.
+StaminaRecoveryPerSecond,3,달리지 않을 때 초당 회복하는 스태미나다. 싱글에서는 파트너 실제 시야 반각이 먼저 최대치까지 복구된 뒤 남은 시간에만 회복한다.
 ,,
 MinBPM,60,심박 대상이 멀리 있을 때 적용되는 최소 BPM이다.
 MaxDistanceBPM,120,심박 대상이 플레이어와 매우 가까울 때 적용되는 거리 기반 최대 BPM이다.

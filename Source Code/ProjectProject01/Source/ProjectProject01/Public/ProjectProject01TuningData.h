@@ -24,6 +24,18 @@ struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float PlayerSprintSpeed = 750.0f;
 
+	/** 플레이어가 시작할 때 보유하는 최대 스태미나입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Stamina", meta = (ClampMin = "0.0"))
+	float MaxStamina = 100.0f;
+
+	/** 실제로 달리는 동안 초당 소모하는 스태미나입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Stamina", meta = (ClampMin = "0.0"))
+	float StaminaDrainPerSecond = 5.0f;
+
+	/** 달리지 않을 때 초당 회복하는 스태미나입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Stamina", meta = (ClampMin = "0.0"))
+	float StaminaRecoveryPerSecond = 3.0f;
+
 	/** 심박 대상이 멀리 있을 때 적용되는 최소 BPM입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
 	float MinBPM = 60.0f;
@@ -159,6 +171,14 @@ struct PROJECTPROJECT01_API FHelperTuningRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision", meta = (ClampMin = "0.0", Units = "deg"))
 	float GuardSearchHalfAngleDegrees = 90.0f;
+
+	/** 싱글플레이에서 스태미나가 0인 채 달릴 때 초당 감소하는 실제 시야 반각입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
+	float StaminaDepletedVisionHalfAngleDrainPerSecond = 2.5f;
+
+	/** 싱글플레이에서 달리지 않을 때 초당 복구하는 실제 시야 반각입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
+	float StaminaVisionHalfAngleRecoveryPerSecond = 1.5f;
 
 	/** 실제 시야 중심 변경을 누적하는 시간창입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision Retreat", meta = (ClampMin = "0.0", Units = "s"))

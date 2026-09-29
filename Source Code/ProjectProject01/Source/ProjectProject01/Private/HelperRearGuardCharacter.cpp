@@ -114,6 +114,17 @@ void AHelperRearGuardCharacter::ApplyHelperTuning(const FHelperTuningRow& Tuning
 	GuardSightRadius = FMath::Max(0.0f, Tuning.GuardSightRadius);
 	GuardHalfAngleDegrees = FMath::Max(0.0f, Tuning.GuardHalfAngleDegrees);
 	GuardSearchHalfAngleDegrees = FMath::Max(0.0f, Tuning.GuardSearchHalfAngleDegrees);
+	StaminaDepletedVisionHalfAngleDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDepletedVisionHalfAngleDrainPerSecond);
+	StaminaVisionHalfAngleRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaVisionHalfAngleRecoveryPerSecond);
+	if (!bGuardHalfAngleInitialized)
+	{
+		CurrentGuardHalfAngleDegrees = GetConfiguredGuardSightHalfAngleDegrees();
+		bGuardHalfAngleInitialized = true;
+	}
+	else
+	{
+		CurrentGuardHalfAngleDegrees = FMath::Clamp(CurrentGuardHalfAngleDegrees, 0.0f, GetConfiguredGuardSightHalfAngleDegrees());
+	}
 	VisionDirectionChangeWindowSeconds = FMath::Max(0.0f, Tuning.VisionDirectionChangeWindowSeconds);
 	VisionDirectionChangeRequiredCount = FMath::Max(1, Tuning.VisionDirectionChangeRequiredCount);
 	VisionDirectionChangeThresholdDegrees = FMath::Max(0.0f, Tuning.VisionDirectionChangeThresholdDegrees);
@@ -141,6 +152,8 @@ void AHelperRearGuardCharacter::GetDiagnosticAppliedTuning(FHelperTuningRow& Out
 	OutTuning.GuardSightRadius = GuardSightRadius;
 	OutTuning.GuardHalfAngleDegrees = GuardHalfAngleDegrees;
 	OutTuning.GuardSearchHalfAngleDegrees = GuardSearchHalfAngleDegrees;
+	OutTuning.StaminaDepletedVisionHalfAngleDrainPerSecond = StaminaDepletedVisionHalfAngleDrainPerSecond;
+	OutTuning.StaminaVisionHalfAngleRecoveryPerSecond = StaminaVisionHalfAngleRecoveryPerSecond;
 	OutTuning.VisionDirectionChangeWindowSeconds = VisionDirectionChangeWindowSeconds;
 	OutTuning.VisionDirectionChangeRequiredCount = VisionDirectionChangeRequiredCount;
 	OutTuning.VisionDirectionChangeThresholdDegrees = VisionDirectionChangeThresholdDegrees;
@@ -400,7 +413,32 @@ float AHelperRearGuardCharacter::GetMaximumFollowAcceptanceRadius() const
 
 float AHelperRearGuardCharacter::GetEffectiveGuardSightHalfAngleDegrees() const
 {
-	return FMath::Clamp(GuardHalfAngleDegrees, 0.0f, GetEffectiveGuardSearchHalfAngleDegrees());
+	return FMath::Clamp(GetCurrentGuardSightHalfAngleDegrees(), 0.0f, GetEffectiveGuardSearchHalfAngleDegrees());
+}
+
+float AHelperRearGuardCharacter::GetCurrentGuardSightHalfAngleDegrees() const
+{
+	return FMath::Clamp(CurrentGuardHalfAngleDegrees, 0.0f, GetConfiguredGuardSightHalfAngleDegrees());
+}
+
+void AHelperRearGuardCharacter::ReduceCurrentGuardSightHalfAngle(const float Degrees)
+{
+	if (!HasAuthority() || Degrees <= 0.0f)
+	{
+		return;
+	}
+	CurrentGuardHalfAngleDegrees = FMath::Max(0.0f, GetCurrentGuardSightHalfAngleDegrees() - Degrees);
+}
+
+void AHelperRearGuardCharacter::RestoreCurrentGuardSightHalfAngle(const float Degrees)
+{
+	if (!HasAuthority() || Degrees <= 0.0f)
+	{
+		return;
+	}
+	CurrentGuardHalfAngleDegrees = FMath::Min(
+		GetConfiguredGuardSightHalfAngleDegrees(),
+		GetCurrentGuardSightHalfAngleDegrees() + Degrees);
 }
 
 float AHelperRearGuardCharacter::GetEffectiveGuardSearchHalfAngleDegrees() const

@@ -13,6 +13,7 @@
 #include "InputMappingContext.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -27,6 +28,82 @@
 #include "SceneViewExtension.h"
 #include "PlayerHeartbeatComponent.h"
 
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
+
+namespace
+{
+	bool TryConsumeFullStaminaUpdate(float& InOutStamina, const float DrainPerSecond, const float DeltaTime)
+	{
+		const float RequiredStamina = FMath::Max(0.0f, DrainPerSecond) * FMath::Max(0.0f, DeltaTime);
+		if (InOutStamina + KINDA_SMALL_NUMBER < RequiredStamina)
+		{
+			return false;
+		}
+		InOutStamina = FMath::Max(0.0f, InOutStamina - RequiredStamina);
+		return true;
+	}
+
+	float ConsumeStaminaAndGetDepletedTime(
+		float& InOutStamina,
+		const float DrainPerSecond,
+		const float DeltaTime)
+	{
+		const float SafeDeltaTime = FMath::Max(0.0f, DeltaTime);
+		if (DrainPerSecond <= 0.0f)
+		{
+			return InOutStamina <= KINDA_SMALL_NUMBER ? SafeDeltaTime : 0.0f;
+		}
+
+		const float TimeCoveredByStamina = FMath::Min(SafeDeltaTime, InOutStamina / DrainPerSecond);
+		InOutStamina = FMath::Max(0.0f, InOutStamina - (DrainPerSecond * TimeCoveredByStamina));
+		return SafeDeltaTime - TimeCoveredByStamina;
+	}
+
+	float GetRemainingTimeAfterVisionRecovery(
+		const float VisionDeficit,
+		const float VisionRecoveryPerSecond,
+		const float DeltaTime)
+	{
+		const float SafeDeltaTime = FMath::Max(0.0f, DeltaTime);
+		if (VisionDeficit <= KINDA_SMALL_NUMBER)
+		{
+			return SafeDeltaTime;
+		}
+		if (VisionRecoveryPerSecond <= 0.0f)
+		{
+			return 0.0f;
+		}
+		return FMath::Max(0.0f, SafeDeltaTime - (VisionDeficit / VisionRecoveryPerSecond));
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01StaminaRulesTest,
+	"ProjectProject01.Player.StaminaRules",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01StaminaRulesTest::RunTest(const FString& Parameters)
+{
+	float MultiplayerRemainder = 0.04f;
+	TestFalse(TEXT("Multiplayer rejects an update it cannot fully afford"),
+		TryConsumeFullStaminaUpdate(MultiplayerRemainder, 5.0f, 0.01f));
+	TestTrue(TEXT("Rejected multiplayer update preserves the remainder"),
+		FMath::IsNearlyEqual(MultiplayerRemainder, 0.04f));
+
+	float SingleStamina = 1.0f;
+	const float DepletedTime = ConsumeStaminaAndGetDepletedTime(SingleStamina, 5.0f, 1.0f);
+	TestTrue(TEXT("Single-player reaches zero stamina"), FMath::IsNearlyZero(SingleStamina));
+	TestTrue(TEXT("Only time after depletion affects helper vision"), FMath::IsNearlyEqual(DepletedTime, 0.8f));
+
+	const float RemainingRecoveryTime = GetRemainingTimeAfterVisionRecovery(0.75f, 1.5f, 1.0f);
+	TestTrue(TEXT("Stamina receives only the time left after helper vision recovery"),
+		FMath::IsNearlyEqual(RemainingRecoveryTime, 0.5f));
+	return true;
+}
+#endif
 
 // =========================================================================================================================
 // 카메라 B 키 디버깅 관련
@@ -240,6 +317,9 @@ void APlayerCharacter::Tick(float DeltaTime)
 		LastAIMovementDirection = InputMovementDirection;
 	}
 
+	UpdateStamina(DeltaTime);
+	DrawStaminaDebug();
+
 	// 디버그 원 그리기
 	DrawAIRangeDebug();
 
@@ -352,13 +432,42 @@ void APlayerCharacter::StopSprint()
 
 void APlayerCharacter::SetSprinting(const bool bNewSprinting)
 {
-	const bool bAllowedSprinting = bNewSprinting && !bGameOver;
-	if (bIsSprinting == bAllowedSprinting)
+	UWorld* World = GetWorld();
+	const bool bIsStandalone = IsValid(World) && World->GetNetMode() == NM_Standalone;
+	const bool bHasMultiplayerStamina = !bIsStandalone &&
+		(StaminaDrainPerSecond <= KINDA_SMALL_NUMBER || CurrentStamina > KINDA_SMALL_NUMBER);
+	const bool bAllowedSprinting = bNewSprinting && !bGameOver && (bIsStandalone || bHasMultiplayerStamina);
+	ApplySprintingState(bAllowedSprinting);
+
+	if (!HasAuthority())
+	{
+		ServerSetSprinting(bNewSprinting);
+	}
+}
+
+void APlayerCharacter::ServerSetSprinting_Implementation(const bool bNewSprinting)
+{
+	const UWorld* World = GetWorld();
+	const bool bIsStandalone = IsValid(World) && World->GetNetMode() == NM_Standalone;
+	const bool bAllowedSprinting = bNewSprinting && !bGameOver &&
+		(bIsStandalone || StaminaDrainPerSecond <= KINDA_SMALL_NUMBER || CurrentStamina > KINDA_SMALL_NUMBER);
+	ApplySprintingState(bAllowedSprinting);
+	ClientCorrectSprinting(bAllowedSprinting);
+}
+
+void APlayerCharacter::ClientCorrectSprinting_Implementation(const bool bAuthoritativeSprinting)
+{
+	ApplySprintingState(bAuthoritativeSprinting);
+}
+
+void APlayerCharacter::ApplySprintingState(const bool bNewSprinting)
+{
+	if (bIsSprinting == bNewSprinting)
 	{
 		return;
 	}
 
-	bIsSprinting = bAllowedSprinting;
+	bIsSprinting = bNewSprinting;
 	ApplyPlayerWalkSpeed();
 	UE_LOG(LogProjectProject01Tuning, Log, TEXT("Player %s sprint=%s; speed=%.1f cm/s."),
 		*GetName(), bIsSprinting ? TEXT("true") : TEXT("false"), bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed);
@@ -367,23 +476,6 @@ void APlayerCharacter::SetSprinting(const bool bNewSprinting)
 	{
 		ForceNetUpdate();
 	}
-	else
-	{
-		ServerSetSprinting(bIsSprinting);
-	}
-}
-
-void APlayerCharacter::ServerSetSprinting_Implementation(const bool bNewSprinting)
-{
-	const bool bAllowedSprinting = bNewSprinting && !bGameOver;
-	if (bIsSprinting == bAllowedSprinting)
-	{
-		return;
-	}
-
-	bIsSprinting = bAllowedSprinting;
-	ApplyPlayerWalkSpeed();
-	ForceNetUpdate();
 }
 
 void APlayerCharacter::RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem)
@@ -460,10 +552,135 @@ void APlayerCharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 	}
 }
 
+AHelperRearGuardCharacter* APlayerCharacter::ResolveStaminaHelper()
+{
+	if (StaminaHelper.IsValid() && StaminaHelper->IsGuardingPlayer(this))
+	{
+		return StaminaHelper.Get();
+	}
+
+	StaminaHelper.Reset();
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<AHelperRearGuardCharacter> It(World); It; ++It)
+	{
+		AHelperRearGuardCharacter* Helper = *It;
+		if (IsValid(Helper) && Helper->IsGuardingPlayer(this))
+		{
+			StaminaHelper = Helper;
+			return Helper;
+		}
+	}
+	return nullptr;
+}
+
+void APlayerCharacter::UpdateStamina(const float DeltaTime)
+{
+	UWorld* World = GetWorld();
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!HasAuthority() || !IsValid(World) || !IsValid(Movement) || DeltaTime <= 0.0f)
+	{
+		return;
+	}
+
+	CurrentStamina = FMath::Clamp(CurrentStamina, 0.0f, MaxStamina);
+	const bool bHasMovementIntent = !Movement->GetCurrentAcceleration().GetSafeNormal2D().IsNearlyZero();
+	const bool bActivelySprinting = bIsSprinting && bHasMovementIntent;
+	const bool bIsStandalone = World->GetNetMode() == NM_Standalone;
+
+	if (!bIsStandalone)
+	{
+		if (bActivelySprinting)
+		{
+			if (!TryConsumeFullStaminaUpdate(CurrentStamina, StaminaDrainPerSecond, DeltaTime))
+			{
+				// 현재 업데이트 전체 소모량을 낼 수 없으면 잔량을 부분 소모하지 않고 즉시 걷기로 돌아간다.
+				ApplySprintingState(false);
+				ClientCorrectSprinting(false);
+			}
+		}
+		else
+		{
+			CurrentStamina = FMath::Min(MaxStamina, CurrentStamina + (StaminaRecoveryPerSecond * DeltaTime));
+		}
+		return;
+	}
+
+	AHelperRearGuardCharacter* Helper = ResolveStaminaHelper();
+	if (bActivelySprinting)
+	{
+		const float TimeAtZeroStamina = ConsumeStaminaAndGetDepletedTime(
+			CurrentStamina, StaminaDrainPerSecond, DeltaTime);
+
+		if (IsValid(Helper) && TimeAtZeroStamina > 0.0f)
+		{
+			Helper->ReduceCurrentGuardSightHalfAngle(Helper->GetStaminaVisionDrainPerSecond() * TimeAtZeroStamina);
+		}
+		return;
+	}
+
+	float RemainingRecoveryTime = DeltaTime;
+	if (IsValid(Helper))
+	{
+		const float VisionDeficit = FMath::Max(
+			0.0f,
+			Helper->GetConfiguredGuardSightHalfAngleDegrees() - Helper->GetCurrentGuardSightHalfAngleDegrees());
+		if (VisionDeficit > KINDA_SMALL_NUMBER)
+		{
+			const float VisionRecoveryRate = Helper->GetStaminaVisionRecoveryPerSecond();
+			if (VisionRecoveryRate <= 0.0f)
+			{
+				return;
+			}
+
+			const float TimeAfterVisionRecovery = GetRemainingTimeAfterVisionRecovery(
+				VisionDeficit, VisionRecoveryRate, RemainingRecoveryTime);
+			const float VisionRecoveryTime = RemainingRecoveryTime - TimeAfterVisionRecovery;
+			Helper->RestoreCurrentGuardSightHalfAngle(VisionRecoveryRate * VisionRecoveryTime);
+			RemainingRecoveryTime = TimeAfterVisionRecovery;
+		}
+	}
+
+	if (RemainingRecoveryTime > 0.0f)
+	{
+		CurrentStamina = FMath::Min(MaxStamina, CurrentStamina + (StaminaRecoveryPerSecond * RemainingRecoveryTime));
+	}
+}
+
+void APlayerCharacter::DrawStaminaDebug() const
+{
+#if ENABLE_DRAW_DEBUG
+	UWorld* World = GetWorld();
+	if (!bShowStaminaDebug || !IsLocallyControlled() || !IsValid(World) || World->WorldType != EWorldType::PIE)
+	{
+		return;
+	}
+
+	FString HelperVisionText(TEXT("N/A"));
+	if (const AHelperRearGuardCharacter* Helper = StaminaHelper.Get(); IsValid(Helper))
+	{
+		HelperVisionText = FString::Printf(TEXT("%.1f/%.1f deg"),
+			Helper->GetCurrentGuardSightHalfAngleDegrees(), Helper->GetConfiguredGuardSightHalfAngleDegrees());
+	}
+	const FString DebugText = FString::Printf(TEXT("Stamina %.1f/%.1f | Sprint %s | Helper half-angle %s"),
+		CurrentStamina, MaxStamina, bIsSprinting ? TEXT("ON") : TEXT("OFF"), *HelperVisionText);
+	DrawDebugString(World, GetActorLocation() + FVector(0.0f, 0.0f, 120.0f), DebugText, nullptr, FColor::Cyan, 0.0f, false);
+#endif
+}
+
 void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
 {
 	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
 	PlayerSprintSpeed = FMath::Max(0.0f, Tuning.PlayerSprintSpeed);
+	MaxStamina = FMath::Max(0.0f, Tuning.MaxStamina);
+	StaminaDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDrainPerSecond);
+	StaminaRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaRecoveryPerSecond);
+	CurrentStamina = bStaminaInitialized ? FMath::Clamp(CurrentStamina, 0.0f, MaxStamina) : MaxStamina;
+	bStaminaInitialized = true;
 	ApplyPlayerWalkSpeed();
 
 	if (ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent."), *GetName()))
@@ -486,6 +703,9 @@ void APlayerCharacter::GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTun
 	// 달리는 중 MaxWalkSpeed는 PlayerSprintSpeed이므로, 현재 이동 컴포넌트 값 대신 실제 적용 설정을 비교한다.
 	OutTuning.PlayerWalkSpeed = PlayerWalkSpeed;
 	OutTuning.PlayerSprintSpeed = PlayerSprintSpeed;
+	OutTuning.MaxStamina = MaxStamina;
+	OutTuning.StaminaDrainPerSecond = StaminaDrainPerSecond;
+	OutTuning.StaminaRecoveryPerSecond = StaminaRecoveryPerSecond;
 	if (IsValid(HeartbeatComponent)) HeartbeatComponent->GetDiagnosticAppliedTuning(OutTuning);
 }
 
@@ -493,6 +713,11 @@ void APlayerCharacter::ClientApplyPlayerTuning_Implementation(const FPlayerTunin
 {
 	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
 	PlayerSprintSpeed = FMath::Max(0.0f, Tuning.PlayerSprintSpeed);
+	MaxStamina = FMath::Max(0.0f, Tuning.MaxStamina);
+	StaminaDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDrainPerSecond);
+	StaminaRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaRecoveryPerSecond);
+	CurrentStamina = bStaminaInitialized ? FMath::Clamp(CurrentStamina, 0.0f, MaxStamina) : MaxStamina;
+	bStaminaInitialized = true;
 	ApplyPlayerWalkSpeed();
 
 	if (!ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent for client tuning."), *GetName()))
@@ -612,6 +837,7 @@ void APlayerCharacter::RemoveGuardingHelpers()
 
 void APlayerCharacter::ApplyGameOverState()
 {
+	ApplySprintingState(false);
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
 	{
 		Movement->StopMovementImmediately();
@@ -639,6 +865,7 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
 	DOREPLIFETIME(APlayerCharacter, PlayerSprintSpeed);
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
+	DOREPLIFETIME_CONDITION(APlayerCharacter, CurrentStamina, COND_OwnerOnly);
 	DOREPLIFETIME(APlayerCharacter, DirectChaseHalfAngleDegrees);
 	DOREPLIFETIME(APlayerCharacter, DirectChaseSectorRadius);
 	DOREPLIFETIME(APlayerCharacter, RemainingDeathCount);

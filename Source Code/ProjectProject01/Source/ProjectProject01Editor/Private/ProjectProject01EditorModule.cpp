@@ -56,6 +56,9 @@ namespace ProjectProject01TuningEditor
 		{
 			TEXT("PlayerWalkSpeed"),
 			TEXT("PlayerSprintSpeed"),
+			TEXT("MaxStamina"),
+			TEXT("StaminaDrainPerSecond"),
+			TEXT("StaminaRecoveryPerSecond"),
 			TEXT("MinBPM"),
 			TEXT("MaxDistanceBPM"),
 			TEXT("MaxEncounterBPM"),
@@ -111,6 +114,8 @@ namespace ProjectProject01TuningEditor
 			TEXT("GuardSightRadius"),
 			TEXT("GuardHalfAngleDegrees"),
 			TEXT("GuardSearchHalfAngleDegrees"),
+			TEXT("StaminaDepletedVisionHalfAngleDrainPerSecond"),
+			TEXT("StaminaVisionHalfAngleRecoveryPerSecond"),
 			TEXT("VisionDirectionChangeWindowSeconds"),
 			TEXT("VisionDirectionChangeRequiredCount"),
 			TEXT("VisionDirectionChangeThresholdDegrees"),

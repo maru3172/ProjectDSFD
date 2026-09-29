@@ -53,6 +53,17 @@ public:
 	void GetDiagnosticAppliedTuning(struct FHelperTuningRow& OutTuning) const;
 	bool IsDiagnosticRetreatLocked() const { return bFollowDistanceLocked; }
 
+	/** 싱글플레이 스태미나 규칙이 사용하는 현재 실제 시야 반각입니다. */
+	float GetCurrentGuardSightHalfAngleDegrees() const;
+	float GetConfiguredGuardSightHalfAngleDegrees() const
+	{
+		return FMath::Clamp(GuardHalfAngleDegrees, 0.0f, FMath::Clamp(GuardSearchHalfAngleDegrees, 0.0f, 180.0f));
+	}
+	float GetStaminaVisionDrainPerSecond() const { return FMath::Max(0.0f, StaminaDepletedVisionHalfAngleDrainPerSecond); }
+	float GetStaminaVisionRecoveryPerSecond() const { return FMath::Max(0.0f, StaminaVisionHalfAngleRecoveryPerSecond); }
+	void ReduceCurrentGuardSightHalfAngle(float Degrees);
+	void RestoreCurrentGuardSightHalfAngle(float Degrees);
+
 protected:
 	/** 최소 50m 이격을 위한 목표 수평 거리(cm)입니다. 50cm 도착 허용 여유를 포함합니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "0.0", UIMin = "0.0"))
@@ -73,6 +84,15 @@ protected:
 	/** 실제 시야 중심이 이동 반대 방향으로부터 회전할 수 있는 커버 범위의 한쪽 각도입니다. 기본값 90도는 총 180도입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "1.0", ClampMax = "180.0", UIMin = "1.0", UIMax = "180.0"))
 	float GuardSearchHalfAngleDegrees = 90.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg"))
+	float CurrentGuardHalfAngleDegrees = 60.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
+	float StaminaDepletedVisionHalfAngleDrainPerSecond = 2.5f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
+	float StaminaVisionHalfAngleRecoveryPerSecond = 1.5f;
 
 	/** 실제 시야 중심 변경을 누적하는 시간창입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard|Vision Retreat", meta = (ClampMin = "0.0", Units = "s"))
@@ -121,4 +141,5 @@ private:
 	FVector LastRecordedGuardViewDirection = FVector::ZeroVector;
 	TArray<double> VisionDirectionChangeTimes;
 	bool bFollowDistanceLocked = false;
+	bool bGuardHalfAngleInitialized = false;
 };

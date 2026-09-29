@@ -37,6 +37,10 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	InvalidPlayerRow.PlayerSprintSpeed = -1.0f;
 	TestFalse(TEXT("Negative player sprint speed is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
 
+	InvalidPlayerRow = ValidPlayerRow;
+	InvalidPlayerRow.StaminaDrainPerSecond = -1.0f;
+	TestFalse(TEXT("Negative stamina drain is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
+
 	FMannequinAITuningRow ValidMannequinRow;
 	TestTrue(TEXT("Default mannequin tuning is accepted"), ValidMannequinRow.IsValidForApplication(Error));
 
@@ -63,6 +67,10 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	InvalidHelperRow = ValidHelperRow;
 	InvalidHelperRow.VisionDirectionChangeRequiredCount = 0;
 	TestFalse(TEXT("Vision retreat requires at least one direction change"), InvalidHelperRow.IsValidForApplication(Error));
+
+	InvalidHelperRow = ValidHelperRow;
+	InvalidHelperRow.StaminaVisionHalfAngleRecoveryPerSecond = -1.0f;
+	TestFalse(TEXT("Negative stamina vision recovery is rejected"), InvalidHelperRow.IsValidForApplication(Error));
 	return true;
 }
 #endif
@@ -77,7 +85,9 @@ namespace ProjectProject01Tuning
 
 bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 {
-	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(PlayerSprintSpeed) || !FMath::IsFinite(MinBPM) ||
+	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(PlayerSprintSpeed) ||
+		!FMath::IsFinite(MaxStamina) || !FMath::IsFinite(StaminaDrainPerSecond) ||
+		!FMath::IsFinite(StaminaRecoveryPerSecond) || !FMath::IsFinite(MinBPM) ||
 		!FMath::IsFinite(MaxDistanceBPM) || !FMath::IsFinite(MaxEncounterBPM) ||
 		!FMath::IsFinite(MinEncounterBoost) || !FMath::IsFinite(MaxEncounterBoost) ||
 		!FMath::IsFinite(BPMDecayPerSecond) || !FMath::IsFinite(HeartbeatRange) ||
@@ -85,7 +95,8 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(RetentionHalfAngleDegrees) || !FMath::IsFinite(LostSightGraceSeconds) ||
 		!FMath::IsFinite(SurpriseRearmDelay) || !FMath::IsFinite(SurpriseCooldown) ||
 		!FMath::IsFinite(VisionCheckInterval) || !FMath::IsFinite(MannequinRefreshInterval) ||
-		!FMath::IsFinite(BPMLogThreshold) || PlayerWalkSpeed < 0.0f || PlayerSprintSpeed < 0.0f || MinBPM < 0.0f ||
+		!FMath::IsFinite(BPMLogThreshold) || PlayerWalkSpeed < 0.0f || PlayerSprintSpeed < 0.0f ||
+		MaxStamina < 0.0f || StaminaDrainPerSecond < 0.0f || StaminaRecoveryPerSecond < 0.0f || MinBPM < 0.0f ||
 		MaxDistanceBPM < 0.0f || MaxEncounterBPM < 0.0f || MinEncounterBoost < 0.0f ||
 		MaxEncounterBoost < 0.0f || BPMDecayPerSecond < 0.0f || HeartbeatRange < 0.0f ||
 		RetentionRange < 0.0f || RecognitionHalfAngleDegrees < 0.0f ||
@@ -128,12 +139,15 @@ bool FHelperTuningRow::IsValidForApplication(FString& OutError) const
 	if (!FMath::IsFinite(HelperWalkSpeed) || !FMath::IsFinite(FollowDistance) || !FMath::IsFinite(MinimumFollowSeparation) ||
 		!FMath::IsFinite(GuardSightRadius) || !FMath::IsFinite(GuardHalfAngleDegrees) ||
 		!FMath::IsFinite(GuardSearchHalfAngleDegrees) ||
+		!FMath::IsFinite(StaminaDepletedVisionHalfAngleDrainPerSecond) ||
+		!FMath::IsFinite(StaminaVisionHalfAngleRecoveryPerSecond) ||
 		!FMath::IsFinite(VisionDirectionChangeWindowSeconds) || !FMath::IsFinite(VisionDirectionChangeThresholdDegrees) ||
 		!FMath::IsFinite(RepathInterval) || !FMath::IsFinite(RepathDistance) ||
 		!FMath::IsFinite(AcceptanceRadius) || !FMath::IsFinite(StuckTimeout) ||
 		!FMath::IsFinite(StuckWaitTime) || !FMath::IsFinite(ProgressDistance) ||
 		HelperWalkSpeed < 0.0f || FollowDistance < 0.0f || MinimumFollowSeparation < 0.0f || GuardSightRadius < 0.0f ||
 		GuardHalfAngleDegrees < 0.0f || GuardSearchHalfAngleDegrees < 0.0f ||
+		StaminaDepletedVisionHalfAngleDrainPerSecond < 0.0f || StaminaVisionHalfAngleRecoveryPerSecond < 0.0f ||
 		VisionDirectionChangeWindowSeconds < 0.0f || VisionDirectionChangeRequiredCount < 1 || VisionDirectionChangeThresholdDegrees < 0.0f ||
 		RepathInterval < 0.0f || RepathDistance < 0.0f ||
 		AcceptanceRadius < 0.0f || StuckTimeout < 0.0f || StuckWaitTime < 0.0f || ProgressDistance < 0.0f)

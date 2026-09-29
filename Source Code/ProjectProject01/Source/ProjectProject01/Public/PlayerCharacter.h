@@ -66,6 +66,12 @@ public:
 	bool HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper);
 	void GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTuning) const;
 
+	UFUNCTION(BlueprintPure, Category = "Player|Stamina")
+	float GetCurrentStamina() const { return CurrentStamina; }
+
+	UFUNCTION(BlueprintPure, Category = "Player|Stamina")
+	float GetMaxStamina() const { return MaxStamina; }
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -113,6 +119,9 @@ private:
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetSprinting(bool bNewSprinting);
+
+	UFUNCTION(Client, Reliable)
+	void ClientCorrectSprinting(bool bAuthoritativeSprinting);
 	
 	// 서버가 권한을 가지며 모든 클라이언트에 복제하는 달리기 상태다.
 	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting, VisibleInstanceOnly, Category = "Player",
@@ -138,6 +147,21 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerSprintSpeed, VisibleInstanceOnly, Category = "Player",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm/s"))
 	float PlayerSprintSpeed = 750.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Player|Stamina", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float MaxStamina = 100.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Player|Stamina", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float StaminaDrainPerSecond = 5.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Player|Stamina", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float StaminaRecoveryPerSecond = 3.0f;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Player|Stamina", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float CurrentStamina = 100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Player|Stamina|Debug", meta = (AllowPrivateAccess = "true"))
+	bool bShowStaminaDebug = true;
 
 	// PIE/Development 플레이 중 두 범위를 디버그 원으로 표시한다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Range|Debug",
@@ -171,6 +195,10 @@ private:
 	float DirectChaseSectorRadius = 1000.0f;
 
 	void ApplyPlayerWalkSpeed();
+	void ApplySprintingState(bool bNewSprinting);
+	void UpdateStamina(float DeltaTime);
+	void DrawStaminaDebug() const;
+	AHelperRearGuardCharacter* ResolveStaminaHelper();
 	void ApplyGameOverState();
 	void RemoveGuardingHelpers();
 
@@ -199,6 +227,8 @@ private:
 	// 플레이어 심박수 관련 변수
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta=(AllowPrivateAccess = "true"))
 	TObjectPtr<UPlayerHeartbeatComponent> HeartbeatComponent;
+	bool bStaminaInitialized = false;
+	TWeakObjectPtr<AHelperRearGuardCharacter> StaminaHelper;
 
 	// =========================================================================================================================
 	// 카메라 B 키 디버깅 관련
