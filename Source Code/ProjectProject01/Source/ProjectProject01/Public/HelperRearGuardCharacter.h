@@ -59,8 +59,8 @@ public:
 	{
 		return FMath::Clamp(GuardHalfAngleDegrees, 0.0f, FMath::Clamp(GuardSearchHalfAngleDegrees, 0.0f, 180.0f));
 	}
-	float GetStaminaVisionDrainPerSecond() const { return FMath::Max(0.0f, StaminaDepletedVisionHalfAngleDrainPerSecond); }
-	float GetStaminaVisionRecoveryPerSecond() const { return FMath::Max(0.0f, StaminaVisionHalfAngleRecoveryPerSecond); }
+	float GetStaminaVisionDrainMultiplier() const { return FMath::Max(0.0f, StaminaVisionDrainMultiplier); }
+	float GetStaminaVisionRecoveryMultiplier() const { return FMath::Max(0.0f, StaminaVisionRecoveryMultiplier); }
 	void ReduceCurrentGuardSightHalfAngle(float Degrees);
 	void RestoreCurrentGuardSightHalfAngle(float Degrees);
 
@@ -88,11 +88,11 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg"))
 	float CurrentGuardHalfAngleDegrees = 60.0f;
 
-	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
-	float StaminaDepletedVisionHalfAngleDrainPerSecond = 2.5f;
+	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0"))
+	float StaminaVisionDrainMultiplier = 1.0f;
 
-	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
-	float StaminaVisionHalfAngleRecoveryPerSecond = 1.5f;
+	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0"))
+	float StaminaVisionRecoveryMultiplier = 1.0f;
 
 	/** 실제 시야 중심 변경을 누적하는 시간창입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard|Vision Retreat", meta = (ClampMin = "0.0", Units = "s"))

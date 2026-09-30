@@ -34,6 +34,22 @@
 
 namespace
 {
+	float CalculateNormalizedVisionRate(
+		const float MaximumSightHalfAngleDegrees,
+		const float MaximumStamina,
+		const float CurrentStaminaRate,
+		const float VisionRateMultiplier)
+	{
+		if (MaximumStamina <= KINDA_SMALL_NUMBER)
+		{
+			return 0.0f;
+		}
+
+		return FMath::Max(0.0f, MaximumSightHalfAngleDegrees) *
+			(FMath::Max(0.0f, CurrentStaminaRate) / MaximumStamina) *
+			FMath::Max(0.0f, VisionRateMultiplier);
+	}
+
 	bool TryConsumeFullStaminaUpdate(float& InOutStamina, const float DrainPerSecond, const float DeltaTime)
 	{
 		const float RequiredStamina = FMath::Max(0.0f, DrainPerSecond) * FMath::Max(0.0f, DeltaTime);
@@ -101,6 +117,16 @@ bool FProjectProject01StaminaRulesTest::RunTest(const FString& Parameters)
 	const float RemainingRecoveryTime = GetRemainingTimeAfterVisionRecovery(0.75f, 1.5f, 1.0f);
 	TestTrue(TEXT("Stamina receives only the time left after helper vision recovery"),
 		FMath::IsNearlyEqual(RemainingRecoveryTime, 0.5f));
+	TestTrue(TEXT("A full stamina drain per second drains a full helper half-angle per second"),
+		FMath::IsNearlyEqual(CalculateNormalizedVisionRate(60.0f, 100.0f, 100.0f, 1.0f), 60.0f));
+	TestTrue(TEXT("Default stamina drain maps proportionally to the helper half-angle"),
+		FMath::IsNearlyEqual(CalculateNormalizedVisionRate(60.0f, 100.0f, 5.0f, 1.0f), 3.0f));
+	TestTrue(TEXT("Default stamina recovery maps proportionally to the helper half-angle"),
+		FMath::IsNearlyEqual(CalculateNormalizedVisionRate(60.0f, 100.0f, 3.0f, 1.0f), 1.8f));
+	TestTrue(TEXT("Vision rate multiplier scales the normalized result"),
+		FMath::IsNearlyEqual(CalculateNormalizedVisionRate(60.0f, 100.0f, 5.0f, 2.0f), 6.0f));
+	TestTrue(TEXT("Zero maximum stamina is handled without division"),
+		FMath::IsNearlyZero(CalculateNormalizedVisionRate(60.0f, 0.0f, 5.0f, 1.0f)));
 	return true;
 }
 #endif
@@ -618,7 +644,12 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 
 		if (IsValid(Helper) && TimeAtZeroStamina > 0.0f)
 		{
-			Helper->ReduceCurrentGuardSightHalfAngle(Helper->GetStaminaVisionDrainPerSecond() * TimeAtZeroStamina);
+			const float ProportionalVisionDrainRate = CalculateNormalizedVisionRate(
+				Helper->GetConfiguredGuardSightHalfAngleDegrees(),
+				MaxStamina,
+				StaminaDrainPerSecond,
+				Helper->GetStaminaVisionDrainMultiplier());
+			Helper->ReduceCurrentGuardSightHalfAngle(ProportionalVisionDrainRate * TimeAtZeroStamina);
 		}
 		return;
 	}
@@ -631,7 +662,11 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 			Helper->GetConfiguredGuardSightHalfAngleDegrees() - Helper->GetCurrentGuardSightHalfAngleDegrees());
 		if (VisionDeficit > KINDA_SMALL_NUMBER)
 		{
-			const float VisionRecoveryRate = Helper->GetStaminaVisionRecoveryPerSecond();
+			const float VisionRecoveryRate = CalculateNormalizedVisionRate(
+				Helper->GetConfiguredGuardSightHalfAngleDegrees(),
+				MaxStamina,
+				StaminaRecoveryPerSecond,
+				Helper->GetStaminaVisionRecoveryMultiplier());
 			if (VisionRecoveryRate <= 0.0f)
 			{
 				return;

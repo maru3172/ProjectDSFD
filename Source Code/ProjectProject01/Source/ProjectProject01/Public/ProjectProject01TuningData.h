@@ -172,13 +172,13 @@ struct PROJECTPROJECT01_API FHelperTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision", meta = (ClampMin = "0.0", Units = "deg"))
 	float GuardSearchHalfAngleDegrees = 90.0f;
 
-	/** 싱글플레이에서 스태미나가 0인 채 달릴 때 초당 감소하는 실제 시야 반각입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
-	float StaminaDepletedVisionHalfAngleDrainPerSecond = 2.5f;
+	/** 최대 스태미나 대비 소모율로 계산한 실제 시야 반각 감소 속도에 곱하는 배율입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision|Stamina", meta = (ClampMin = "0.0"))
+	float StaminaVisionDrainMultiplier = 1.0f;
 
-	/** 싱글플레이에서 달리지 않을 때 초당 복구하는 실제 시야 반각입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision|Stamina", meta = (ClampMin = "0.0", Units = "deg/s"))
-	float StaminaVisionHalfAngleRecoveryPerSecond = 1.5f;
+	/** 최대 스태미나 대비 회복률로 계산한 실제 시야 반각 복구 속도에 곱하는 배율입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision|Stamina", meta = (ClampMin = "0.0"))
+	float StaminaVisionRecoveryMultiplier = 1.0f;
 
 	/** 실제 시야 중심 변경을 누적하는 시간창입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper|Vision Retreat", meta = (ClampMin = "0.0", Units = "s"))

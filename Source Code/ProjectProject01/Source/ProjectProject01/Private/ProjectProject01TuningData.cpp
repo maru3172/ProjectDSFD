@@ -69,8 +69,8 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Vision retreat requires at least one direction change"), InvalidHelperRow.IsValidForApplication(Error));
 
 	InvalidHelperRow = ValidHelperRow;
-	InvalidHelperRow.StaminaVisionHalfAngleRecoveryPerSecond = -1.0f;
-	TestFalse(TEXT("Negative stamina vision recovery is rejected"), InvalidHelperRow.IsValidForApplication(Error));
+	InvalidHelperRow.StaminaVisionRecoveryMultiplier = -1.0f;
+	TestFalse(TEXT("Negative stamina vision recovery multiplier is rejected"), InvalidHelperRow.IsValidForApplication(Error));
 	return true;
 }
 #endif
@@ -139,15 +139,15 @@ bool FHelperTuningRow::IsValidForApplication(FString& OutError) const
 	if (!FMath::IsFinite(HelperWalkSpeed) || !FMath::IsFinite(FollowDistance) || !FMath::IsFinite(MinimumFollowSeparation) ||
 		!FMath::IsFinite(GuardSightRadius) || !FMath::IsFinite(GuardHalfAngleDegrees) ||
 		!FMath::IsFinite(GuardSearchHalfAngleDegrees) ||
-		!FMath::IsFinite(StaminaDepletedVisionHalfAngleDrainPerSecond) ||
-		!FMath::IsFinite(StaminaVisionHalfAngleRecoveryPerSecond) ||
+		!FMath::IsFinite(StaminaVisionDrainMultiplier) ||
+		!FMath::IsFinite(StaminaVisionRecoveryMultiplier) ||
 		!FMath::IsFinite(VisionDirectionChangeWindowSeconds) || !FMath::IsFinite(VisionDirectionChangeThresholdDegrees) ||
 		!FMath::IsFinite(RepathInterval) || !FMath::IsFinite(RepathDistance) ||
 		!FMath::IsFinite(AcceptanceRadius) || !FMath::IsFinite(StuckTimeout) ||
 		!FMath::IsFinite(StuckWaitTime) || !FMath::IsFinite(ProgressDistance) ||
 		HelperWalkSpeed < 0.0f || FollowDistance < 0.0f || MinimumFollowSeparation < 0.0f || GuardSightRadius < 0.0f ||
 		GuardHalfAngleDegrees < 0.0f || GuardSearchHalfAngleDegrees < 0.0f ||
-		StaminaDepletedVisionHalfAngleDrainPerSecond < 0.0f || StaminaVisionHalfAngleRecoveryPerSecond < 0.0f ||
+		StaminaVisionDrainMultiplier < 0.0f || StaminaVisionRecoveryMultiplier < 0.0f ||
 		VisionDirectionChangeWindowSeconds < 0.0f || VisionDirectionChangeRequiredCount < 1 || VisionDirectionChangeThresholdDegrees < 0.0f ||
 		RepathInterval < 0.0f || RepathDistance < 0.0f ||
 		AcceptanceRadius < 0.0f || StuckTimeout < 0.0f || StuckWaitTime < 0.0f || ProgressDistance < 0.0f)

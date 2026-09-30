@@ -22,6 +22,11 @@
 
 namespace
 {
+	bool HasUsableGuardSight(const float SightHalfAngleDegrees)
+	{
+		return SightHalfAngleDegrees > KINDA_SMALL_NUMBER;
+	}
+
 	/** 실제 시야 부채꼴 전체가 커버 부채꼴 안에 남도록 중심 방향을 제한한다. */
 	FVector ClampViewDirectionToCoverage(
 		const FVector& CoverageCenterDirection,
@@ -64,6 +69,8 @@ bool FProjectProject01HelperVisionBoundsTest::RunTest(const FString& Parameters)
 		FVector::DotProduct(CoverageCenter, ConstrainedView), -1.0f, 1.0f)));
 
 	TestTrue(TEXT("120-degree actual sight stays inside 180-degree coverage"), FMath::IsNearlyEqual(OffsetDegrees, 30.0f, 0.01f));
+	TestFalse(TEXT("A zero-degree helper sight observes nothing"), HasUsableGuardSight(0.0f));
+	TestTrue(TEXT("A positive helper sight remains active"), HasUsableGuardSight(0.01f));
 	return true;
 }
 #endif
@@ -114,8 +121,8 @@ void AHelperRearGuardCharacter::ApplyHelperTuning(const FHelperTuningRow& Tuning
 	GuardSightRadius = FMath::Max(0.0f, Tuning.GuardSightRadius);
 	GuardHalfAngleDegrees = FMath::Max(0.0f, Tuning.GuardHalfAngleDegrees);
 	GuardSearchHalfAngleDegrees = FMath::Max(0.0f, Tuning.GuardSearchHalfAngleDegrees);
-	StaminaDepletedVisionHalfAngleDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDepletedVisionHalfAngleDrainPerSecond);
-	StaminaVisionHalfAngleRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaVisionHalfAngleRecoveryPerSecond);
+	StaminaVisionDrainMultiplier = FMath::Max(0.0f, Tuning.StaminaVisionDrainMultiplier);
+	StaminaVisionRecoveryMultiplier = FMath::Max(0.0f, Tuning.StaminaVisionRecoveryMultiplier);
 	if (!bGuardHalfAngleInitialized)
 	{
 		CurrentGuardHalfAngleDegrees = GetConfiguredGuardSightHalfAngleDegrees();
@@ -152,8 +159,8 @@ void AHelperRearGuardCharacter::GetDiagnosticAppliedTuning(FHelperTuningRow& Out
 	OutTuning.GuardSightRadius = GuardSightRadius;
 	OutTuning.GuardHalfAngleDegrees = GuardHalfAngleDegrees;
 	OutTuning.GuardSearchHalfAngleDegrees = GuardSearchHalfAngleDegrees;
-	OutTuning.StaminaDepletedVisionHalfAngleDrainPerSecond = StaminaDepletedVisionHalfAngleDrainPerSecond;
-	OutTuning.StaminaVisionHalfAngleRecoveryPerSecond = StaminaVisionHalfAngleRecoveryPerSecond;
+	OutTuning.StaminaVisionDrainMultiplier = StaminaVisionDrainMultiplier;
+	OutTuning.StaminaVisionRecoveryMultiplier = StaminaVisionRecoveryMultiplier;
 	OutTuning.VisionDirectionChangeWindowSeconds = VisionDirectionChangeWindowSeconds;
 	OutTuning.VisionDirectionChangeRequiredCount = VisionDirectionChangeRequiredCount;
 	OutTuning.VisionDirectionChangeThresholdDegrees = VisionDirectionChangeThresholdDegrees;
@@ -188,7 +195,9 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 {
 	FProjectProject01DiagnosticWorkScope DiagnosticWork(GetWorld());
 	DiagnosticWork.AddVisionCheck();
-	if (!IsValid(TargetActor) || !GuardedPlayer.IsValid() || GuardSightRadius <= 0.0f)
+	const float SightHalfAngleDegrees = GetEffectiveGuardSightHalfAngleDegrees();
+	if (!IsValid(TargetActor) || !GuardedPlayer.IsValid() || GuardSightRadius <= 0.0f ||
+		!HasUsableGuardSight(SightHalfAngleDegrees))
 	{
 		return false;
 	}
@@ -210,7 +219,7 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 	}
 
 	const FVector DirectionToTarget = ToTarget.GetSafeNormal();
-	const float MinimumDot = FMath::Cos(FMath::DegreesToRadians(GetEffectiveGuardSightHalfAngleDegrees()));
+	const float MinimumDot = FMath::Cos(FMath::DegreesToRadians(SightHalfAngleDegrees));
 	if (FVector::DotProduct(GuardViewDirection, DirectionToTarget) < MinimumDot)
 	{
 		return false;
@@ -281,6 +290,10 @@ bool AHelperRearGuardCharacter::CalculateGuardViewDirection(FVector& OutViewDire
 	const FVector CoverageCenterDirection = -PlayerMovementDirection;
 	const float CoverageHalfAngleDegrees = GetEffectiveGuardSearchHalfAngleDegrees();
 	const float SightHalfAngleDegrees = GetEffectiveGuardSightHalfAngleDegrees();
+	if (!HasUsableGuardSight(SightHalfAngleDegrees))
+	{
+		return false;
+	}
 	const float CoverageMinimumDot = FMath::Cos(FMath::DegreesToRadians(CoverageHalfAngleDegrees));
 	const FVector ViewOrigin = GetGuardViewOrigin();
 	const float MaximumDistanceSquared = FMath::Square(GuardSightRadius);
