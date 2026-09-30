@@ -147,6 +147,52 @@ void UBTService_MannequinAI::ClearRoamingState(UBlackboardComponent& Blackboard)
     Blackboard.ClearValue(TEXT("RoamingLocation"));
 }
 
+void UBTService_MannequinAI::ClearPendingOutwardTransition(UBlackboardComponent& Blackboard)
+{
+    bHasPendingOutwardTransition = false;
+    bPendingTransitionUsesCommittedLocation = false;
+    PendingRangeRegion = EMannequinRangeRegion::Unknown;
+    PendingMoveLocation = FVector::ZeroVector;
+    Blackboard.ClearValue(TEXT("PendingMoveLocation"));
+}
+
+int32 UBTService_MannequinAI::GetRegionPriority(EMannequinRangeRegion Region)
+{
+    switch (Region)
+    {
+    case EMannequinRangeRegion::OutsideOuterRange:
+        return 0;
+    case EMannequinRangeRegion::BetweenRangesOuterRoamingArea:
+        return 1;
+    case EMannequinRangeRegion::BetweenRangesDirectChaseSector:
+        return 2;
+    case EMannequinRangeRegion::InsideInnerRange:
+        return 3;
+    default:
+        return INDEX_NONE;
+    }
+}
+
+void UBTService_MannequinAI::SetActiveRangeRegion(
+    EMannequinRangeRegion NewRegion,
+    UBlackboardComponent& Blackboard)
+{
+    ActiveRangeRegion = NewRegion;
+
+    const bool bActiveOutside = NewRegion == EMannequinRangeRegion::OutsideOuterRange;
+    const bool bActiveInner = NewRegion == EMannequinRangeRegion::InsideInnerRange;
+    const bool bActiveChaseSector =
+        NewRegion == EMannequinRangeRegion::BetweenRangesDirectChaseSector;
+    const bool bActiveRoaming =
+        NewRegion == EMannequinRangeRegion::BetweenRangesOuterRoamingArea;
+
+    Blackboard.SetValueAsBool(TEXT("IsOutsideOuterRange"), bActiveOutside);
+    Blackboard.SetValueAsBool(TEXT("IsBetweenPlayerRanges"), bActiveChaseSector || bActiveRoaming);
+    Blackboard.SetValueAsBool(TEXT("IsInsideInnerRange"), bActiveInner);
+    Blackboard.SetValueAsBool(TEXT("IsInChaseSector"), bActiveChaseSector);
+    Blackboard.SetValueAsBool(TEXT("IsInRoamingSector"), bActiveRoaming);
+}
+
 void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
@@ -457,11 +503,11 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         ? FMath::Max(0.0f, ActiveTuning.RoamingOuterRadius)
         : PlayerCharacter->GetRoamingOuterRadius();
     const double PlayerDistanceSquared = FVector::DistSquared2D(MannequinLocation, PlayerLocation);
-    const bool bIsInsideInnerRange =
+    bool bIsInsideInnerRange =
         PlayerDistanceSquared <= FMath::Square(static_cast<double>(DirectChaseRadius));
-    const bool bIsBetweenPlayerRanges = !bIsInsideInnerRange &&
+    bool bIsBetweenPlayerRanges = !bIsInsideInnerRange &&
         PlayerDistanceSquared <= FMath::Square(static_cast<double>(RoamingOuterRadius));
-    const bool bIsOutsideOuterRange = !bIsInsideInnerRange && !bIsBetweenPlayerRanges;
+    bool bIsOutsideOuterRange = !bIsInsideInnerRange && !bIsBetweenPlayerRanges;
     
     // 플레이어의 실제 이동 방향을 가져오기
     const FVector PlayerMovementDirection = PlayerCharacter->GetAIMovementDirection();
@@ -477,11 +523,11 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 직접 추격 부채꼴은 내부원 밖에서 시작하며 플레이어가 설정한 반경까지만 이어진다.
     const bool bIsInsideDirectChaseSectorDistance =
         bIsBetweenPlayerRanges && PlayerDistanceSquared <= DirectChaseSectorRadiusSquared;
-    const bool bIsInChaseSector =
+    bool bIsInChaseSector =
         bIsInsideDirectChaseSectorDistance && MovementDirectionDot >= ChaseMinimumDot;
 
     // 내부원과 외부원 사이에서 직접 추격 부채꼴을 제외한 모든 영역은 랜덤 이동 영역이다.
-    const bool bIsInRoamingSector = bIsBetweenPlayerRanges && !bIsInChaseSector;
+    bool bIsInRoamingSector = bIsBetweenPlayerRanges && !bIsInChaseSector;
     
     // =========================================================================================================================
     // Mannequin AI 플레이어 원 반경 내 디버깅 출력 관련 코드
@@ -555,13 +601,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     }
 
     const bool bMutuallyDetected = PlayerSeeMannequin && MannequinSeePlayer;
-    Blackboard->SetValueAsBool(TEXT("IsOutsideOuterRange"), bIsOutsideOuterRange);
-    Blackboard->SetValueAsBool(TEXT("IsBetweenPlayerRanges"), bIsBetweenPlayerRanges);
-    Blackboard->SetValueAsBool(TEXT("IsInsideInnerRange"), bIsInsideInnerRange);
-    
-    Blackboard->SetValueAsBool(TEXT("IsInChaseSector"), bIsInChaseSector);
-    Blackboard->SetValueAsBool(TEXT("IsInRoamingSector"), bIsInRoamingSector);
-
     const double CurrentTime = GetWorld()->GetTimeSeconds();
     // 빙의 해제 때 남겨진 명령은 기존 AI 반경/배회 판단보다 우선한다.
     // 단, 생존자 시야 정지 상태는 MultiplayTest GameMode가 별도로 이동 권한을 막는다.
@@ -570,6 +609,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         AIController->StopMovement();
         Mannequin->SetFrozen(true);
         Blackboard->ClearValue(TEXT("TargetActor"));
+        ClearPendingOutwardTransition(*Blackboard);
         ClearRoamingState(*Blackboard);
         return;
     }
@@ -582,6 +622,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         {
             Mannequin->SetFrozen(false);
             Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
+            ClearPendingOutwardTransition(*Blackboard);
             ClearRoamingState(*Blackboard);
             return;
         }
@@ -589,7 +630,119 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         // E 명령이 유효한 동안 사정거리 안에 생존자가 없으면 기존 AI를 실행하지 않고 대기한다.
         AIController->StopMovement();
         Blackboard->ClearValue(TEXT("TargetActor"));
+        ClearPendingOutwardTransition(*Blackboard);
         ClearRoamingState(*Blackboard);
+        return;
+    }
+
+    const bool bMovementSequenceCompleted =
+        Blackboard->GetValueAsBool(TEXT("RoamingSequenceCompleted"));
+    if (bMovementSequenceCompleted)
+    {
+        Blackboard->SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
+
+        if (bHasPendingOutwardTransition)
+        {
+            const EMannequinRangeRegion CompletedRegion = PendingRangeRegion;
+            ClearPendingOutwardTransition(*Blackboard);
+            ClearRoamingState(*Blackboard);
+            SetActiveRangeRegion(CompletedRegion, *Blackboard);
+        }
+        else
+        {
+            ClearRoamingState(*Blackboard);
+        }
+    }
+
+    const EMannequinRangeRegion DetectedRangeRegion = CurrentRangeRegion;
+    if (ActiveRangeRegion == EMannequinRangeRegion::Unknown)
+    {
+        SetActiveRangeRegion(DetectedRangeRegion, *Blackboard);
+    }
+
+    const int32 DetectedPriority = GetRegionPriority(DetectedRangeRegion);
+    const int32 ActivePriority = GetRegionPriority(ActiveRangeRegion);
+
+    if (bHasPendingOutwardTransition)
+    {
+        if (DetectedPriority >= ActivePriority)
+        {
+            // 완료 대기 중 같은 영역으로 돌아오거나 더 안쪽으로 들어오면 즉시 기존 대기를 취소한다.
+            if (DetectedPriority > ActivePriority)
+            {
+                AIController->StopMovement();
+                ClearRoamingState(*Blackboard);
+                SetActiveRangeRegion(DetectedRangeRegion, *Blackboard);
+            }
+            ClearPendingOutwardTransition(*Blackboard);
+        }
+        else
+        {
+            // 이동 완료 전 더 바깥으로 나가거나 한 단계 안으로 돌아오면 최종 적용 영역만 갱신한다.
+            PendingRangeRegion = DetectedRangeRegion;
+        }
+    }
+    else if (DetectedPriority > ActivePriority)
+    {
+        // 바깥에서 안쪽으로 들어오는 전이는 현재 이동을 즉시 취소하고 새 영역을 적용한다.
+        AIController->StopMovement();
+        ClearRoamingState(*Blackboard);
+        SetActiveRangeRegion(DetectedRangeRegion, *Blackboard);
+    }
+    else if (DetectedPriority < ActivePriority)
+    {
+        const bool bActiveDirectChase =
+            ActiveRangeRegion == EMannequinRangeRegion::InsideInnerRange ||
+            ActiveRangeRegion == EMannequinRangeRegion::BetweenRangesDirectChaseSector;
+        const bool bDetectedStillDirectChase =
+            DetectedRangeRegion == EMannequinRangeRegion::InsideInnerRange ||
+            DetectedRangeRegion == EMannequinRangeRegion::BetweenRangesDirectChaseSector;
+
+        if (bActiveDirectChase && bDetectedStillDirectChase)
+        {
+            // 내부원과 전방 호는 같은 직접 추격 동작이므로 이동을 끊지 않고 상태만 갱신한다.
+            SetActiveRangeRegion(DetectedRangeRegion, *Blackboard);
+        }
+        else if (bRoamingCommitted && bHasRoamingDestination)
+        {
+            // 전방 호 또는 외부원에서 이미 분산/배회를 시작했다면 현재 랜덤 목적지를 끝까지 유지한다.
+            bHasPendingOutwardTransition = true;
+            bPendingTransitionUsesCommittedLocation = false;
+            PendingRangeRegion = DetectedRangeRegion;
+        }
+        else if (bActiveDirectChase)
+        {
+            // 직접 추격이 끝난 순간의 플레이어 위치를 고정하고, 그곳에 도착한 뒤 바깥 로직을 적용한다.
+            bHasPendingOutwardTransition = true;
+            bPendingTransitionUsesCommittedLocation = true;
+            PendingRangeRegion = DetectedRangeRegion;
+            PendingMoveLocation = PlayerLocation;
+
+            ClearRoamingState(*Blackboard);
+            Blackboard->ClearValue(TEXT("TargetActor"));
+            Blackboard->SetValueAsVector(TEXT("PendingMoveLocation"), PendingMoveLocation);
+        }
+        else
+        {
+            // 완료를 기다릴 실제 이동이 없다면 바깥 영역을 바로 적용한다.
+            SetActiveRangeRegion(DetectedRangeRegion, *Blackboard);
+        }
+    }
+
+    SetActiveRangeRegion(ActiveRangeRegion, *Blackboard);
+
+    bIsOutsideOuterRange = ActiveRangeRegion == EMannequinRangeRegion::OutsideOuterRange;
+    bIsInsideInnerRange = ActiveRangeRegion == EMannequinRangeRegion::InsideInnerRange;
+    bIsInChaseSector =
+        ActiveRangeRegion == EMannequinRangeRegion::BetweenRangesDirectChaseSector;
+    bIsInRoamingSector =
+        ActiveRangeRegion == EMannequinRangeRegion::BetweenRangesOuterRoamingArea;
+    bIsBetweenPlayerRanges = bIsInChaseSector || bIsInRoamingSector;
+
+    if (bHasPendingOutwardTransition && bPendingTransitionUsesCommittedLocation)
+    {
+        Blackboard->ClearValue(TEXT("TargetActor"));
+        Blackboard->SetValueAsVector(TEXT("PendingMoveLocation"), PendingMoveLocation);
         return;
     }
 
@@ -613,6 +766,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     if (bRequiresMutualDetection && !bMutuallyDetected)
     {
         Blackboard->ClearValue(TEXT("TargetActor"));
+        ClearPendingOutwardTransition(*Blackboard);
         ClearRoamingState(*Blackboard);
         return;
     }
@@ -623,16 +777,6 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         Blackboard->SetValueAsObject(TEXT("TargetActor"), PlayerPawn);
         ClearRoamingState(*Blackboard);
         return;
-    }
-    
-    const bool bRoamingSequenceCompleted = Blackboard->GetValueAsBool(TEXT("RoamingSequenceCompleted"));
-    if (bRoamingSequenceCompleted)
-    {
-        Blackboard->SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
-        ClearRoamingState(*Blackboard);
-
-        // 여기서 return하지 않는다!
-        // 현재 조건에 따라 추격 또는 새 랜덤 이동을 다시 결정한다.
     }
     
     const double InnerRadiusSquared = FMath::Square(static_cast<double>(DirectChaseRadius));
@@ -695,7 +839,8 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         const double DestinationDistanceSquared = bHasRoamingDestination
             ? FVector::DistSquared2D(RoamingDestination, PlayerLocation)
             : 0.0;
-        const bool bDestinationOutsideRing = bHasRoamingDestination &&
+        const bool bDestinationOutsideRing =
+            !bHasPendingOutwardTransition && bHasRoamingDestination &&
             (DestinationDistanceSquared <= InnerRadiusSquared || DestinationDistanceSquared > OuterRadiusSquared);
         
         if (bDestinationOutsideRing)

@@ -40,6 +40,9 @@ private:
 		FVector& OutDestination) const;
 
 	void ClearRoamingState(class UBlackboardComponent& Blackboard);
+	void ClearPendingOutwardTransition(class UBlackboardComponent& Blackboard);
+	void SetActiveRangeRegion(EMannequinRangeRegion NewRegion, class UBlackboardComponent& Blackboard);
+	static int32 GetRegionPriority(EMannequinRangeRegion Region);
 
 	UPROPERTY(EditAnywhere, Category = "AI|Roaming", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
 	float MannequinGatherRadius = 500.0f;
@@ -62,6 +65,13 @@ private:
 	// 직접 추격 부채꼴 밖에서 시작된 랜덤 이동인지 구분한다.
 	// false면 부채꼴 안에서 집결로 인해 시작된 분열 이동이다.
 	bool bRoamingStartedOutsideChaseSector = false;
+
+	// 실제 위치가 바깥 영역으로 바뀌더라도 현재 이동이 끝날 때까지 적용을 미룬다.
+	EMannequinRangeRegion ActiveRangeRegion = EMannequinRangeRegion::Unknown;
+	EMannequinRangeRegion PendingRangeRegion = EMannequinRangeRegion::Unknown;
+	bool bHasPendingOutwardTransition = false;
+	bool bPendingTransitionUsesCommittedLocation = false;
+	FVector PendingMoveLocation = FVector::ZeroVector;
 	
 	// 마네킹의 마지막 상태를 저장하기
 	EMannequinRangeRegion LastLoggedRangeRegion = EMannequinRangeRegion::Unknown;
