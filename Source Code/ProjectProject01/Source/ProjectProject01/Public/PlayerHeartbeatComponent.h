@@ -1,4 +1,5 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// File: Source/ProjectProject01/Public/PlayerHeartbeatComponent.h
+// Target: ProjectProject01 / ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 
 #pragma once
 
@@ -8,6 +9,9 @@
 
 class AMannequinAICharacter;
 class APawn;
+class UCameraComponent;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
 struct FPlayerTuningRow;
 
 // 각 마네킹의 인지, 노출, 재발견 상태를 보관한다.
@@ -75,6 +79,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
@@ -85,6 +90,12 @@ private:
 	void UpdateDetectionStates(APawn& OwnerPawn);
 	// 활성 대상의 거리 하한과 최초 조우 감소를 합쳐 최종 BPM을 계산한다.
 	void UpdateBPM(float DeltaTime, const APawn& OwnerPawn);
+	// 가장 가까운 활성 마네킹 거리와 활성 수를 로컬 화면 후처리 파라미터로 변환한다.
+	void UpdateHeartbeatVFX(float DeltaTime, APawn& OwnerPawn);
+	// 로컬 Pawn 카메라에 동적 후처리 머티리얼을 안전하게 연결한다.
+	bool EnsureHeartbeatVFX(APawn& OwnerPawn);
+	// 연결한 카메라에서 후처리를 제거하고 런타임 상태를 초기화한다.
+	void ReleaseHeartbeatVFX();
 	// CurrentBPM을 실제 박동 간격으로 환산해 THUMP 로그를 출력한다.
 	void UpdateBeatLog(float DeltaTime);
 	// 파괴된 마네킹의 약한 참조를 내부 상태에서 제거한다.
@@ -198,6 +209,57 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
 	float BPMLogThreshold = 1.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true"))
+	bool bEnableHeartbeatVFX = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX",
+		meta=(AllowPrivateAccess="true", ClampMin="1", UIMin="1"))
+	int32 HeartbeatVFXDensityCountForMax = 5;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", ClampMax="1.0"))
+	float HeartbeatVFXMaxOpacity = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMaxNoiseIntensity = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMinNoiseSpeed = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMaxNoiseSpeed = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMinNoiseFrequency = 80.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMaxNoiseFrequency = 320.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMaxDistortionAmount = 0.012f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMinDistortionSpeed = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMaxDistortionSpeed = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMinDistortionFrequency = 6.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXMaxDistortionFrequency = 40.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXBlendInSpeed = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float HeartbeatVFXBlendOutSpeed = 2.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Heartbeat|VFX", meta=(AllowedClasses="/Script/Engine.MaterialInterface"))
+	TSoftObjectPtr<UMaterialInterface> HeartbeatVFXMaterial;
+
 	// 아래 값들은 실행 중 확인만 가능한 현재 계산 결과다.
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Heartbeat|Runtime",
 		meta=(AllowPrivateAccess="true"))
@@ -214,6 +276,23 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Heartbeat|Runtime",
 		meta=(AllowPrivateAccess="true"))
 	bool bHeartbeatActive = false;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Heartbeat|Runtime",
+		meta=(AllowPrivateAccess="true"))
+	float HeartbeatVFXProximityAlpha = 0.0f;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Heartbeat|Runtime",
+		meta=(AllowPrivateAccess="true"))
+	float HeartbeatVFXDensityAlpha = 0.0f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HeartbeatVFXInstance;
+
+	TWeakObjectPtr<UCameraComponent> HeartbeatVFXCamera;
+	bool bHeartbeatVFXBlendableAttached = false;
+	bool bHeartbeatVFXLoadFailureLogged = false;
+	int32 CurrentVFXActiveMannequinCount = 0;
+	float NearestActiveMannequinDistance = TNumericLimits<float>::Max();
 
 	// 전체 마네킹, 최초 인지 대상, 현재 활성 대상을 구분해 보관한다.
 	TArray<TWeakObjectPtr<AMannequinAICharacter>> CachedMannequins;

@@ -1,7 +1,9 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// File: Source/ProjectProject01/Private/PlayerHeartbeatComponent.cpp
+// Target: ProjectProject01 / ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 
 #include "PlayerHeartbeatComponent.h"
 
+#include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
@@ -9,12 +11,64 @@
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
+
+namespace ProjectProject01HeartbeatVFX
+{
+	const FName EffectOpacityParameter(TEXT("EffectOpacity"));
+	const FName NoiseIntensityParameter(TEXT("NoiseIntensity"));
+	const FName NoiseSpeedParameter(TEXT("NoiseSpeed"));
+	const FName NoiseFrequencyParameter(TEXT("NoiseFrequency"));
+	const FName DistortionAmountParameter(TEXT("DistortionAmount"));
+	const FName DistortionSpeedParameter(TEXT("DistortionSpeed"));
+	const FName DistortionFrequencyParameter(TEXT("DistortionFrequency"));
+
+	float InterpAlpha(const float Current, const float Target, const float DeltaTime, const float Speed)
+	{
+		return Speed <= 0.0f ? Target : FMath::FInterpTo(Current, Target, DeltaTime, Speed);
+	}
+
+	float CalculateProximityAlpha(const float Distance, const float Range)
+	{
+		return Range <= UE_SMALL_NUMBER ? 0.0f : 1.0f - FMath::Clamp(Distance / Range, 0.0f, 1.0f);
+	}
+
+	float CalculateDensityAlpha(const int32 ActiveCount, const int32 CountForMax)
+	{
+		return FMath::Clamp(static_cast<float>(ActiveCount) / static_cast<float>(FMath::Max(CountForMax, 1)), 0.0f, 1.0f);
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01HeartbeatVFXMappingTest,
+	"ProjectProject01.Player.HeartbeatVFXMapping",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01HeartbeatVFXMappingTest::RunTest(const FString& Parameters)
+{
+	using namespace ProjectProject01HeartbeatVFX;
+	TestEqual(TEXT("Outside the heartbeat range is fully transparent"), CalculateProximityAlpha(1500.0f, 1500.0f), 0.0f);
+	TestEqual(TEXT("Half range maps to half visibility"), CalculateProximityAlpha(750.0f, 1500.0f), 0.5f);
+	TestEqual(TEXT("At the player maps to full visibility"), CalculateProximityAlpha(0.0f, 1500.0f), 1.0f);
+	TestEqual(TEXT("Density reaches maximum at configured count"), CalculateDensityAlpha(5, 5), 1.0f);
+	TestEqual(TEXT("Density clamps above configured count"), CalculateDensityAlpha(10, 5), 1.0f);
+	return true;
+}
+#endif
 
 UPlayerHeartbeatComponent::UPlayerHeartbeatComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	HeartbeatVFXMaterial = TSoftObjectPtr<UMaterialInterface>(
+		FSoftObjectPath(TEXT("/Game/MyProject/VFX/M_HeartbeatScreenVFX.M_HeartbeatScreenVFX")));
 }
 
 void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tuning)
@@ -46,6 +100,21 @@ void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tun
 	MannequinRefreshInterval = FMath::Max(0.0f, Tuning.MannequinRefreshInterval);
 	bEnableHeartbeatLog = Tuning.bEnableHeartbeatLog;
 	BPMLogThreshold = FMath::Max(0.0f, Tuning.BPMLogThreshold);
+	bEnableHeartbeatVFX = Tuning.bEnableHeartbeatVFX;
+	HeartbeatVFXDensityCountForMax = FMath::Max(Tuning.HeartbeatVFXDensityCountForMax, 1);
+	HeartbeatVFXMaxOpacity = FMath::Clamp(Tuning.HeartbeatVFXMaxOpacity, 0.0f, 1.0f);
+	HeartbeatVFXMaxNoiseIntensity = FMath::Max(Tuning.HeartbeatVFXMaxNoiseIntensity, 0.0f);
+	HeartbeatVFXMinNoiseSpeed = FMath::Max(Tuning.HeartbeatVFXMinNoiseSpeed, 0.0f);
+	HeartbeatVFXMaxNoiseSpeed = FMath::Max(Tuning.HeartbeatVFXMaxNoiseSpeed, HeartbeatVFXMinNoiseSpeed);
+	HeartbeatVFXMinNoiseFrequency = FMath::Max(Tuning.HeartbeatVFXMinNoiseFrequency, 0.0f);
+	HeartbeatVFXMaxNoiseFrequency = FMath::Max(Tuning.HeartbeatVFXMaxNoiseFrequency, HeartbeatVFXMinNoiseFrequency);
+	HeartbeatVFXMaxDistortionAmount = FMath::Max(Tuning.HeartbeatVFXMaxDistortionAmount, 0.0f);
+	HeartbeatVFXMinDistortionSpeed = FMath::Max(Tuning.HeartbeatVFXMinDistortionSpeed, 0.0f);
+	HeartbeatVFXMaxDistortionSpeed = FMath::Max(Tuning.HeartbeatVFXMaxDistortionSpeed, HeartbeatVFXMinDistortionSpeed);
+	HeartbeatVFXMinDistortionFrequency = FMath::Max(Tuning.HeartbeatVFXMinDistortionFrequency, 0.0f);
+	HeartbeatVFXMaxDistortionFrequency = FMath::Max(Tuning.HeartbeatVFXMaxDistortionFrequency, HeartbeatVFXMinDistortionFrequency);
+	HeartbeatVFXBlendInSpeed = FMath::Max(Tuning.HeartbeatVFXBlendInSpeed, 0.0f);
+	HeartbeatVFXBlendOutSpeed = FMath::Max(Tuning.HeartbeatVFXBlendOutSpeed, 0.0f);
 
 	// 재임포트 직후에는 이전 임시 인지·쿨다운 상태를 섞지 않고 새 값으로 다시 계산한다.
 	ResetHeartbeatState();
@@ -65,6 +134,21 @@ void UPlayerHeartbeatComponent::GetDiagnosticAppliedTuning(FPlayerTuningRow& Out
 	OutTuning.SurpriseCooldown = SurpriseCooldown; OutTuning.bEnableRediscovery = bEnableRediscovery;
 	OutTuning.VisionCheckInterval = VisionCheckInterval; OutTuning.MannequinRefreshInterval = MannequinRefreshInterval;
 	OutTuning.bEnableHeartbeatLog = bEnableHeartbeatLog; OutTuning.BPMLogThreshold = BPMLogThreshold;
+	OutTuning.bEnableHeartbeatVFX = bEnableHeartbeatVFX;
+	OutTuning.HeartbeatVFXDensityCountForMax = HeartbeatVFXDensityCountForMax;
+	OutTuning.HeartbeatVFXMaxOpacity = HeartbeatVFXMaxOpacity;
+	OutTuning.HeartbeatVFXMaxNoiseIntensity = HeartbeatVFXMaxNoiseIntensity;
+	OutTuning.HeartbeatVFXMinNoiseSpeed = HeartbeatVFXMinNoiseSpeed;
+	OutTuning.HeartbeatVFXMaxNoiseSpeed = HeartbeatVFXMaxNoiseSpeed;
+	OutTuning.HeartbeatVFXMinNoiseFrequency = HeartbeatVFXMinNoiseFrequency;
+	OutTuning.HeartbeatVFXMaxNoiseFrequency = HeartbeatVFXMaxNoiseFrequency;
+	OutTuning.HeartbeatVFXMaxDistortionAmount = HeartbeatVFXMaxDistortionAmount;
+	OutTuning.HeartbeatVFXMinDistortionSpeed = HeartbeatVFXMinDistortionSpeed;
+	OutTuning.HeartbeatVFXMaxDistortionSpeed = HeartbeatVFXMaxDistortionSpeed;
+	OutTuning.HeartbeatVFXMinDistortionFrequency = HeartbeatVFXMinDistortionFrequency;
+	OutTuning.HeartbeatVFXMaxDistortionFrequency = HeartbeatVFXMaxDistortionFrequency;
+	OutTuning.HeartbeatVFXBlendInSpeed = HeartbeatVFXBlendInSpeed;
+	OutTuning.HeartbeatVFXBlendOutSpeed = HeartbeatVFXBlendOutSpeed;
 }
 
 void UPlayerHeartbeatComponent::BeginPlay()
@@ -79,6 +163,12 @@ void UPlayerHeartbeatComponent::BeginPlay()
 	}
 }
 
+void UPlayerHeartbeatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ReleaseHeartbeatVFX();
+	Super::EndPlay(EndPlayReason);
+}
+
 void UPlayerHeartbeatComponent::TickComponent(
 	float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
@@ -87,6 +177,7 @@ void UPlayerHeartbeatComponent::TickComponent(
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	if (!IsValid(OwnerPawn) || !OwnerPawn->IsLocallyControlled())
 	{
+		ReleaseHeartbeatVFX();
 		return;
 	}
 
@@ -106,6 +197,7 @@ void UPlayerHeartbeatComponent::TickComponent(
 	}
 
 	UpdateBPM(DeltaTime, *OwnerPawn);
+	UpdateHeartbeatVFX(DeltaTime, *OwnerPawn);
 	UpdateBeatLog(DeltaTime);
 }
 
@@ -121,6 +213,11 @@ void UPlayerHeartbeatComponent::ResetHeartbeatState()
 	VisionCheckAccumulator = 0.0f;
 	RefreshAccumulator = 0.0f;
 	LastLoggedBPM = 0.0f;
+	CurrentVFXActiveMannequinCount = 0;
+	NearestActiveMannequinDistance = TNumericLimits<float>::Max();
+	HeartbeatVFXProximityAlpha = 0.0f;
+	HeartbeatVFXDensityAlpha = 0.0f;
+	ReleaseHeartbeatVFX();
 }
 
 int32 UPlayerHeartbeatComponent::GetKnownMannequinCount() const
@@ -316,6 +413,7 @@ void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPaw
 	// 여러 활성 대상 중 가장 높은 거리 기반 BPM을 하한으로 사용한다.
 	float NewDistanceBPM = 0.0f;
 	int32 ActiveCount = 0;
+	float NearestDistance = TNumericLimits<float>::Max();
 	for (const TPair<TWeakObjectPtr<AMannequinAICharacter>, FHeartbeatMannequinState>& Entry : MannequinStates)
 	{
 		const AMannequinAICharacter* Mannequin = Entry.Key.Get();
@@ -323,9 +421,12 @@ void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPaw
 		{
 			const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
 			NewDistanceBPM = FMath::Max(NewDistanceBPM, CalculateDistanceBPM(Distance));
+			NearestDistance = FMath::Min(NearestDistance, Distance);
 			++ActiveCount;
 		}
 	}
+	CurrentVFXActiveMannequinCount = ActiveCount;
+	NearestActiveMannequinDistance = NearestDistance;
 
 	const bool bWasActive = bHeartbeatActive;
 	bHeartbeatActive = NewDistanceBPM > 0.0f;
@@ -357,6 +458,131 @@ void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPaw
 			CurrentBPM, DistanceBPM, EncounterBPM, ActiveCount);
 		LastLoggedBPM = CurrentBPM;
 	}
+}
+
+void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& OwnerPawn)
+{
+	UWorld* World = GetWorld();
+	if (!bEnableHeartbeatVFX || !IsValid(World) || World->GetNetMode() == NM_DedicatedServer)
+	{
+		ReleaseHeartbeatVFX();
+		return;
+	}
+
+	using namespace ProjectProject01HeartbeatVFX;
+	const bool bHasActiveTarget = CurrentVFXActiveMannequinCount > 0 &&
+		FMath::IsFinite(NearestActiveMannequinDistance);
+	const float SafeHeartbeatRange = FMath::Max(HeartbeatRange, 0.0f);
+	// 범위 밖은 보간 잔상을 남기지 않고 즉시 완전 투명(효과 미부착) 상태로 만든다.
+	if (!bHasActiveTarget || SafeHeartbeatRange <= UE_SMALL_NUMBER ||
+		NearestActiveMannequinDistance >= SafeHeartbeatRange)
+	{
+		HeartbeatVFXProximityAlpha = 0.0f;
+		HeartbeatVFXDensityAlpha = 0.0f;
+		ReleaseHeartbeatVFX();
+		return;
+	}
+
+	const float TargetProximity = CalculateProximityAlpha(NearestActiveMannequinDistance, SafeHeartbeatRange);
+	const float TargetDensity = CalculateDensityAlpha(
+		CurrentVFXActiveMannequinCount, HeartbeatVFXDensityCountForMax);
+	const float BlendSpeed = TargetProximity > HeartbeatVFXProximityAlpha
+		? HeartbeatVFXBlendInSpeed
+		: HeartbeatVFXBlendOutSpeed;
+
+	HeartbeatVFXProximityAlpha = InterpAlpha(
+		HeartbeatVFXProximityAlpha, TargetProximity, DeltaTime, BlendSpeed);
+	HeartbeatVFXDensityAlpha = InterpAlpha(
+		HeartbeatVFXDensityAlpha, TargetDensity, DeltaTime, BlendSpeed);
+
+	const float EffectOpacity = FMath::Clamp(
+		HeartbeatVFXProximityAlpha * HeartbeatVFXMaxOpacity, 0.0f, 1.0f);
+	if (EffectOpacity <= KINDA_SMALL_NUMBER && TargetProximity <= KINDA_SMALL_NUMBER)
+	{
+		HeartbeatVFXProximityAlpha = 0.0f;
+		HeartbeatVFXDensityAlpha = 0.0f;
+		if (bHeartbeatVFXBlendableAttached && HeartbeatVFXCamera.IsValid() && IsValid(HeartbeatVFXInstance))
+		{
+			HeartbeatVFXCamera->RemoveBlendable(HeartbeatVFXInstance);
+			bHeartbeatVFXBlendableAttached = false;
+		}
+		return;
+	}
+
+	if (!EnsureHeartbeatVFX(OwnerPawn) || !IsValid(HeartbeatVFXInstance))
+	{
+		return;
+	}
+
+	HeartbeatVFXInstance->SetScalarParameterValue(EffectOpacityParameter, EffectOpacity);
+	HeartbeatVFXInstance->SetScalarParameterValue(
+		NoiseIntensityParameter, HeartbeatVFXMaxNoiseIntensity * HeartbeatVFXDensityAlpha);
+	HeartbeatVFXInstance->SetScalarParameterValue(
+		NoiseSpeedParameter, FMath::Lerp(HeartbeatVFXMinNoiseSpeed, HeartbeatVFXMaxNoiseSpeed, HeartbeatVFXDensityAlpha));
+	HeartbeatVFXInstance->SetScalarParameterValue(
+		NoiseFrequencyParameter, FMath::Lerp(HeartbeatVFXMinNoiseFrequency, HeartbeatVFXMaxNoiseFrequency, HeartbeatVFXDensityAlpha));
+	HeartbeatVFXInstance->SetScalarParameterValue(
+		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * HeartbeatVFXDensityAlpha);
+	HeartbeatVFXInstance->SetScalarParameterValue(
+		DistortionSpeedParameter, FMath::Lerp(HeartbeatVFXMinDistortionSpeed, HeartbeatVFXMaxDistortionSpeed, HeartbeatVFXDensityAlpha));
+	HeartbeatVFXInstance->SetScalarParameterValue(
+		DistortionFrequencyParameter, FMath::Lerp(HeartbeatVFXMinDistortionFrequency, HeartbeatVFXMaxDistortionFrequency, HeartbeatVFXDensityAlpha));
+}
+
+bool UPlayerHeartbeatComponent::EnsureHeartbeatVFX(APawn& OwnerPawn)
+{
+	UCameraComponent* Camera = OwnerPawn.FindComponentByClass<UCameraComponent>();
+	if (!IsValid(Camera))
+	{
+		return false;
+	}
+
+	if (HeartbeatVFXCamera.Get() != Camera)
+	{
+		ReleaseHeartbeatVFX();
+		HeartbeatVFXCamera = Camera;
+	}
+
+	if (!IsValid(HeartbeatVFXInstance))
+	{
+		UMaterialInterface* Material = HeartbeatVFXMaterial.LoadSynchronous();
+		if (!IsValid(Material))
+		{
+			if (!bHeartbeatVFXLoadFailureLogged)
+			{
+				UE_LOG(LogTemp, Error,
+					TEXT("[HeartbeatVFX] Post-process material is unavailable: %s"),
+					*HeartbeatVFXMaterial.ToSoftObjectPath().ToString());
+				bHeartbeatVFXLoadFailureLogged = true;
+			}
+			return false;
+		}
+
+		HeartbeatVFXInstance = UMaterialInstanceDynamic::Create(Material, this);
+		if (!ensureMsgf(IsValid(HeartbeatVFXInstance), TEXT("Heartbeat VFX dynamic material creation failed.")))
+		{
+			return false;
+		}
+		bHeartbeatVFXLoadFailureLogged = false;
+	}
+
+	if (!bHeartbeatVFXBlendableAttached)
+	{
+		Camera->AddOrUpdateBlendable(HeartbeatVFXInstance, 1.0f);
+		bHeartbeatVFXBlendableAttached = true;
+	}
+	return true;
+}
+
+void UPlayerHeartbeatComponent::ReleaseHeartbeatVFX()
+{
+	if (bHeartbeatVFXBlendableAttached && HeartbeatVFXCamera.IsValid() && IsValid(HeartbeatVFXInstance))
+	{
+		HeartbeatVFXCamera->RemoveBlendable(HeartbeatVFXInstance);
+	}
+	bHeartbeatVFXBlendableAttached = false;
+	HeartbeatVFXCamera.Reset();
+	HeartbeatVFXInstance = nullptr;
 }
 
 void UPlayerHeartbeatComponent::UpdateBeatLog(float DeltaTime)

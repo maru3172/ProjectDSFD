@@ -100,6 +100,58 @@ struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
 	float BPMLogThreshold = 1.0f;
 
+	/** 로컬 플레이어 화면의 심박 연동 후처리 효과를 켭니다. 전용 서버에는 적용되지 않습니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX")
+	bool bEnableHeartbeatVFX = true;
+
+	/** 이 수 이상의 활성 마네킹이 가까이 모이면 밀집도 기반 효과가 최대가 됩니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "1"))
+	int32 HeartbeatVFXDensityCountForMax = 5;
+
+	/** 가장 가까운 활성 마네킹이 플레이어와 겹칠 때 사용할 최대 화면 효과 불투명도입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HeartbeatVFXMaxOpacity = 1.0f;
+
+	/** 밀집도가 최대일 때 TV 노이즈의 최대 밝기 변화량입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMaxNoiseIntensity = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMinNoiseSpeed = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMaxNoiseSpeed = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMinNoiseFrequency = 80.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMaxNoiseFrequency = 320.0f;
+
+	/** 밀집도가 최대일 때 화면 UV를 좌우로 흔드는 최대 크기입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMaxDistortionAmount = 0.012f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMinDistortionSpeed = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMaxDistortionSpeed = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMinDistortionFrequency = 6.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXMaxDistortionFrequency = 40.0f;
+
+	/** 마네킹이 가까워질 때 효과가 선명해지는 보간 속도입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXBlendInSpeed = 4.0f;
+
+	/** 마네킹이 멀어지거나 범위를 벗어날 때 효과가 투명해지는 보간 속도입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
+	float HeartbeatVFXBlendOutSpeed = 2.0f;
+
 	bool IsValidForApplication(FString& OutError) const;
 };
 
