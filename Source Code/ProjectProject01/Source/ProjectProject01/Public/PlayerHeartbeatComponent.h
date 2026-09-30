@@ -90,7 +90,7 @@ private:
 	void UpdateDetectionStates(APawn& OwnerPawn);
 	// 활성 대상의 거리 하한과 최초 조우 감소를 합쳐 최종 BPM을 계산한다.
 	void UpdateBPM(float DeltaTime, const APawn& OwnerPawn);
-	// 가장 가까운 활성 마네킹 거리와 활성 수를 로컬 화면 후처리 파라미터로 변환한다.
+	// 시야와 무관하게 HeartbeatRange 안의 가장 가까운 마네킹 거리와 수를 로컬 화면 후처리 파라미터로 변환한다.
 	void UpdateHeartbeatVFX(float DeltaTime, APawn& OwnerPawn);
 	// 로컬 Pawn 카메라에 동적 후처리 머티리얼을 안전하게 연결한다.
 	bool EnsureHeartbeatVFX(APawn& OwnerPawn);
@@ -291,8 +291,8 @@ private:
 	TWeakObjectPtr<UCameraComponent> HeartbeatVFXCamera;
 	bool bHeartbeatVFXBlendableAttached = false;
 	bool bHeartbeatVFXLoadFailureLogged = false;
-	int32 CurrentVFXActiveMannequinCount = 0;
-	float NearestActiveMannequinDistance = TNumericLimits<float>::Max();
+	int32 CurrentVFXNearbyMannequinCount = 0;
+	float NearestVFXMannequinDistance = TNumericLimits<float>::Max();
 
 	// 전체 마네킹, 최초 인지 대상, 현재 활성 대상을 구분해 보관한다.
 	TArray<TWeakObjectPtr<AMannequinAICharacter>> CachedMannequins;

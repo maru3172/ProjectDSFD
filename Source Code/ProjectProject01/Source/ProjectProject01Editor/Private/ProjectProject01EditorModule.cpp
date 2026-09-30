@@ -49,6 +49,7 @@ namespace ProjectProject01TuningEditor
 	const TCHAR* const HelperAssetName = TEXT("DT_HelperTuning");
 	const TCHAR* const HeartbeatVFXDirectory = TEXT("/Game/MyProject/VFX");
 	const TCHAR* const HeartbeatVFXAssetName = TEXT("M_HeartbeatScreenVFX");
+	const TCHAR* const HeartbeatNoiseVFXAssetName = TEXT("M_HeartbeatScreenNoiseVFX");
 
 	FString GetCsvPath(const TCHAR* FileName)
 	{
@@ -424,10 +425,10 @@ namespace ProjectProject01TuningEditor
 		return bConnected;
 	}
 
-	bool CreateOrRepairHeartbeatVFXMaterial(FString& OutError)
+	bool CreateOrRepairHeartbeatNoiseVFXMaterial(FString& OutError)
 	{
 		const FString ObjectPath = FString::Printf(TEXT("%s/%s.%s"),
-			HeartbeatVFXDirectory, HeartbeatVFXAssetName, HeartbeatVFXAssetName);
+			HeartbeatVFXDirectory, HeartbeatNoiseVFXAssetName, HeartbeatNoiseVFXAssetName);
 		UMaterial* Material = LoadObject<UMaterial>(nullptr, *ObjectPath);
 		if (!IsValid(Material))
 		{
@@ -439,7 +440,7 @@ namespace ProjectProject01TuningEditor
 			}
 			FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 			Material = Cast<UMaterial>(AssetToolsModule.Get().CreateAsset(
-				HeartbeatVFXAssetName, HeartbeatVFXDirectory, UMaterial::StaticClass(), Factory));
+				HeartbeatNoiseVFXAssetName, HeartbeatVFXDirectory, UMaterial::StaticClass(), Factory));
 		}
 		if (!IsValid(Material))
 		{
@@ -464,18 +465,6 @@ namespace ProjectProject01TuningEditor
 		UMaterialExpressionScalarParameter* NoiseIntensity = CreateScalarParameter(Material, TEXT("NoiseIntensity"), 0.0f, -700, 900);
 		UMaterialExpressionScalarParameter* NoiseSpeed = CreateScalarParameter(Material, TEXT("NoiseSpeed"), 0.75f, -1700, 850);
 		UMaterialExpressionScalarParameter* NoiseFrequency = CreateScalarParameter(Material, TEXT("NoiseFrequency"), 80.0f, -1700, 650);
-		UMaterialExpressionScalarParameter* DistortionAmount = CreateScalarParameter(Material, TEXT("DistortionAmount"), 0.0f, -700, 250);
-		UMaterialExpressionScalarParameter* DistortionSpeed = CreateScalarParameter(Material, TEXT("DistortionSpeed"), 0.35f, -1700, 450);
-		UMaterialExpressionScalarParameter* DistortionFrequency = CreateScalarParameter(Material, TEXT("DistortionFrequency"), 6.0f, -1700, 250);
-
-		// 움직이는 수평 화면 일렁임: sin(V * frequency + Time * speed) * amount.
-		UMaterialExpressionMultiply* DistortionSpatial = CreateExpression<UMaterialExpressionMultiply>(Material, -1400, 120);
-		UMaterialExpressionMultiply* DistortionTemporal = CreateExpression<UMaterialExpressionMultiply>(Material, -1400, 360);
-		UMaterialExpressionAdd* DistortionPhase = CreateExpression<UMaterialExpressionAdd>(Material, -1150, 220);
-		UMaterialExpressionSine* DistortionWave = CreateExpression<UMaterialExpressionSine>(Material, -950, 220);
-		UMaterialExpressionMultiply* DistortionOffset = CreateExpression<UMaterialExpressionMultiply>(Material, -700, 100);
-		UMaterialExpressionAdd* DistortedU = CreateExpression<UMaterialExpressionAdd>(Material, -450, -100);
-		UMaterialExpressionAppendVector* DistortedUV = CreateExpression<UMaterialExpressionAppendVector>(Material, -200, -20);
 
 		// 화면 셀은 고정하고 시간 프레임마다 해시 결과만 교체하는 흑백 TV 스노우.
 		// 서로 다른 공간/시간 계수를 사용하므로 패턴이 좌우로 평행 이동하지 않는다.
@@ -511,14 +500,10 @@ namespace ProjectProject01TuningEditor
 		UMaterialExpressionMultiply* NoiseValue = CreateExpression<UMaterialExpressionMultiply>(Material, 1150, 760);
 
 		UMaterialExpressionSceneTexture* OriginalScene = CreateExpression<UMaterialExpressionSceneTexture>(Material, 100, -320);
-		UMaterialExpressionSceneTexture* DistortedScene = CreateExpression<UMaterialExpressionSceneTexture>(Material, 100, 20);
 		if (IsValid(OriginalScene)) { OriginalScene->SceneTextureId = PPI_PostProcessInput0; OriginalScene->bFiltered = true; }
-		if (IsValid(DistortedScene)) { DistortedScene->SceneTextureId = PPI_PostProcessInput0; DistortedScene->bFiltered = true; }
 		UMaterialExpressionComponentMask* OriginalRGB = CreateExpression<UMaterialExpressionComponentMask>(Material, 350, -320);
-		UMaterialExpressionComponentMask* DistortedRGB = CreateExpression<UMaterialExpressionComponentMask>(Material, 350, 20);
 		if (IsValid(OriginalRGB)) { OriginalRGB->R = true; OriginalRGB->G = true; OriginalRGB->B = true; OriginalRGB->A = false; }
-		if (IsValid(DistortedRGB)) { DistortedRGB->R = true; DistortedRGB->G = true; DistortedRGB->B = true; DistortedRGB->A = false; }
-		UMaterialExpressionAdd* DistortedWithNoise = CreateExpression<UMaterialExpressionAdd>(Material, 1400, 120);
+		UMaterialExpressionAdd* OriginalWithNoise = CreateExpression<UMaterialExpressionAdd>(Material, 1400, 120);
 		UMaterialExpressionLinearInterpolate* FinalBlend = CreateExpression<UMaterialExpressionLinearInterpolate>(Material, 1650, 50);
 
 		bool bConnected = true;
@@ -526,19 +511,6 @@ namespace ProjectProject01TuningEditor
 		bConnected &= Connect(ScreenPosition, TEXT(""), ScreenV, TEXT(""));
 		bConnected &= Connect(ScreenU, TEXT(""), OriginalUV, TEXT("A"));
 		bConnected &= Connect(ScreenV, TEXT(""), OriginalUV, TEXT("B"));
-		bConnected &= Connect(ScreenV, TEXT(""), DistortionSpatial, TEXT("A"));
-		bConnected &= Connect(DistortionFrequency, TEXT(""), DistortionSpatial, TEXT("B"));
-		bConnected &= Connect(Time, TEXT(""), DistortionTemporal, TEXT("A"));
-		bConnected &= Connect(DistortionSpeed, TEXT(""), DistortionTemporal, TEXT("B"));
-		bConnected &= Connect(DistortionSpatial, TEXT(""), DistortionPhase, TEXT("A"));
-		bConnected &= Connect(DistortionTemporal, TEXT(""), DistortionPhase, TEXT("B"));
-		bConnected &= Connect(DistortionPhase, TEXT(""), DistortionWave, TEXT(""));
-		bConnected &= Connect(DistortionWave, TEXT(""), DistortionOffset, TEXT("A"));
-		bConnected &= Connect(DistortionAmount, TEXT(""), DistortionOffset, TEXT("B"));
-		bConnected &= Connect(ScreenU, TEXT(""), DistortedU, TEXT("A"));
-		bConnected &= Connect(DistortionOffset, TEXT(""), DistortedU, TEXT("B"));
-		bConnected &= Connect(DistortedU, TEXT(""), DistortedUV, TEXT("A"));
-		bConnected &= Connect(ScreenV, TEXT(""), DistortedUV, TEXT("B"));
 
 		bConnected &= Connect(ScreenU, TEXT(""), NoiseU, TEXT("A"));
 		bConnected &= Connect(NoiseFrequency, TEXT(""), NoiseU, TEXT("B"));
@@ -572,13 +544,11 @@ namespace ProjectProject01TuningEditor
 		bConnected &= Connect(NoiseIntensity, TEXT(""), NoiseValue, TEXT("B"));
 
 		bConnected &= Connect(OriginalUV, TEXT(""), OriginalScene, TEXT(""));
-		bConnected &= Connect(DistortedUV, TEXT(""), DistortedScene, TEXT(""));
 		bConnected &= Connect(OriginalScene, TEXT(""), OriginalRGB, TEXT(""));
-		bConnected &= Connect(DistortedScene, TEXT(""), DistortedRGB, TEXT(""));
-		bConnected &= Connect(DistortedRGB, TEXT(""), DistortedWithNoise, TEXT("A"));
-		bConnected &= Connect(NoiseValue, TEXT(""), DistortedWithNoise, TEXT("B"));
+		bConnected &= Connect(OriginalRGB, TEXT(""), OriginalWithNoise, TEXT("A"));
+		bConnected &= Connect(NoiseValue, TEXT(""), OriginalWithNoise, TEXT("B"));
 		bConnected &= Connect(OriginalRGB, TEXT(""), FinalBlend, TEXT("A"));
-		bConnected &= Connect(DistortedWithNoise, TEXT(""), FinalBlend, TEXT("B"));
+		bConnected &= Connect(OriginalWithNoise, TEXT(""), FinalBlend, TEXT("B"));
 		bConnected &= Connect(EffectOpacity, TEXT(""), FinalBlend, TEXT("Alpha"));
 		bConnected &= UMaterialEditingLibrary::ConnectMaterialProperty(FinalBlend, TEXT(""), MP_EmissiveColor);
 		if (!bConnected)
@@ -605,13 +575,129 @@ namespace ProjectProject01TuningEditor
 		return true;
 	}
 
+	bool CreateOrRepairHeartbeatDistortionVFXMaterial(FString& OutError)
+	{
+		const FString ObjectPath = FString::Printf(TEXT("%s/%s.%s"),
+			HeartbeatVFXDirectory, HeartbeatVFXAssetName, HeartbeatVFXAssetName);
+		UMaterial* Material = LoadObject<UMaterial>(nullptr, *ObjectPath);
+		if (!IsValid(Material))
+		{
+			UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+			if (!IsValid(Factory))
+			{
+				OutError = TEXT("Heartbeat distortion VFX Material Factory를 만들지 못했습니다.");
+				return false;
+			}
+			FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+			Material = Cast<UMaterial>(AssetToolsModule.Get().CreateAsset(
+				HeartbeatVFXAssetName, HeartbeatVFXDirectory, UMaterial::StaticClass(), Factory));
+		}
+		if (!IsValid(Material))
+		{
+			OutError = FString::Printf(TEXT("Heartbeat distortion VFX 머티리얼을 만들지 못했습니다: %s"), *ObjectPath);
+			return false;
+		}
+
+		Material->Modify();
+		Material->MaterialDomain = MD_PostProcess;
+		Material->BlendableLocation = BL_SceneColorAfterTonemapping;
+		UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+
+		UMaterialExpressionScreenPosition* ScreenPosition = CreateExpression<UMaterialExpressionScreenPosition>(Material, -1500, -100);
+		UMaterialExpressionComponentMask* ScreenU = CreateExpression<UMaterialExpressionComponentMask>(Material, -1300, -180);
+		UMaterialExpressionComponentMask* ScreenV = CreateExpression<UMaterialExpressionComponentMask>(Material, -1300, 20);
+		if (IsValid(ScreenU)) { ScreenU->R = true; ScreenU->G = false; ScreenU->B = false; ScreenU->A = false; }
+		if (IsValid(ScreenV)) { ScreenV->R = false; ScreenV->G = true; ScreenV->B = false; ScreenV->A = false; }
+		UMaterialExpressionAppendVector* OriginalUV = CreateExpression<UMaterialExpressionAppendVector>(Material, -1050, -250);
+		UMaterialExpressionTime* Time = CreateExpression<UMaterialExpressionTime>(Material, -1500, 420);
+		UMaterialExpressionScalarParameter* EffectOpacity = CreateScalarParameter(Material, TEXT("EffectOpacity"), 0.0f, 850, 350);
+		UMaterialExpressionScalarParameter* DistortionAmount = CreateScalarParameter(Material, TEXT("DistortionAmount"), 0.0f, -450, 260);
+		UMaterialExpressionScalarParameter* DistortionSpeed = CreateScalarParameter(Material, TEXT("DistortionSpeed"), 0.35f, -1250, 440);
+		UMaterialExpressionScalarParameter* DistortionFrequency = CreateScalarParameter(Material, TEXT("DistortionFrequency"), 6.0f, -1250, 240);
+
+		UMaterialExpressionMultiply* DistortionSpatial = CreateExpression<UMaterialExpressionMultiply>(Material, -1000, 100);
+		UMaterialExpressionMultiply* DistortionTemporal = CreateExpression<UMaterialExpressionMultiply>(Material, -1000, 360);
+		UMaterialExpressionAdd* DistortionPhase = CreateExpression<UMaterialExpressionAdd>(Material, -750, 220);
+		UMaterialExpressionSine* DistortionWave = CreateExpression<UMaterialExpressionSine>(Material, -550, 220);
+		UMaterialExpressionMultiply* DistortionOffset = CreateExpression<UMaterialExpressionMultiply>(Material, -300, 100);
+		UMaterialExpressionAdd* DistortedU = CreateExpression<UMaterialExpressionAdd>(Material, -50, -100);
+		UMaterialExpressionAppendVector* DistortedUV = CreateExpression<UMaterialExpressionAppendVector>(Material, 150, -20);
+
+		UMaterialExpressionSceneTexture* OriginalScene = CreateExpression<UMaterialExpressionSceneTexture>(Material, 350, -300);
+		UMaterialExpressionSceneTexture* DistortedScene = CreateExpression<UMaterialExpressionSceneTexture>(Material, 350, 20);
+		if (IsValid(OriginalScene)) { OriginalScene->SceneTextureId = PPI_PostProcessInput0; OriginalScene->bFiltered = true; }
+		if (IsValid(DistortedScene)) { DistortedScene->SceneTextureId = PPI_PostProcessInput0; DistortedScene->bFiltered = true; }
+		UMaterialExpressionComponentMask* OriginalRGB = CreateExpression<UMaterialExpressionComponentMask>(Material, 550, -300);
+		UMaterialExpressionComponentMask* DistortedRGB = CreateExpression<UMaterialExpressionComponentMask>(Material, 550, 20);
+		if (IsValid(OriginalRGB)) { OriginalRGB->R = true; OriginalRGB->G = true; OriginalRGB->B = true; OriginalRGB->A = false; }
+		if (IsValid(DistortedRGB)) { DistortedRGB->R = true; DistortedRGB->G = true; DistortedRGB->B = true; DistortedRGB->A = false; }
+		UMaterialExpressionLinearInterpolate* FinalBlend = CreateExpression<UMaterialExpressionLinearInterpolate>(Material, 1050, 20);
+
+		bool bConnected = true;
+		bConnected &= Connect(ScreenPosition, TEXT(""), ScreenU, TEXT(""));
+		bConnected &= Connect(ScreenPosition, TEXT(""), ScreenV, TEXT(""));
+		bConnected &= Connect(ScreenU, TEXT(""), OriginalUV, TEXT("A"));
+		bConnected &= Connect(ScreenV, TEXT(""), OriginalUV, TEXT("B"));
+		bConnected &= Connect(ScreenV, TEXT(""), DistortionSpatial, TEXT("A"));
+		bConnected &= Connect(DistortionFrequency, TEXT(""), DistortionSpatial, TEXT("B"));
+		bConnected &= Connect(Time, TEXT(""), DistortionTemporal, TEXT("A"));
+		bConnected &= Connect(DistortionSpeed, TEXT(""), DistortionTemporal, TEXT("B"));
+		bConnected &= Connect(DistortionSpatial, TEXT(""), DistortionPhase, TEXT("A"));
+		bConnected &= Connect(DistortionTemporal, TEXT(""), DistortionPhase, TEXT("B"));
+		bConnected &= Connect(DistortionPhase, TEXT(""), DistortionWave, TEXT(""));
+		bConnected &= Connect(DistortionWave, TEXT(""), DistortionOffset, TEXT("A"));
+		bConnected &= Connect(DistortionAmount, TEXT(""), DistortionOffset, TEXT("B"));
+		bConnected &= Connect(ScreenU, TEXT(""), DistortedU, TEXT("A"));
+		bConnected &= Connect(DistortionOffset, TEXT(""), DistortedU, TEXT("B"));
+		bConnected &= Connect(DistortedU, TEXT(""), DistortedUV, TEXT("A"));
+		bConnected &= Connect(ScreenV, TEXT(""), DistortedUV, TEXT("B"));
+		bConnected &= Connect(OriginalUV, TEXT(""), OriginalScene, TEXT(""));
+		bConnected &= Connect(DistortedUV, TEXT(""), DistortedScene, TEXT(""));
+		bConnected &= Connect(OriginalScene, TEXT(""), OriginalRGB, TEXT(""));
+		bConnected &= Connect(DistortedScene, TEXT(""), DistortedRGB, TEXT(""));
+		bConnected &= Connect(OriginalRGB, TEXT(""), FinalBlend, TEXT("A"));
+		bConnected &= Connect(DistortedRGB, TEXT(""), FinalBlend, TEXT("B"));
+		bConnected &= Connect(EffectOpacity, TEXT(""), FinalBlend, TEXT("Alpha"));
+		bConnected &= UMaterialEditingLibrary::ConnectMaterialProperty(FinalBlend, TEXT(""), MP_EmissiveColor);
+		if (!bConnected)
+		{
+			OutError = TEXT("Heartbeat distortion VFX 머티리얼 노드 연결에 실패했습니다.");
+			return false;
+		}
+
+		const TArray<FString> CompileErrors = UMaterialEditingLibrary::RecompileMaterial(Material);
+		if (!CompileErrors.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Heartbeat distortion VFX 머티리얼 컴파일 오류: %s"),
+				*FString::Join(CompileErrors, TEXT(" | ")));
+			return false;
+		}
+
+		Material->MarkPackageDirty();
+		TArray<UPackage*> PackagesToSave{ Material->GetOutermost() };
+		if (!UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, false))
+		{
+			OutError = TEXT("Heartbeat distortion VFX 머티리얼 패키지를 저장하지 못했습니다.");
+			return false;
+		}
+		OutError.Reset();
+		return true;
+	}
+
+	bool CreateOrRepairHeartbeatVFXMaterial(FString& OutError)
+	{
+		return CreateOrRepairHeartbeatDistortionVFXMaterial(OutError) &&
+			CreateOrRepairHeartbeatNoiseVFXMaterial(OutError);
+	}
+
 	void RunHeartbeatVFXMaterialCommand()
 	{
 		FString Error;
 		const bool bSuccess = CreateOrRepairHeartbeatVFXMaterial(Error);
 		if (bSuccess)
 		{
-			UE_LOG(LogProjectProject01Tuning, Log, TEXT("Heartbeat VFX material created, compiled, and saved."));
+			UE_LOG(LogProjectProject01Tuning, Log,
+				TEXT("Heartbeat distortion and archived noise VFX materials created, compiled, and saved."));
 		}
 		else
 		{
@@ -621,7 +707,7 @@ namespace ProjectProject01TuningEditor
 
 	FAutoConsoleCommand CreateHeartbeatVFXMaterialCommand(
 		TEXT("ProjectProject01.CreateHeartbeatVFXMaterial"),
-		TEXT("Create or repair /Game/MyProject/VFX/M_HeartbeatScreenVFX."),
+		TEXT("Create or repair the active heartbeat distortion VFX and the separate archived noise VFX."),
 		FConsoleCommandDelegate::CreateStatic(&RunHeartbeatVFXMaterialCommand));
 
 	void RunReimportTuningCommand()
@@ -684,8 +770,8 @@ private:
 			FUIAction(FExecuteAction::CreateRaw(this, &FProjectProject01EditorModule::ApplyToPie)));
 		Section.AddMenuEntry(
 			TEXT("ProjectProject01CreateHeartbeatVFXMaterial"),
-			LOCTEXT("CreateHeartbeatVFXMaterial", "Create or Repair Heartbeat Screen VFX Material"),
-			LOCTEXT("CreateHeartbeatVFXMaterialTooltip", "Create, compile, and save the local-player heartbeat post-process material."),
+			LOCTEXT("CreateHeartbeatVFXMaterial", "Create or Repair Heartbeat Screen VFX Materials"),
+			LOCTEXT("CreateHeartbeatVFXMaterialTooltip", "Create the active distortion-only material and the separate archived noise-only material."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateRaw(this, &FProjectProject01EditorModule::CreateHeartbeatVFXMaterial)));
 
@@ -726,7 +812,7 @@ private:
 			UE_LOG(LogProjectProject01Tuning, Error, TEXT("Heartbeat VFX material creation failed: %s"), *Error);
 		}
 		ShowResultNotification(
-			bSuccess ? TEXT("Heartbeat screen VFX material created, compiled, and saved.") : Error,
+			bSuccess ? TEXT("Heartbeat distortion and archived noise VFX materials created, compiled, and saved.") : Error,
 			bSuccess);
 	}
 

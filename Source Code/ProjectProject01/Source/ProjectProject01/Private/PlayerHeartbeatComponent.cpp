@@ -23,9 +23,6 @@
 namespace ProjectProject01HeartbeatVFX
 {
 	const FName EffectOpacityParameter(TEXT("EffectOpacity"));
-	const FName NoiseIntensityParameter(TEXT("NoiseIntensity"));
-	const FName NoiseSpeedParameter(TEXT("NoiseSpeed"));
-	const FName NoiseFrequencyParameter(TEXT("NoiseFrequency"));
 	const FName DistortionAmountParameter(TEXT("DistortionAmount"));
 	const FName DistortionSpeedParameter(TEXT("DistortionSpeed"));
 	const FName DistortionFrequencyParameter(TEXT("DistortionFrequency"));
@@ -40,9 +37,9 @@ namespace ProjectProject01HeartbeatVFX
 		return Range <= UE_SMALL_NUMBER ? 0.0f : 1.0f - FMath::Clamp(Distance / Range, 0.0f, 1.0f);
 	}
 
-	float CalculateDensityAlpha(const int32 ActiveCount, const int32 CountForMax)
+	float CalculateDensityAlpha(const int32 NearbyCount, const int32 CountForMax)
 	{
-		return FMath::Clamp(static_cast<float>(ActiveCount) / static_cast<float>(FMath::Max(CountForMax, 1)), 0.0f, 1.0f);
+		return FMath::Clamp(static_cast<float>(NearbyCount) / static_cast<float>(FMath::Max(CountForMax, 1)), 0.0f, 1.0f);
 	}
 }
 
@@ -213,8 +210,8 @@ void UPlayerHeartbeatComponent::ResetHeartbeatState()
 	VisionCheckAccumulator = 0.0f;
 	RefreshAccumulator = 0.0f;
 	LastLoggedBPM = 0.0f;
-	CurrentVFXActiveMannequinCount = 0;
-	NearestActiveMannequinDistance = TNumericLimits<float>::Max();
+	CurrentVFXNearbyMannequinCount = 0;
+	NearestVFXMannequinDistance = TNumericLimits<float>::Max();
 	HeartbeatVFXProximityAlpha = 0.0f;
 	HeartbeatVFXDensityAlpha = 0.0f;
 	ReleaseHeartbeatVFX();
@@ -261,7 +258,10 @@ void UPlayerHeartbeatComponent::RefreshMannequinCache()
 	{
 		if (AMannequinAICharacter* Mannequin = Cast<AMannequinAICharacter>(Actor); IsValid(Mannequin))
 		{
-			CachedMannequins.Add(Mannequin);
+			const TWeakObjectPtr<AMannequinAICharacter> WeakMannequin(Mannequin);
+			CachedMannequins.Add(WeakMannequin);
+			// VFX 거리 집계는 최초 시야 검사 전에도 동작해야 하므로 인지 상태와 별개로 항목을 준비한다.
+			MannequinStates.FindOrAdd(WeakMannequin);
 		}
 	}
 	RemoveInvalidMannequins();
@@ -413,20 +413,33 @@ void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPaw
 	// 여러 활성 대상 중 가장 높은 거리 기반 BPM을 하한으로 사용한다.
 	float NewDistanceBPM = 0.0f;
 	int32 ActiveCount = 0;
-	float NearestDistance = TNumericLimits<float>::Max();
+	int32 NearbyVFXCount = 0;
+	float NearestVFXDistance = TNumericLimits<float>::Max();
+	const float SafeHeartbeatRange = FMath::Max(HeartbeatRange, 0.0f);
 	for (const TPair<TWeakObjectPtr<AMannequinAICharacter>, FHeartbeatMannequinState>& Entry : MannequinStates)
 	{
 		const AMannequinAICharacter* Mannequin = Entry.Key.Get();
-		if (IsValid(Mannequin) && Entry.Value.bActiveForHeartbeat)
+		if (!IsValid(Mannequin))
 		{
-			const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
+			continue;
+		}
+
+		const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
+		// VFX는 심박 인지·시야 상태와 분리한다. 주변에 실제로 존재하는 마네킹만 거리로 집계한다.
+		if (SafeHeartbeatRange > UE_SMALL_NUMBER && Distance < SafeHeartbeatRange)
+		{
+			NearestVFXDistance = FMath::Min(NearestVFXDistance, Distance);
+			++NearbyVFXCount;
+		}
+
+		if (Entry.Value.bActiveForHeartbeat)
+		{
 			NewDistanceBPM = FMath::Max(NewDistanceBPM, CalculateDistanceBPM(Distance));
-			NearestDistance = FMath::Min(NearestDistance, Distance);
 			++ActiveCount;
 		}
 	}
-	CurrentVFXActiveMannequinCount = ActiveCount;
-	NearestActiveMannequinDistance = NearestDistance;
+	CurrentVFXNearbyMannequinCount = NearbyVFXCount;
+	NearestVFXMannequinDistance = NearestVFXDistance;
 
 	const bool bWasActive = bHeartbeatActive;
 	bHeartbeatActive = NewDistanceBPM > 0.0f;
@@ -470,12 +483,12 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 	}
 
 	using namespace ProjectProject01HeartbeatVFX;
-	const bool bHasActiveTarget = CurrentVFXActiveMannequinCount > 0 &&
-		FMath::IsFinite(NearestActiveMannequinDistance);
+	const bool bHasNearbyTarget = CurrentVFXNearbyMannequinCount > 0 &&
+		FMath::IsFinite(NearestVFXMannequinDistance);
 	const float SafeHeartbeatRange = FMath::Max(HeartbeatRange, 0.0f);
 	// 범위 밖은 보간 잔상을 남기지 않고 즉시 완전 투명(효과 미부착) 상태로 만든다.
-	if (!bHasActiveTarget || SafeHeartbeatRange <= UE_SMALL_NUMBER ||
-		NearestActiveMannequinDistance >= SafeHeartbeatRange)
+	if (!bHasNearbyTarget || SafeHeartbeatRange <= UE_SMALL_NUMBER ||
+		NearestVFXMannequinDistance >= SafeHeartbeatRange)
 	{
 		HeartbeatVFXProximityAlpha = 0.0f;
 		HeartbeatVFXDensityAlpha = 0.0f;
@@ -483,9 +496,9 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 		return;
 	}
 
-	const float TargetProximity = CalculateProximityAlpha(NearestActiveMannequinDistance, SafeHeartbeatRange);
+	const float TargetProximity = CalculateProximityAlpha(NearestVFXMannequinDistance, SafeHeartbeatRange);
 	const float TargetDensity = CalculateDensityAlpha(
-		CurrentVFXActiveMannequinCount, HeartbeatVFXDensityCountForMax);
+		CurrentVFXNearbyMannequinCount, HeartbeatVFXDensityCountForMax);
 	const float BlendSpeed = TargetProximity > HeartbeatVFXProximityAlpha
 		? HeartbeatVFXBlendInSpeed
 		: HeartbeatVFXBlendOutSpeed;
@@ -515,12 +528,6 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 	}
 
 	HeartbeatVFXInstance->SetScalarParameterValue(EffectOpacityParameter, EffectOpacity);
-	HeartbeatVFXInstance->SetScalarParameterValue(
-		NoiseIntensityParameter, HeartbeatVFXMaxNoiseIntensity * HeartbeatVFXDensityAlpha);
-	HeartbeatVFXInstance->SetScalarParameterValue(
-		NoiseSpeedParameter, FMath::Lerp(HeartbeatVFXMinNoiseSpeed, HeartbeatVFXMaxNoiseSpeed, HeartbeatVFXDensityAlpha));
-	HeartbeatVFXInstance->SetScalarParameterValue(
-		NoiseFrequencyParameter, FMath::Lerp(HeartbeatVFXMinNoiseFrequency, HeartbeatVFXMaxNoiseFrequency, HeartbeatVFXDensityAlpha));
 	HeartbeatVFXInstance->SetScalarParameterValue(
 		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * HeartbeatVFXDensityAlpha);
 	HeartbeatVFXInstance->SetScalarParameterValue(
