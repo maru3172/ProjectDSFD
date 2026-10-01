@@ -31,6 +31,10 @@ struct FHeartbeatMannequinState
 	double LastRetentionTime = 0.0;
 	// 마지막으로 갑작스러운 BPM 상승이 발생한 시간이다.
 	double LastSurpriseTime = -1.0e30;
+	// 조우 시야와 직접 가시선이 모두 끊긴 시각이다. 음수면 미확인 타이머가 동작하지 않는다.
+	double UnconfirmedStartTime = -1.0;
+	// 최초 조우 또는 3초 미확인 이후 새로운 조우 BPM을 받을 수 있는 상태다.
+	bool bEncounterArmed = true;
 };
 
 // 로컬 플레이어가 직접 인지한 마네킹을 기준으로 심박 BPM을 계산한다.
@@ -69,6 +73,24 @@ public:
 		return FMath::Clamp(RecognitionHalfAngleDegrees, 0.0f, 180.0f);
 	}
 
+	UFUNCTION(BlueprintPure, Category="Heartbeat|Base")
+	float GetBaseVisionRange() const { return FMath::Max(BaseVisionRange, 0.0f); }
+
+	UFUNCTION(BlueprintPure, Category="Heartbeat|Base")
+	float GetBaseVisionHalfAngleDegrees() const
+	{
+		return FMath::Clamp(BaseVisionHalfAngleDegrees, 0.0f, 180.0f);
+	}
+
+	UFUNCTION(BlueprintPure, Category="Heartbeat|Encounter")
+	float GetEncounterVisionRange() const { return FMath::Max(EncounterVisionRange, 0.0f); }
+
+	UFUNCTION(BlueprintPure, Category="Heartbeat|Encounter")
+	float GetEncounterVisionHalfAngleDegrees() const
+	{
+		return FMath::Clamp(EncounterVisionHalfAngleDegrees, 0.0f, 180.0f);
+	}
+
 	// 최초 인지 기록과 현재 심박 상태를 모두 초기화한다.
 	UFUNCTION(BlueprintCallable, Category="Heartbeat|Runtime")
 	void ResetHeartbeatState();
@@ -88,7 +110,7 @@ private:
 	void RefreshMannequinCache();
 	// 실제 시야 진입과 인지 대상 유지 여부를 갱신한다.
 	void UpdateDetectionStates(APawn& OwnerPawn);
-	// 활성 대상의 거리 하한과 최초 조우 감소를 합쳐 최종 BPM을 계산한다.
+	// 기본 시야 대상의 거리 BPM과 감소 중인 조우 BPM을 합쳐 최종 BPM을 계산한다.
 	void UpdateBPM(float DeltaTime, const APawn& OwnerPawn);
 	// 시야와 무관하게 HeartbeatRange 안의 가장 가까운 마네킹 거리와 수를 로컬 화면 후처리 파라미터로 변환한다.
 	void UpdateHeartbeatVFX(float DeltaTime, APawn& OwnerPawn);
@@ -102,9 +124,9 @@ private:
 	void RemoveInvalidMannequins();
 	// 소유 Pawn의 실제 플레이 시점과 정면 방향을 가져온다.
 	bool GetPlayerViewPoint(const APawn& OwnerPawn, FVector& OutLocation, FVector& OutForward) const;
-	// 최초 인지용 좁은 시야각과 장애물 검사를 수행한다.
-	bool IsMannequinActuallyVisible(const APawn& OwnerPawn, const AMannequinAICharacter& Mannequin,
-		const FVector& ViewLocation, const FVector& ViewForward) const;
+	// 지정한 수평 반각 안에 마네킹 중심이 들어오는지 검사한다.
+	bool IsInsideVisionCone(const AMannequinAICharacter& Mannequin,
+		const FVector& ViewLocation, const FVector& ViewForward, float HalfAngleDegrees) const;
 	// 이미 인지한 대상을 유지할 넓은 시야각 안인지 확인한다.
 	bool IsInsideRetentionCone(const AMannequinAICharacter& Mannequin,
 		const FVector& ViewLocation, const FVector& ViewForward) const;
@@ -115,8 +137,51 @@ private:
 	float CalculateDistanceAlpha(float Distance) const;
 	// 현재 거리를 MinBPM~MaxDistanceBPM 범위로 변환한다.
 	float CalculateDistanceBPM(float Distance) const;
+	float CalculateBaseBPM(float Distance) const;
+	float CalculateEncounterBPM(float Distance) const;
 	// 최초 발견 또는 재발견에 따른 일시적인 BPM 상승을 발생시킨다.
 	void TriggerSurpriseBPM(AMannequinAICharacter& Mannequin, float Distance, bool bFirstEncounter);
+
+	// 아래 값은 DataTable에 연결하지 않고 Heartbeat Component의 Blueprint 기본값으로 조절한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Base",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
+	float BaseVisionRange = 5000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Base",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="deg"))
+	float BaseVisionHalfAngleDegrees = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Base",
+		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
+	float BaseMinBPM = 60.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Base",
+		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
+	float BaseMaxBPM = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
+	float EncounterVisionRange = 1500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="deg"))
+	float EncounterVisionHalfAngleDegrees = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
+	float EncounterMinBPM = 75.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
+	float EncounterMaxBPM = 165.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="BPM/s"))
+	float EncounterDecayPerSecond = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
+	float EncounterMemorySeconds = 3.0f;
 
 	// 거리 기반 심박의 최소·최대값과 최초 조우 상한이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|BPM",
