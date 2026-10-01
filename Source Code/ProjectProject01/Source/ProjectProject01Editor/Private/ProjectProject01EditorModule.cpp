@@ -10,6 +10,7 @@
 #include "Factories/MaterialFactoryNew.h"
 #include "FileHelpers.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "GameFramework/WorldSettings.h"
 #include "HAL/IConsoleManager.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
@@ -28,8 +29,10 @@
 #include "Materials/MaterialExpressionSubtract.h"
 #include "Materials/MaterialExpressionTime.h"
 #include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01TuningData.h"
 #include "Serialization/Csv/CsvParser.h"
 #include "Styling/AppStyle.h"
@@ -727,6 +730,67 @@ namespace ProjectProject01TuningEditor
 		TEXT("ProjectProject01.ReimportTuningDataTables"),
 		TEXT("Validate the three vertical tuning CSV files, then import and save their DataTables."),
 		FConsoleCommandDelegate::CreateStatic(&RunReimportTuningCommand));
+
+	bool CreateFrontendLevel(const FString& PackagePath, UClass* GameModeClass, FString& OutError)
+	{
+		FText PackageNameError;
+		if (!FPackageName::IsValidLongPackageName(PackagePath, true, &PackageNameError))
+		{
+			OutError = PackageNameError.ToString();
+			return false;
+		}
+
+		UWorld* NewWorld = FPackageName::DoesPackageExist(PackagePath)
+			? UEditorLoadingAndSavingUtils::LoadMap(PackagePath)
+			: UEditorLoadingAndSavingUtils::NewBlankMap(false);
+		if (!IsValid(NewWorld))
+		{
+			OutError = FString::Printf(TEXT("프런트엔드 월드를 생성하거나 불러오지 못했습니다: %s"), *PackagePath);
+			return false;
+		}
+		AWorldSettings* WorldSettings = NewWorld->GetWorldSettings();
+		if (!IsValid(WorldSettings) || !IsValid(GameModeClass) || !GameModeClass->IsChildOf(AGameModeBase::StaticClass()))
+		{
+			OutError = FString::Printf(TEXT("레벨 GameMode 설정이 잘못되었습니다: %s"), *PackagePath);
+			return false;
+		}
+		WorldSettings->DefaultGameMode = GameModeClass;
+		WorldSettings->MarkPackageDirty();
+
+		if (!UEditorLoadingAndSavingUtils::SaveMap(NewWorld, PackagePath))
+		{
+			OutError = FString::Printf(TEXT("레벨 패키지를 저장하지 못했습니다: %s"), *PackagePath);
+			return false;
+		}
+
+		UE_LOG(LogProjectProject01Tuning, Log, TEXT("Frontend level configured and saved: %s"), *PackagePath);
+		return true;
+	}
+
+	void RunCreateFrontendLevelsCommand()
+	{
+		FString Error;
+		const bool bLoginCreated = CreateFrontendLevel(
+			TEXT("/Game/MyProject/Level/LoginLevel"),
+			AProjectProject01LoginGameMode::StaticClass(),
+			Error);
+		const bool bLobbyCreated = bLoginCreated && CreateFrontendLevel(
+			TEXT("/Game/MyProject/Level/LobbyLevel"),
+			AProjectProject01LobbyGameMode::StaticClass(),
+			Error);
+		if (!bLoginCreated || !bLobbyCreated)
+		{
+			UE_LOG(LogProjectProject01Tuning, Error, TEXT("Frontend level creation failed: %s"), *Error);
+			return;
+		}
+
+		UE_LOG(LogProjectProject01Tuning, Log, TEXT("LoginLevel and LobbyLevel are ready."));
+	}
+
+	FAutoConsoleCommand CreateFrontendLevelsCommand(
+		TEXT("ProjectProject01.CreateFrontendLevels"),
+		TEXT("Create LoginLevel and LobbyLevel without overwriting existing map packages."),
+		FConsoleCommandDelegate::CreateStatic(&RunCreateFrontendLevelsCommand));
 }
 
 class FProjectProject01EditorModule final : public IModuleInterface

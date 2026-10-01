@@ -1,0 +1,17 @@
+<!-- File: Tools/ProjectProject01Backend/ProjectProject01Backend.csproj -->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>ProjectProject01-Backend-Local-Auth</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Database\001_CreateAuthSchema.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
