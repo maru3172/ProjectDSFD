@@ -168,6 +168,12 @@ private:
 		meta = (AllowPrivateAccess = "true"))
 	bool bShowAIRangeDebug = true;
 
+	// 거리 제한 없이 판정하는 멀티플레이 생존자 시야를 탑뷰에서 확인하기 위한 표시 길이다.
+	// 각도와 방향은 조우 BPM 발견 부채꼴과 동일하게 사용한다.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Range|Debug",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
+	float MultiplayerVisionDebugRadius = 5000.0f;
+
 	void DrawAIRangeDebug();
 	
 	// 이동 방향을 중심으로 직접 추격 영역이 펼쳐지는 좌우 반각이다.
