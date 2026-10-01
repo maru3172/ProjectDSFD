@@ -176,7 +176,7 @@ private:
 	float EncounterMaxBPM = 165.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="BPM/s"))
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
 	float EncounterDecayPerSecond = 12.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
