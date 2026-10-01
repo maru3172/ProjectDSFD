@@ -995,29 +995,28 @@ void APlayerCharacter::DrawAIRangeDebug()
 			return;
 		}
 
-		const float HeartbeatHalfAngle = HeartbeatComponent->GetRecognitionHalfAngleDegrees();
-		const FVector HeartbeatLeft = HeartbeatDirection.RotateAngleAxis(-HeartbeatHalfAngle, FVector::UpVector);
-		const FVector HeartbeatRight = HeartbeatDirection.RotateAngleAxis(HeartbeatHalfAngle, FVector::UpVector);
 		const FColor HeartbeatColor = FColor::Yellow;
 
-		const auto DrawHeartbeatViewSector = [this, &CircleCenter, &HeartbeatDirection,
-			&HeartbeatLeft, &HeartbeatRight, HeartbeatHalfAngle, HeartbeatColor](const float Radius, const float Thickness)
+		const auto DrawHeartbeatViewSector = [this, &CircleCenter, &HeartbeatDirection, HeartbeatColor](
+			const float Radius, const float HalfAngleDegrees, const float Thickness)
 		{
 			if (Radius <= 0.0f)
 			{
 				return;
 			}
+			const FVector LeftDirection = HeartbeatDirection.RotateAngleAxis(-HalfAngleDegrees, FVector::UpVector);
+			const FVector RightDirection = HeartbeatDirection.RotateAngleAxis(HalfAngleDegrees, FVector::UpVector);
 
-			DrawDebugLine(GetWorld(), CircleCenter, CircleCenter + HeartbeatLeft * Radius,
+			DrawDebugLine(GetWorld(), CircleCenter, CircleCenter + LeftDirection * Radius,
 				HeartbeatColor, false, 0.0f, 0, Thickness);
-			DrawDebugLine(GetWorld(), CircleCenter, CircleCenter + HeartbeatRight * Radius,
+			DrawDebugLine(GetWorld(), CircleCenter, CircleCenter + RightDirection * Radius,
 				HeartbeatColor, false, 0.0f, 0, Thickness);
 
-			FVector PreviousHeartbeatPoint = CircleCenter + HeartbeatLeft * Radius;
+			FVector PreviousHeartbeatPoint = CircleCenter + LeftDirection * Radius;
 			for (int32 SegmentIndex = 1; SegmentIndex <= SectorArcSegments; ++SegmentIndex)
 			{
 				const float Alpha = static_cast<float>(SegmentIndex) / static_cast<float>(SectorArcSegments);
-				const float Angle = FMath::Lerp(-HeartbeatHalfAngle, HeartbeatHalfAngle, Alpha);
+				const float Angle = FMath::Lerp(-HalfAngleDegrees, HalfAngleDegrees, Alpha);
 				const FVector Direction = HeartbeatDirection.RotateAngleAxis(Angle, FVector::UpVector);
 				const FVector CurrentPoint = CircleCenter + Direction * Radius;
 				DrawDebugLine(GetWorld(), PreviousHeartbeatPoint, CurrentPoint,
@@ -1026,12 +1025,14 @@ void APlayerCharacter::DrawAIRangeDebug()
 			}
 		};
 
-		const float HeartbeatRadius = HeartbeatComponent->GetHeartbeatRange();
-		DrawHeartbeatViewSector(HeartbeatRadius, LineThickness);
-
-		// 서버의 멀티플레이 생존자 시야는 거리 제한이 없으므로, 별도 길이로 전체 시야 범위를 시각화한다.
-		const float FullVisionRadius = FMath::Max(HeartbeatRadius, MultiplayerVisionDebugRadius);
-		DrawHeartbeatViewSector(FullVisionRadius, LineThickness * 0.65f);
+		DrawHeartbeatViewSector(
+			HeartbeatComponent->GetEncounterVisionRange(),
+			HeartbeatComponent->GetEncounterVisionHalfAngleDegrees(),
+			LineThickness);
+		DrawHeartbeatViewSector(
+			HeartbeatComponent->GetBaseVisionRange(),
+			HeartbeatComponent->GetBaseVisionHalfAngleDegrees(),
+			LineThickness * 0.65f);
 	}
 }
 
