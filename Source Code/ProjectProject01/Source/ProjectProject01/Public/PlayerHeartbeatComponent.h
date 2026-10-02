@@ -21,16 +21,8 @@ struct FHeartbeatMannequinState
 	bool bHasEverBeenRecognized = false;
 	// 현재 플레이어 시야 안에서 장애물 없이 보이는지 나타낸다.
 	bool bCurrentlyVisible = false;
-	// 다시 발견했을 때 BPM 상승을 발생시킬 수 있는 상태다.
-	bool bSurpriseArmed = true;
 	// 현재 거리 기반 심박 계산에 반영되는지 나타낸다.
 	bool bActiveForHeartbeat = false;
-	// 마지막으로 시야에서 사라진 시간이다.
-	double HiddenStartTime = 0.0;
-	// 마지막으로 유지 범위 조건을 만족한 시간이다.
-	double LastRetentionTime = 0.0;
-	// 마지막으로 갑작스러운 BPM 상승이 발생한 시간이다.
-	double LastSurpriseTime = -1.0e30;
 	// 조우 시야와 직접 가시선이 모두 끊긴 시각이다. 음수면 미확인 타이머가 동작하지 않는다.
 	double UnconfirmedStartTime = -1.0;
 	// 최초 조우 또는 3초 미확인 이후 새로운 조우 BPM을 받을 수 있는 상태다.
@@ -62,16 +54,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
 	bool IsHeartbeatActive() const { return bHeartbeatActive; }
 
-	// 거리 BPM과 발견 부채꼴에 사용하는 최대 거리다.
-	UFUNCTION(BlueprintPure, Category="Heartbeat|Detection")
+	// 심박 VFX의 거리·밀집도 계산에 사용하는 최대 거리다.
+	UFUNCTION(BlueprintPure, Category="Heartbeat|VFX")
 	float GetHeartbeatRange() const { return FMath::Max(HeartbeatRange, 0.0f); }
-
-	// 마네킹 발견에 사용하는 수평 부채꼴의 반각이다.
-	UFUNCTION(BlueprintPure, Category="Heartbeat|Detection")
-	float GetRecognitionHalfAngleDegrees() const
-	{
-		return FMath::Clamp(RecognitionHalfAngleDegrees, 0.0f, 180.0f);
-	}
 
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Base")
 	float GetBaseVisionRange() const { return FMath::Max(BaseVisionRange, 0.0f); }
@@ -127,22 +112,15 @@ private:
 	// 지정한 수평 반각 안에 마네킹 중심이 들어오는지 검사한다.
 	bool IsInsideVisionCone(const AMannequinAICharacter& Mannequin,
 		const FVector& ViewLocation, const FVector& ViewForward, float HalfAngleDegrees) const;
-	// 이미 인지한 대상을 유지할 넓은 시야각 안인지 확인한다.
-	bool IsInsideRetentionCone(const AMannequinAICharacter& Mannequin,
-		const FVector& ViewLocation, const FVector& ViewForward) const;
 	// 카메라와 마네킹 사이에 시야를 막는 물체가 없는지 확인한다.
 	bool HasClearLineOfSight(const APawn& OwnerPawn, const AMannequinAICharacter& Mannequin,
 		const FVector& ViewLocation) const;
-	// 0은 심박 거리 바깥, 1은 플레이어와 거의 같은 위치를 뜻한다.
-	float CalculateDistanceAlpha(float Distance) const;
-	// 현재 거리를 MinBPM~MaxDistanceBPM 범위로 변환한다.
-	float CalculateDistanceBPM(float Distance) const;
 	float CalculateBaseBPM(float Distance) const;
 	float CalculateEncounterBPM(float Distance) const;
 	// 최초 발견 또는 재발견에 따른 일시적인 BPM 상승을 발생시킨다.
 	void TriggerSurpriseBPM(AMannequinAICharacter& Mannequin, float Distance, bool bFirstEncounter);
 
-	// 아래 값은 DataTable에 연결하지 않고 Heartbeat Component의 Blueprint 기본값으로 조절한다.
+	// 아래 값은 Player DataTable에서 적용하며, 값이 없을 때는 이 C++ 기본값을 사용한다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Base",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
 	float BaseVisionRange = 5000.0f;
@@ -183,77 +161,10 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
 	float EncounterMemorySeconds = 3.0f;
 
-	// 거리 기반 심박의 최소·최대값과 최초 조우 상한이다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|BPM",
-		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
-	float MinBPM = 60.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|BPM",
-		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
-	float MaxDistanceBPM = 120.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|BPM",
-		meta=(AllowPrivateAccess="true", ClampMin="1.0", UIMin="1.0"))
-	float MaxEncounterBPM = 165.0f;
-
-	// 최초 조우 시 거리에 따라 더할 BPM 범위다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float MinEncounterBoost = 15.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float MaxEncounterBoost = 45.0f;
-
-	// 최초 조우 BPM이 거리 기반 BPM까지 내려오는 초당 감소량이다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float BPMDecayPerSecond = 12.0f;
-
-	// 거리 기반 BPM 계산에 사용하는 최대 거리다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
+	// VFX 거리·밀집도 계산에 사용하는 최대 거리다. BPM 시야 거리와는 독립적이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
 	float HeartbeatRange = 1500.0f;
-
-	// 한 번 인지한 마네킹을 심박 대상으로 유지할 최대 거리다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
-	float RetentionRange = 1800.0f;
-
-	// 마네킹을 발견할 수평 부채꼴의 한쪽 각도다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="deg"))
-	float RecognitionHalfAngleDegrees = 45.0f;
-
-	// false면 현재 발견 부채꼴과 거리만으로 심박 활성 여부를 결정한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
-		meta=(AllowPrivateAccess="true"))
-	bool bUseRetentionRules = false;
-
-	// 인지 완료 마네킹을 유지할 더 넓은 시야의 한쪽 각도다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", ClampMax="180.0", UIMin="0.0", UIMax="180.0", Units="deg"))
-	float RetentionHalfAngleDegrees = 80.0f;
-
-	// 유지 조건을 잃은 뒤에도 심박 반영을 계속하는 유예시간이다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
-	float LostSightGraceSeconds = 1.5f;
-	
-	// 이 시간 이상 연속으로 보이지 않아야 재발견 BPM이 준비된다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
-	float SurpriseRearmDelay = 0.75f;
-	
-	// 마지막 BPM 상승 이후 재발견 상승을 막는 최소 시간이다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
-	float SurpriseCooldown = 3.0f;
-
-	// false면 최초 발견 상승만 허용하고 재발견 상승은 사용하지 않는다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Encounter",
-		meta=(AllowPrivateAccess="true"))
-	bool bEnableRediscovery = false;
 
 	// 시야 판정 주기다. 낮을수록 즉각적이지만 검사량이 늘어난다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|Detection",

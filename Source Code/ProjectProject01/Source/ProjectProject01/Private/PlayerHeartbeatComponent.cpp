@@ -4,8 +4,6 @@
 #include "PlayerHeartbeatComponent.h"
 
 #include "Camera/CameraComponent.h"
-#include "Components/CapsuleComponent.h"
-#include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -78,21 +76,17 @@ void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tun
 		return;
 	}
 
-	MinBPM = FMath::Max(0.0f, Tuning.MinBPM);
-	MaxDistanceBPM = FMath::Max(0.0f, Tuning.MaxDistanceBPM);
-	MaxEncounterBPM = FMath::Max(0.0f, Tuning.MaxEncounterBPM);
-	MinEncounterBoost = FMath::Max(0.0f, Tuning.MinEncounterBoost);
-	MaxEncounterBoost = FMath::Max(0.0f, Tuning.MaxEncounterBoost);
-	BPMDecayPerSecond = FMath::Max(0.0f, Tuning.BPMDecayPerSecond);
+	BaseVisionRange = FMath::Max(0.0f, Tuning.BaseVisionRange);
+	BaseVisionHalfAngleDegrees = FMath::Clamp(Tuning.BaseVisionHalfAngleDegrees, 0.0f, 180.0f);
+	BaseMinBPM = FMath::Max(0.0f, Tuning.BaseMinBPM);
+	BaseMaxBPM = FMath::Max(0.0f, Tuning.BaseMaxBPM);
+	EncounterVisionRange = FMath::Max(0.0f, Tuning.EncounterVisionRange);
+	EncounterVisionHalfAngleDegrees = FMath::Clamp(Tuning.EncounterVisionHalfAngleDegrees, 0.0f, 180.0f);
+	EncounterMinBPM = FMath::Max(0.0f, Tuning.EncounterMinBPM);
+	EncounterMaxBPM = FMath::Max(0.0f, Tuning.EncounterMaxBPM);
+	EncounterDecayPerSecond = FMath::Max(0.0f, Tuning.EncounterDecayPerSecond);
+	EncounterMemorySeconds = FMath::Max(0.0f, Tuning.EncounterMemorySeconds);
 	HeartbeatRange = FMath::Max(0.0f, Tuning.HeartbeatRange);
-	RetentionRange = FMath::Max(0.0f, Tuning.RetentionRange);
-	RecognitionHalfAngleDegrees = FMath::Max(0.0f, Tuning.RecognitionHalfAngleDegrees);
-	bUseRetentionRules = Tuning.bUseRetentionRules;
-	RetentionHalfAngleDegrees = FMath::Max(0.0f, Tuning.RetentionHalfAngleDegrees);
-	LostSightGraceSeconds = FMath::Max(0.0f, Tuning.LostSightGraceSeconds);
-	SurpriseRearmDelay = FMath::Max(0.0f, Tuning.SurpriseRearmDelay);
-	SurpriseCooldown = FMath::Max(0.0f, Tuning.SurpriseCooldown);
-	bEnableRediscovery = Tuning.bEnableRediscovery;
 	VisionCheckInterval = FMath::Max(0.0f, Tuning.VisionCheckInterval);
 	MannequinRefreshInterval = FMath::Max(0.0f, Tuning.MannequinRefreshInterval);
 	bEnableHeartbeatLog = Tuning.bEnableHeartbeatLog;
@@ -122,13 +116,17 @@ void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tun
 
 void UPlayerHeartbeatComponent::GetDiagnosticAppliedTuning(FPlayerTuningRow& OutTuning) const
 {
-	OutTuning.MinBPM = MinBPM; OutTuning.MaxDistanceBPM = MaxDistanceBPM; OutTuning.MaxEncounterBPM = MaxEncounterBPM;
-	OutTuning.MinEncounterBoost = MinEncounterBoost; OutTuning.MaxEncounterBoost = MaxEncounterBoost;
-	OutTuning.BPMDecayPerSecond = BPMDecayPerSecond; OutTuning.HeartbeatRange = HeartbeatRange;
-	OutTuning.RetentionRange = RetentionRange; OutTuning.RecognitionHalfAngleDegrees = RecognitionHalfAngleDegrees;
-	OutTuning.bUseRetentionRules = bUseRetentionRules; OutTuning.RetentionHalfAngleDegrees = RetentionHalfAngleDegrees;
-	OutTuning.LostSightGraceSeconds = LostSightGraceSeconds; OutTuning.SurpriseRearmDelay = SurpriseRearmDelay;
-	OutTuning.SurpriseCooldown = SurpriseCooldown; OutTuning.bEnableRediscovery = bEnableRediscovery;
+	OutTuning.BaseVisionRange = BaseVisionRange;
+	OutTuning.BaseVisionHalfAngleDegrees = BaseVisionHalfAngleDegrees;
+	OutTuning.BaseMinBPM = BaseMinBPM;
+	OutTuning.BaseMaxBPM = BaseMaxBPM;
+	OutTuning.EncounterVisionRange = EncounterVisionRange;
+	OutTuning.EncounterVisionHalfAngleDegrees = EncounterVisionHalfAngleDegrees;
+	OutTuning.EncounterMinBPM = EncounterMinBPM;
+	OutTuning.EncounterMaxBPM = EncounterMaxBPM;
+	OutTuning.EncounterDecayPerSecond = EncounterDecayPerSecond;
+	OutTuning.EncounterMemorySeconds = EncounterMemorySeconds;
+	OutTuning.HeartbeatRange = HeartbeatRange;
 	OutTuning.VisionCheckInterval = VisionCheckInterval; OutTuning.MannequinRefreshInterval = MannequinRefreshInterval;
 	OutTuning.bEnableHeartbeatLog = bEnableHeartbeatLog; OutTuning.BPMLogThreshold = BPMLogThreshold;
 	OutTuning.bEnableHeartbeatVFX = bEnableHeartbeatVFX;
@@ -338,7 +336,6 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 		{
 			const bool bFirstEncounter = !State.bHasEverBeenRecognized;
 			TriggerSurpriseBPM(*Mannequin, Distance, bFirstEncounter);
-			State.LastSurpriseTime = CurrentTime;
 			State.bEncounterArmed = false;
 			State.UnconfirmedStartTime = -1.0;
 		}
@@ -613,20 +610,6 @@ bool UPlayerHeartbeatComponent::IsInsideVisionCone(
 		FVector::DotProduct(HorizontalViewForward, HorizontalViewToMannequin) >= MinimumViewDot;
 }
 
-bool UPlayerHeartbeatComponent::IsInsideRetentionCone(
-	const AMannequinAICharacter& Mannequin,
-	const FVector& ViewLocation, const FVector& ViewForward) const
-{
-	const FVector ViewToMannequin = (Mannequin.GetActorLocation() - ViewLocation).GetSafeNormal();
-	if (ViewToMannequin.IsNearlyZero())
-	{
-		return true;
-	}
-	const float MinimumDot = FMath::Cos(FMath::DegreesToRadians(
-		FMath::Clamp(RetentionHalfAngleDegrees, 0.0f, 180.0f)));
-	return FVector::DotProduct(ViewForward, ViewToMannequin) >= MinimumDot;
-}
-
 bool UPlayerHeartbeatComponent::HasClearLineOfSight(
 	const APawn& OwnerPawn, const AMannequinAICharacter& Mannequin, const FVector& ViewLocation) const
 {
@@ -643,19 +626,6 @@ bool UPlayerHeartbeatComponent::HasClearLineOfSight(
 	}
 	return World->LineTraceSingleByChannel(HitResult, ViewLocation, Mannequin.GetActorLocation(),
 		ECC_GameTraceChannel1, QueryParams) && HitResult.GetActor() == &Mannequin;
-}
-
-float UPlayerHeartbeatComponent::CalculateDistanceAlpha(float Distance) const
-{
-	const float SafeRange = FMath::Max(HeartbeatRange, UE_SMALL_NUMBER);
-	return 1.0f - FMath::Clamp(Distance / SafeRange, 0.0f, 1.0f);
-}
-
-float UPlayerHeartbeatComponent::CalculateDistanceBPM(float Distance) const
-{
-	const float SafeMinBPM = FMath::Max(MinBPM, 1.0f);
-	const float SafeMaxBPM = FMath::Max(MaxDistanceBPM, SafeMinBPM);
-	return FMath::Lerp(SafeMinBPM, SafeMaxBPM, FMath::Square(CalculateDistanceAlpha(Distance)));
 }
 
 float UPlayerHeartbeatComponent::CalculateBaseBPM(const float Distance) const

@@ -41,6 +41,14 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	InvalidPlayerRow.StaminaDrainPerSecond = -1.0f;
 	TestFalse(TEXT("Negative stamina drain is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
 
+	InvalidPlayerRow = ValidPlayerRow;
+	InvalidPlayerRow.BaseVisionRange = -1.0f;
+	TestFalse(TEXT("Negative base heartbeat vision range is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
+
+	InvalidPlayerRow = ValidPlayerRow;
+	InvalidPlayerRow.EncounterMemorySeconds = -1.0f;
+	TestFalse(TEXT("Negative encounter memory is rejected"), InvalidPlayerRow.IsValidForApplication(Error));
+
 	FMannequinAITuningRow ValidMannequinRow;
 	TestTrue(TEXT("Default mannequin tuning is accepted"), ValidMannequinRow.IsValidForApplication(Error));
 
@@ -87,13 +95,12 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 {
 	if (!FMath::IsFinite(PlayerWalkSpeed) || !FMath::IsFinite(PlayerSprintSpeed) ||
 		!FMath::IsFinite(MaxStamina) || !FMath::IsFinite(StaminaDrainPerSecond) ||
-		!FMath::IsFinite(StaminaRecoveryPerSecond) || !FMath::IsFinite(MinBPM) ||
-		!FMath::IsFinite(MaxDistanceBPM) || !FMath::IsFinite(MaxEncounterBPM) ||
-		!FMath::IsFinite(MinEncounterBoost) || !FMath::IsFinite(MaxEncounterBoost) ||
-		!FMath::IsFinite(BPMDecayPerSecond) || !FMath::IsFinite(HeartbeatRange) ||
-		!FMath::IsFinite(RetentionRange) || !FMath::IsFinite(RecognitionHalfAngleDegrees) ||
-		!FMath::IsFinite(RetentionHalfAngleDegrees) || !FMath::IsFinite(LostSightGraceSeconds) ||
-		!FMath::IsFinite(SurpriseRearmDelay) || !FMath::IsFinite(SurpriseCooldown) ||
+		!FMath::IsFinite(StaminaRecoveryPerSecond) || !FMath::IsFinite(BaseVisionRange) ||
+		!FMath::IsFinite(BaseVisionHalfAngleDegrees) || !FMath::IsFinite(BaseMinBPM) ||
+		!FMath::IsFinite(BaseMaxBPM) || !FMath::IsFinite(EncounterVisionRange) ||
+		!FMath::IsFinite(EncounterVisionHalfAngleDegrees) || !FMath::IsFinite(EncounterMinBPM) ||
+		!FMath::IsFinite(EncounterMaxBPM) || !FMath::IsFinite(EncounterDecayPerSecond) ||
+		!FMath::IsFinite(EncounterMemorySeconds) || !FMath::IsFinite(HeartbeatRange) ||
 		!FMath::IsFinite(VisionCheckInterval) || !FMath::IsFinite(MannequinRefreshInterval) ||
 		!FMath::IsFinite(BPMLogThreshold) || !FMath::IsFinite(HeartbeatVFXMaxOpacity) ||
 		!FMath::IsFinite(HeartbeatVFXMaxNoiseIntensity) || !FMath::IsFinite(HeartbeatVFXMinNoiseSpeed) ||
@@ -103,12 +110,11 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(HeartbeatVFXMinDistortionFrequency) || !FMath::IsFinite(HeartbeatVFXMaxDistortionFrequency) ||
 		!FMath::IsFinite(HeartbeatVFXBlendInSpeed) || !FMath::IsFinite(HeartbeatVFXBlendOutSpeed) ||
 		PlayerWalkSpeed < 0.0f || PlayerSprintSpeed < 0.0f ||
-		MaxStamina < 0.0f || StaminaDrainPerSecond < 0.0f || StaminaRecoveryPerSecond < 0.0f || MinBPM < 0.0f ||
-		MaxDistanceBPM < 0.0f || MaxEncounterBPM < 0.0f || MinEncounterBoost < 0.0f ||
-		MaxEncounterBoost < 0.0f || BPMDecayPerSecond < 0.0f || HeartbeatRange < 0.0f ||
-		RetentionRange < 0.0f || RecognitionHalfAngleDegrees < 0.0f ||
-		RetentionHalfAngleDegrees < 0.0f || LostSightGraceSeconds < 0.0f ||
-		SurpriseRearmDelay < 0.0f || SurpriseCooldown < 0.0f ||
+		MaxStamina < 0.0f || StaminaDrainPerSecond < 0.0f || StaminaRecoveryPerSecond < 0.0f ||
+		BaseVisionRange < 0.0f || BaseVisionHalfAngleDegrees < 0.0f || BaseMinBPM < 0.0f || BaseMaxBPM < 0.0f ||
+		EncounterVisionRange < 0.0f || EncounterVisionHalfAngleDegrees < 0.0f ||
+		EncounterMinBPM < 0.0f || EncounterMaxBPM < 0.0f || EncounterDecayPerSecond < 0.0f ||
+		EncounterMemorySeconds < 0.0f || HeartbeatRange < 0.0f ||
 		VisionCheckInterval < 0.0f || MannequinRefreshInterval < 0.0f || BPMLogThreshold < 0.0f ||
 		HeartbeatVFXDensityCountForMax < 1 || HeartbeatVFXMaxOpacity < 0.0f || HeartbeatVFXMaxOpacity > 1.0f ||
 		HeartbeatVFXMaxNoiseIntensity < 0.0f || HeartbeatVFXMinNoiseSpeed < 0.0f || HeartbeatVFXMaxNoiseSpeed < 0.0f ||

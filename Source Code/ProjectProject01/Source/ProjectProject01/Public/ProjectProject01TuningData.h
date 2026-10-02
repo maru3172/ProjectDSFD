@@ -36,55 +36,49 @@ struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Stamina", meta = (ClampMin = "0.0"))
 	float StaminaRecoveryPerSecond = 3.0f;
 
-	/** 심박 대상이 멀리 있을 때 적용되는 최소 BPM입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
-	float MinBPM = 60.0f;
+	/** 기본 심박 판정 부채꼴의 최대 거리입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Base", meta = (ClampMin = "0.0", Units = "cm"))
+	float BaseVisionRange = 5000.0f;
 
-	/** 심박 대상이 플레이어와 매우 가까울 때 적용되는 거리 기반 최대 BPM입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
-	float MaxDistanceBPM = 120.0f;
+	/** 기본 심박 판정 부채꼴의 한쪽 각도입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Base", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
+	float BaseVisionHalfAngleDegrees = 45.0f;
 
-	/** 최초 발견 및 재발견 상승을 포함한 최종 BPM 상한입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
-	float MaxEncounterBPM = 165.0f;
+	/** 기본 시야 범위 끝에서 적용되는 최소 BPM입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Base", meta = (ClampMin = "0.0"))
+	float BaseMinBPM = 60.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
-	float MinEncounterBoost = 15.0f;
+	/** 기본 시야 안에서 마네킹이 플레이어와 겹칠 때 적용되는 최대 BPM입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Base", meta = (ClampMin = "0.0"))
+	float BaseMaxBPM = 120.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
-	float MaxEncounterBoost = 45.0f;
+	/** 최초 발견·재발견 조우 판정 부채꼴의 최대 거리입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Encounter", meta = (ClampMin = "0.0", Units = "cm"))
+	float EncounterVisionRange = 1500.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
-	float BPMDecayPerSecond = 12.0f;
+	/** 최초 발견·재발견 조우 판정 부채꼴의 한쪽 각도입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Encounter", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
+	float EncounterVisionHalfAngleDegrees = 45.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "cm"))
+	/** 조우 시야 범위 끝에서 발생하는 최소 조우 BPM입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Encounter", meta = (ClampMin = "0.0"))
+	float EncounterMinBPM = 75.0f;
+
+	/** 조우 시야 안에서 마네킹이 플레이어와 겹칠 때 발생하는 최대 조우 BPM입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Encounter", meta = (ClampMin = "0.0"))
+	float EncounterMaxBPM = 165.0f;
+
+	/** 조우 BPM이 기본 BPM으로 초당 감소하는 양입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Encounter", meta = (ClampMin = "0.0"))
+	float EncounterDecayPerSecond = 12.0f;
+
+	/** 조우 시야와 직접 가시선이 모두 끊긴 뒤 재발견이 준비되는 시간입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|Encounter", meta = (ClampMin = "0.0", Units = "s"))
+	float EncounterMemorySeconds = 3.0f;
+
+	/** 심박 VFX의 거리·밀집도 계산에 사용하는 최대 거리입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0", Units = "cm"))
 	float HeartbeatRange = 1500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "cm"))
-	float RetentionRange = 1800.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "deg"))
-	float RecognitionHalfAngleDegrees = 45.0f;
-
-	/** false면 현재 발견 부채꼴과 거리만으로 심박 활성 여부를 결정합니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat")
-	bool bUseRetentionRules = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "deg"))
-	float RetentionHalfAngleDegrees = 80.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
-	float LostSightGraceSeconds = 1.5f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
-	float SurpriseRearmDelay = 0.75f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
-	float SurpriseCooldown = 3.0f;
-
-	/** false면 최초 발견 상승만 허용하고 재발견 상승은 사용하지 않습니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat")
-	bool bEnableRediscovery = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0", Units = "s"))
 	float VisionCheckInterval = 0.05f;
