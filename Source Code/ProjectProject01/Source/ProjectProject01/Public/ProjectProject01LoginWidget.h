@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01LoginWidget.generated.h"
 
 UCLASS()
@@ -66,17 +67,108 @@ protected:
 
 private:
 	UFUNCTION()
+	void HandleCreateRoomClicked();
+
+	UFUNCTION()
+	void HandleRefreshRoomsClicked();
+
+	UFUNCTION()
+	void HandleJoinRoomClicked();
+
+	UFUNCTION()
+	void HandleReadyClicked();
+
+	UFUNCTION()
+	void HandleStartRoomClicked();
+
+	UFUNCTION()
+	void HandleLeaveRoomClicked();
+
+	UFUNCTION()
+	void HandleSendChatClicked();
+
+	UFUNCTION()
 	void HandleLogoutClicked();
 
 	UFUNCTION()
 	void HandleLogoutResult(bool bSuccess, const FString& Message, const FString& DisplayName);
 
+	UFUNCTION()
+	void HandleLobbyRequestResult(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
+
+	UFUNCTION()
+	void HandleRoomListChanged();
+
+	UFUNCTION()
+	void HandleCurrentRoomChanged();
+
 	void BuildWidgetTree();
 	void SetStatus(const FString& Message, bool bIsError);
+	void RefreshLobbyState();
+	void RefreshRoomListView();
+	void RefreshCurrentRoomView();
+	void BeginLogout();
+	void TravelToStartedGame(const FProjectProject01RoomState& RoomState);
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UEditableTextBox> RoomNameInput;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UCheckBox> PublicRoomCheckBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UEditableTextBox> CreatePasswordInput;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> CreateRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> RefreshRoomsButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UComboBoxString> RoomListComboBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UEditableTextBox> DirectRoomIdInput;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UEditableTextBox> JoinPasswordInput;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> JoinRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> CurrentRoomText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> MemberListText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReadyButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> StartRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LeaveRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UMultiLineEditableTextBox> ChatLogText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UEditableTextBox> ChatInput;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SendChatButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> LogoutButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> LobbyStatusText;
+
+	TMap<FString, FString> RoomIdByDisplayOption;
+	FTimerHandle LobbyRefreshTimer;
+	bool bLogoutAfterLeave = false;
+	bool bTravelRequested = false;
 };

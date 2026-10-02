@@ -19,12 +19,20 @@ var localConfigurationPath = Path.Combine(
     builder.Environment.ContentRootPath,
     "LocalMySql",
     "ProjectProject01Backend.local.json");
-builder.Configuration.AddJsonFile(localConfigurationPath, optional: true, reloadOnChange: false);
 builder.Configuration.AddUserSecrets<Program>(optional: true, reloadOnChange: false);
+builder.Configuration.AddEnvironmentVariables();
+// 프로젝트 전용 LocalMySql 인스턴스가 준비된 개발 PC에서는 해당 인스턴스와 함께 생성된
+// 접속 정보를 최종 우선합니다. 이 파일은 Git에 포함되지 않으며, 파일이 없는 배포/CI 환경은
+// 기존과 같이 User Secrets 또는 환경변수를 사용합니다.
+if (File.Exists(localConfigurationPath))
+{
+    builder.Configuration.AddJsonFile(localConfigurationPath, optional: false, reloadOnChange: false);
+}
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
 builder.Services.AddSingleton<IPasswordHasher<AuthUser>, PasswordHasher<AuthUser>>();
+builder.Services.AddSingleton<IPasswordHasher<RoomPasswordRecord>, PasswordHasher<RoomPasswordRecord>>();
 builder.Services.AddSingleton(sp =>
 {
     var configuredConnectionString = builder.Configuration.GetConnectionString("ProjectProject01");
@@ -39,6 +47,16 @@ builder.Services.AddRateLimiter(options =>
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("lobby", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true
@@ -288,6 +306,8 @@ app.MapPost("/api/auth/logout", async (
         return DatabaseUnavailable();
     }
 }).RequireRateLimiting("auth");
+
+app.MapProjectProject01Lobby(builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777");
 
 app.Run();
 

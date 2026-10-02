@@ -128,14 +128,41 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 	UpdateSurvivorVisionFrozenStates();
 }
 
+FString AMultiplayTestGameMode::InitNewPlayer(
+	APlayerController* NewPlayerController,
+	const FUniqueNetIdRepl& UniqueId,
+	const FString& Options,
+	const FString& Portal)
+{
+	AMultiplayTestPlayerController* MultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayerController);
+	const FString LobbyRole = UGameplayStatics::ParseOption(Options, TEXT("LobbyRole"));
+	if (IsValid(MultiplayController) &&
+		(LobbyRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) ||
+		 LobbyRole.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase)))
+	{
+		ExplicitRoleControllers.Add(MultiplayController);
+		if (LobbyRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+		{
+			RequestedMannequinControllers.Add(MultiplayController);
+		}
+		UE_LOG(LogProjectProject01Multiplayer, Log,
+			TEXT("%s requested lobby role %s."), *GetNameSafe(MultiplayController), *LobbyRole);
+	}
+	return Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
+}
+
 void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	AMultiplayTestPlayerController* NewMultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayer);
-	if (IsValid(NewMultiplayController) && !MannequinController.IsValid())
+	const bool bHasExplicitRole = IsValid(NewMultiplayController) && ExplicitRoleControllers.Contains(NewMultiplayController);
+	const bool bRequestedMannequin = IsValid(NewMultiplayController) && RequestedMannequinControllers.Contains(NewMultiplayController);
+	if (IsValid(NewMultiplayController) && !MannequinController.IsValid() &&
+		(bRequestedMannequin || !bHasExplicitRole))
 	{
 		MannequinController = NewMultiplayController;
 		UE_LOG(LogProjectProject01Multiplayer, Log,
-			TEXT("%s was assigned as the prototype mannequin controller."), *NewMultiplayController->GetName());
+			TEXT("%s was assigned as the mannequin controller (%s)."), *NewMultiplayController->GetName(),
+			bRequestedMannequin ? TEXT("lobby role") : TEXT("legacy first-player fallback"));
 	}
 	else if (!IsValid(NewMultiplayController))
 	{
@@ -149,6 +176,8 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 void AMultiplayTestGameMode::Logout(AController* Exiting)
 {
 	AMultiplayTestPlayerController* ExitingMultiplayController = Cast<AMultiplayTestPlayerController>(Exiting);
+	RequestedMannequinControllers.Remove(ExitingMultiplayController);
+	ExplicitRoleControllers.Remove(ExitingMultiplayController);
 	if (IsMannequinController(ExitingMultiplayController))
 	{
 		if (AMannequinAICharacter* ControlledMannequin = Cast<AMannequinAICharacter>(ExitingMultiplayController->GetPawn());
@@ -178,7 +207,8 @@ void AMultiplayTestGameMode::SetPlayerDefaults(APawn* PlayerPawn)
 
 bool AMultiplayTestGameMode::MustSpectate_Implementation(APlayerController* NewPlayerController) const
 {
-	return IsMannequinController(Cast<AMultiplayTestPlayerController>(NewPlayerController)) ||
+	const AMultiplayTestPlayerController* MultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayerController);
+	return IsMannequinController(MultiplayController) || RequestedMannequinControllers.Contains(MultiplayController) ||
 		Super::MustSpectate_Implementation(NewPlayerController);
 }
 

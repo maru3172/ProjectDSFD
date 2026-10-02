@@ -36,6 +36,11 @@ public:
 	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual FString InitNewPlayer(
+		APlayerController* NewPlayerController,
+		const FUniqueNetIdRepl& UniqueId,
+		const FString& Options,
+		const FString& Portal = TEXT("")) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual void SetPlayerDefaults(APawn* PlayerPawn) override;
@@ -61,6 +66,8 @@ private:
 
 	float SurvivorVisionCheckAccumulatorSeconds = 0.0f;
 
-	// 프로토타입 규칙: 서버에 먼저 접속한 한 명만 마네킹을 조종한다.
+	// 로비에서 무작위 배정된 한 명만 마네킹을 조종한다. 역할 옵션이 없는 기존 PIE는 첫 접속자를 사용한다.
 	TWeakObjectPtr<class AMultiplayTestPlayerController> MannequinController;
+	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> RequestedMannequinControllers;
+	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> ExplicitRoleControllers;
 };
