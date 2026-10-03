@@ -169,6 +169,11 @@ void UPlayerHeartbeatComponent::ApplyHeartbeatTuning(const FPlayerTuningRow& Tun
 	MannequinRefreshInterval = FMath::Max(0.0f, Tuning.MannequinRefreshInterval);
 	bEnableHeartbeatLog = Tuning.bEnableHeartbeatLog;
 	BPMLogThreshold = FMath::Max(0.0f, Tuning.BPMLogThreshold);
+	HeartbeatSFXVolumeMultiplier = FMath::Max(0.0f, Tuning.HeartbeatSFXVolumeMultiplier);
+	if (UHeartbeatSynthComponent* Synth = HeartbeatSFXSynth.Get(); IsValid(Synth))
+	{
+		Synth->SetVolumeMultiplier(HeartbeatSFXVolumeMultiplier);
+	}
 	bEnableHeartbeatVFX = Tuning.bEnableHeartbeatVFX;
 	HeartbeatVFXDensityCountForMax = FMath::Max(Tuning.HeartbeatVFXDensityCountForMax, 1);
 	HeartbeatVFXMaxOpacity = FMath::Clamp(Tuning.HeartbeatVFXMaxOpacity, 0.0f, 1.0f);
@@ -207,6 +212,7 @@ void UPlayerHeartbeatComponent::GetDiagnosticAppliedTuning(FPlayerTuningRow& Out
 	OutTuning.HeartbeatRange = HeartbeatRange;
 	OutTuning.VisionCheckInterval = VisionCheckInterval; OutTuning.MannequinRefreshInterval = MannequinRefreshInterval;
 	OutTuning.bEnableHeartbeatLog = bEnableHeartbeatLog; OutTuning.BPMLogThreshold = BPMLogThreshold;
+	OutTuning.HeartbeatSFXVolumeMultiplier = HeartbeatSFXVolumeMultiplier;
 	OutTuning.bEnableHeartbeatVFX = bEnableHeartbeatVFX;
 	OutTuning.HeartbeatVFXDensityCountForMax = HeartbeatVFXDensityCountForMax;
 	OutTuning.HeartbeatVFXMaxOpacity = HeartbeatVFXMaxOpacity;
@@ -643,6 +649,7 @@ bool UPlayerHeartbeatComponent::EnsureHeartbeatSFX(APawn& OwnerPawn)
 	{
 		return false;
 	}
+	Synth->SetVolumeMultiplier(HeartbeatSFXVolumeMultiplier);
 	if (!Synth->IsPlaying())
 	{
 		Synth->Start();

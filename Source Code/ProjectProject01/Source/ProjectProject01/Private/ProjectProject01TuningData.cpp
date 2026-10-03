@@ -102,7 +102,8 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(EncounterMaxBPM) || !FMath::IsFinite(EncounterDecayPerSecond) ||
 		!FMath::IsFinite(EncounterMemorySeconds) || !FMath::IsFinite(HeartbeatRange) ||
 		!FMath::IsFinite(VisionCheckInterval) || !FMath::IsFinite(MannequinRefreshInterval) ||
-		!FMath::IsFinite(BPMLogThreshold) || !FMath::IsFinite(HeartbeatVFXMaxOpacity) ||
+		!FMath::IsFinite(BPMLogThreshold) || !FMath::IsFinite(HeartbeatSFXVolumeMultiplier) ||
+		!FMath::IsFinite(HeartbeatVFXMaxOpacity) ||
 		!FMath::IsFinite(HeartbeatVFXMaxNoiseIntensity) || !FMath::IsFinite(HeartbeatVFXMinNoiseSpeed) ||
 		!FMath::IsFinite(HeartbeatVFXMaxNoiseSpeed) || !FMath::IsFinite(HeartbeatVFXMinNoiseFrequency) ||
 		!FMath::IsFinite(HeartbeatVFXMaxNoiseFrequency) || !FMath::IsFinite(HeartbeatVFXMaxDistortionAmount) ||
@@ -116,6 +117,7 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		EncounterMinBPM < 0.0f || EncounterMaxBPM < 0.0f || EncounterDecayPerSecond < 0.0f ||
 		EncounterMemorySeconds < 0.0f || HeartbeatRange < 0.0f ||
 		VisionCheckInterval < 0.0f || MannequinRefreshInterval < 0.0f || BPMLogThreshold < 0.0f ||
+		HeartbeatSFXVolumeMultiplier < 0.0f ||
 		HeartbeatVFXDensityCountForMax < 1 || HeartbeatVFXMaxOpacity < 0.0f || HeartbeatVFXMaxOpacity > 1.0f ||
 		HeartbeatVFXMaxNoiseIntensity < 0.0f || HeartbeatVFXMinNoiseSpeed < 0.0f || HeartbeatVFXMaxNoiseSpeed < 0.0f ||
 		HeartbeatVFXMinNoiseFrequency < 0.0f || HeartbeatVFXMaxNoiseFrequency < 0.0f ||

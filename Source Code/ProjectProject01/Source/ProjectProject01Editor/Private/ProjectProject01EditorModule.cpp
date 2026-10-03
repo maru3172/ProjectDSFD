@@ -98,6 +98,7 @@ namespace ProjectProject01TuningEditor
 			TEXT("bEnableHeartbeatLog"),
 			TEXT("BPMLogThreshold"),
 			TEXT("HeartbeatRange"),
+			TEXT("HeartbeatSFXVolumeMultiplier"),
 			TEXT("bEnableHeartbeatVFX"),
 			TEXT("HeartbeatVFXDensityCountForMax"),
 			TEXT("HeartbeatVFXMaxOpacity"),

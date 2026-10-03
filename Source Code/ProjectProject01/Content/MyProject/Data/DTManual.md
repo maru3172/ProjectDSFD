@@ -190,3 +190,7 @@ VisionFovMarginMultiplier	카메라 FOV보다 약간 넓게 “봤다”고 판�
 
 직전 로그 출력 BPM과의 차이가 이 값 이상일 때만 상태 로그를 새로 출력한다. 단위는 BPM이다.
 
+`HeartbeatSFXVolumeMultiplier`
+
+합성 심장 박동 SFX의 최종 음량 배수다. `1`은 원본 음량이며 값이 클수록 박동음이 커진다. BPM에 따른 박동 간격에는 영향을 주지 않는다.
+

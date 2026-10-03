@@ -94,6 +94,10 @@ struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta = (ClampMin = "0.0"))
 	float BPMLogThreshold = 1.0f;
 
+	/** 합성 심장 박동 SFX의 최종 음량 배수입니다. 1은 원본 음량이고 1보다 크면 더 크게 재생됩니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat SFX", meta = (ClampMin = "0.0"))
+	float HeartbeatSFXVolumeMultiplier = 2.0f;
+
 	/** 로컬 플레이어 화면의 심박 연동 후처리 효과를 켭니다. 전용 서버에는 적용되지 않습니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX")
 	bool bEnableHeartbeatVFX = true;

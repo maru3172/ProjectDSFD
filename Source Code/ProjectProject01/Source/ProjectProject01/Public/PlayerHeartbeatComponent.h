@@ -212,6 +212,11 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
 	float BPMLogThreshold = 1.0f;
 
+	// 합성 심장 박동의 최종 음량 배수다. Player DataTable 재적용 시 즉시 갱신된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|SFX",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
+	float HeartbeatSFXVolumeMultiplier = 2.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Heartbeat|VFX", meta=(AllowPrivateAccess="true"))
 	bool bEnableHeartbeatVFX = true;
 
