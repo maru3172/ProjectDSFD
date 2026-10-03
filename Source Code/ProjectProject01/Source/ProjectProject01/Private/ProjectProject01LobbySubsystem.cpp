@@ -102,12 +102,12 @@ void UProjectProject01LobbySubsystem::CreateRoom(
 	SendRequest(EProjectProject01LobbyOperation::CreateRoom, TEXT("POST"), TEXT("/api/rooms"), Body);
 }
 
-void UProjectProject01LobbySubsystem::JoinRoom(const FString& RoomId, const FString& Password)
+void UProjectProject01LobbySubsystem::JoinRoom(const FString& RoomCode, const FString& Password)
 {
-	const FString CleanId = RoomId.TrimStartAndEnd();
-	if (CleanId.IsEmpty())
+	FString CleanCode = RoomCode.TrimStartAndEnd().ToUpper();
+	if (CleanCode.Len() < 6 || CleanCode.Len() > 8)
 	{
-		Complete(EProjectProject01LobbyOperation::JoinRoom, false, TEXT("참가할 방을 선택하세요."));
+		Complete(EProjectProject01LobbyOperation::JoinRoom, false, TEXT("6~8자리 참가 코드를 입력하거나 공개방을 선택하세요."));
 		return;
 	}
 	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
@@ -115,12 +115,33 @@ void UProjectProject01LobbySubsystem::JoinRoom(const FString& RoomId, const FStr
 	FString Body;
 	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
 	SendRequest(EProjectProject01LobbyOperation::JoinRoom, TEXT("POST"),
-		TEXT("/api/rooms/") + FGenericPlatformHttp::UrlEncode(CleanId) + TEXT("/join"), Body);
+		TEXT("/api/rooms/") + FGenericPlatformHttp::UrlEncode(CleanCode) + TEXT("/join"), Body);
 }
 
 void UProjectProject01LobbySubsystem::LeaveRoom()
 {
 	SendRequest(EProjectProject01LobbyOperation::LeaveRoom, TEXT("POST"), TEXT("/api/rooms/current/leave"), TEXT("{}"));
+}
+
+void UProjectProject01LobbySubsystem::TransferHost(const FString& TargetUserId)
+{
+	const FString CleanTargetUserId = TargetUserId.TrimStartAndEnd();
+	if (CleanTargetUserId.IsEmpty())
+	{
+		Complete(EProjectProject01LobbyOperation::TransferHost, false, TEXT("방장을 넘길 플레이어를 선택하세요."));
+		return;
+	}
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("targetUserId"), CleanTargetUserId);
+	FString Body;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
+	SendRequest(EProjectProject01LobbyOperation::TransferHost, TEXT("POST"),
+		TEXT("/api/rooms/current/transfer-host"), Body);
+}
+
+void UProjectProject01LobbySubsystem::DeleteRoom()
+{
+	SendRequest(EProjectProject01LobbyOperation::DeleteRoom, TEXT("POST"), TEXT("/api/rooms/current/delete"), TEXT("{}"));
 }
 
 void UProjectProject01LobbySubsystem::SetReady(const bool bReady)
@@ -249,7 +270,9 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 			CurrentRoom = FProjectProject01RoomState();
 			OnCurrentRoomChanged.Broadcast();
 		}
-		else if (StatusCode == 404 && Operation == EProjectProject01LobbyOperation::LeaveRoom)
+		else if (StatusCode == 404 &&
+			(Operation == EProjectProject01LobbyOperation::LeaveRoom ||
+				Operation == EProjectProject01LobbyOperation::DeleteRoom))
 		{
 			// 서버에서 이미 시간 초과 정리된 방은 로컬에서도 나간 것으로 처리한다.
 			CurrentRoom = FProjectProject01RoomState();
@@ -267,7 +290,8 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	{
 		bParsed = ParseRoomList(Json, ParseError);
 	}
-	else if (Operation == EProjectProject01LobbyOperation::LeaveRoom)
+	else if (Operation == EProjectProject01LobbyOperation::LeaveRoom ||
+		Operation == EProjectProject01LobbyOperation::DeleteRoom)
 	{
 		CurrentRoom = FProjectProject01RoomState();
 		OnCurrentRoomChanged.Broadcast();
@@ -296,6 +320,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomList(const TSharedPtr<FJsonObject
 		double MemberCount = 0.0;
 		double MaxPlayers = 0.0;
 		if (!ProjectProject01Lobby::ReadRequiredString(RoomJson, TEXT("roomId"), Room.RoomId) ||
+			!ProjectProject01Lobby::ReadRequiredString(RoomJson, TEXT("joinCode"), Room.JoinCode) ||
 			!ProjectProject01Lobby::ReadRequiredString(RoomJson, TEXT("name"), Room.Name) ||
 			!ProjectProject01Lobby::ReadRequiredString(RoomJson, TEXT("hostDisplayName"), Room.HostDisplayName) ||
 			!RoomJson->TryGetNumberField(TEXT("memberCount"), MemberCount) ||
@@ -326,6 +351,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	const TSharedPtr<FJsonObject>& StateJson = *StateJsonPointer;
 	FProjectProject01RoomState Parsed;
 	if (!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("roomId"), Parsed.RoomId) ||
+		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("joinCode"), Parsed.JoinCode) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("name"), Parsed.Name) ||
 		!StateJson->TryGetBoolField(TEXT("isHost"), Parsed.bIsHost) ||
 		!StateJson->TryGetBoolField(TEXT("isReady"), Parsed.bIsReady) ||
@@ -348,7 +374,8 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	{
 		const TSharedPtr<FJsonObject> MemberJson = Value.IsValid() ? Value->AsObject() : nullptr;
 		FProjectProject01RoomMember Member;
-		if (!ProjectProject01Lobby::ReadRequiredString(MemberJson, TEXT("displayName"), Member.DisplayName) ||
+		if (!ProjectProject01Lobby::ReadRequiredString(MemberJson, TEXT("userId"), Member.UserId) ||
+			!ProjectProject01Lobby::ReadRequiredString(MemberJson, TEXT("displayName"), Member.DisplayName) ||
 			!MemberJson->TryGetBoolField(TEXT("isHost"), Member.bIsHost) ||
 			!MemberJson->TryGetBoolField(TEXT("ready"), Member.bIsReady))
 		{

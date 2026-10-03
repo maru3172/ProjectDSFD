@@ -51,6 +51,7 @@ INSERT IGNORE INTO lobby_state (id, max_rooms) VALUES (1, 30);
 CREATE TABLE IF NOT EXISTS game_rooms
 (
   id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  join_code CHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   name VARCHAR(48) NOT NULL,
   host_user_id BIGINT UNSIGNED NOT NULL,
   password_hash VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NULL,
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS game_rooms
   created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   started_at_utc DATETIME(6) NULL,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_game_rooms_join_code (join_code),
   KEY ix_game_rooms_status_created (status, created_at_utc),
   CONSTRAINT fk_game_rooms_host
     FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE CASCADE

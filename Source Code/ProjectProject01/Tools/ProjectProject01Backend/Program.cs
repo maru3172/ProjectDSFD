@@ -489,6 +489,101 @@ internal sealed class AuthDatabase
         await connection.OpenAsync(cancellationToken);
         await using var command = new MySqlCommand(schemaSql, connection) { CommandTimeout = 15 };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
+    }
+
+    private static async Task EnsureLobbyJoinCodeSchemaAsync(
+        MySqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await connection.ChangeDatabaseAsync("projectproject01", cancellationToken);
+        await using (var columnCommand = new MySqlCommand(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'game_rooms' AND column_name = 'join_code';",
+            connection) { CommandTimeout = 5 })
+        {
+            if (Convert.ToInt32(await columnCommand.ExecuteScalarAsync(cancellationToken)) == 0)
+            {
+                await using var addColumn = new MySqlCommand(
+                    "ALTER TABLE game_rooms ADD COLUMN join_code CHAR(8) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER id;",
+                    connection) { CommandTimeout = 15 };
+                await addColumn.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        var roomIdsWithoutCode = new List<string>();
+        var existingCodes = new HashSet<string>(StringComparer.Ordinal);
+        await using (var selectRooms = new MySqlCommand(
+            "SELECT id, join_code FROM game_rooms;", connection) { CommandTimeout = 5 })
+        {
+            await using var reader = await selectRooms.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (reader.IsDBNull(1) || string.IsNullOrWhiteSpace(reader.GetString(1)))
+                {
+                    roomIdsWithoutCode.Add(reader.GetValue(0) switch
+                    {
+                        Guid guid => guid.ToString("D"),
+                        string text => text,
+                        var value => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+                            ?? throw new InvalidOperationException("기존 방 ID를 읽지 못했습니다.")
+                    });
+                }
+                else
+                {
+                    existingCodes.Add(reader.GetString(1));
+                }
+            }
+        }
+        foreach (var roomId in roomIdsWithoutCode)
+        {
+            string joinCode;
+            do
+            {
+                joinCode = GenerateJoinCode();
+            }
+            while (!existingCodes.Add(joinCode));
+
+            await using var updateRoom = new MySqlCommand(
+                "UPDATE game_rooms SET join_code = @joinCode WHERE id = @roomId;", connection) { CommandTimeout = 5 };
+            updateRoom.Parameters.AddWithValue("@joinCode", joinCode);
+            updateRoom.Parameters.AddWithValue("@roomId", roomId);
+            await updateRoom.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var nullableCommand = new MySqlCommand(
+            "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'game_rooms' AND column_name = 'join_code' LIMIT 1;",
+            connection) { CommandTimeout = 5 })
+        {
+            if (string.Equals(Convert.ToString(await nullableCommand.ExecuteScalarAsync(cancellationToken)), "YES", StringComparison.Ordinal))
+            {
+                await using var makeRequired = new MySqlCommand(
+                    "ALTER TABLE game_rooms MODIFY COLUMN join_code CHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL;",
+                    connection) { CommandTimeout = 15 };
+                await makeRequired.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        await using var indexCommand = new MySqlCommand(
+            "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = 'projectproject01' AND table_name = 'game_rooms' AND index_name = 'uq_game_rooms_join_code';",
+            connection) { CommandTimeout = 5 };
+        if (Convert.ToInt32(await indexCommand.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addIndex = new MySqlCommand(
+                "ALTER TABLE game_rooms ADD UNIQUE KEY uq_game_rooms_join_code (join_code);",
+                connection) { CommandTimeout = 15 };
+            await addIndex.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static string GenerateJoinCode()
+    {
+        const string alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        Span<char> characters = stackalloc char[8];
+        for (var index = 0; index < characters.Length; ++index)
+        {
+            characters[index] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
+        }
+        return new string(characters);
     }
 
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

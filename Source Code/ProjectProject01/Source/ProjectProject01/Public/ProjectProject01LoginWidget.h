@@ -85,6 +85,15 @@ private:
 	void HandleLeaveRoomClicked();
 
 	UFUNCTION()
+	void HandleTransferHostClicked();
+
+	UFUNCTION()
+	void HandleDeleteRoomClicked();
+
+	UFUNCTION()
+	void HandleCopyJoinCodeClicked();
+
+	UFUNCTION()
 	void HandleSendChatClicked();
 
 	UFUNCTION()
@@ -129,7 +138,7 @@ private:
 	TObjectPtr<class UComboBoxString> RoomListComboBox;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UEditableTextBox> DirectRoomIdInput;
+	TObjectPtr<class UEditableTextBox> DirectRoomCodeInput;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UEditableTextBox> JoinPasswordInput;
@@ -139,6 +148,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> CurrentRoomText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> CopyJoinCodeButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> MemberListText;
@@ -151,6 +163,15 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> LeaveRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UComboBoxString> HostTransferComboBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> TransferHostButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> DeleteRoomButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UMultiLineEditableTextBox> ChatLogText;
@@ -167,7 +188,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> LobbyStatusText;
 
-	TMap<FString, FString> RoomIdByDisplayOption;
+	TMap<FString, FString> JoinCodeByDisplayOption;
+	TMap<FString, FString> UserIdByTransferOption;
 	FTimerHandle LobbyRefreshTimer;
 	bool bLogoutAfterLeave = false;
 	bool bTravelRequested = false;

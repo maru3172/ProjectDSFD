@@ -34,7 +34,7 @@ internal static class LobbyEndpoints
                 var rooms = new List<RoomSummary>();
                 await using var command = new MySqlCommand(
                     """
-                    SELECT r.id, r.name, u.display_name, COUNT(m.user_id) AS member_count,
+                    SELECT r.id, r.join_code, r.name, u.display_name, COUNT(m.user_id) AS member_count,
                            r.password_hash IS NOT NULL AS has_password
                     FROM game_rooms r
                     INNER JOIN users u ON u.id = r.host_user_id
@@ -49,8 +49,8 @@ internal static class LobbyEndpoints
                 while (await reader.ReadAsync(ct))
                 {
                     rooms.Add(new RoomSummary(
-                        ReadRoomId(reader, 0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), MaximumPlayers,
-                        reader.GetBoolean(4)));
+                        ReadRoomId(reader, 0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                        reader.GetInt32(4), MaximumPlayers, reader.GetBoolean(5)));
                 }
                 return Results.Ok(new { message = "열린 방 목록을 불러왔습니다.", rooms });
             }
@@ -70,8 +70,8 @@ internal static class LobbyEndpoints
             try
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
-                await CleanupStaleRoomsAsync(connection, null, ct);
                 await TouchMemberAsync(connection, null, user.Id, ct);
+                await CleanupStaleRoomsAsync(connection, null, ct);
                 var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
                 return room is null
                     ? Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."))
@@ -122,16 +122,23 @@ internal static class LobbyEndpoints
                     await transaction.RollbackAsync(ct);
                     return Results.Conflict(new LobbyFailure("생성 가능한 방 30개가 모두 사용 중입니다."));
                 }
+                if (await WaitingRoomNameExistsAsync(connection, transaction, name, ct))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("이미 사용 중인 방 이름입니다. 다른 이름을 입력하세요."));
+                }
 
                 var roomId = Guid.NewGuid().ToString("D");
+                var joinCode = await GenerateUniqueJoinCodeAsync(connection, transaction, ct);
                 var passwordHash = password.Length == 0
                     ? null
                     : passwordHasher.HashPassword(new RoomPasswordRecord(roomId), password);
                 await using (var insertRoom = new MySqlCommand(
-                    "INSERT INTO game_rooms (id, name, host_user_id, password_hash, is_public) VALUES (@roomId, @name, @userId, @passwordHash, @isPublic);",
+                    "INSERT INTO game_rooms (id, join_code, name, host_user_id, password_hash, is_public) VALUES (@roomId, @joinCode, @name, @userId, @passwordHash, @isPublic);",
                     connection, transaction) { CommandTimeout = 5 })
                 {
                     insertRoom.Parameters.AddWithValue("@roomId", roomId);
+                    insertRoom.Parameters.AddWithValue("@joinCode", joinCode);
                     insertRoom.Parameters.AddWithValue("@name", name);
                     insertRoom.Parameters.AddWithValue("@userId", user.Id);
                     insertRoom.Parameters.AddWithValue("@passwordHash", passwordHash is null ? DBNull.Value : passwordHash);
@@ -160,8 +167,8 @@ internal static class LobbyEndpoints
             }
         }).RequireRateLimiting("lobby");
 
-        app.MapPost("/api/rooms/{roomId}/join", async (
-            string roomId,
+        app.MapPost("/api/rooms/{roomCode}/join", async (
+            string roomCode,
             HttpRequest request,
             JoinRoomRequest body,
             AuthDatabase database,
@@ -173,9 +180,11 @@ internal static class LobbyEndpoints
             {
                 return Results.Unauthorized();
             }
-            if (!Guid.TryParse(roomId, out _))
+            var normalizedRoomCode = roomCode.Trim().ToUpperInvariant();
+            if (normalizedRoomCode.Length is < 6 or > 8 ||
+                normalizedRoomCode.Any(character => !char.IsAsciiLetterOrDigit(character)))
             {
-                return Results.BadRequest(new LobbyFailure("방 ID 형식이 올바르지 않습니다."));
+                return Results.BadRequest(new LobbyFailure("참가 코드는 영문과 숫자로 된 6~8자리여야 합니다."));
             }
 
             try
@@ -188,18 +197,20 @@ internal static class LobbyEndpoints
                     await transaction.RollbackAsync(ct);
                     return Results.Conflict(new LobbyFailure("이미 다른 방에 참가 중입니다."));
                 }
+                string? resolvedRoomId = null;
                 await using (var lockRoom = new MySqlCommand(
-                    "SELECT status, password_hash FROM game_rooms WHERE id = @roomId FOR UPDATE;", connection, transaction) { CommandTimeout = 5 })
+                    "SELECT id, status, password_hash FROM game_rooms WHERE join_code = @joinCode FOR UPDATE;", connection, transaction) { CommandTimeout = 5 })
                 {
-                    lockRoom.Parameters.AddWithValue("@roomId", roomId);
+                    lockRoom.Parameters.AddWithValue("@joinCode", normalizedRoomCode);
                     string? status = null;
                     string? passwordHash = null;
                     await using (var reader = await lockRoom.ExecuteReaderAsync(ct))
                     {
                         if (await reader.ReadAsync(ct))
                         {
-                            status = reader.GetString(0);
-                            passwordHash = reader.IsDBNull(1) ? null : reader.GetString(1);
+                            resolvedRoomId = ReadRoomId(reader, 0);
+                            status = reader.GetString(1);
+                            passwordHash = reader.IsDBNull(2) ? null : reader.GetString(2);
                         }
                     }
                     if (status is null)
@@ -216,7 +227,7 @@ internal static class LobbyEndpoints
                     {
                         var suppliedPassword = body.Password?.Trim() ?? string.Empty;
                         var verification = passwordHasher.VerifyHashedPassword(
-                            new RoomPasswordRecord(roomId), passwordHash, suppliedPassword);
+                            new RoomPasswordRecord(resolvedRoomId!), passwordHash, suppliedPassword);
                         if (verification == PasswordVerificationResult.Failed)
                         {
                             await transaction.RollbackAsync(ct);
@@ -227,7 +238,7 @@ internal static class LobbyEndpoints
                 await using (var countMembers = new MySqlCommand(
                     "SELECT COUNT(*) FROM room_members WHERE room_id = @roomId;", connection, transaction) { CommandTimeout = 5 })
                 {
-                    countMembers.Parameters.AddWithValue("@roomId", roomId);
+                    countMembers.Parameters.AddWithValue("@roomId", resolvedRoomId!);
                     if (Convert.ToInt32(await countMembers.ExecuteScalarAsync(ct)) >= MaximumPlayers)
                     {
                         await transaction.RollbackAsync(ct);
@@ -238,7 +249,7 @@ internal static class LobbyEndpoints
                     "INSERT INTO room_members (room_id, user_id, is_ready) VALUES (@roomId, @userId, FALSE);",
                     connection, transaction) { CommandTimeout = 5 })
                 {
-                    insert.Parameters.AddWithValue("@roomId", roomId);
+                    insert.Parameters.AddWithValue("@roomId", resolvedRoomId!);
                     insert.Parameters.AddWithValue("@userId", user.Id);
                     await insert.ExecuteNonQueryAsync(ct);
                 }
@@ -273,10 +284,29 @@ internal static class LobbyEndpoints
                     await transaction.RollbackAsync(ct);
                     return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
                 }
+                var hostTransferred = false;
                 if (membership.IsHost)
                 {
-                    await ExecuteAsync(connection, transaction,
-                        "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
+                    var successorUserId = await FindEarliestOtherMemberAsync(
+                        connection, transaction, membership.RoomId, user.Id, ct);
+                    if (successorUserId is ulong successor)
+                    {
+                        await ExecuteAsync(connection, transaction,
+                            "UPDATE game_rooms SET host_user_id = @successorUserId WHERE id = @roomId;",
+                            ("@successorUserId", successor), ("@roomId", membership.RoomId), ct);
+                        await ExecuteAsync(connection, transaction,
+                            "UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id = @successorUserId;",
+                            ("@roomId", membership.RoomId), ("@successorUserId", successor), ct);
+                        await ExecuteAsync(connection, transaction,
+                            "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
+                            ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
+                        hostTransferred = true;
+                    }
+                    else
+                    {
+                        await ExecuteAsync(connection, transaction,
+                            "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
+                    }
                 }
                 else
                 {
@@ -285,7 +315,104 @@ internal static class LobbyEndpoints
                         ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
                 }
                 await transaction.CommitAsync(ct);
-                return Results.Ok(new { message = membership.IsHost ? "방장이 나가 방이 삭제되었습니다." : "방에서 나왔습니다." });
+                return Results.Ok(new
+                {
+                    message = hostTransferred
+                        ? "방에서 나왔으며 가장 먼저 참가한 플레이어에게 방장 권한을 넘겼습니다."
+                        : membership.IsHost
+                            ? "마지막 인원이 나가 방이 삭제되었습니다."
+                            : "방에서 나왔습니다."
+                });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/rooms/current/transfer-host", async (
+            HttpRequest request, TransferHostRequest body, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            if (!ulong.TryParse(body.TargetUserId, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var targetUserId))
+            {
+                return Results.BadRequest(new LobbyFailure("방장을 넘길 플레이어가 올바르지 않습니다."));
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
+                if (membership is null)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
+                }
+                if (!membership.IsHost)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Json(new LobbyFailure("방장만 방장 권한을 넘길 수 있습니다."), statusCode: 403);
+                }
+                if (!string.Equals(membership.Status, "Waiting", StringComparison.Ordinal))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("대기 중인 방에서만 방장 권한을 넘길 수 있습니다."));
+                }
+                if (targetUserId == user.Id ||
+                    !await IsMemberOfRoomAsync(connection, transaction, membership.RoomId, targetUserId, ct))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.BadRequest(new LobbyFailure("같은 방의 다른 플레이어를 선택해야 합니다."));
+                }
+
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE game_rooms SET host_user_id = @targetUserId WHERE id = @roomId;",
+                    ("@targetUserId", targetUserId), ("@roomId", membership.RoomId), ct);
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id IN (@oldHostUserId, @targetUserId);",
+                    ("@roomId", membership.RoomId), ("@oldHostUserId", user.Id), ("@targetUserId", targetUserId), ct);
+                await transaction.CommitAsync(ct);
+                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                return Results.Ok(new { message = "방장 권한을 넘겼습니다.", room });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/rooms/current/delete", async (HttpRequest request, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
+                if (membership is null)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
+                }
+                if (!membership.IsHost)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Json(new LobbyFailure("방장만 방을 삭제할 수 있습니다."), statusCode: 403);
+                }
+
+                await ExecuteAsync(connection, transaction,
+                    "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
+                await transaction.CommitAsync(ct);
+                return Results.Ok(new { message = "방을 삭제했습니다. 모든 참가자가 로비로 돌아갑니다." });
             }
             catch (MySqlException)
             {
@@ -474,14 +601,20 @@ internal static class LobbyEndpoints
     private static async Task CleanupStaleRoomsAsync(
         MySqlConnection connection, MySqlTransaction? transaction, CancellationToken ct)
     {
-        await ExecuteAsync(connection, transaction,
-            $"""
-            DELETE r FROM game_rooms r
-            LEFT JOIN room_members host_member
-              ON host_member.room_id = r.id AND host_member.user_id = r.host_user_id
-            WHERE r.status = 'Waiting'
-              AND (host_member.user_id IS NULL OR host_member.last_seen_at_utc < UTC_TIMESTAMP(6) - INTERVAL {StaleMemberSeconds} SECOND);
-            """, ct);
+        if (transaction is null)
+        {
+            await using var ownedTransaction = await connection.BeginTransactionAsync(ct);
+            await CleanupStaleRoomsCoreAsync(connection, ownedTransaction, ct);
+            await ownedTransaction.CommitAsync(ct);
+            return;
+        }
+
+        await CleanupStaleRoomsCoreAsync(connection, transaction, ct);
+    }
+
+    private static async Task CleanupStaleRoomsCoreAsync(
+        MySqlConnection connection, MySqlTransaction transaction, CancellationToken ct)
+    {
         await ExecuteAsync(connection, transaction,
             $"""
             DELETE m FROM room_members m
@@ -490,6 +623,48 @@ internal static class LobbyEndpoints
               AND m.user_id <> r.host_user_id
               AND m.last_seen_at_utc < UTC_TIMESTAMP(6) - INTERVAL {StaleMemberSeconds} SECOND;
             """, ct);
+
+        var staleHosts = new List<(string RoomId, ulong HostUserId)>();
+        await using (var selectStaleHosts = new MySqlCommand(
+            $"""
+            SELECT r.id, r.host_user_id
+            FROM game_rooms r
+            LEFT JOIN room_members host_member
+              ON host_member.room_id = r.id AND host_member.user_id = r.host_user_id
+            WHERE r.status = 'Waiting'
+              AND (host_member.user_id IS NULL OR host_member.last_seen_at_utc < UTC_TIMESTAMP(6) - INTERVAL {StaleMemberSeconds} SECOND)
+            FOR UPDATE;
+            """, connection, transaction) { CommandTimeout = 5 })
+        {
+            await using var reader = await selectStaleHosts.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                staleHosts.Add((ReadRoomId(reader, 0), reader.GetUInt64(1)));
+            }
+        }
+
+        foreach (var staleHost in staleHosts)
+        {
+            var successorUserId = await FindEarliestOtherMemberAsync(
+                connection, transaction, staleHost.RoomId, staleHost.HostUserId, ct);
+            if (successorUserId is ulong successor)
+            {
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE game_rooms SET host_user_id = @successorUserId WHERE id = @roomId;",
+                    ("@successorUserId", successor), ("@roomId", staleHost.RoomId), ct);
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id = @successorUserId;",
+                    ("@roomId", staleHost.RoomId), ("@successorUserId", successor), ct);
+                await ExecuteAsync(connection, transaction,
+                    "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @hostUserId;",
+                    ("@roomId", staleHost.RoomId), ("@hostUserId", staleHost.HostUserId), ct);
+            }
+            else
+            {
+                await ExecuteAsync(connection, transaction,
+                    "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", staleHost.RoomId), ct);
+            }
+        }
     }
 
     private static async Task LockLobbyStateAsync(MySqlConnection connection, MySqlTransaction transaction, CancellationToken ct)
@@ -504,6 +679,40 @@ internal static class LobbyEndpoints
         await using var command = new MySqlCommand(
             "SELECT COUNT(*) FROM game_rooms WHERE status = 'Waiting';", connection, transaction) { CommandTimeout = 5 };
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+    }
+
+    private static async Task<bool> WaitingRoomNameExistsAsync(
+        MySqlConnection connection, MySqlTransaction transaction, string roomName, CancellationToken ct)
+    {
+        await using var command = new MySqlCommand(
+            "SELECT 1 FROM game_rooms WHERE status = 'Waiting' AND name = @roomName LIMIT 1;",
+            connection, transaction) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@roomName", roomName);
+        return await command.ExecuteScalarAsync(ct) is not null;
+    }
+
+    private static async Task<string> GenerateUniqueJoinCodeAsync(
+        MySqlConnection connection, MySqlTransaction transaction, CancellationToken ct)
+    {
+        const string alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        var characters = new char[8];
+        for (var attempt = 0; attempt < 32; ++attempt)
+        {
+            for (var index = 0; index < characters.Length; ++index)
+            {
+                characters[index] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
+            }
+            var candidate = new string(characters);
+            await using var command = new MySqlCommand(
+                "SELECT 1 FROM game_rooms WHERE join_code = @joinCode LIMIT 1;",
+                connection, transaction) { CommandTimeout = 5 };
+            command.Parameters.AddWithValue("@joinCode", candidate);
+            if (await command.ExecuteScalarAsync(ct) is null)
+            {
+                return candidate;
+            }
+        }
+        throw new InvalidOperationException("고유한 방 참가 코드를 생성하지 못했습니다.");
     }
 
     private static async Task<string?> FindCurrentRoomIdAsync(
@@ -545,10 +754,42 @@ internal static class LobbyEndpoints
             "UPDATE room_members SET last_seen_at_utc = UTC_TIMESTAMP(6) WHERE user_id = @userId;",
             ("@userId", userId), ct);
 
+    private static async Task<ulong?> FindEarliestOtherMemberAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string roomId,
+        ulong excludedUserId,
+        CancellationToken ct)
+    {
+        await using var command = new MySqlCommand(
+            "SELECT user_id FROM room_members WHERE room_id = @roomId AND user_id <> @excludedUserId ORDER BY joined_at_utc ASC, user_id ASC LIMIT 1 FOR UPDATE;",
+            connection, transaction) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@roomId", roomId);
+        command.Parameters.AddWithValue("@excludedUserId", excludedUserId);
+        var value = await command.ExecuteScalarAsync(ct);
+        return value is null or DBNull ? null : Convert.ToUInt64(value);
+    }
+
+    private static async Task<bool> IsMemberOfRoomAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string roomId,
+        ulong userId,
+        CancellationToken ct)
+    {
+        await using var command = new MySqlCommand(
+            "SELECT 1 FROM room_members WHERE room_id = @roomId AND user_id = @userId LIMIT 1 FOR UPDATE;",
+            connection, transaction) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@roomId", roomId);
+        command.Parameters.AddWithValue("@userId", userId);
+        return await command.ExecuteScalarAsync(ct) is not null;
+    }
+
     private static async Task<RoomState?> LoadCurrentRoomAsync(
         MySqlConnection connection, MySqlTransaction? transaction, ulong userId, CancellationToken ct)
     {
         string roomId;
+        string joinCode;
         string name;
         string status;
         string? travelUrl;
@@ -557,7 +798,7 @@ internal static class LobbyEndpoints
         string? assignedRole;
         await using (var roomCommand = new MySqlCommand(
             """
-            SELECT r.id, r.name, r.status, r.travel_url, r.host_user_id = m.user_id AS is_host, m.is_ready, m.assigned_role
+            SELECT r.id, r.join_code, r.name, r.status, r.travel_url, r.host_user_id = m.user_id AS is_host, m.is_ready, m.assigned_role
             FROM room_members m
             INNER JOIN game_rooms r ON r.id = m.room_id
             WHERE m.user_id = @userId
@@ -571,18 +812,19 @@ internal static class LobbyEndpoints
                 return null;
             }
             roomId = ReadRoomId(reader, 0);
-            name = reader.GetString(1);
-            status = reader.GetString(2);
-            travelUrl = reader.IsDBNull(3) ? null : reader.GetString(3);
-            isHost = reader.GetBoolean(4);
-            isReady = reader.GetBoolean(5);
-            assignedRole = reader.IsDBNull(6) ? null : reader.GetString(6);
+            joinCode = reader.GetString(1);
+            name = reader.GetString(2);
+            status = reader.GetString(3);
+            travelUrl = reader.IsDBNull(4) ? null : reader.GetString(4);
+            isHost = reader.GetBoolean(5);
+            isReady = reader.GetBoolean(6);
+            assignedRole = reader.IsDBNull(7) ? null : reader.GetString(7);
         }
 
         var members = new List<RoomMember>();
         await using (var memberCommand = new MySqlCommand(
             """
-            SELECT u.display_name, r.host_user_id = m.user_id AS is_host, m.is_ready, m.assigned_role
+            SELECT m.user_id, u.display_name, r.host_user_id = m.user_id AS is_host, m.is_ready, m.assigned_role
             FROM room_members m
             INNER JOIN users u ON u.id = m.user_id
             INNER JOIN game_rooms r ON r.id = m.room_id
@@ -595,8 +837,9 @@ internal static class LobbyEndpoints
             while (await reader.ReadAsync(ct))
             {
                 members.Add(new RoomMember(
-                    reader.GetString(0), reader.GetBoolean(1), reader.GetBoolean(2),
-                    reader.IsDBNull(3) ? string.Empty : reader.GetString(3)));
+                    reader.GetUInt64(0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3),
+                    reader.IsDBNull(4) ? string.Empty : reader.GetString(4)));
             }
         }
 
@@ -630,7 +873,7 @@ internal static class LobbyEndpoints
             members.Where(member => !member.IsHost).All(member => member.Ready) &&
             string.Equals(status, "Waiting", StringComparison.Ordinal);
         return new RoomState(
-            roomId, name, isHost, isReady, canStart, string.Equals(status, "Started", StringComparison.Ordinal),
+            roomId, joinCode, name, isHost, isReady, canStart, string.Equals(status, "Started", StringComparison.Ordinal),
             travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages);
     }
 
@@ -699,15 +942,17 @@ internal sealed record CreateRoomRequest(string? Name, bool IsPublic, string? Pa
 internal sealed record JoinRoomRequest(string? Password);
 internal sealed record ReadyRequest(bool Ready);
 internal sealed record ChatRequest(string? Message);
+internal sealed record TransferHostRequest(string? TargetUserId);
 internal sealed record LobbyFailure(string Message);
 internal sealed record LobbyUser(ulong Id, string DisplayName);
 internal sealed record Membership(string RoomId, bool IsHost, string Status);
 internal sealed record RoomSummary(
-    string RoomId, string Name, string HostDisplayName, int MemberCount, int MaxPlayers, bool HasPassword);
-internal sealed record RoomMember(string DisplayName, bool IsHost, bool Ready, string AssignedRole);
+    string RoomId, string JoinCode, string Name, string HostDisplayName, int MemberCount, int MaxPlayers, bool HasPassword);
+internal sealed record RoomMember(string UserId, string DisplayName, bool IsHost, bool Ready, string AssignedRole);
 internal sealed record RoomChatMessage(string MessageId, string DisplayName, string Message, string CreatedAtUtc);
 internal sealed record RoomState(
     string RoomId,
+    string JoinCode,
     string Name,
     bool IsHost,
     bool IsReady,

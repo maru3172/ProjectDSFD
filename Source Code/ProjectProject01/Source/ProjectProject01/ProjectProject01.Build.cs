@@ -10,7 +10,7 @@ public class ProjectProject01 : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "NavigationSystem", "UMG" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

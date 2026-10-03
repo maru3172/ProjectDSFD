@@ -15,6 +15,8 @@ enum class EProjectProject01LobbyOperation : uint8
 	CreateRoom,
 	JoinRoom,
 	LeaveRoom,
+	TransferHost,
+	DeleteRoom,
 	SetReady,
 	StartRoom,
 	SendChat
@@ -27,6 +29,9 @@ struct PROJECTPROJECT01_API FProjectProject01RoomSummary
 
 	UPROPERTY(BlueprintReadOnly)
 	FString RoomId;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString JoinCode;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString Name;
@@ -48,6 +53,9 @@ USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FProjectProject01RoomMember
 {
 	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly)
+	FString UserId;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString DisplayName;
@@ -87,6 +95,9 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 
 	UPROPERTY(BlueprintReadOnly)
 	FString RoomId;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString JoinCode;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString Name;
@@ -154,10 +165,16 @@ public:
 	void CreateRoom(const FString& RoomName, bool bIsPublic, const FString& Password);
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
-	void JoinRoom(const FString& RoomId, const FString& Password);
+	void JoinRoom(const FString& RoomCode, const FString& Password);
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void LeaveRoom();
+
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
+	void TransferHost(const FString& TargetUserId);
+
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
+	void DeleteRoom();
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void SetReady(bool bReady);
