@@ -563,6 +563,233 @@ internal static class LobbyEndpoints
                 return DatabaseUnavailable();
             }
         }).RequireRateLimiting("lobby");
+
+        app.MapGet("/api/leaderboards/{role}", async (
+            string role, HttpRequest request, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            var normalizedRole = NormalizeLeaderboardRole(role);
+            if (normalizedRole is null)
+            {
+                return Results.BadRequest(new LobbyFailure("리더보드 역할은 Mannequin 또는 Survivor여야 합니다."));
+            }
+            var normalizedSort = NormalizeLeaderboardSort(normalizedRole, request.Query["sort"].ToString());
+            if (normalizedSort is null)
+            {
+                return Results.BadRequest(new LobbyFailure("선택한 역할에서 사용할 수 없는 정렬 항목입니다."));
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                var entries = await LoadLeaderboardAsync(connection, normalizedRole, normalizedSort, ct);
+                return Results.Ok(new
+                {
+                    message = "리더보드 상위 50개 기록을 불러왔습니다.",
+                    role = normalizedRole,
+                    sort = normalizedSort,
+                    entries
+                });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/leaderboards/records", async (
+            HttpRequest request, SubmitLeaderboardRecordRequest body, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            if (!body.Success)
+            {
+                return Results.BadRequest(new LobbyFailure("실패한 경기 기록은 리더보드에 등록할 수 없습니다."));
+            }
+            if (!Guid.TryParse(body.MatchId, out var matchId))
+            {
+                return Results.BadRequest(new LobbyFailure("경기 ID 형식이 올바르지 않습니다."));
+            }
+            var normalizedRole = NormalizeLeaderboardRole(body.Role ?? string.Empty);
+            if (normalizedRole is null)
+            {
+                return Results.BadRequest(new LobbyFailure("리더보드 역할은 Mannequin 또는 Survivor여야 합니다."));
+            }
+
+            var validationError = ValidateLeaderboardRecord(normalizedRole, body);
+            if (!string.IsNullOrEmpty(validationError))
+            {
+                return Results.BadRequest(new LobbyFailure(validationError));
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var command = new MySqlCommand(
+                    """
+                    INSERT INTO leaderboard_records
+                    (match_id, user_id, role, capture_count, first_capture_seconds, all_captured_seconds, rescue_count, escape_seconds)
+                    VALUES
+                    (@matchId, @userId, @role, @captureCount, @firstCaptureSeconds, @allCapturedSeconds, @rescueCount, @escapeSeconds);
+                    """, connection) { CommandTimeout = 5 };
+                command.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
+                command.Parameters.AddWithValue("@userId", user.Id);
+                command.Parameters.AddWithValue("@role", normalizedRole);
+                command.Parameters.AddWithValue("@captureCount",
+                    normalizedRole == "Mannequin" ? body.CaptureCount!.Value : DBNull.Value);
+                command.Parameters.AddWithValue("@firstCaptureSeconds",
+                    normalizedRole == "Mannequin" ? body.FirstCaptureSeconds!.Value : DBNull.Value);
+                command.Parameters.AddWithValue("@allCapturedSeconds",
+                    normalizedRole == "Mannequin" ? body.AllCapturedSeconds!.Value : DBNull.Value);
+                command.Parameters.AddWithValue("@rescueCount",
+                    normalizedRole == "Survivor" ? body.RescueCount!.Value : DBNull.Value);
+                command.Parameters.AddWithValue("@escapeSeconds",
+                    normalizedRole == "Survivor" ? body.EscapeSeconds!.Value : DBNull.Value);
+                await command.ExecuteNonQueryAsync(ct);
+                return Results.Ok(new { message = "성공 기록을 리더보드에 등록했습니다." });
+            }
+            catch (MySqlException exception) when (exception.Number == 1062)
+            {
+                return Results.Conflict(new LobbyFailure("이 경기의 기록은 이미 등록되어 있습니다."));
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+    }
+
+    private static string? NormalizeLeaderboardRole(string role) => role.Trim().ToLowerInvariant() switch
+    {
+        "mannequin" => "Mannequin",
+        "survivor" => "Survivor",
+        _ => null
+    };
+
+    private static string? NormalizeLeaderboardSort(string role, string sort)
+    {
+        var normalized = string.IsNullOrWhiteSpace(sort) ? "overall" : sort.Trim();
+        return role switch
+        {
+            "Mannequin" when normalized is "overall" or "captures" or "firstCapture" or "allCaptured" => normalized,
+            "Survivor" when normalized is "overall" or "rescues" or "escape" => normalized,
+            _ => null
+        };
+    }
+
+    private static string? ValidateLeaderboardRecord(string role, SubmitLeaderboardRecordRequest body)
+    {
+        const double maximumMatchSeconds = 86400.0;
+        const int maximumEventCount = 10000;
+        if (role == "Mannequin")
+        {
+            if (body.CaptureCount is null or < 1 or > maximumEventCount ||
+                body.FirstCaptureSeconds is null or <= 0.0 or > maximumMatchSeconds ||
+                body.AllCapturedSeconds is null or <= 0.0 or > maximumMatchSeconds)
+            {
+                return "마네킹 성공 기록의 포획 횟수와 포획 시간이 유효하지 않습니다.";
+            }
+            if (body.AllCapturedSeconds < body.FirstCaptureSeconds)
+            {
+                return "전원 포획 시간은 첫 포획 시간보다 빠를 수 없습니다.";
+            }
+            return null;
+        }
+
+        if (body.RescueCount is null or < 0 or > maximumEventCount ||
+            body.EscapeSeconds is null or <= 0.0 or > maximumMatchSeconds)
+        {
+            return "생존자 성공 기록의 구출 횟수와 탈출 시간이 유효하지 않습니다.";
+        }
+        return null;
+    }
+
+    private static async Task<IReadOnlyList<LeaderboardEntry>> LoadLeaderboardAsync(
+        MySqlConnection connection, string role, string sort, CancellationToken ct)
+    {
+        var orderBy = role switch
+        {
+            "Mannequin" when sort == "captures" =>
+                "capture_count DESC, all_captured_seconds ASC, first_capture_seconds ASC, record_id ASC",
+            "Mannequin" when sort == "firstCapture" =>
+                "first_capture_seconds ASC, capture_count DESC, all_captured_seconds ASC, record_id ASC",
+            "Mannequin" when sort == "allCaptured" =>
+                "all_captured_seconds ASC, capture_count DESC, first_capture_seconds ASC, record_id ASC",
+            "Survivor" when sort == "rescues" =>
+                "rescue_count DESC, escape_seconds ASC, record_id ASC",
+            "Survivor" when sort == "escape" =>
+                "escape_seconds ASC, rescue_count DESC, record_id ASC",
+            _ => "average_rank ASC, created_at_utc ASC, record_id ASC"
+        };
+        var rankedColumns = role == "Mannequin"
+            ? """
+              RANK() OVER (ORDER BY lr.capture_count DESC, lr.all_captured_seconds ASC, lr.first_capture_seconds ASC, lr.id ASC) AS primary_rank,
+              RANK() OVER (ORDER BY lr.first_capture_seconds ASC, lr.capture_count DESC, lr.all_captured_seconds ASC, lr.id ASC) AS secondary_rank,
+              RANK() OVER (ORDER BY lr.all_captured_seconds ASC, lr.capture_count DESC, lr.first_capture_seconds ASC, lr.id ASC) AS tertiary_rank
+              """
+            : """
+              RANK() OVER (ORDER BY lr.rescue_count DESC, lr.escape_seconds ASC, lr.id ASC) AS primary_rank,
+              RANK() OVER (ORDER BY lr.escape_seconds ASC, lr.rescue_count DESC, lr.id ASC) AS secondary_rank,
+              0 AS tertiary_rank
+              """;
+        var averageExpression = role == "Mannequin"
+            ? "(primary_rank + secondary_rank + tertiary_rank) / 3.0"
+            : "(primary_rank + secondary_rank) / 2.0";
+        var sql = $"""
+            WITH metric_ranks AS
+            (
+                SELECT lr.id AS record_id, u.display_name, lr.role, lr.capture_count,
+                       lr.first_capture_seconds, lr.all_captured_seconds, lr.rescue_count,
+                       lr.escape_seconds, lr.created_at_utc,
+                       {rankedColumns},
+                       COUNT(*) OVER () AS total_count
+                FROM leaderboard_records lr
+                INNER JOIN users u ON u.id = lr.user_id
+                WHERE lr.role = @role
+            ), scored AS
+            (
+                SELECT *, {averageExpression} AS average_rank
+                FROM metric_ranks
+            )
+            SELECT record_id, display_name, role, capture_count, first_capture_seconds,
+                   all_captured_seconds, rescue_count, escape_seconds, created_at_utc,
+                   average_rank, total_count
+            FROM scored
+            ORDER BY {orderBy}
+            LIMIT 50;
+            """;
+
+        var entries = new List<LeaderboardEntry>();
+        await using var command = new MySqlCommand(sql, connection) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@role", role);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var displayRank = 0;
+        while (await reader.ReadAsync(ct))
+        {
+            ++displayRank;
+            var averageRank = Convert.ToDouble(reader.GetValue(9), System.Globalization.CultureInfo.InvariantCulture);
+            var totalCount = reader.GetInt64(10);
+            var overallScore = totalCount <= 1
+                ? 100.0
+                : Math.Clamp(100.0 * (1.0 - ((averageRank - 1.0) / (totalCount - 1.0))), 0.0, 100.0);
+            entries.Add(new LeaderboardEntry(
+                displayRank,
+                reader.GetString(1),
+                reader.GetString(2),
+                Math.Round(overallScore, 2),
+                reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), System.Globalization.CultureInfo.InvariantCulture),
+                reader.IsDBNull(5) ? null : Convert.ToDouble(reader.GetValue(5), System.Globalization.CultureInfo.InvariantCulture),
+                reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                reader.IsDBNull(7) ? null : Convert.ToDouble(reader.GetValue(7), System.Globalization.CultureInfo.InvariantCulture),
+                DateTime.SpecifyKind(reader.GetDateTime(8), DateTimeKind.Utc).ToString("O")));
+        }
+        return entries;
     }
 
     private static async Task<LobbyUser?> AuthenticateAsync(HttpRequest request, AuthDatabase database, CancellationToken ct)
@@ -943,6 +1170,15 @@ internal sealed record JoinRoomRequest(string? Password);
 internal sealed record ReadyRequest(bool Ready);
 internal sealed record ChatRequest(string? Message);
 internal sealed record TransferHostRequest(string? TargetUserId);
+internal sealed record SubmitLeaderboardRecordRequest(
+    string? MatchId,
+    string? Role,
+    bool Success,
+    int? CaptureCount,
+    double? FirstCaptureSeconds,
+    double? AllCapturedSeconds,
+    int? RescueCount,
+    double? EscapeSeconds);
 internal sealed record LobbyFailure(string Message);
 internal sealed record LobbyUser(ulong Id, string DisplayName);
 internal sealed record Membership(string RoomId, bool IsHost, string Status);
@@ -963,3 +1199,14 @@ internal sealed record RoomState(
     IReadOnlyList<RoomMember> Members,
     IReadOnlyList<RoomChatMessage> ChatMessages);
 internal sealed record RoomPasswordRecord(string RoomId);
+internal sealed record LeaderboardEntry(
+    int Rank,
+    string DisplayName,
+    string Role,
+    double OverallScore,
+    int? CaptureCount,
+    double? FirstCaptureSeconds,
+    double? AllCapturedSeconds,
+    int? RescueCount,
+    double? EscapeSeconds,
+    string CreatedAtUtc);

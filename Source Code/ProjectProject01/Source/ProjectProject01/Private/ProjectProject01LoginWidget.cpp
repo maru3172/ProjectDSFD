@@ -284,6 +284,7 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 	if (IsValid(DeleteRoomButton)) DeleteRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleDeleteRoomClicked);
 	if (IsValid(CopyJoinCodeButton)) CopyJoinCodeButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleCopyJoinCodeClicked);
 	if (IsValid(SendChatButton)) SendChatButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleSendChatClicked);
+	if (IsValid(OpenLeaderboardTestButton)) OpenLeaderboardTestButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleOpenLeaderboardTestClicked);
 	if (IsValid(LogoutButton))
 	{
 		LogoutButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLogoutClicked);
@@ -497,6 +498,11 @@ void UProjectProject01LobbyWidget::HandleLogoutClicked()
 		return;
 	}
 	BeginLogout();
+}
+
+void UProjectProject01LobbyWidget::HandleOpenLeaderboardTestClicked()
+{
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LeaderBoardTest")));
 }
 
 void UProjectProject01LobbyWidget::BeginLogout()
@@ -828,6 +834,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	Root->AddChildToVerticalBox(ChatInput)->SetPadding(FMargin(6.0f));
 	SendChatButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("채팅 보내기"));
 	SendChatButton->SetIsEnabled(false);
+	OpenLeaderboardTestButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("리더보드 테스트 열기"));
 	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("로그아웃 / 로그인 화면으로"));
 }
 
@@ -839,4 +846,287 @@ void UProjectProject01LobbyWidget::SetStatus(const FString& Message, const bool 
 	}
 	LobbyStatusText->SetText(FText::FromString(Message));
 	LobbyStatusText->SetColorAndOpacity(bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
+}
+
+bool UProjectProject01LeaderboardWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01LeaderboardWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	if (IsValid(RefreshButton)) RefreshButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleRefreshClicked);
+	if (IsValid(RoleComboBox)) RoleComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleRoleSelectionChanged);
+	if (IsValid(SortComboBox)) SortComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSortSelectionChanged);
+	if (IsValid(SubmitRecordButton)) SubmitRecordButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked);
+	if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked);
+
+	PendingTestMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+	RefreshSortOptions();
+
+	UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Auth) || !Auth->IsSignedIn() || !IsValid(Lobby))
+	{
+		SetStatus(TEXT("로그인 세션 또는 리더보드 시스템이 없습니다."), true);
+		return;
+	}
+
+	Lobby->OnRequestCompleted.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult);
+	Lobby->OnLeaderboardChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardChanged);
+	Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
+}
+
+void UProjectProject01LeaderboardWidget::NativeDestruct()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->OnRequestCompleted.RemoveDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult);
+			Lobby->OnLeaderboardChanged.RemoveDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardChanged);
+		}
+	}
+	Super::NativeDestruct();
+}
+
+void UProjectProject01LeaderboardWidget::HandleRefreshClicked()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
+		}
+	}
+}
+
+void UProjectProject01LeaderboardWidget::HandleRoleSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
+{
+	(void)SelectedItem;
+	(void)SelectionType;
+	RefreshSortOptions();
+	HandleRefreshClicked();
+}
+
+void UProjectProject01LeaderboardWidget::HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
+{
+	(void)SelectedItem;
+	(void)SelectionType;
+	if (bUpdatingSortOptions)
+	{
+		return;
+	}
+	HandleRefreshClicked();
+}
+
+void UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Lobby))
+	{
+		SetStatus(TEXT("리더보드 시스템을 찾지 못했습니다."), true);
+		return;
+	}
+
+	const int32 CaptureCount = IsValid(CaptureCountInput) ? FCString::Atoi(*CaptureCountInput->GetText().ToString()) : 0;
+	const double FirstCaptureSeconds = IsValid(FirstCaptureSecondsInput) ? FCString::Atod(*FirstCaptureSecondsInput->GetText().ToString()) : 0.0;
+	const double AllCapturedSeconds = IsValid(AllCapturedSecondsInput) ? FCString::Atod(*AllCapturedSecondsInput->GetText().ToString()) : 0.0;
+	const int32 RescueCount = IsValid(RescueCountInput) ? FCString::Atoi(*RescueCountInput->GetText().ToString()) : 0;
+	const double EscapeSeconds = IsValid(EscapeSecondsInput) ? FCString::Atod(*EscapeSecondsInput->GetText().ToString()) : 0.0;
+
+	SetStatus(TEXT("테스트 성공 기록을 등록하는 중..."), false);
+	Lobby->SubmitLeaderboardRecord(PendingTestMatchId, GetSelectedRole(), true,
+		CaptureCount, FirstCaptureSeconds, AllCapturedSeconds, RescueCount, EscapeSeconds);
+}
+
+void UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked()
+{
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")));
+}
+
+void UProjectProject01LeaderboardWidget::HandleLeaderboardChanged()
+{
+	RefreshLeaderboardView();
+}
+
+void UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult(
+	const EProjectProject01LobbyOperation Operation,
+	const bool bSuccess,
+	const FString& Message)
+{
+	if (Operation != EProjectProject01LobbyOperation::RefreshLeaderboard &&
+		Operation != EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
+	{
+		return;
+	}
+	SetStatus(Message, !bSuccess);
+	if (bSuccess && Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
+	{
+		PendingTestMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+			{
+				Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
+			}
+		}
+	}
+}
+
+void UProjectProject01LeaderboardWidget::RefreshLeaderboardView()
+{
+	if (!IsValid(LeaderboardText))
+	{
+		return;
+	}
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Lobby))
+	{
+		return;
+	}
+
+	FString Text = GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin
+		? TEXT("순위 | 이름 | 역할 | 종합점수 | 포획 | 첫 포획(초) | 전원 포획(초)\n")
+		: TEXT("순위 | 이름 | 역할 | 종합점수 | 구출 | 탈출(초)\n");
+	for (const FProjectProject01LeaderboardEntry& Entry : Lobby->GetLeaderboardEntries())
+	{
+		if (GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin)
+		{
+			Text += FString::Printf(TEXT("%d | %s | %s | %.1f | %d | %.2f | %.2f\n"),
+				Entry.Rank, *Entry.DisplayName, *Entry.Role, Entry.OverallScore, Entry.CaptureCount,
+				Entry.FirstCaptureSeconds, Entry.AllCapturedSeconds);
+		}
+		else
+		{
+			Text += FString::Printf(TEXT("%d | %s | %s | %.1f | %d | %.2f\n"),
+				Entry.Rank, *Entry.DisplayName, *Entry.Role, Entry.OverallScore,
+				Entry.RescueCount, Entry.EscapeSeconds);
+		}
+	}
+	if (Lobby->GetLeaderboardEntries().IsEmpty())
+	{
+		Text += TEXT("등록된 성공 기록이 없습니다.\n");
+	}
+	LeaderboardText->SetText(FText::FromString(Text));
+}
+
+void UProjectProject01LeaderboardWidget::RefreshSortOptions()
+{
+	if (!IsValid(SortComboBox))
+	{
+		return;
+	}
+	bUpdatingSortOptions = true;
+	SortComboBox->ClearOptions();
+	SortComboBox->AddOption(TEXT("종합 점수"));
+	const bool bMannequin = GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin;
+	if (bMannequin)
+	{
+		SortComboBox->AddOption(TEXT("붙잡은 횟수"));
+		SortComboBox->AddOption(TEXT("첫 포획 시간"));
+		SortComboBox->AddOption(TEXT("전원 포획 시간"));
+	}
+	else
+	{
+		SortComboBox->AddOption(TEXT("구출 횟수"));
+		SortComboBox->AddOption(TEXT("탈출 시간"));
+	}
+	SortComboBox->SetSelectedOption(TEXT("종합 점수"));
+	if (IsValid(CaptureCountInput)) CaptureCountInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(FirstCaptureSecondsInput)) FirstCaptureSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(AllCapturedSecondsInput)) AllCapturedSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(RescueCountInput)) RescueCountInput->SetVisibility(bMannequin ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(EscapeSecondsInput)) EscapeSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	bUpdatingSortOptions = false;
+}
+
+EProjectProject01LeaderboardRole UProjectProject01LeaderboardWidget::GetSelectedRole() const
+{
+	return IsValid(RoleComboBox) && RoleComboBox->GetSelectedOption() == TEXT("생존자")
+		? EProjectProject01LeaderboardRole::Survivor : EProjectProject01LeaderboardRole::Mannequin;
+}
+
+EProjectProject01LeaderboardSort UProjectProject01LeaderboardWidget::GetSelectedSort() const
+{
+	const FString Option = IsValid(SortComboBox) ? SortComboBox->GetSelectedOption() : FString();
+	if (Option == TEXT("붙잡은 횟수")) return EProjectProject01LeaderboardSort::Captures;
+	if (Option == TEXT("첫 포획 시간")) return EProjectProject01LeaderboardSort::FirstCapture;
+	if (Option == TEXT("전원 포획 시간")) return EProjectProject01LeaderboardSort::AllCaptured;
+	if (Option == TEXT("구출 횟수")) return EProjectProject01LeaderboardSort::Rescues;
+	if (Option == TEXT("탈출 시간")) return EProjectProject01LeaderboardSort::Escape;
+	return EProjectProject01LeaderboardSort::Overall;
+}
+
+void UProjectProject01LeaderboardWidget::BuildWidgetTree()
+{
+	UScrollBox* ScrollRoot = WidgetTree->ConstructWidget<UScrollBox>();
+	WidgetTree->RootWidget = ScrollRoot;
+	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
+	ScrollRoot->AddChild(Root);
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 LeaderBoardTest"), 24.0f);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
+		TEXT("성공한 경기만 등록하는 리더보드 테스트입니다. 미지정 정렬은 역할별 평균 순위 기반 종합점수입니다."), 14.0f);
+	LeaderboardStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("리더보드를 불러오는 중..."), 14.0f);
+
+	RoleComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
+	ProjectProject01LoginUI::SetComboBoxTextBlack(RoleComboBox);
+	RoleComboBox->AddOption(TEXT("마네킹"));
+	RoleComboBox->AddOption(TEXT("생존자"));
+	RoleComboBox->SetSelectedOption(TEXT("마네킹"));
+	Root->AddChildToVerticalBox(RoleComboBox)->SetPadding(FMargin(6.0f));
+
+	SortComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
+	ProjectProject01LoginUI::SetComboBoxTextBlack(SortComboBox);
+	Root->AddChildToVerticalBox(SortComboBox)->SetPadding(FMargin(6.0f));
+	RefreshButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("리더보드 새로고침"));
+
+	LeaderboardText = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
+	LeaderboardText->SetIsReadOnly(true);
+	LeaderboardText->SetForegroundColor(FLinearColor::Black);
+	Root->AddChildToVerticalBox(LeaderboardText)->SetPadding(FMargin(6.0f));
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
+		TEXT("테스트 성공 결과 입력 (실제 게임 종료 연결 전 수동 검증용)"), 16.0f);
+	auto AddInput = [this, Root](const FString& Hint, const FString& DefaultValue)
+	{
+		UEditableTextBox* Input = WidgetTree->ConstructWidget<UEditableTextBox>();
+		Input->SetHintText(FText::FromString(Hint));
+		Input->SetText(FText::FromString(DefaultValue));
+		Input->SetForegroundColor(FLinearColor::Black);
+		Root->AddChildToVerticalBox(Input)->SetPadding(FMargin(6.0f));
+		return Input;
+	};
+	CaptureCountInput = AddInput(TEXT("붙잡은 횟수"), TEXT("2"));
+	FirstCaptureSecondsInput = AddInput(TEXT("첫 포획 시간(초)"), TEXT("30"));
+	AllCapturedSecondsInput = AddInput(TEXT("전원 포획 시간(초)"), TEXT("120"));
+	RescueCountInput = AddInput(TEXT("구출 횟수"), TEXT("1"));
+	EscapeSecondsInput = AddInput(TEXT("탈출 시간(초)"), TEXT("180"));
+	SubmitRecordButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("현재 성공 기록을 리더보드에 등록"));
+	ReturnToLobbyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("등록하지 않고 로비로 돌아가기"));
+}
+
+void UProjectProject01LeaderboardWidget::SetStatus(const FString& Message, const bool bIsError)
+{
+	if (!IsValid(LeaderboardStatusText))
+	{
+		return;
+	}
+	LeaderboardStatusText->SetText(FText::FromString(Message));
+	LeaderboardStatusText->SetColorAndOpacity(
+		bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
 }

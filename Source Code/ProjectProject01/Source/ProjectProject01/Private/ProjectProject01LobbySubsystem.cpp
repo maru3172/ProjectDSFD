@@ -20,7 +20,8 @@ namespace ProjectProject01Lobby
 	bool IsReadOperation(const EProjectProject01LobbyOperation Operation)
 	{
 		return Operation == EProjectProject01LobbyOperation::RefreshRooms ||
-			Operation == EProjectProject01LobbyOperation::RefreshCurrentRoom;
+			Operation == EProjectProject01LobbyOperation::RefreshCurrentRoom ||
+			Operation == EProjectProject01LobbyOperation::RefreshLeaderboard;
 	}
 
 	FString NormalizeBaseUrl(FString Url)
@@ -36,6 +37,24 @@ namespace ProjectProject01Lobby
 	bool ReadRequiredString(const TSharedPtr<FJsonObject>& Json, const TCHAR* Field, FString& OutValue)
 	{
 		return Json.IsValid() && Json->TryGetStringField(Field, OutValue);
+	}
+
+	const TCHAR* RoleToString(const EProjectProject01LeaderboardRole Role)
+	{
+		return Role == EProjectProject01LeaderboardRole::Mannequin ? TEXT("Mannequin") : TEXT("Survivor");
+	}
+
+	const TCHAR* SortToString(const EProjectProject01LeaderboardSort Sort)
+	{
+		switch (Sort)
+		{
+		case EProjectProject01LeaderboardSort::Captures: return TEXT("captures");
+		case EProjectProject01LeaderboardSort::FirstCapture: return TEXT("firstCapture");
+		case EProjectProject01LeaderboardSort::AllCaptured: return TEXT("allCaptured");
+		case EProjectProject01LeaderboardSort::Rescues: return TEXT("rescues");
+		case EProjectProject01LeaderboardSort::Escape: return TEXT("escape");
+		default: return TEXT("overall");
+		}
 	}
 }
 
@@ -62,6 +81,7 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 	}
 	Rooms.Reset();
 	CurrentRoom = FProjectProject01RoomState();
+	LeaderboardEntries.Reset();
 	Super::Deinitialize();
 }
 
@@ -171,6 +191,60 @@ void UProjectProject01LobbySubsystem::SendChat(const FString& Message)
 	FString Body;
 	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
 	SendRequest(EProjectProject01LobbyOperation::SendChat, TEXT("POST"), TEXT("/api/rooms/current/chat"), Body);
+}
+
+void UProjectProject01LobbySubsystem::RefreshLeaderboard(
+	const EProjectProject01LeaderboardRole Role,
+	EProjectProject01LeaderboardSort Sort)
+{
+	const bool bMannequinSort = Sort == EProjectProject01LeaderboardSort::Overall ||
+		Sort == EProjectProject01LeaderboardSort::Captures ||
+		Sort == EProjectProject01LeaderboardSort::FirstCapture ||
+		Sort == EProjectProject01LeaderboardSort::AllCaptured;
+	const bool bSurvivorSort = Sort == EProjectProject01LeaderboardSort::Overall ||
+		Sort == EProjectProject01LeaderboardSort::Rescues ||
+		Sort == EProjectProject01LeaderboardSort::Escape;
+	if ((Role == EProjectProject01LeaderboardRole::Mannequin && !bMannequinSort) ||
+		(Role == EProjectProject01LeaderboardRole::Survivor && !bSurvivorSort))
+	{
+		Sort = EProjectProject01LeaderboardSort::Overall;
+	}
+	LeaderboardRole = Role;
+	LeaderboardSort = Sort;
+	const FString Endpoint = FString::Printf(TEXT("/api/leaderboards/%s?sort=%s"),
+		ProjectProject01Lobby::RoleToString(Role), ProjectProject01Lobby::SortToString(Sort));
+	SendRequest(EProjectProject01LobbyOperation::RefreshLeaderboard, TEXT("GET"), Endpoint, FString());
+}
+
+void UProjectProject01LobbySubsystem::SubmitLeaderboardRecord(
+	const FString& MatchId,
+	const EProjectProject01LeaderboardRole Role,
+	const bool bSuccess,
+	const int32 CaptureCount,
+	const double FirstCaptureSeconds,
+	const double AllCapturedSeconds,
+	const int32 RescueCount,
+	const double EscapeSeconds)
+{
+	FGuid ParsedMatchId;
+	if (!FGuid::Parse(MatchId, ParsedMatchId))
+	{
+		Complete(EProjectProject01LobbyOperation::SubmitLeaderboardRecord, false, TEXT("경기 ID가 올바르지 않습니다."));
+		return;
+	}
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("matchId"), ParsedMatchId.ToString(EGuidFormats::DigitsWithHyphens));
+	Json->SetStringField(TEXT("role"), ProjectProject01Lobby::RoleToString(Role));
+	Json->SetBoolField(TEXT("success"), bSuccess);
+	Json->SetNumberField(TEXT("captureCount"), CaptureCount);
+	Json->SetNumberField(TEXT("firstCaptureSeconds"), FirstCaptureSeconds);
+	Json->SetNumberField(TEXT("allCapturedSeconds"), AllCapturedSeconds);
+	Json->SetNumberField(TEXT("rescueCount"), RescueCount);
+	Json->SetNumberField(TEXT("escapeSeconds"), EscapeSeconds);
+	FString Body;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
+	SendRequest(EProjectProject01LobbyOperation::SubmitLeaderboardRecord, TEXT("POST"),
+		TEXT("/api/leaderboards/records"), Body);
 }
 
 void UProjectProject01LobbySubsystem::SendRequest(
@@ -290,11 +364,19 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	{
 		bParsed = ParseRoomList(Json, ParseError);
 	}
+	else if (Operation == EProjectProject01LobbyOperation::RefreshLeaderboard)
+	{
+		bParsed = ParseLeaderboard(Json, ParseError);
+	}
 	else if (Operation == EProjectProject01LobbyOperation::LeaveRoom ||
 		Operation == EProjectProject01LobbyOperation::DeleteRoom)
 	{
 		CurrentRoom = FProjectProject01RoomState();
 		OnCurrentRoomChanged.Broadcast();
+	}
+	else if (Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
+	{
+		// 등록 응답에는 방 또는 리더보드 배열이 없으며, UI가 성공 후 목록을 새로 요청한다.
 	}
 	else
 	{
@@ -407,6 +489,45 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 
 	CurrentRoom = MoveTemp(Parsed);
 	OnCurrentRoomChanged.Broadcast();
+	OutError.Reset();
+	return true;
+}
+
+bool UProjectProject01LobbySubsystem::ParseLeaderboard(const TSharedPtr<FJsonObject>& Json, FString& OutError)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!Json.IsValid() || !Json->TryGetArrayField(TEXT("entries"), Values) || Values == nullptr)
+	{
+		OutError = TEXT("리더보드 응답에 entries 배열이 없습니다.");
+		return false;
+	}
+
+	TArray<FProjectProject01LeaderboardEntry> ParsedEntries;
+	for (const TSharedPtr<FJsonValue>& Value : *Values)
+	{
+		const TSharedPtr<FJsonObject> EntryJson = Value.IsValid() ? Value->AsObject() : nullptr;
+		FProjectProject01LeaderboardEntry Entry;
+		double Rank = 0.0;
+		if (!EntryJson.IsValid() || !EntryJson->TryGetNumberField(TEXT("rank"), Rank) ||
+			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("displayName"), Entry.DisplayName) ||
+			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("role"), Entry.Role) ||
+			!EntryJson->TryGetNumberField(TEXT("overallScore"), Entry.OverallScore) ||
+			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("createdAtUtc"), Entry.CreatedAtUtc))
+		{
+			OutError = TEXT("리더보드 항목 형식이 올바르지 않습니다.");
+			return false;
+		}
+		Entry.Rank = FMath::Max(1, FMath::RoundToInt(Rank));
+		double Number = 0.0;
+		if (EntryJson->TryGetNumberField(TEXT("captureCount"), Number)) Entry.CaptureCount = FMath::Max(0, FMath::RoundToInt(Number));
+		if (EntryJson->TryGetNumberField(TEXT("firstCaptureSeconds"), Number)) Entry.FirstCaptureSeconds = FMath::Max(0.0, Number);
+		if (EntryJson->TryGetNumberField(TEXT("allCapturedSeconds"), Number)) Entry.AllCapturedSeconds = FMath::Max(0.0, Number);
+		if (EntryJson->TryGetNumberField(TEXT("rescueCount"), Number)) Entry.RescueCount = FMath::Max(0, FMath::RoundToInt(Number));
+		if (EntryJson->TryGetNumberField(TEXT("escapeSeconds"), Number)) Entry.EscapeSeconds = FMath::Max(0.0, Number);
+		ParsedEntries.Add(MoveTemp(Entry));
+	}
+	LeaderboardEntries = MoveTemp(ParsedEntries);
+	OnLeaderboardChanged.Broadcast();
 	OutError.Reset();
 	return true;
 }

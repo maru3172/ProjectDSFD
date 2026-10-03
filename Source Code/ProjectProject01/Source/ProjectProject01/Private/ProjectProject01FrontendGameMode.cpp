@@ -57,3 +57,30 @@ AProjectProject01LobbyGameMode::AProjectProject01LobbyGameMode()
 	DefaultPawnClass = nullptr;
 	PlayerControllerClass = AProjectProject01LobbyPlayerController::StaticClass();
 }
+
+void AProjectProject01LeaderboardPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bShowMouseCursor = true;
+	FInputModeUIOnly InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
+
+	LeaderboardWidget = CreateWidget<UProjectProject01LeaderboardWidget>(
+		this, UProjectProject01LeaderboardWidget::StaticClass());
+	if (ensureMsgf(IsValid(LeaderboardWidget), TEXT("ProjectProject01 leaderboard widget creation failed.")))
+	{
+		LeaderboardWidget->AddToViewport(100);
+	}
+}
+
+AProjectProject01LeaderboardGameMode::AProjectProject01LeaderboardGameMode()
+{
+	DefaultPawnClass = nullptr;
+	PlayerControllerClass = AProjectProject01LeaderboardPlayerController::StaticClass();
+}

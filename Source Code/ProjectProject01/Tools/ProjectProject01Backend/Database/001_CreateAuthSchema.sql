@@ -98,3 +98,26 @@ CREATE TABLE IF NOT EXISTS room_chat_messages
   CONSTRAINT fk_room_chat_user
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS leaderboard_records
+(
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  capture_count INT UNSIGNED NULL,
+  first_capture_seconds DECIMAL(12,3) NULL,
+  all_captured_seconds DECIMAL(12,3) NULL,
+  rescue_count INT UNSIGNED NULL,
+  escape_seconds DECIMAL(12,3) NULL,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_leaderboard_match_user (match_id, user_id),
+  KEY ix_leaderboard_role_capture (role, capture_count, all_captured_seconds),
+  KEY ix_leaderboard_role_first_capture (role, first_capture_seconds),
+  KEY ix_leaderboard_role_all_captured (role, all_captured_seconds),
+  KEY ix_leaderboard_role_rescue (role, rescue_count, escape_seconds),
+  KEY ix_leaderboard_role_escape (role, escape_seconds),
+  CONSTRAINT fk_leaderboard_user
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

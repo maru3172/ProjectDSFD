@@ -51,3 +51,25 @@ class PROJECTPROJECT01_API AProjectProject01LobbyGameMode final : public AGameMo
 public:
 	AProjectProject01LobbyGameMode();
 };
+
+UCLASS()
+class PROJECTPROJECT01_API AProjectProject01LeaderboardPlayerController final : public APlayerController
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BeginPlay() override;
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01LeaderboardWidget> LeaderboardWidget;
+};
+
+UCLASS()
+class PROJECTPROJECT01_API AProjectProject01LeaderboardGameMode final : public AGameModeBase
+{
+	GENERATED_BODY()
+
+public:
+	AProjectProject01LeaderboardGameMode();
+};

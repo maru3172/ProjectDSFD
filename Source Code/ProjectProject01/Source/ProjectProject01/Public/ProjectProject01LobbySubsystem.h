@@ -19,7 +19,63 @@ enum class EProjectProject01LobbyOperation : uint8
 	DeleteRoom,
 	SetReady,
 	StartRoom,
-	SendChat
+	SendChat,
+	RefreshLeaderboard,
+	SubmitLeaderboardRecord
+};
+
+UENUM(BlueprintType)
+enum class EProjectProject01LeaderboardRole : uint8
+{
+	Mannequin,
+	Survivor
+};
+
+UENUM(BlueprintType)
+enum class EProjectProject01LeaderboardSort : uint8
+{
+	Overall,
+	Captures,
+	FirstCapture,
+	AllCaptured,
+	Rescues,
+	Escape
+};
+
+USTRUCT(BlueprintType)
+struct PROJECTPROJECT01_API FProjectProject01LeaderboardEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 Rank = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString DisplayName;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString Role;
+
+	UPROPERTY(BlueprintReadOnly)
+	double OverallScore = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 CaptureCount = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double FirstCaptureSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double AllCapturedSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 RescueCount = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double EscapeSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString CreatedAtUtc;
 };
 
 USTRUCT(BlueprintType)
@@ -155,6 +211,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="ProjectProject01|Lobby")
 	FProjectProject01LobbyDataChanged OnCurrentRoomChanged;
 
+	UPROPERTY(BlueprintAssignable, Category="ProjectProject01|Leaderboard")
+	FProjectProject01LobbyDataChanged OnLeaderboardChanged;
+
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void RefreshRooms();
 
@@ -185,6 +244,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void SendChat(const FString& Message);
 
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
+	void RefreshLeaderboard(EProjectProject01LeaderboardRole Role, EProjectProject01LeaderboardSort Sort);
+
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
+	void SubmitLeaderboardRecord(
+		const FString& MatchId,
+		EProjectProject01LeaderboardRole Role,
+		bool bSuccess,
+		int32 CaptureCount,
+		double FirstCaptureSeconds,
+		double AllCapturedSeconds,
+		int32 RescueCount,
+		double EscapeSeconds);
+
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool HasCurrentRoom() const { return CurrentRoom.IsValid(); }
 
@@ -193,6 +266,9 @@ public:
 
 	const TArray<FProjectProject01RoomSummary>& GetRooms() const { return Rooms; }
 	const FProjectProject01RoomState& GetCurrentRoom() const { return CurrentRoom; }
+	const TArray<FProjectProject01LeaderboardEntry>& GetLeaderboardEntries() const { return LeaderboardEntries; }
+	EProjectProject01LeaderboardRole GetLeaderboardRole() const { return LeaderboardRole; }
+	EProjectProject01LeaderboardSort GetLeaderboardSort() const { return LeaderboardSort; }
 
 private:
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
@@ -208,6 +284,7 @@ private:
 		int32 RetryIndex);
 	bool ParseRoomList(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
 	bool ParseRoomState(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
+	bool ParseLeaderboard(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
 	void Complete(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
 
 	UPROPERTY(Config)
@@ -221,6 +298,12 @@ private:
 
 	UPROPERTY(Transient)
 	FProjectProject01RoomState CurrentRoom;
+
+	UPROPERTY(Transient)
+	TArray<FProjectProject01LeaderboardEntry> LeaderboardEntries;
+
+	EProjectProject01LeaderboardRole LeaderboardRole = EProjectProject01LeaderboardRole::Mannequin;
+	EProjectProject01LeaderboardSort LeaderboardSort = EProjectProject01LeaderboardSort::Overall;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
 };

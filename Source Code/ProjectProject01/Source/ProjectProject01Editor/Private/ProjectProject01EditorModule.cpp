@@ -774,18 +774,22 @@ namespace ProjectProject01TuningEditor
 			TEXT("/Game/MyProject/Level/LobbyLevel"),
 			AProjectProject01LobbyGameMode::StaticClass(),
 			Error);
-		if (!bLoginCreated || !bLobbyCreated)
+		const bool bLeaderboardCreated = bLobbyCreated && CreateFrontendLevel(
+			TEXT("/Game/MyProject/Level/LeaderBoardTest"),
+			AProjectProject01LeaderboardGameMode::StaticClass(),
+			Error);
+		if (!bLoginCreated || !bLobbyCreated || !bLeaderboardCreated)
 		{
 			UE_LOG(LogProjectProject01Tuning, Error, TEXT("Frontend level creation failed: %s"), *Error);
 			return;
 		}
 
-		UE_LOG(LogProjectProject01Tuning, Log, TEXT("LoginLevel and LobbyLevel are ready."));
+		UE_LOG(LogProjectProject01Tuning, Log, TEXT("LoginLevel, LobbyLevel, and LeaderBoardTest are ready."));
 	}
 
 	FAutoConsoleCommand CreateFrontendLevelsCommand(
 		TEXT("ProjectProject01.CreateFrontendLevels"),
-		TEXT("Create LoginLevel and LobbyLevel without overwriting existing map packages."),
+		TEXT("Create LoginLevel, LobbyLevel, and LeaderBoardTest without overwriting existing map packages."),
 		FConsoleCommandDelegate::CreateStatic(&RunCreateFrontendLevelsCommand));
 }
 
