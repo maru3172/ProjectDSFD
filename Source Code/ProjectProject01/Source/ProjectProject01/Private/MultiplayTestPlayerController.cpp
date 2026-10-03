@@ -9,6 +9,20 @@
 #include "ProjectProject01GameInstance.h"
 #include "Net/UnrealNetwork.h"
 
+void AMultiplayTestPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
+	bShowMouseCursor = false;
+	SetInputMode(FInputModeGameOnly());
+}
+
 void AMultiplayTestPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();

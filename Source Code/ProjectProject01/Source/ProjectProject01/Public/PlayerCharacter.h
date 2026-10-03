@@ -76,6 +76,7 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+	virtual void PawnClientRestart() override;
 	virtual void PossessedBy(AController* NewController) override;
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -116,6 +117,7 @@ private:
 	void StartSprint();
 	void StopSprint();
 	void SetSprinting(bool bNewSprinting);
+	void InitializeLocalPlayerInput();
 	void RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem);
 
 	UFUNCTION(Server, Reliable, WithValidation)

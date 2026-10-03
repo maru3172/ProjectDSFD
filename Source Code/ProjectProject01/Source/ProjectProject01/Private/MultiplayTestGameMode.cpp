@@ -221,6 +221,27 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 	}
 
 	Super::PostLogin(NewPlayer);
+
+	// 마네킹 역할은 Pawn을 빙의하지 않고 시작한다. 서버가 유효한 0~9 슬롯 중 하나를
+	// 무작위로 골라 시점만 배정하며, 해당 마네킹의 AIController는 R 입력 전까지 유지된다.
+	if (IsMannequinController(NewMultiplayController))
+	{
+		AssignRandomInitialMannequinView(NewMultiplayController);
+	}
+}
+
+void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
+{
+	const AMultiplayTestPlayerController* MultiplayController =
+		Cast<AMultiplayTestPlayerController>(NewPlayer);
+	if (IsMannequinController(MultiplayController))
+	{
+		// 마네킹 역할은 일반 생존자 Pawn을 생성하지 않지만, OnlySpectator로 만들지도 않는다.
+		// OnlySpectator는 APlayerController::OnPossess에서 이후 R 빙의를 거부하므로 시점 전용 대기만 수행한다.
+		return;
+	}
+
+	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 }
 
 void AMultiplayTestGameMode::Logout(AController* Exiting)
@@ -253,13 +274,6 @@ void AMultiplayTestGameMode::SetPlayerDefaults(APawn* PlayerPawn)
 		// MultiplayTest에는 조력자가 없으므로 생존자는 추가 포획 허용 횟수 없이 시작한다.
 		SurvivorPlayer->SetRemainingDeathCountForGameMode(0);
 	}
-}
-
-bool AMultiplayTestGameMode::MustSpectate_Implementation(APlayerController* NewPlayerController) const
-{
-	const AMultiplayTestPlayerController* MultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayerController);
-	return IsMannequinController(MultiplayController) || RequestedMannequinControllers.Contains(MultiplayController) ||
-		Super::MustSpectate_Implementation(NewPlayerController);
 }
 
 bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController* RequestingController, int32 Slot)
@@ -468,6 +482,45 @@ AMannequinAICharacter* AMultiplayTestGameMode::FindMannequinBySlot(int32 Slot) c
 	}
 
 	return MatchingMannequin;
+}
+
+void AMultiplayTestGameMode::AssignRandomInitialMannequinView(
+	AMultiplayTestPlayerController* Controller)
+{
+	if (!HasAuthority() || !IsMannequinController(Controller))
+	{
+		return;
+	}
+
+	TArray<int32> AvailableSlots;
+	AvailableSlots.Reserve(10);
+	for (int32 Slot = 0; Slot <= 9; ++Slot)
+	{
+		if (IsValid(FindMannequinBySlot(Slot)))
+		{
+			AvailableSlots.Add(Slot);
+		}
+	}
+
+	if (AvailableSlots.IsEmpty())
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("No valid mannequin control slot is available for the initial view of %s."),
+			*GetNameSafe(Controller));
+		return;
+	}
+
+	const int32 SelectedSlot = AvailableSlots[FMath::RandHelper(AvailableSlots.Num())];
+	if (!ensureMsgf(TryPossessMannequin(Controller, SelectedSlot),
+		TEXT("Failed to assign mannequin slot %d as the initial view for %s."),
+		SelectedSlot, *GetNameSafe(Controller)))
+	{
+		return;
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("%s received random initial mannequin view slot %d."),
+		*GetNameSafe(Controller), SelectedSlot);
 }
 
 bool AMultiplayTestGameMode::IsMannequinController(const AMultiplayTestPlayerController* Controller) const

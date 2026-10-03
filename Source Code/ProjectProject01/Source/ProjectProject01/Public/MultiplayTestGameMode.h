@@ -48,13 +48,13 @@ public:
 		const FString& Options,
 		const FString& Portal = TEXT("")) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
+	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual void SetPlayerDefaults(APawn* PlayerPawn) override;
 
-	virtual bool MustSpectate_Implementation(APlayerController* NewPlayerController) const override;
-
 private:
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;
+	void AssignRandomInitialMannequinView(class AMultiplayTestPlayerController* Controller);
 	void QueueDefaultAIControllerRestore(class AMannequinAICharacter* Mannequin) const;
 	bool IsMannequinController(const class AMultiplayTestPlayerController* Controller) const;
 	bool IsSurvivorController(const APlayerController* Controller) const;

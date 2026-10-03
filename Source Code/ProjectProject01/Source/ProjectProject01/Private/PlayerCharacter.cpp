@@ -255,25 +255,7 @@ void APlayerCharacter::BeginPlay()
 		}
 	}
 	
-	// 현재 플레이어가 소유한 컨트롤러를 가져온다.
-	//APlayerController* PlayerController = GetWorld()->GetFirstPlayerController();
-	// 이보다 현재 캐릭터가 가지고 있는 컨트롤러를 가져오는 게 좋다.
-	APlayerController* PlayerController = Cast<APlayerController>(GetController());
-	
-	// 만일, 플레이어 컨트롤러 변수에 값이 들어 있다면...
-	if (PlayerController != nullptr)
-	{
-		// 플레이어 컨트롤러로부터 입력 서브 시스템 정보를 가져온다.
-		UEnhancedInputLocalPlayerSubsystem* Subsystem = 
-		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer());
-
-		if (Subsystem != nullptr)
-		{
-			// 입력 서브 시스템에 IMC 파일 변수를 연결한다.
-			Subsystem->AddMappingContext(IMC_PlayerInput, 0);
-			RegisterRuntimeSprintMapping(Subsystem);
-		}
-	}
+	InitializeLocalPlayerInput();
 
     // 카메라 B 키 디버깅 관련
     // PIE를 시작할 때마다 반드시 기본 플레이어 화면에서 시작한다.
@@ -291,6 +273,15 @@ void APlayerCharacter::BeginPlay()
             UE_LOG(LogTemp, Warning, TEXT("PIE top view unavailable: missing debug camera on %s."), *GetName());
         }
     }
+}
+
+void APlayerCharacter::PawnClientRestart()
+{
+	Super::PawnClientRestart();
+
+	// 네트워크 클라이언트는 BeginPlay보다 소유 Controller 복제가 늦을 수 있다.
+	// APawn::PawnClientRestart가 로컬 입력 컴포넌트를 구성한 직후 매핑을 다시 보장한다.
+	InitializeLocalPlayerInput();
 }
 
 void APlayerCharacter::PossessedBy(AController* NewController)
@@ -394,6 +385,35 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
             }
         }
 	}
+}
+
+void APlayerCharacter::InitializeLocalPlayerInput()
+{
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!IsValid(PlayerController) || !PlayerController->IsLocalController())
+	{
+		return;
+	}
+
+	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
+	UEnhancedInputLocalPlayerSubsystem* InputSubsystem = IsValid(LocalPlayer)
+		? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer)
+		: nullptr;
+	if (!ensureMsgf(IsValid(InputSubsystem),
+		TEXT("Player %s cannot initialize local input because its Enhanced Input subsystem is unavailable."),
+		*GetName()))
+	{
+		return;
+	}
+
+	if (ensureMsgf(IsValid(IMC_PlayerInput),
+		TEXT("Player %s cannot initialize movement input because IMC_PlayerInput is missing."), *GetName()) &&
+		!InputSubsystem->HasMappingContext(IMC_PlayerInput))
+	{
+		InputSubsystem->AddMappingContext(IMC_PlayerInput, 0);
+	}
+
+	RegisterRuntimeSprintMapping(InputSubsystem);
 }
 
 void APlayerCharacter::Move(const FInputActionValue& Value)
@@ -546,7 +566,10 @@ void APlayerCharacter::RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSub
 		RuntimeSprintInputContext->MapKey(IA_Sprint, EKeys::LeftShift);
 	}
 
-	InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 1);
+	if (!InputSubsystem->HasMappingContext(RuntimeSprintInputContext))
+	{
+		InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 1);
+	}
 }
 
 // =========================================================================================================================
