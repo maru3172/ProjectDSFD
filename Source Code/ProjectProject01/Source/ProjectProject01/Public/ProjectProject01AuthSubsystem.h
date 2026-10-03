@@ -62,12 +62,14 @@ public:
 
 	/** 인증된 로비 API 요청에만 사용하는 현재 액세스 토큰입니다. 로그나 UI에는 노출하지 않습니다. */
 	const FString& GetAccessTokenForAuthenticatedRequest() const { return AccessToken; }
+	void RefreshSession(TFunction<void(bool)> Completion);
 
 private:
 	enum class EAuthOperation : uint8
 	{
 		Register,
 		Login,
+		Refresh,
 		Logout
 	};
 
@@ -84,6 +86,7 @@ private:
 	bool ValidateCommonInput(const FString& AccountId, const FString& Password, FString& OutError) const;
 	bool CanStartOperation(EAuthOperation Operation);
 	void ClearSession();
+	bool IsApiBaseUrlAllowed() const;
 
 	UPROPERTY(Config)
 	FString ApiBaseUrl = TEXT("http://127.0.0.1:5080");
@@ -107,4 +110,5 @@ private:
 	FString SignedInDisplayName;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
+	TFunction<void(bool)> ActiveRefreshCompletion;
 };

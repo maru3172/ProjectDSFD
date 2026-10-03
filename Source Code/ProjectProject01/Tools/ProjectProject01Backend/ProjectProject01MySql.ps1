@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Initialize', 'Start', 'Stop', 'Status', 'SyncLocalConfiguration')]
+    [ValidateSet('Initialize', 'Start', 'Stop', 'Status', 'SyncLocalConfiguration', 'Backup', 'InstallBackupTask')]
     [string]$Action
 )
 
@@ -23,6 +23,7 @@ $mysqlBaseDirectory = Join-Path $env:ProgramFiles 'MySQL\MySQL Server 8.0'
 $mysqldPath = Join-Path $mysqlBaseDirectory 'bin\mysqld.exe'
 $mysqlPath = Join-Path $mysqlBaseDirectory 'bin\mysql.exe'
 $mysqlAdminPath = Join-Path $mysqlBaseDirectory 'bin\mysqladmin.exe'
+$mysqlDumpPath = Join-Path $mysqlBaseDirectory 'bin\mysqldump.exe'
 
 function Set-ProcessArguments {
     param(
@@ -77,7 +78,7 @@ function Set-ProcessEnvironmentValue {
 }
 
 function Assert-Requirements {
-    foreach ($requiredPath in @($projectFile, $mysqldPath, $mysqlPath, $mysqlAdminPath)) {
+    foreach ($requiredPath in @($projectFile, $mysqldPath, $mysqlPath, $mysqlAdminPath, $mysqlDumpPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Required file was not found: $requiredPath"
         }
@@ -199,12 +200,26 @@ function New-RandomSecret {
     return [Convert]::ToBase64String($bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
 }
 
+function New-RandomBase64Secret {
+    $bytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+    }
+    finally {
+        $generator.Dispose()
+    }
+    return [Convert]::ToBase64String($bytes)
+}
+
 function Save-LocalSecrets {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ApiPassword,
         [Parameter(Mandatory = $true)]
-        [string]$AdminPassword
+        [string]$AdminPassword,
+        [string]$GameServerSharedSecret = (New-RandomSecret),
+        [string]$TicketKey = (New-RandomBase64Secret)
     )
 
     $connectionString = "Server=$bindAddress;Port=$port;User ID=projectproject01_api;Password=$ApiPassword;SslMode=Disabled;Connection Timeout=5;Default Command Timeout=5"
@@ -215,6 +230,13 @@ function Save-LocalSecrets {
         LocalMySql = [ordered]@{
             AdminUser = 'projectproject01_admin'
             AdminPassword = $AdminPassword
+        }
+        GameServer = [ordered]@{
+            SharedSecret = $GameServerSharedSecret
+            TicketKey = $TicketKey
+        }
+        Security = [ordered]@{
+            AllowUnverifiedLeaderboardSubmissions = $true
         }
     }
     New-Item -ItemType Directory -Path $instanceDirectory -Force | Out-Null
@@ -228,6 +250,9 @@ function Save-LocalSecrets {
         'ConnectionStrings:ProjectProject01' = $connectionString
         'LocalMySql:AdminUser' = 'projectproject01_admin'
         'LocalMySql:AdminPassword' = $AdminPassword
+        'GameServer:SharedSecret' = $GameServerSharedSecret
+        'GameServer:TicketKey' = $TicketKey
+        'Security:AllowUnverifiedLeaderboardSubmissions' = 'true'
     }
     $json = $secretObject | ConvertTo-Json -Compress
 
@@ -270,6 +295,15 @@ function Sync-LocalConfiguration {
         throw 'The current user secrets do not contain the ProjectProject01 MySQL credentials.'
     }
 
+    $gameServerSharedSecret = $secrets.'GameServer:SharedSecret'
+    $ticketKey = $secrets.'GameServer:TicketKey'
+    if ([string]::IsNullOrWhiteSpace($gameServerSharedSecret)) {
+        $gameServerSharedSecret = New-RandomSecret
+    }
+    if ([string]::IsNullOrWhiteSpace($ticketKey)) {
+        $ticketKey = New-RandomBase64Secret
+    }
+
     $localConfiguration = [ordered]@{
         ConnectionStrings = [ordered]@{
             ProjectProject01 = $connectionString
@@ -278,6 +312,13 @@ function Sync-LocalConfiguration {
             AdminUser = 'projectproject01_admin'
             AdminPassword = $adminPassword
         }
+        GameServer = [ordered]@{
+            SharedSecret = $gameServerSharedSecret
+            TicketKey = $ticketKey
+        }
+        Security = [ordered]@{
+            AllowUnverifiedLeaderboardSubmissions = $true
+        }
     }
     $localConfigurationJson = $localConfiguration | ConvertTo-Json -Depth 4
     [System.IO.File]::WriteAllText(
@@ -285,6 +326,51 @@ function Sync-LocalConfiguration {
         $localConfigurationJson,
         [System.Text.UTF8Encoding]::new($false))
     Write-Host "ProjectProject01 local backend configuration was synchronized without printing credentials."
+}
+
+function Backup-ProjectProject01Database {
+    if (-not (Test-ProjectProject01Port)) {
+        throw 'ProjectProject01 MySQL must be running before a backup can be created.'
+    }
+    $adminPassword = Read-AdminPassword
+    $backupDirectory = Join-Path $instanceDirectory 'Backups'
+    New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+    $backupPath = Join-Path $backupDirectory ("ProjectProject01_{0}.sql" -f [DateTime]::UtcNow.ToString('yyyyMMdd_HHmmss'))
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $mysqlDumpPath
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    Set-ProcessArguments -StartInfo $startInfo -Arguments @(
+        '--protocol=TCP', "--host=$bindAddress", "--port=$port", '--user=projectproject01_admin',
+        '--single-transaction', '--quick', '--routines', '--events', '--no-tablespaces', 'projectproject01'
+    )
+    Set-ProcessEnvironmentValue -StartInfo $startInfo -Name 'MYSQL_PWD' -Value $adminPassword
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) {
+        throw 'Failed to start mysqldump.'
+    }
+    $sql = $process.StandardOutput.ReadToEnd()
+    $standardError = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+        throw "mysqldump failed with exit code $($process.ExitCode): $standardError"
+    }
+    [System.IO.File]::WriteAllText($backupPath, $sql, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "ProjectProject01 database backup created: $backupPath"
+}
+
+function Install-ProjectProject01BackupTask {
+    $taskName = 'ProjectProject01MySqlBackup'
+    $escapedScriptPath = $PSCommandPath.Replace('"', '""')
+    $taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$escapedScriptPath`" -Action Backup"
+    & schtasks.exe /Create /F /SC DAILY /ST 03:00 /TN $taskName /TR $taskCommand | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to create scheduled task $taskName."
+    }
+    Write-Host "Daily database backup task installed: $taskName (03:00 local time)."
 }
 
 function Read-AdminPassword {
@@ -362,6 +448,8 @@ switch ($Action) {
     'Start' { Start-ProjectProject01Server }
     'Stop' { Stop-ProjectProject01Server }
     'SyncLocalConfiguration' { Sync-LocalConfiguration }
+    'Backup' { Backup-ProjectProject01Database }
+    'InstallBackupTask' { Install-ProjectProject01BackupTask }
     'Status' {
         if (Test-ProjectProject01Port) {
             Write-Host "ProjectProject01 MySQL is running on ${bindAddress}:$port."

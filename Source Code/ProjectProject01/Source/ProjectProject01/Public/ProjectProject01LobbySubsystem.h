@@ -20,6 +20,7 @@ enum class EProjectProject01LobbyOperation : uint8
 	SetReady,
 	StartRoom,
 	SendChat,
+	RequestGameTicket,
 	RefreshLeaderboard,
 	SubmitLeaderboardRecord
 };
@@ -244,6 +245,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void SendChat(const FString& Message);
 
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
+	void RequestGameJoinTicket();
+
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
 	void RefreshLeaderboard(EProjectProject01LeaderboardRole Role, EProjectProject01LeaderboardSort Sort);
 
@@ -269,6 +273,13 @@ public:
 	const TArray<FProjectProject01LeaderboardEntry>& GetLeaderboardEntries() const { return LeaderboardEntries; }
 	EProjectProject01LeaderboardRole GetLeaderboardRole() const { return LeaderboardRole; }
 	EProjectProject01LeaderboardSort GetLeaderboardSort() const { return LeaderboardSort; }
+	bool HasPendingGameJoinTicket() const { return !GameJoinTicket.IsEmpty() && !GameEncryptionKeyBase64.IsEmpty(); }
+	const FString& GetGameJoinTicket() const { return GameJoinTicket; }
+	const FString& GetGameEncryptionKeyBase64() const { return GameEncryptionKeyBase64; }
+	const FString& GetGameTicketTravelUrl() const { return GameTicketTravelUrl; }
+	const FString& GetGameTicketRoomId() const { return GameTicketRoomId; }
+	const FString& GetGameTicketMatchId() const { return GameTicketMatchId; }
+	const FString& GetGameTicketRole() const { return GameTicketRole; }
 
 private:
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
@@ -285,6 +296,8 @@ private:
 	bool ParseRoomList(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
 	bool ParseRoomState(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
 	bool ParseLeaderboard(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
+	bool ParseGameJoinTicket(const TSharedPtr<class FJsonObject>& Json, FString& OutError);
+	void ClearGameJoinTicket();
 	void Complete(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
 
 	UPROPERTY(Config)
@@ -304,6 +317,13 @@ private:
 
 	EProjectProject01LeaderboardRole LeaderboardRole = EProjectProject01LeaderboardRole::Mannequin;
 	EProjectProject01LeaderboardSort LeaderboardSort = EProjectProject01LeaderboardSort::Overall;
+
+	FString GameJoinTicket;
+	FString GameEncryptionKeyBase64;
+	FString GameTicketTravelUrl;
+	FString GameTicketRoomId;
+	FString GameTicketMatchId;
+	FString GameTicketRole;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
 };

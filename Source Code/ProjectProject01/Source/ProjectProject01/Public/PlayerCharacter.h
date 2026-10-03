@@ -118,7 +118,7 @@ private:
 	void SetSprinting(bool bNewSprinting);
 	void RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem);
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSetSprinting(bool bNewSprinting);
 
 	UFUNCTION(Client, Reliable)
@@ -128,6 +128,8 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting, VisibleInstanceOnly, Category = "Player",
 		meta = (AllowPrivateAccess = "true"))
 	bool bIsSprinting = false;
+	float SprintRpcWindowStartSeconds = 0.0f;
+	int32 SprintRpcWindowCallCount = 0;
 
 	// 작은 원: 이 반경 안에서는 마네킹 AI가 직접 추격하는 용도로 사용한다.
 	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "AI|Range",

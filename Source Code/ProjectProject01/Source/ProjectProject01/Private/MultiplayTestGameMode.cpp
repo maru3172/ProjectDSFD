@@ -128,6 +128,41 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 	UpdateSurvivorVisionFrozenStates();
 }
 
+void AMultiplayTestGameMode::PreLogin(
+	const FString& Options,
+	const FString& Address,
+	const FUniqueNetIdRepl& UniqueId,
+	FString& ErrorMessage)
+{
+	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
+	if (!ErrorMessage.IsEmpty() || GetNetMode() == NM_Standalone || !bRequireGameJoinTicket)
+	{
+		return;
+	}
+
+	const FString Ticket = UGameplayStatics::ParseOption(Options, TEXT("GameTicket"));
+	const FString RequestedRoomId = UGameplayStatics::ParseOption(Options, TEXT("LobbyRoomId"));
+	FProjectProject01ValidatedJoinClaim Claim;
+	if (Ticket.IsEmpty() || !UProjectProject01GameInstance::ConsumeValidatedJoinClaim(Ticket, Claim))
+	{
+		ErrorMessage = TEXT("A valid one-time game connection ticket is required.");
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Security rejected a connection from %s without a validated game ticket."), *Address);
+		return;
+	}
+	if (Claim.RoomId.IsEmpty() || Claim.MatchId.IsEmpty() ||
+		(Claim.Role != TEXT("Mannequin") && Claim.Role != TEXT("Survivor")) ||
+		(!RequestedRoomId.IsEmpty() && !RequestedRoomId.Equals(Claim.RoomId, ESearchCase::CaseSensitive)))
+	{
+		ErrorMessage = TEXT("The game connection ticket does not match this room.");
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Security rejected a game ticket with inconsistent room or role data."));
+		return;
+	}
+
+	PendingValidatedJoinClaims.Add(Ticket, MoveTemp(Claim));
+}
+
 FString AMultiplayTestGameMode::InitNewPlayer(
 	APlayerController* NewPlayerController,
 	const FUniqueNetIdRepl& UniqueId,
@@ -135,7 +170,22 @@ FString AMultiplayTestGameMode::InitNewPlayer(
 	const FString& Portal)
 {
 	AMultiplayTestPlayerController* MultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayerController);
-	const FString LobbyRole = UGameplayStatics::ParseOption(Options, TEXT("LobbyRole"));
+	FString LobbyRole;
+	const FString Ticket = UGameplayStatics::ParseOption(Options, TEXT("GameTicket"));
+	if (FProjectProject01ValidatedJoinClaim* Claim = PendingValidatedJoinClaims.Find(Ticket))
+	{
+		LobbyRole = Claim->Role;
+		if (IsValid(MultiplayController))
+		{
+			MultiplayController->SetAuthenticatedLobbyIdentity(*Claim);
+		}
+		PendingValidatedJoinClaims.Remove(Ticket);
+	}
+	else if (!bRequireGameJoinTicket || GetNetMode() == NM_Standalone)
+	{
+		// 티켓 검증을 명시적으로 끈 로컬 호환 모드에서만 과거 URL 역할 옵션을 허용한다.
+		LobbyRole = UGameplayStatics::ParseOption(Options, TEXT("LobbyRole"));
+	}
 	if (IsValid(MultiplayController) &&
 		(LobbyRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) ||
 		 LobbyRole.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase)))
@@ -146,7 +196,7 @@ FString AMultiplayTestGameMode::InitNewPlayer(
 			RequestedMannequinControllers.Add(MultiplayController);
 		}
 		UE_LOG(LogProjectProject01Multiplayer, Log,
-			TEXT("%s requested lobby role %s."), *GetNameSafe(MultiplayController), *LobbyRole);
+			TEXT("%s received validated lobby role %s."), *GetNameSafe(MultiplayController), *LobbyRole);
 	}
 	return Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
 }

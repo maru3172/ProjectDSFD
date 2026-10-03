@@ -551,6 +551,16 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	{
 		ChatInput->SetText(FText::GetEmpty());
 	}
+	if (bSuccess && Operation == EProjectProject01LobbyOperation::RequestGameTicket)
+	{
+		UGameInstance* GameInstance = GetGameInstance();
+		const UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+			? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+		if (IsValid(Lobby) && Lobby->HasCurrentRoom())
+		{
+			TravelToStartedGame(Lobby->GetCurrentRoom());
+		}
+	}
 	if (Operation == EProjectProject01LobbyOperation::LeaveRoom)
 	{
 		if (bSuccess && bLogoutAfterLeave)
@@ -629,7 +639,7 @@ void UProjectProject01LobbyWidget::RefreshRoomListView()
 void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 {
 	UGameInstance* GameInstance = GetGameInstance();
-	const UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
 	if (!IsValid(Lobby))
 	{
@@ -723,17 +733,28 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(ChatLogText)) ChatLogText->SetText(FText::FromString(ChatText));
 	if (Room.bStarted)
 	{
-		TravelToStartedGame(Room);
+		if (Lobby->HasPendingGameJoinTicket())
+		{
+			TravelToStartedGame(Room);
+		}
+		else if (!Lobby->IsRequestInFlight())
+		{
+			SetStatus(TEXT("일회용 게임 접속 티켓을 발급받는 중입니다..."), false);
+			Lobby->RequestGameJoinTicket();
+		}
 	}
 }
 
 void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01RoomState& RoomState)
 {
-	if (bTravelRequested || RoomState.TravelUrl.IsEmpty() || RoomState.AssignedRole.IsEmpty())
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (bTravelRequested || !IsValid(Lobby) || !Lobby->HasPendingGameJoinTicket())
 	{
 		if (!bTravelRequested && RoomState.bStarted)
 		{
-			SetStatus(TEXT("게임 시작 정보에 서버 주소 또는 역할이 없습니다."), true);
+			SetStatus(TEXT("검증된 게임 접속 티켓 또는 AES-GCM 키가 없습니다."), true);
 		}
 		return;
 	}
@@ -744,9 +765,11 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 		return;
 	}
 	bTravelRequested = true;
-	const FString TravelUrl = FString::Printf(TEXT("%s?LobbyRoomId=%s?LobbyRole=%s"),
-		*RoomState.TravelUrl, *RoomState.RoomId, *RoomState.AssignedRole);
-	SetStatus(FString::Printf(TEXT("MultiplayTest 서버로 이동합니다. 역할: %s"), *RoomState.AssignedRole), false);
+	const FString TravelUrl = FString::Printf(TEXT("%s?EncryptionToken=%s?GameTicket=%s?LobbyRoomId=%s?MatchId=%s"),
+		*Lobby->GetGameTicketTravelUrl(), *Lobby->GetGameJoinTicket(), *Lobby->GetGameJoinTicket(),
+		*Lobby->GetGameTicketRoomId(), *Lobby->GetGameTicketMatchId());
+	SetStatus(FString::Printf(TEXT("검증된 MultiplayTest 서버로 이동합니다. 역할: %s"),
+		*Lobby->GetGameTicketRole()), false);
 	PlayerController->ClientTravel(TravelUrl, TRAVEL_Absolute);
 }
 

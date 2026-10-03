@@ -7,6 +7,8 @@
 #include "GameFramework/PlayerController.h"
 #include "MultiplayTestPlayerController.generated.h"
 
+struct FProjectProject01ValidatedJoinClaim;
+
 /** 마네킹 슬롯 선택 입력을 서버에 요청하는 MultiplayTest 전용 컨트롤러입니다. */
 UCLASS()
 class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerController
@@ -16,6 +18,10 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 public:
 	class AMannequinAICharacter* GetViewedMannequin() const;
 	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
+	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
+	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
+	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
+	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
@@ -37,13 +43,13 @@ private:
 	void RequestMannequinManualControl();
 	void RequestPostPossessionChaseCommand();
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinSlot(int32 Slot);
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinManualControl();
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestPostPossessionChaseCommand();
 
 	UFUNCTION(Client, Reliable)
@@ -53,8 +59,15 @@ private:
 	void OnRep_ViewedMannequin();
 
 	void ApplyViewedMannequinCamera(class AMannequinAICharacter* Mannequin);
+	bool AllowServerRequest(uint8 RequestType, int32 MaximumCalls, float WindowSeconds);
 
 	/** 소유 클라이언트가 Pawn 복제 이후에도 다시 적용할 수 있는 마지막 선택 시점 대상입니다. */
 	UPROPERTY(ReplicatedUsing = OnRep_ViewedMannequin)
 	TObjectPtr<class AMannequinAICharacter> ViewedMannequin;
+
+	FString AuthenticatedUserId;
+	FString AuthenticatedMatchId;
+	FString AuthenticatedRole;
+	float RpcWindowStartSeconds[3] = { 0.0f, 0.0f, 0.0f };
+	int32 RpcWindowCallCount[3] = { 0, 0, 0 };
 };

@@ -6,6 +6,7 @@
 #include "InputCoreTypes.h"
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "ProjectProject01GameInstance.h"
 #include "Net/UnrealNetwork.h"
 
 void AMultiplayTestPlayerController::SetupInputComponent()
@@ -47,6 +48,18 @@ void AMultiplayTestPlayerController::SetViewedMannequin(AMannequinAICharacter* M
 	ApplyViewedMannequinCamera(Mannequin);
 	ForceNetUpdate();
 	ClientApplyViewedMannequin(Mannequin);
+}
+
+void AMultiplayTestPlayerController::SetAuthenticatedLobbyIdentity(
+	const FProjectProject01ValidatedJoinClaim& Claim)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	AuthenticatedUserId = Claim.UserId;
+	AuthenticatedMatchId = Claim.MatchId;
+	AuthenticatedRole = Claim.Role;
 }
 
 void AMultiplayTestPlayerController::OnRep_Pawn()
@@ -119,6 +132,10 @@ void AMultiplayTestPlayerController::RequestPostPossessionChaseCommand()
 
 void AMultiplayTestPlayerController::ServerRequestMannequinSlot_Implementation(int32 Slot)
 {
+	if (!AllowServerRequest(0, 12, 1.0f))
+	{
+		return;
+	}
 	if (Slot < 0 || Slot > 9)
 	{
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
@@ -138,8 +155,17 @@ void AMultiplayTestPlayerController::ServerRequestMannequinSlot_Implementation(i
 	GameMode->TryPossessMannequin(this, Slot);
 }
 
+bool AMultiplayTestPlayerController::ServerRequestMannequinSlot_Validate(const int32 Slot)
+{
+	return Slot >= 0 && Slot <= 9;
+}
+
 void AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Implementation()
 {
+	if (!AllowServerRequest(1, 6, 1.0f))
+	{
+		return;
+	}
 	UWorld* World = GetWorld();
 	AMultiplayTestGameMode* GameMode = IsValid(World)
 		? World->GetAuthGameMode<AMultiplayTestGameMode>()
@@ -152,8 +178,17 @@ void AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Impleme
 	GameMode->TryEnableMannequinManualControl(this);
 }
 
+bool AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Validate()
+{
+	return true;
+}
+
 void AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Implementation()
 {
+	if (!AllowServerRequest(2, 6, 1.0f))
+	{
+		return;
+	}
 	UWorld* World = GetWorld();
 	AMultiplayTestGameMode* GameMode = IsValid(World)
 		? World->GetAuthGameMode<AMultiplayTestGameMode>()
@@ -164,6 +199,42 @@ void AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Imp
 	}
 
 	GameMode->TryQueuePostPossessionChaseCommand(this);
+}
+
+bool AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Validate()
+{
+	return true;
+}
+
+bool AMultiplayTestPlayerController::AllowServerRequest(
+	const uint8 RequestType,
+	const int32 MaximumCalls,
+	const float WindowSeconds)
+{
+	if (!HasAuthority() || RequestType >= UE_ARRAY_COUNT(RpcWindowStartSeconds) ||
+		MaximumCalls <= 0 || WindowSeconds <= 0.0f)
+	{
+		return false;
+	}
+	const UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	const float Now = World->GetTimeSeconds();
+	if (Now - RpcWindowStartSeconds[RequestType] >= WindowSeconds)
+	{
+		RpcWindowStartSeconds[RequestType] = Now;
+		RpcWindowCallCount[RequestType] = 0;
+	}
+	if (++RpcWindowCallCount[RequestType] > MaximumCalls)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Security rejected excessive mannequin RPC type %d from %s."),
+			RequestType, *GetNameSafe(this));
+		return false;
+	}
+	return true;
 }
 
 void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

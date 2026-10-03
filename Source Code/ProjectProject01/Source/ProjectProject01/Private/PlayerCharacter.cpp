@@ -476,11 +476,33 @@ void APlayerCharacter::SetSprinting(const bool bNewSprinting)
 void APlayerCharacter::ServerSetSprinting_Implementation(const bool bNewSprinting)
 {
 	const UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return;
+	}
+	const float Now = World->GetTimeSeconds();
+	if (Now - SprintRpcWindowStartSeconds >= 1.0f)
+	{
+		SprintRpcWindowStartSeconds = Now;
+		SprintRpcWindowCallCount = 0;
+	}
+	if (++SprintRpcWindowCallCount > 20)
+	{
+		UE_LOG(LogProjectProject01Tuning, Warning,
+			TEXT("Security rejected excessive sprint RPCs from %s."), *GetNameSafe(this));
+		ClientCorrectSprinting(bIsSprinting);
+		return;
+	}
 	const bool bIsStandalone = IsValid(World) && World->GetNetMode() == NM_Standalone;
 	const bool bAllowedSprinting = bNewSprinting && !bGameOver &&
 		(bIsStandalone || StaminaDrainPerSecond <= KINDA_SMALL_NUMBER || CurrentStamina > KINDA_SMALL_NUMBER);
 	ApplySprintingState(bAllowedSprinting);
 	ClientCorrectSprinting(bAllowedSprinting);
+}
+
+bool APlayerCharacter::ServerSetSprinting_Validate(const bool bNewSprinting)
+{
+	return bNewSprinting == true || bNewSprinting == false;
 }
 
 void APlayerCharacter::ClientCorrectSprinting_Implementation(const bool bAuthoritativeSprinting)

@@ -9,6 +9,7 @@
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 #include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01GameInstance.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -17,6 +18,12 @@ DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01Lobby, Log, All);
 
 namespace ProjectProject01Lobby
 {
+	bool IsApiBaseUrlAllowed(const FString& Url)
+	{
+		return Url.StartsWith(TEXT("https://")) || Url.StartsWith(TEXT("http://127.0.0.1")) ||
+			Url.StartsWith(TEXT("http://localhost"));
+	}
+
 	bool IsReadOperation(const EProjectProject01LobbyOperation Operation)
 	{
 		return Operation == EProjectProject01LobbyOperation::RefreshRooms ||
@@ -81,6 +88,7 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 	}
 	Rooms.Reset();
 	CurrentRoom = FProjectProject01RoomState();
+	ClearGameJoinTicket();
 	LeaderboardEntries.Reset();
 	Super::Deinitialize();
 }
@@ -100,6 +108,7 @@ void UProjectProject01LobbySubsystem::CreateRoom(
 	const bool bIsPublic,
 	const FString& Password)
 {
+	ClearGameJoinTicket();
 	const FString CleanName = RoomName.TrimStartAndEnd();
 	if (CleanName.Len() < 1 || CleanName.Len() > 48)
 	{
@@ -124,6 +133,7 @@ void UProjectProject01LobbySubsystem::CreateRoom(
 
 void UProjectProject01LobbySubsystem::JoinRoom(const FString& RoomCode, const FString& Password)
 {
+	ClearGameJoinTicket();
 	FString CleanCode = RoomCode.TrimStartAndEnd().ToUpper();
 	if (CleanCode.Len() < 6 || CleanCode.Len() > 8)
 	{
@@ -175,6 +185,7 @@ void UProjectProject01LobbySubsystem::SetReady(const bool bReady)
 
 void UProjectProject01LobbySubsystem::StartRoom()
 {
+	ClearGameJoinTicket();
 	SendRequest(EProjectProject01LobbyOperation::StartRoom, TEXT("POST"), TEXT("/api/rooms/current/start"), TEXT("{}"));
 }
 
@@ -191,6 +202,12 @@ void UProjectProject01LobbySubsystem::SendChat(const FString& Message)
 	FString Body;
 	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
 	SendRequest(EProjectProject01LobbyOperation::SendChat, TEXT("POST"), TEXT("/api/rooms/current/chat"), Body);
+}
+
+void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
+{
+	ClearGameJoinTicket();
+	SendRequest(EProjectProject01LobbyOperation::RequestGameTicket, TEXT("POST"), TEXT("/api/game-tickets"), TEXT("{}"));
 }
 
 void UProjectProject01LobbySubsystem::RefreshLeaderboard(
@@ -272,7 +289,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 		Complete(Operation, false, TEXT("로그인 세션이 필요합니다."));
 		return;
 	}
-	if (ApiBaseUrl.IsEmpty())
+	if (ApiBaseUrl.IsEmpty() || !ProjectProject01Lobby::IsApiBaseUrlAllowed(ApiBaseUrl))
 	{
 		Complete(Operation, false, TEXT("로비 API 주소가 설정되지 않았습니다."));
 		return;
@@ -316,6 +333,31 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	}
 
 	const int32 StatusCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+	if (StatusCode == 401 && RetryIndex == 0)
+	{
+		UGameInstance* GameInstance = GetGameInstance();
+		UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+			? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+		if (IsValid(Auth))
+		{
+			const TWeakObjectPtr<UProjectProject01LobbySubsystem> WeakThis(this);
+			Auth->RefreshSession([WeakThis, Operation, Verb, Endpoint, JsonBody](const bool bRefreshed)
+			{
+				if (UProjectProject01LobbySubsystem* Self = WeakThis.Get(); IsValid(Self))
+				{
+					if (bRefreshed)
+					{
+						Self->SendRequest(Operation, Verb, Endpoint, JsonBody, 1);
+					}
+					else
+					{
+						Self->Complete(Operation, false, TEXT("로그인 세션이 만료되었습니다. 다시 로그인하세요."));
+					}
+				}
+			});
+			return;
+		}
+	}
 	const bool bRetryableRead = ProjectProject01Lobby::IsReadOperation(Operation) && RetryIndex < 1 &&
 		(!bConnectedSuccessfully || StatusCode == 408 || StatusCode == 429 || StatusCode >= 500);
 	if (bRetryableRead)
@@ -342,6 +384,7 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 		if (StatusCode == 404 && Operation == EProjectProject01LobbyOperation::RefreshCurrentRoom)
 		{
 			CurrentRoom = FProjectProject01RoomState();
+			ClearGameJoinTicket();
 			OnCurrentRoomChanged.Broadcast();
 		}
 		else if (StatusCode == 404 &&
@@ -350,6 +393,7 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 		{
 			// 서버에서 이미 시간 초과 정리된 방은 로컬에서도 나간 것으로 처리한다.
 			CurrentRoom = FProjectProject01RoomState();
+			ClearGameJoinTicket();
 			OnCurrentRoomChanged.Broadcast();
 			Complete(Operation, true, TEXT("이미 정리된 방에서 나왔습니다."));
 			return;
@@ -368,10 +412,15 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	{
 		bParsed = ParseLeaderboard(Json, ParseError);
 	}
+	else if (Operation == EProjectProject01LobbyOperation::RequestGameTicket)
+	{
+		bParsed = ParseGameJoinTicket(Json, ParseError);
+	}
 	else if (Operation == EProjectProject01LobbyOperation::LeaveRoom ||
 		Operation == EProjectProject01LobbyOperation::DeleteRoom)
 	{
 		CurrentRoom = FProjectProject01RoomState();
+		ClearGameJoinTicket();
 		OnCurrentRoomChanged.Broadcast();
 	}
 	else if (Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
@@ -530,6 +579,57 @@ bool UProjectProject01LobbySubsystem::ParseLeaderboard(const TSharedPtr<FJsonObj
 	OnLeaderboardChanged.Broadcast();
 	OutError.Reset();
 	return true;
+}
+
+bool UProjectProject01LobbySubsystem::ParseGameJoinTicket(
+	const TSharedPtr<FJsonObject>& Json,
+	FString& OutError)
+{
+	FString ParsedTicket;
+	FString ParsedKey;
+	FString ParsedTravelUrl;
+	FString ParsedRoomId;
+	FString ParsedMatchId;
+	FString ParsedRole;
+	if (!ProjectProject01Lobby::ReadRequiredString(Json, TEXT("ticket"), ParsedTicket) ||
+		!ProjectProject01Lobby::ReadRequiredString(Json, TEXT("encryptionKey"), ParsedKey) ||
+		!ProjectProject01Lobby::ReadRequiredString(Json, TEXT("travelUrl"), ParsedTravelUrl) ||
+		!ProjectProject01Lobby::ReadRequiredString(Json, TEXT("roomId"), ParsedRoomId) ||
+		!ProjectProject01Lobby::ReadRequiredString(Json, TEXT("matchId"), ParsedMatchId) ||
+		!ProjectProject01Lobby::ReadRequiredString(Json, TEXT("role"), ParsedRole))
+	{
+		OutError = TEXT("게임 접속 티켓 응답의 필수 값이 없습니다.");
+		ClearGameJoinTicket();
+		return false;
+	}
+
+	UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	if (!IsValid(ProjectGameInstance) || !ProjectGameInstance->ConfigurePendingGameConnection(
+		ParsedTicket, ParsedKey, ParsedRoomId, ParsedMatchId, ParsedRole))
+	{
+		OutError = TEXT("게임 접속 티켓 또는 AES-GCM 키가 올바르지 않습니다.");
+		ClearGameJoinTicket();
+		return false;
+	}
+
+	GameJoinTicket = MoveTemp(ParsedTicket);
+	GameEncryptionKeyBase64 = MoveTemp(ParsedKey);
+	GameTicketTravelUrl = MoveTemp(ParsedTravelUrl);
+	GameTicketRoomId = MoveTemp(ParsedRoomId);
+	GameTicketMatchId = MoveTemp(ParsedMatchId);
+	GameTicketRole = MoveTemp(ParsedRole);
+	OutError.Reset();
+	return true;
+}
+
+void UProjectProject01LobbySubsystem::ClearGameJoinTicket()
+{
+	GameJoinTicket.Reset();
+	GameEncryptionKeyBase64.Reset();
+	GameTicketTravelUrl.Reset();
+	GameTicketRoomId.Reset();
+	GameTicketMatchId.Reset();
+	GameTicketRole.Reset();
 }
 
 void UProjectProject01LobbySubsystem::Complete(

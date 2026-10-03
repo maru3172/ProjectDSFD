@@ -1,54 +1,51 @@
-# ProjectProject01 로그인·로비 백엔드
+# ProjectProject01 인증·로비·게임 접속 백엔드
 
-이 프로그램은 Unreal 클라이언트와 MySQL 사이에 위치하는 로컬 개발용 ASP.NET Core API입니다. Unreal 클라이언트가 MySQL에 직접 접속하지 않도록 분리합니다.
+이 ASP.NET Core API는 Unreal 클라이언트와 MySQL 사이의 신뢰 경계입니다. 클라이언트는 MySQL에 직접 접속하지 않으며, 로그인·방·게임 접속 티켓·서버 검증 경기 결과·리더보드만 API를 통해 처리합니다.
 
-## 격리된 MySQL 서버
+## 로컬 개발 시작
 
-기존 `MySQL80` 서비스와 기존 데이터베이스는 사용하거나 변경하지 않습니다. 프로젝트 전용 인스턴스는 `127.0.0.1:3307`과 `LocalMySql` 데이터 디렉터리를 사용합니다.
+기존 `MySQL80` 서비스와 기존 데이터베이스는 사용하거나 변경하지 않습니다. 프로젝트 전용 인스턴스는 `127.0.0.1:3307`과 Git에서 제외된 `LocalMySql` 데이터 디렉터리를 사용합니다.
 
-최초 한 번만 다음 명령을 실행합니다.
-
-```powershell
-.\ProjectProject01MySql.ps1 -Action Initialize
-```
-
-무작위 API·관리자 비밀번호와 접속 문자열은 프로젝트 파일이 아니라 .NET User Secrets에 저장됩니다. 이후 시작·종료·상태 확인은 다음 명령을 사용합니다.
+새 PC에서는 최초 한 번만 실행합니다.
 
 ```powershell
-.\ProjectProject01MySql.ps1 -Action Start
-.\ProjectProject01MySql.ps1 -Action Status
-.\ProjectProject01MySql.ps1 -Action Stop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action Initialize
 ```
 
-## API 실행
+이전 버전에서 이미 초기화한 PC는 기존 로그인 데이터를 유지한 채 새 게임 서버 비밀키를 한 번 동기화합니다.
 
-격리된 MySQL 서버를 시작한 뒤 로컬 API를 실행합니다.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action SyncLocalConfiguration
+```
+
+평소 시작·상태 확인·종료는 다음과 같습니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action Start
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action Status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action Stop
+```
+
+MySQL을 시작한 뒤 API를 실행합니다.
 
 ```powershell
 dotnet run --urls http://127.0.0.1:5080
 ```
 
-`http://127.0.0.1:5080/health`가 HTTP 200을 반환하면 Unreal의 `LoginLevel`에서 회원가입과 로그인을 테스트합니다.
+`http://127.0.0.1:5080/health`가 HTTP 200과 `healthy`를 반환하면 로컬 로그인·로비 테스트 준비가 끝난 것입니다. HTTP는 루프백 개발 접속에만 허용됩니다.
 
-## 방 로비
+## 로비와 보안 게임 접속
 
-로그인한 사용자는 `LobbyLevel`에서 다음 기능을 사용할 수 있습니다.
+- 공개/비공개 방, 선택적 방 비밀번호, 6~8자리 참가 코드, 최대 30개 대기방을 지원합니다.
+- 정확히 3명이 모이고 참가자가 준비하면 방장이 시작할 수 있습니다.
+- 서버가 암호학적 난수로 `Mannequin` 1명과 `Survivor` 2명을 배정합니다.
+- 시작된 각 경기에는 별도 `match_id`가 생성됩니다.
+- 각 플레이어는 60초 유효한 일회용 게임 접속 티켓을 발급받습니다.
+- 티켓 원문은 DB에 저장하지 않고 SHA-256 해시만 저장하며, 데디케이티드 서버가 한 번 소비하면 재사용할 수 없습니다.
+- AES-GCM 256비트 키는 티켓마다 다르게 파생되며, URL에 키를 넣지 않습니다. 클라이언트와 서버는 UE 암호화 핸드셰이크를 통해 메모리에서만 사용합니다.
+- `AMultiplayTestGameMode::PreLogin`은 백엔드 검증이 끝난 티켓만 허용하고 역할을 클라이언트 URL 값이 아니라 검증된 claim에서 가져옵니다.
 
-- 공개방 생성 및 공개방 목록 참가
-- 비공개방 생성 후 방 ID 직접 입력 참가
-- 공개·비공개방 모두 선택적으로 4~64자 비밀번호 설정
-- 방장을 제외한 참가자의 준비/준비 취소
-- 정확히 3명이 모이고 두 참가자가 모두 준비한 경우에만 방장 시작
-- 방장이 나가면 방과 채팅을 함께 삭제
-- 최대 30개의 대기방 유지
-- 방마다 최근 100개의 채팅 표시
-- 시작 시 암호학적 난수로 1명은 `Mannequin`, 2명은 `Survivor` 배정
-
-방 비밀번호는 원문을 저장하지 않고 ASP.NET Core `PasswordHasher` 결과만 MySQL에 저장합니다.
-공개방만 목록에 나타나며 비공개방은 방 화면에 표시되는 ID를 전달받아 참가합니다.
-
-게임 시작 전에 `MultiplayTest` 전용 서버가 실행 중이어야 합니다. 기본 접속 주소는
-`127.0.0.1:7777`이며, 다른 주소는 다음 구성값으로 지정할 수 있습니다.
+기본 게임 서버 주소는 `127.0.0.1:7777`입니다. 다른 주소는 안전한 서버 설정 또는 환경별 구성에서 다음 값으로 지정합니다.
 
 ```json
 {
@@ -58,18 +55,66 @@ dotnet run --urls http://127.0.0.1:5080
 }
 ```
 
-클라이언트는 시작된 방을 1초 이내에 확인하고 같은 서버로 이동합니다. 역할은 접속 URL의
-`LobbyRole` 옵션으로 `AMultiplayTestGameMode`에 전달됩니다. 이 방식은 현재 로컬 개발 및 기능
-검증용이며, 외부 배포 전에는 서버가 백엔드에 역할 티켓을 검증하는 단계를 추가해야 합니다.
+UE 설정은 `AESGCMHandlerComponent`, `[PacketHandlerComponents] EncryptionComponent=AESGCMHandlerComponent`, `net.AllowEncryption=2`를 사용합니다. 직접 `IP:7777`로 접속하거나 클라이언트가 역할만 조작해 접속하는 경로는 거부됩니다. 로컬에서 티켓 없는 개별 PIE 로직만 시험할 때에는 테스트용 GameMode 인스턴스의 `bRequireGameJoinTicket`을 명시적으로 꺼야 하며, 공개 서버에서는 켠 상태를 유지해야 합니다.
 
-정상 종료 시 방 나가기를 먼저 호출합니다. 비정상 종료된 대기방과 참가자는 다른 로비 요청이
-들어올 때 마지막 확인 시각 기준 60초 후 정리됩니다.
+## 인증과 권한
 
-## 보안 경계
+- 계정 및 방 비밀번호는 ASP.NET Core `PasswordHasher` 결과만 저장합니다.
+- 로그인 실패 5회 시 15분 동안 계정을 잠급니다.
+- 인증 API는 IP별 분당 10회, 게임 티켓은 분당 30회로 제한합니다.
+- 액세스 토큰은 30분, 리프레시 토큰은 30일이며 DB에는 토큰의 SHA-256 해시만 저장합니다.
+- 갱신 시 이전 세션을 폐기하고 액세스·리프레시 토큰을 모두 회전합니다.
+- 로그아웃 시 해당 세션을 폐기합니다.
+- 현재 C++의 모든 Server RPC는 입력/역할/상태를 서버에서 검사하고 RPC별 호출 빈도를 제한합니다.
+- 보안 관련 인증, 티켓, 경기 결과, 리더보드 판정은 `security_audit_events`에 기록합니다. 비밀번호·토큰·비밀키 원문은 기록하지 않습니다.
 
-- 비밀번호 원문은 저장하거나 로그로 출력하지 않습니다.
-- DB에는 ASP.NET Core Identity의 `PasswordHasher` 결과만 저장합니다.
-- 액세스·리프레시 토큰 원문은 클라이언트에만 반환하고, DB에는 SHA-256 해시만 저장합니다.
-- 로그인 실패 5회 시 15분 동안 해당 계정을 잠급니다.
-- 인증 API는 IP별 분당 10회로 제한합니다.
-- 현재 HTTP 주소는 같은 PC의 개발 테스트 전용입니다. 외부 배포에서는 HTTPS 리버스 프록시와 최소 권한 DB 계정을 사용해야 합니다.
+경기 결과는 데디케이티드 서버만 `/api/server/matches/results`에 제출할 수 있습니다. 사용자의 역할과 해당 경기 참가 여부를 다시 검증한 성공 기록만 리더보드 등록에 사용할 수 있습니다. 현재 게임 종료 규칙을 연결할 때 서버에서 `UProjectProject01GameInstance::SubmitAuthoritativeMatchResult`를 호출해야 합니다. 로컬 `LeaderBoardTest` 수동 검증은 Git에서 제외된 개발 설정에서만 예외 허용됩니다.
+
+## 공개 배포 HTTPS와 비밀키
+
+공개 배포에서는 저장소나 패키지에 비밀키를 넣지 않습니다. 백엔드에는 환경변수 또는 배포 환경의 비밀 저장소로 다음 값을 제공합니다.
+
+```text
+GameServer__SharedSecret=<32자 이상 무작위 값>
+GameServer__TicketKey=<32바이트 무작위 값의 Base64>
+ConnectionStrings__ProjectProject01=<운영 DB 최소 권한 연결 문자열>
+```
+
+데디케이티드 서버 프로세스에는 같은 공유 비밀을 환경변수로 제공합니다.
+
+```text
+PROJECTPROJECT01_GAME_SERVER_SECRET=<백엔드와 같은 공유 비밀>
+```
+
+Kestrel에 인증서를 직접 적용하는 예시는 다음과 같습니다. 인증서 경로와 암호는 저장소 밖에서 주입합니다.
+
+```powershell
+$env:ASPNETCORE_URLS = 'https://0.0.0.0:5081'
+$env:ASPNETCORE_Kestrel__Certificates__Default__Path = 'D:\Secrets\projectproject01.pfx'
+$env:ASPNETCORE_Kestrel__Certificates__Default__Password = '<비밀 저장소에서 주입>'
+dotnet run --configuration Release
+```
+
+리버스 프록시를 쓸 경우 외부 TLS는 프록시에서 종료하고 백엔드는 같은 서버의 루프백 주소로만 노출합니다. 공개 HTTP 요청은 애플리케이션에서 거부됩니다.
+
+## DB 차단과 백업
+
+로컬 MySQL은 스크립트가 `--bind-address=127.0.0.1`, `--mysqlx=OFF`, `--local-infile=OFF`로 실행합니다. 운영 환경에서도 MySQL 포트는 인터넷에 공개하지 않고 방화벽에서 백엔드 서버만 허용합니다. 외부 인바운드는 원칙적으로 HTTPS 포트와 필요한 게임 UDP 포트만 엽니다.
+
+수동 백업과 매일 03:00 예약 백업 등록은 다음과 같습니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action Backup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action InstallBackupTask
+```
+
+백업 파일은 Git에서 제외된 `LocalMySql/Backups`에 저장됩니다. 실제 운영에서는 별도 암호화 저장소로 복제하고 복구 시험을 수행해야 합니다.
+
+## 배포 전 확인
+
+1. 공개 API가 유효한 HTTPS 인증서로만 응답하는지 확인합니다.
+2. MySQL 포트가 외부에서 닫혀 있고 최소 권한 계정만 사용하는지 확인합니다.
+3. 티켓 없는 직접 게임 서버 접속과 사용된 티켓 재접속이 거부되는지 확인합니다.
+4. Mannequin/Survivor 권한 밖의 Server RPC와 과다 호출이 거부되는지 확인합니다.
+5. 성공한 경기만 서버 검증 결과를 거쳐 리더보드에 등록되는지 확인합니다.
+6. 백업 생성과 실제 복구를 별도 테스트 DB에서 확인합니다.

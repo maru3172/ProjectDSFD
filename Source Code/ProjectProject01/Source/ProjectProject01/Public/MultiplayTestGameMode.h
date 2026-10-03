@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "ProjectProject01GameInstance.h"
 #include "MultiplayTestGameMode.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Multiplayer, Log, All);
@@ -14,7 +15,7 @@ struct FMannequinAITuningRow;
  * MultiplayTest 전용 게임 모드입니다.
  * 기존 AProjectPracticeGameModeBase를 상속하지 않으므로 조력자를 자동 생성하지 않습니다.
  */
-UCLASS()
+UCLASS(Config=Game)
 class PROJECTPROJECT01_API AMultiplayTestGameMode final : public AGameModeBase
 {
 	GENERATED_BODY()
@@ -36,6 +37,11 @@ public:
 	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void PreLogin(
+		const FString& Options,
+		const FString& Address,
+		const FUniqueNetIdRepl& UniqueId,
+		FString& ErrorMessage) override;
 	virtual FString InitNewPlayer(
 		APlayerController* NewPlayerController,
 		const FUniqueNetIdRepl& UniqueId,
@@ -70,4 +76,8 @@ private:
 	TWeakObjectPtr<class AMultiplayTestPlayerController> MannequinController;
 	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> RequestedMannequinControllers;
 	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> ExplicitRoleControllers;
+	TMap<FString, FProjectProject01ValidatedJoinClaim> PendingValidatedJoinClaims;
+
+	UPROPERTY(Config)
+	bool bRequireGameJoinTicket = true;
 };

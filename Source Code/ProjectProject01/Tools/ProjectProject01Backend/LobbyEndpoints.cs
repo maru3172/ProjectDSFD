@@ -12,8 +12,12 @@ internal static class LobbyEndpoints
     private const int MaximumRooms = 30;
     private const int MaximumPlayers = 3;
     private const int StaleMemberSeconds = 60;
+    private const int GameTicketLifetimeSeconds = 60;
 
-    public static void MapProjectProject01Lobby(this WebApplication app, string configuredTravelUrl)
+    public static void MapProjectProject01Lobby(
+        this WebApplication app,
+        string configuredTravelUrl,
+        ProjectSecurityOptions securityOptions)
     {
         var travelUrl = string.IsNullOrWhiteSpace(configuredTravelUrl)
             ? "127.0.0.1:7777"
@@ -551,9 +555,10 @@ internal static class LobbyEndpoints
                 await ExecuteAsync(connection, transaction,
                     "UPDATE room_members SET assigned_role = 'Mannequin' WHERE room_id = @roomId AND user_id = @userId;",
                     ("@roomId", membership.RoomId), ("@userId", members[mannequinIndex].UserId), ct);
+                var matchId = Guid.NewGuid().ToString("D");
                 await ExecuteAsync(connection, transaction,
-                    "UPDATE game_rooms SET status = 'Started', travel_url = @travelUrl, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId;",
-                    ("@travelUrl", travelUrl), ("@roomId", membership.RoomId), ct);
+                    "UPDATE game_rooms SET status = 'Started', travel_url = @travelUrl, match_id = @matchId, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId;",
+                    ("@travelUrl", travelUrl), ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
                 await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
                 return Results.Ok(new { message = "게임을 시작합니다.", room });
@@ -563,6 +568,276 @@ internal static class LobbyEndpoints
                 return DatabaseUnavailable();
             }
         }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/game-tickets", async (
+            HttpRequest request, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "Unauthorized", null, null, ct);
+                return Results.Unauthorized();
+            }
+            if (!securityOptions.IsGameServerSecurityConfigured)
+            {
+                await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "SecurityNotConfigured", user.Id, null, ct);
+                return Results.Json(new LobbyFailure("게임 서버 보안 비밀키가 설정되지 않았습니다."), statusCode: 503);
+            }
+
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                string roomId;
+                string matchId;
+                string role;
+                string gameServerTravelUrl;
+                await using (var select = new MySqlCommand(
+                    """
+                    SELECT r.id, r.match_id, m.assigned_role, r.travel_url
+                    FROM room_members m
+                    INNER JOIN game_rooms r ON r.id = m.room_id
+                    WHERE m.user_id = @userId AND r.status = 'Started'
+                    LIMIT 1
+                    FOR UPDATE;
+                    """, connection, transaction) { CommandTimeout = 5 })
+                {
+                    select.Parameters.AddWithValue("@userId", user.Id);
+                    await using var reader = await select.ExecuteReaderAsync(ct);
+                    if (!await reader.ReadAsync(ct) || reader.IsDBNull(1) || reader.IsDBNull(2) || reader.IsDBNull(3))
+                    {
+                        await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "NoStartedMatch", user.Id, null, ct);
+                        return Results.Conflict(new LobbyFailure("시작된 경기의 역할 또는 서버 정보가 없습니다."));
+                    }
+                    roomId = ReadRoomId(reader, 0);
+                    matchId = ReadRoomId(reader, 1);
+                    role = reader.GetString(2);
+                    gameServerTravelUrl = reader.GetString(3);
+                }
+
+                var ticket = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(48));
+                var expiresAtUtc = DateTime.UtcNow.AddSeconds(GameTicketLifetimeSeconds);
+                await using (var cleanup = new MySqlCommand(
+                    "DELETE FROM game_join_tickets WHERE user_id = @userId;",
+                    connection, transaction) { CommandTimeout = 5 })
+                {
+                    cleanup.Parameters.AddWithValue("@userId", user.Id);
+                    await cleanup.ExecuteNonQueryAsync(ct);
+                }
+                await using (var insert = new MySqlCommand(
+                    """
+                    INSERT INTO game_join_tickets
+                        (ticket_hash, room_id, match_id, user_id, role, expires_at_utc)
+                    VALUES
+                        (@ticketHash, @roomId, @matchId, @userId, @role, @expiresAtUtc);
+                    """, connection, transaction) { CommandTimeout = 5 })
+                {
+                    insert.Parameters.Add("@ticketHash", MySqlDbType.Binary, 32).Value =
+                        SHA256.HashData(Encoding.UTF8.GetBytes(ticket));
+                    insert.Parameters.AddWithValue("@roomId", roomId);
+                    insert.Parameters.AddWithValue("@matchId", matchId);
+                    insert.Parameters.AddWithValue("@userId", user.Id);
+                    insert.Parameters.AddWithValue("@role", role);
+                    insert.Parameters.AddWithValue("@expiresAtUtc", expiresAtUtc);
+                    await insert.ExecuteNonQueryAsync(ct);
+                }
+                await transaction.CommitAsync(ct);
+                // 각 클라이언트 연결마다 서로 다른 256비트 키를 파생한다. 원본 키와 티켓은 DB에 저장하지 않는다.
+                var encryptionKey = Convert.ToBase64String(securityOptions.DeriveConnectionEncryptionKey(ticket));
+                await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "Success", user.Id,
+                    $"RoomId={roomId}; MatchId={matchId}; Role={role}", ct);
+                return Results.Ok(new
+                {
+                    message = "일회용 게임 접속 티켓을 발급했습니다.",
+                    ticket,
+                    encryptionKey,
+                    roomId,
+                    matchId,
+                    role,
+                    travelUrl = gameServerTravelUrl,
+                    expiresAtUtc
+                });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("game-ticket");
+
+        app.MapPost("/api/server/game-tickets/consume", async (
+            HttpRequest request,
+            ConsumeGameTicketRequest body,
+            AuthDatabase database,
+            CancellationToken ct) =>
+        {
+            if (!securityOptions.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))
+            {
+                await SecurityAudit.WriteAsync(database, request, "GameTicketConsume", "UnauthorizedServer", null, null, ct);
+                return Results.Unauthorized();
+            }
+            var ticket = body.Ticket?.Trim() ?? string.Empty;
+            if (ticket.Length is < 48 or > 256)
+            {
+                await SecurityAudit.WriteAsync(database, request, "GameTicketConsume", "InvalidTicketFormat", null, null, ct);
+                return Results.BadRequest(new LobbyFailure("게임 접속 티켓 형식이 올바르지 않습니다."));
+            }
+
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                ulong ticketId;
+                ulong userId;
+                string displayName;
+                string roomId;
+                string matchId;
+                string role;
+                await using (var select = new MySqlCommand(
+                    """
+                    SELECT t.id, t.user_id, u.display_name, t.room_id, t.match_id, t.role
+                    FROM game_join_tickets t
+                    INNER JOIN users u ON u.id = t.user_id
+                    WHERE t.ticket_hash = @ticketHash
+                      AND t.consumed_at_utc IS NULL
+                      AND t.expires_at_utc > UTC_TIMESTAMP(6)
+                    LIMIT 1
+                    FOR UPDATE;
+                    """, connection, transaction) { CommandTimeout = 5 })
+                {
+                    select.Parameters.Add("@ticketHash", MySqlDbType.Binary, 32).Value =
+                        SHA256.HashData(Encoding.UTF8.GetBytes(ticket));
+                    await using var reader = await select.ExecuteReaderAsync(ct);
+                    if (!await reader.ReadAsync(ct))
+                    {
+                        await transaction.RollbackAsync(ct);
+                        await SecurityAudit.WriteAsync(database, request, "GameTicketConsume", "InvalidExpiredOrUsed", null, null, ct);
+                        return Results.Unauthorized();
+                    }
+                    ticketId = reader.GetUInt64(0);
+                    userId = reader.GetUInt64(1);
+                    displayName = reader.GetString(2);
+                    roomId = ReadRoomId(reader, 3);
+                    matchId = ReadRoomId(reader, 4);
+                    role = reader.GetString(5);
+                }
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE game_join_tickets SET consumed_at_utc = UTC_TIMESTAMP(6) WHERE id = @ticketId;",
+                    ("@ticketId", ticketId), ct);
+                await transaction.CommitAsync(ct);
+
+                var encryptionKey = Convert.ToBase64String(securityOptions.DeriveConnectionEncryptionKey(ticket));
+                await SecurityAudit.WriteAsync(database, request, "GameTicketConsume", "Success", userId,
+                    $"RoomId={roomId}; MatchId={matchId}; Role={role}", ct);
+                return Results.Ok(new
+                {
+                    userId = userId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    displayName,
+                    roomId,
+                    matchId,
+                    role,
+                    encryptionKey
+                });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("game-server");
+
+        app.MapPost("/api/server/matches/results", async (
+            HttpRequest request,
+            SubmitVerifiedMatchResultRequest body,
+            AuthDatabase database,
+            CancellationToken ct) =>
+        {
+            if (!securityOptions.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))
+            {
+                await SecurityAudit.WriteAsync(database, request, "MatchResultVerify", "UnauthorizedServer", null, null, ct);
+                return Results.Unauthorized();
+            }
+            if (!Guid.TryParse(body.MatchId, out var matchId) ||
+                !ulong.TryParse(body.UserId, out var userId))
+            {
+                return Results.BadRequest(new LobbyFailure("경기 또는 사용자 ID 형식이 올바르지 않습니다."));
+            }
+            var normalizedRole = NormalizeLeaderboardRole(body.Role ?? string.Empty);
+            if (normalizedRole is null)
+            {
+                return Results.BadRequest(new LobbyFailure("역할은 Mannequin 또는 Survivor여야 합니다."));
+            }
+            var compatibilityBody = new SubmitLeaderboardRecordRequest(
+                body.MatchId, normalizedRole, body.Success, body.CaptureCount,
+                body.FirstCaptureSeconds, body.AllCapturedSeconds, body.RescueCount, body.EscapeSeconds);
+            var validationError = body.Success ? ValidateLeaderboardRecord(normalizedRole, compatibilityBody) : null;
+            if (validationError is not null)
+            {
+                return Results.BadRequest(new LobbyFailure(validationError));
+            }
+
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                string roomId;
+                await using (var membership = new MySqlCommand(
+                    """
+                    SELECT r.id
+                    FROM game_rooms r
+                    INNER JOIN room_members m ON m.room_id = r.id
+                    WHERE r.match_id = @matchId AND m.user_id = @userId AND m.assigned_role = @role
+                    LIMIT 1;
+                    """, connection) { CommandTimeout = 5 })
+                {
+                    membership.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
+                    membership.Parameters.AddWithValue("@userId", userId);
+                    membership.Parameters.AddWithValue("@role", normalizedRole);
+                    var roomValue = await membership.ExecuteScalarAsync(ct);
+                    if (roomValue is null)
+                    {
+                        await SecurityAudit.WriteAsync(database, request, "MatchResultVerify", "MembershipMismatch", userId,
+                            $"MatchId={matchId:D}; Role={normalizedRole}", ct);
+                        return Results.StatusCode(StatusCodes.Status403Forbidden);
+                    }
+                    roomId = roomValue switch
+                    {
+                        Guid guid => guid.ToString("D"),
+                        _ => Convert.ToString(roomValue, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty
+                    };
+                }
+
+                await using var command = new MySqlCommand(
+                    """
+                    INSERT INTO verified_match_results
+                        (match_id, room_id, user_id, role, success, capture_count, first_capture_seconds,
+                         all_captured_seconds, rescue_count, escape_seconds)
+                    VALUES
+                        (@matchId, @roomId, @userId, @role, @success, @captureCount, @firstCaptureSeconds,
+                         @allCapturedSeconds, @rescueCount, @escapeSeconds)
+                    ON DUPLICATE KEY UPDATE
+                        success = VALUES(success), capture_count = VALUES(capture_count),
+                        first_capture_seconds = VALUES(first_capture_seconds),
+                        all_captured_seconds = VALUES(all_captured_seconds), rescue_count = VALUES(rescue_count),
+                        escape_seconds = VALUES(escape_seconds), verified_at_utc = UTC_TIMESTAMP(6);
+                    """, connection) { CommandTimeout = 5 };
+                command.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
+                command.Parameters.AddWithValue("@roomId", roomId);
+                command.Parameters.AddWithValue("@userId", userId);
+                command.Parameters.AddWithValue("@role", normalizedRole);
+                command.Parameters.AddWithValue("@success", body.Success);
+                command.Parameters.AddWithValue("@captureCount", normalizedRole == "Mannequin" && body.Success ? body.CaptureCount : DBNull.Value);
+                command.Parameters.AddWithValue("@firstCaptureSeconds", normalizedRole == "Mannequin" && body.Success ? body.FirstCaptureSeconds : DBNull.Value);
+                command.Parameters.AddWithValue("@allCapturedSeconds", normalizedRole == "Mannequin" && body.Success ? body.AllCapturedSeconds : DBNull.Value);
+                command.Parameters.AddWithValue("@rescueCount", normalizedRole == "Survivor" && body.Success ? body.RescueCount : DBNull.Value);
+                command.Parameters.AddWithValue("@escapeSeconds", normalizedRole == "Survivor" && body.Success ? body.EscapeSeconds : DBNull.Value);
+                await command.ExecuteNonQueryAsync(ct);
+                await SecurityAudit.WriteAsync(database, request, "MatchResultVerify", "Success", userId,
+                    $"MatchId={matchId:D}; Role={normalizedRole}; Success={body.Success}", ct);
+                return Results.Ok(new { message = "데디케이티드 서버 경기 결과를 검증 기록했습니다." });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("game-server");
 
         app.MapGet("/api/leaderboards/{role}", async (
             string role, HttpRequest request, AuthDatabase database, CancellationToken ct) =>
@@ -622,14 +897,63 @@ internal static class LobbyEndpoints
                 return Results.BadRequest(new LobbyFailure("리더보드 역할은 Mannequin 또는 Survivor여야 합니다."));
             }
 
-            var validationError = ValidateLeaderboardRecord(normalizedRole, body);
-            if (!string.IsNullOrEmpty(validationError))
-            {
-                return Results.BadRequest(new LobbyFailure(validationError));
-            }
             try
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
+                int? verifiedCaptureCount = null;
+                double? verifiedFirstCaptureSeconds = null;
+                double? verifiedAllCapturedSeconds = null;
+                int? verifiedRescueCount = null;
+                double? verifiedEscapeSeconds = null;
+                var hasVerifiedResult = false;
+                await using (var verified = new MySqlCommand(
+                    """
+                    SELECT capture_count, first_capture_seconds, all_captured_seconds, rescue_count, escape_seconds
+                    FROM verified_match_results
+                    WHERE match_id = @matchId AND user_id = @userId AND role = @role AND success = TRUE
+                    LIMIT 1;
+                    """, connection) { CommandTimeout = 5 })
+                {
+                    verified.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
+                    verified.Parameters.AddWithValue("@userId", user.Id);
+                    verified.Parameters.AddWithValue("@role", normalizedRole);
+                    await using var reader = await verified.ExecuteReaderAsync(ct);
+                    if (await reader.ReadAsync(ct))
+                    {
+                        hasVerifiedResult = true;
+                        verifiedCaptureCount = reader.IsDBNull(0) ? null : reader.GetInt32(0);
+                        verifiedFirstCaptureSeconds = reader.IsDBNull(1) ? null : Convert.ToDouble(reader.GetValue(1), System.Globalization.CultureInfo.InvariantCulture);
+                        verifiedAllCapturedSeconds = reader.IsDBNull(2) ? null : Convert.ToDouble(reader.GetValue(2), System.Globalization.CultureInfo.InvariantCulture);
+                        verifiedRescueCount = reader.IsDBNull(3) ? null : reader.GetInt32(3);
+                        verifiedEscapeSeconds = reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                }
+
+                var remoteIpAddress = request.HttpContext.Connection.RemoteIpAddress;
+                var isLoopbackDevelopment = remoteIpAddress is not null &&
+                    System.Net.IPAddress.IsLoopback(remoteIpAddress);
+                if (!hasVerifiedResult && !(securityOptions.AllowUnverifiedLeaderboardSubmissions && isLoopbackDevelopment))
+                {
+                    await SecurityAudit.WriteAsync(database, request, "LeaderboardPublish", "UnverifiedResultRejected", user.Id,
+                        $"MatchId={matchId:D}; Role={normalizedRole}", ct);
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                }
+
+                var captureCount = hasVerifiedResult ? verifiedCaptureCount : body.CaptureCount;
+                var firstCaptureSeconds = hasVerifiedResult ? verifiedFirstCaptureSeconds : body.FirstCaptureSeconds;
+                var allCapturedSeconds = hasVerifiedResult ? verifiedAllCapturedSeconds : body.AllCapturedSeconds;
+                var rescueCount = hasVerifiedResult ? verifiedRescueCount : body.RescueCount;
+                var escapeSeconds = hasVerifiedResult ? verifiedEscapeSeconds : body.EscapeSeconds;
+                var effectiveRecord = new SubmitLeaderboardRecordRequest(
+                    matchId.ToString("D"), normalizedRole, true, captureCount,
+                    firstCaptureSeconds, allCapturedSeconds, rescueCount, escapeSeconds);
+                var validationError = ValidateLeaderboardRecord(normalizedRole, effectiveRecord);
+                if (!string.IsNullOrEmpty(validationError))
+                {
+                    await SecurityAudit.WriteAsync(database, request, "LeaderboardPublish", "InvalidVerifiedResult", user.Id,
+                        $"MatchId={matchId:D}; Role={normalizedRole}", ct);
+                    return Results.BadRequest(new LobbyFailure(validationError));
+                }
                 await using var command = new MySqlCommand(
                     """
                     INSERT INTO leaderboard_records
@@ -641,16 +965,27 @@ internal static class LobbyEndpoints
                 command.Parameters.AddWithValue("@userId", user.Id);
                 command.Parameters.AddWithValue("@role", normalizedRole);
                 command.Parameters.AddWithValue("@captureCount",
-                    normalizedRole == "Mannequin" ? body.CaptureCount!.Value : DBNull.Value);
+                    normalizedRole == "Mannequin" ? captureCount!.Value : DBNull.Value);
                 command.Parameters.AddWithValue("@firstCaptureSeconds",
-                    normalizedRole == "Mannequin" ? body.FirstCaptureSeconds!.Value : DBNull.Value);
+                    normalizedRole == "Mannequin" ? firstCaptureSeconds!.Value : DBNull.Value);
                 command.Parameters.AddWithValue("@allCapturedSeconds",
-                    normalizedRole == "Mannequin" ? body.AllCapturedSeconds!.Value : DBNull.Value);
+                    normalizedRole == "Mannequin" ? allCapturedSeconds!.Value : DBNull.Value);
                 command.Parameters.AddWithValue("@rescueCount",
-                    normalizedRole == "Survivor" ? body.RescueCount!.Value : DBNull.Value);
+                    normalizedRole == "Survivor" ? rescueCount!.Value : DBNull.Value);
                 command.Parameters.AddWithValue("@escapeSeconds",
-                    normalizedRole == "Survivor" ? body.EscapeSeconds!.Value : DBNull.Value);
+                    normalizedRole == "Survivor" ? escapeSeconds!.Value : DBNull.Value);
                 await command.ExecuteNonQueryAsync(ct);
+                if (hasVerifiedResult)
+                {
+                    await using var markPublished = new MySqlCommand(
+                        "UPDATE verified_match_results SET published_at_utc = UTC_TIMESTAMP(6) WHERE match_id = @matchId AND user_id = @userId;",
+                        connection) { CommandTimeout = 5 };
+                    markPublished.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
+                    markPublished.Parameters.AddWithValue("@userId", user.Id);
+                    await markPublished.ExecuteNonQueryAsync(ct);
+                }
+                await SecurityAudit.WriteAsync(database, request, "LeaderboardPublish", "Success", user.Id,
+                    $"MatchId={matchId:D}; Role={normalizedRole}; Verified={hasVerifiedResult}", ct);
                 return Results.Ok(new { message = "성공 기록을 리더보드에 등록했습니다." });
             }
             catch (MySqlException exception) when (exception.Number == 1062)
@@ -1170,6 +1505,17 @@ internal sealed record JoinRoomRequest(string? Password);
 internal sealed record ReadyRequest(bool Ready);
 internal sealed record ChatRequest(string? Message);
 internal sealed record TransferHostRequest(string? TargetUserId);
+internal sealed record ConsumeGameTicketRequest(string? Ticket);
+internal sealed record SubmitVerifiedMatchResultRequest(
+    string? MatchId,
+    string? UserId,
+    string? Role,
+    bool Success,
+    int? CaptureCount,
+    double? FirstCaptureSeconds,
+    double? AllCapturedSeconds,
+    int? RescueCount,
+    double? EscapeSeconds);
 internal sealed record SubmitLeaderboardRecordRequest(
     string? MatchId,
     string? Role,

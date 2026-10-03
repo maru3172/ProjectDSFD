@@ -2,6 +2,8 @@
 // Target: .NET 9 / MySQL Server 8.0
 
 using System.Security.Cryptography;
+using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Identity;
@@ -31,6 +33,9 @@ if (File.Exists(localConfigurationPath))
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
+var securityOptions = ProjectSecurityOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(securityOptions);
+
 builder.Services.AddSingleton<IPasswordHasher<AuthUser>, PasswordHasher<AuthUser>>();
 builder.Services.AddSingleton<IPasswordHasher<RoomPasswordRecord>, PasswordHasher<RoomPasswordRecord>>();
 builder.Services.AddSingleton(sp =>
@@ -41,9 +46,29 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        var logger = context.HttpContext.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("ProjectProject01Security");
+        logger.LogWarning(
+            "Security rate limit rejected {Method} {Path} from {RemoteAddress}.",
+            context.HttpContext.Request.Method,
+            context.HttpContext.Request.Path.Value,
+            RequestSecurity.GetClientAddress(context.HttpContext));
+        var database = context.HttpContext.RequestServices.GetRequiredService<AuthDatabase>();
+        await SecurityAudit.WriteAsync(
+            database,
+            context.HttpContext.Request,
+            "RateLimit",
+            "Rejected",
+            null,
+            $"Method={context.HttpContext.Request.Method}; Path={context.HttpContext.Request.Path.Value}",
+            cancellationToken);
+    };
     options.AddPolicy("auth", context =>
         RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            RequestSecurity.GetClientAddress(context),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
@@ -53,7 +78,27 @@ builder.Services.AddRateLimiter(options =>
             }));
     options.AddPolicy("lobby", context =>
         RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("game-ticket", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("game-server", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RequestSecurity.GetClientAddress(context),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 600,
@@ -64,6 +109,25 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    var remoteAddress = context.Connection.RemoteIpAddress;
+    var isLoopback = remoteAddress is not null && IPAddress.IsLoopback(remoteAddress);
+    var forwardedByLocalProxy = isLoopback && context.Request.Headers.ContainsKey("X-Forwarded-For");
+    var forwardedHttps = string.Equals(
+        context.Request.Headers["X-Forwarded-Proto"].ToString(), "https", StringComparison.OrdinalIgnoreCase);
+    if (!context.Request.IsHttps && (!isLoopback || (forwardedByLocalProxy && !forwardedHttps)))
+    {
+        app.Logger.LogWarning(
+            "Rejected insecure public HTTP request {Method} {Path} from {RemoteAddress}.",
+            context.Request.Method, context.Request.Path.Value, remoteAddress?.ToString() ?? "unknown");
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new AuthFailure(
+            "공개 접속에서는 HTTPS가 필요합니다. HTTP는 같은 컴퓨터의 개발 테스트에만 허용됩니다."));
+        return;
+    }
+    await next();
+});
 app.UseRateLimiter();
 
 var startupDatabase = app.Services.GetRequiredService<AuthDatabase>();
@@ -105,6 +169,7 @@ app.MapGet("/health", async (AuthDatabase database, CancellationToken cancellati
 });
 
 app.MapPost("/api/auth/register", async (
+    HttpRequest httpRequest,
     RegisterRequest request,
     AuthDatabase database,
     IPasswordHasher<AuthUser> passwordHasher,
@@ -113,6 +178,7 @@ app.MapPost("/api/auth/register", async (
     var validationError = AuthValidation.Validate(request.AccountId, request.Password, request.DisplayName);
     if (validationError is not null)
     {
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "RejectedInput", null, validationError, cancellationToken);
         return Results.BadRequest(new AuthFailure(validationError));
     }
     if (!database.IsConfigured)
@@ -145,12 +211,14 @@ app.MapPost("/api/auth/register", async (
         var userId = checked((ulong)insertUser.LastInsertedId);
         var tokens = await CreateSessionAsync(connection, transaction, userId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "Success", userId, null, cancellationToken);
         return Results.Created("/api/auth/me", new AuthSuccess(
             "계정이 생성되었습니다.", displayName, tokens.AccessToken, tokens.RefreshToken,
             tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc));
     }
     catch (MySqlException exception) when (exception.Number == 1062)
     {
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "DuplicateAccount", null, null, cancellationToken);
         return Results.Conflict(new AuthFailure("이미 사용 중인 계정 ID입니다."));
     }
     catch (MySqlException)
@@ -160,6 +228,7 @@ app.MapPost("/api/auth/register", async (
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/login", async (
+    HttpRequest httpRequest,
     LoginRequest request,
     AuthDatabase database,
     IPasswordHasher<AuthUser> passwordHasher,
@@ -168,6 +237,7 @@ app.MapPost("/api/auth/login", async (
     var validationError = AuthValidation.Validate(request.AccountId, request.Password, null);
     if (validationError is not null)
     {
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "RejectedInput", null, validationError, cancellationToken);
         return Results.BadRequest(new AuthFailure(validationError));
     }
     if (!database.IsConfigured)
@@ -179,8 +249,14 @@ app.MapPost("/api/auth/login", async (
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         var user = await LoadUserAsync(connection, request.AccountId.Trim(), cancellationToken);
-        if (user is null || (user.LockedUntilUtc.HasValue && user.LockedUntilUtc.Value > DateTime.UtcNow))
+        if (user is null)
         {
+            await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "InvalidCredentials", null, null, cancellationToken);
+            return InvalidCredentials();
+        }
+        if (user.LockedUntilUtc.HasValue && user.LockedUntilUtc.Value > DateTime.UtcNow)
+        {
+            await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "AccountLocked", user.Id, null, cancellationToken);
             return InvalidCredentials();
         }
 
@@ -188,6 +264,8 @@ app.MapPost("/api/auth/login", async (
         if (verifyResult == PasswordVerificationResult.Failed)
         {
             await RecordFailedLoginAsync(connection, user.Id, user.FailedLoginCount + 1, cancellationToken);
+            await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "InvalidCredentials", user.Id,
+                $"FailedCount={user.FailedLoginCount + 1}", cancellationToken);
             return InvalidCredentials();
         }
 
@@ -202,8 +280,21 @@ app.MapPost("/api/auth/login", async (
             await resetFailure.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        if (verifyResult == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            await using var updateHash = new MySqlCommand(
+                "UPDATE users SET password_hash = @passwordHash WHERE id = @userId;", connection, transaction)
+            {
+                CommandTimeout = 5
+            };
+            updateHash.Parameters.AddWithValue("@passwordHash", passwordHasher.HashPassword(user, request.Password));
+            updateHash.Parameters.AddWithValue("@userId", user.Id);
+            await updateHash.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         var tokens = await CreateSessionAsync(connection, transaction, user.Id, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "Success", user.Id, null, cancellationToken);
         return Results.Ok(new AuthSuccess(
             "로그인되었습니다.", user.DisplayName, tokens.AccessToken, tokens.RefreshToken,
             tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc));
@@ -215,12 +306,14 @@ app.MapPost("/api/auth/login", async (
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/refresh", async (
+    HttpRequest httpRequest,
     RefreshRequest request,
     AuthDatabase database,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.RefreshToken) || request.RefreshToken.Length > 512)
     {
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRefresh", "RejectedInput", null, null, cancellationToken);
         return Results.BadRequest(new AuthFailure("리프레시 토큰 형식이 잘못되었습니다."));
     }
     if (!database.IsConfigured)
@@ -253,6 +346,7 @@ app.MapPost("/api/auth/refresh", async (
             if (!await reader.ReadAsync(cancellationToken))
             {
                 await transaction.RollbackAsync(cancellationToken);
+                await SecurityAudit.WriteAsync(database, httpRequest, "AuthRefresh", "InvalidOrExpired", null, null, cancellationToken);
                 return Results.Unauthorized();
             }
             sessionId = reader.GetUInt64(0);
@@ -263,6 +357,7 @@ app.MapPost("/api/auth/refresh", async (
         await RevokeSessionAsync(connection, transaction, sessionId, cancellationToken);
         var tokens = await CreateSessionAsync(connection, transaction, userId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRefresh", "Success", userId, null, cancellationToken);
         return Results.Ok(new AuthSuccess(
             "세션이 갱신되었습니다.", displayName, tokens.AccessToken, tokens.RefreshToken,
             tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc));
@@ -298,7 +393,9 @@ app.MapPost("/api/auth/logout", async (
             CommandTimeout = 5
         };
         command.Parameters.Add("@accessHash", MySqlDbType.Binary, 32).Value = HashToken(accessToken);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var revokedCount = await command.ExecuteNonQueryAsync(cancellationToken);
+        await SecurityAudit.WriteAsync(database, request, "AuthLogout", revokedCount > 0 ? "Success" : "UnknownSession",
+            null, null, cancellationToken);
         return Results.Ok(new { message = "로그아웃되었습니다." });
     }
     catch (MySqlException)
@@ -307,7 +404,9 @@ app.MapPost("/api/auth/logout", async (
     }
 }).RequireRateLimiting("auth");
 
-app.MapProjectProject01Lobby(builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777");
+app.MapProjectProject01Lobby(
+    builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777",
+    securityOptions);
 
 app.Run();
 
@@ -490,6 +589,7 @@ internal sealed class AuthDatabase
         await using var command = new MySqlCommand(schemaSql, connection) { CommandTimeout = 15 };
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
+        await EnsureSecuritySchemaAsync(connection, cancellationToken);
     }
 
     private static async Task EnsureLobbyJoinCodeSchemaAsync(
@@ -586,6 +686,23 @@ internal sealed class AuthDatabase
         return new string(characters);
     }
 
+    private static async Task EnsureSecuritySchemaAsync(
+        MySqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await connection.ChangeDatabaseAsync("projectproject01", cancellationToken);
+        await using var columnCommand = new MySqlCommand(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'game_rooms' AND column_name = 'match_id';",
+            connection) { CommandTimeout = 5 };
+        if (Convert.ToInt32(await columnCommand.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addColumn = new MySqlCommand(
+                "ALTER TABLE game_rooms ADD COLUMN match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER travel_url;",
+                connection) { CommandTimeout = 15 };
+            await addColumn.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         if (_databaseConnectionString is null)
@@ -621,3 +738,125 @@ internal sealed record TokenPair(
     string RefreshToken,
     DateTime AccessExpiresAtUtc,
     DateTime RefreshExpiresAtUtc);
+
+internal sealed class ProjectSecurityOptions
+{
+    private readonly byte[]? _ticketKey;
+
+    private ProjectSecurityOptions(
+        string gameServerSharedSecret,
+        byte[]? ticketKey,
+        bool allowUnverifiedLeaderboardSubmissions)
+    {
+        GameServerSharedSecret = gameServerSharedSecret;
+        _ticketKey = ticketKey;
+        AllowUnverifiedLeaderboardSubmissions = allowUnverifiedLeaderboardSubmissions;
+    }
+
+    public string GameServerSharedSecret { get; }
+    public bool AllowUnverifiedLeaderboardSubmissions { get; }
+    public bool IsGameServerSecurityConfigured =>
+        GameServerSharedSecret.Length >= 32 && _ticketKey is { Length: >= 32 };
+
+    public static ProjectSecurityOptions FromConfiguration(IConfiguration configuration)
+    {
+        var sharedSecret = configuration["GameServer:SharedSecret"]?.Trim()
+            ?? Environment.GetEnvironmentVariable("PROJECTPROJECT01_GAME_SERVER_SECRET")?.Trim()
+            ?? string.Empty;
+        var ticketKeyText = configuration["GameServer:TicketKey"]?.Trim()
+            ?? Environment.GetEnvironmentVariable("PROJECTPROJECT01_TICKET_KEY")?.Trim()
+            ?? string.Empty;
+        byte[]? ticketKey = null;
+        if (!string.IsNullOrWhiteSpace(ticketKeyText))
+        {
+            try
+            {
+                ticketKey = Convert.FromBase64String(ticketKeyText);
+            }
+            catch (FormatException)
+            {
+                ticketKey = null;
+            }
+        }
+
+        return new ProjectSecurityOptions(
+            sharedSecret,
+            ticketKey,
+            configuration.GetValue("Security:AllowUnverifiedLeaderboardSubmissions", false));
+    }
+
+    public bool IsAuthorizedGameServer(string? suppliedSecret)
+    {
+        if (!IsGameServerSecurityConfigured || string.IsNullOrEmpty(suppliedSecret))
+        {
+            return false;
+        }
+        var expected = Encoding.UTF8.GetBytes(GameServerSharedSecret);
+        var supplied = Encoding.UTF8.GetBytes(suppliedSecret);
+        return expected.Length == supplied.Length && CryptographicOperations.FixedTimeEquals(expected, supplied);
+    }
+
+    public byte[] DeriveConnectionEncryptionKey(string gameTicket)
+    {
+        if (_ticketKey is not { Length: >= 32 })
+        {
+            throw new InvalidOperationException("GameServer:TicketKey is not configured.");
+        }
+        using var hmac = new HMACSHA256(_ticketKey);
+        return hmac.ComputeHash(Encoding.UTF8.GetBytes(gameTicket));
+    }
+}
+
+internal static class SecurityAudit
+{
+    public static async Task WriteAsync(
+        AuthDatabase database,
+        HttpRequest request,
+        string eventType,
+        string outcome,
+        ulong? userId,
+        string? details,
+        CancellationToken cancellationToken)
+    {
+        if (!database.IsConfigured)
+        {
+            return;
+        }
+        try
+        {
+            await using var connection = await database.OpenConnectionAsync(cancellationToken);
+            await using var command = new MySqlCommand(
+                "INSERT INTO security_audit_events (user_id, event_type, outcome, remote_address, details) VALUES (@userId, @eventType, @outcome, @remoteAddress, @details);",
+                connection) { CommandTimeout = 5 };
+            command.Parameters.AddWithValue("@userId", userId.HasValue ? userId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@eventType", eventType.Length <= 64 ? eventType : eventType[..64]);
+            command.Parameters.AddWithValue("@outcome", outcome.Length <= 32 ? outcome : outcome[..32]);
+            command.Parameters.AddWithValue("@remoteAddress", RequestSecurity.GetClientAddress(request.HttpContext));
+            var safeDetails = details ?? string.Empty;
+            command.Parameters.AddWithValue("@details", safeDetails.Length <= 512 ? safeDetails : safeDetails[..512]);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (Exception)
+        {
+            // 감사 로그 실패가 인증 또는 게임 요청의 성공/실패를 바꾸지 않도록 한다.
+        }
+    }
+}
+
+internal static class RequestSecurity
+{
+    public static string GetClientAddress(HttpContext context)
+    {
+        var directAddress = context.Connection.RemoteIpAddress;
+        if (directAddress is not null && IPAddress.IsLoopback(directAddress) &&
+            context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwardedValues))
+        {
+            var firstForwardedAddress = forwardedValues.ToString().Split(',', 2)[0].Trim();
+            if (IPAddress.TryParse(firstForwardedAddress, out var parsedAddress))
+            {
+                return parsedAddress.ToString();
+            }
+        }
+        return directAddress?.ToString() ?? "unknown";
+    }
+}

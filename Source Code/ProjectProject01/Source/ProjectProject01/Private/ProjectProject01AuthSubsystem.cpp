@@ -59,6 +59,12 @@ void UProjectProject01AuthSubsystem::Deinitialize()
 		ActiveRequest->CancelRequest();
 		ActiveRequest.Reset();
 	}
+	if (ActiveRefreshCompletion)
+	{
+		TFunction<void(bool)> Completion = MoveTemp(ActiveRefreshCompletion);
+		ActiveRefreshCompletion = nullptr;
+		Completion(false);
+	}
 	ClearSession();
 	Super::Deinitialize();
 }
@@ -133,13 +139,29 @@ void UProjectProject01AuthSubsystem::Logout()
 	SendRequest(EAuthOperation::Logout, TEXT("/api/auth/logout"), TEXT("{}"), 0);
 }
 
+void UProjectProject01AuthSubsystem::RefreshSession(TFunction<void(bool)> Completion)
+{
+	if (RefreshToken.IsEmpty() || ActiveRequest.IsValid())
+	{
+		Completion(false);
+		return;
+	}
+	ActiveRefreshCompletion = MoveTemp(Completion);
+	AuthState = EProjectProject01AuthState::Refreshing;
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("refreshToken"), RefreshToken);
+	FString Body;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
+	SendRequest(EAuthOperation::Refresh, TEXT("/api/auth/refresh"), Body, 0);
+}
+
 void UProjectProject01AuthSubsystem::SendRequest(
 	const EAuthOperation Operation,
 	const FString& Endpoint,
 	const FString& JsonBody,
 	const int32 RetryIndex)
 {
-	if (ApiBaseUrl.IsEmpty())
+	if (ApiBaseUrl.IsEmpty() || !IsApiBaseUrlAllowed())
 	{
 		CompleteOperation(Operation, false, TEXT("인증 API 주소가 설정되지 않았습니다."), FString());
 		return;
@@ -218,7 +240,7 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 
 	FString DisplayName;
 	Json->TryGetStringField(TEXT("displayName"), DisplayName);
-	if (Operation == EAuthOperation::Login || Operation == EAuthOperation::Register)
+	if (Operation == EAuthOperation::Login || Operation == EAuthOperation::Register || Operation == EAuthOperation::Refresh)
 	{
 		FString NewAccessToken;
 		FString NewRefreshToken;
@@ -255,6 +277,23 @@ void UProjectProject01AuthSubsystem::CompleteOperation(
 	{
 		AuthState = bSuccess ? EProjectProject01AuthState::SignedIn : EProjectProject01AuthState::SignedOut;
 		OnLoginCompleted.Broadcast(bSuccess, Message, DisplayName);
+	}
+	else if (Operation == EAuthOperation::Refresh)
+	{
+		if (!bSuccess)
+		{
+			ClearSession();
+		}
+		else
+		{
+			AuthState = EProjectProject01AuthState::SignedIn;
+		}
+		TFunction<void(bool)> Completion = MoveTemp(ActiveRefreshCompletion);
+		ActiveRefreshCompletion = nullptr;
+		if (Completion)
+		{
+			Completion(bSuccess);
+		}
 	}
 	else
 	{
@@ -316,7 +355,9 @@ bool UProjectProject01AuthSubsystem::CanStartOperation(const EAuthOperation Oper
 		? EProjectProject01AuthState::Registering
 		: Operation == EAuthOperation::Login
 			? EProjectProject01AuthState::SigningIn
-			: EProjectProject01AuthState::SigningOut;
+			: Operation == EAuthOperation::Refresh
+				? EProjectProject01AuthState::Refreshing
+				: EProjectProject01AuthState::SigningOut;
 	return true;
 }
 
@@ -326,4 +367,10 @@ void UProjectProject01AuthSubsystem::ClearSession()
 	RefreshToken.Reset();
 	SignedInDisplayName.Reset();
 	AuthState = EProjectProject01AuthState::SignedOut;
+}
+
+bool UProjectProject01AuthSubsystem::IsApiBaseUrlAllowed() const
+{
+	return ApiBaseUrl.StartsWith(TEXT("https://")) || ApiBaseUrl.StartsWith(TEXT("http://127.0.0.1")) ||
+		ApiBaseUrl.StartsWith(TEXT("http://localhost"));
 }
