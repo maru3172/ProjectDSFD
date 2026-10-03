@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Components/SynthComponent.h"
 #include "PlayerHeartbeatComponent.generated.h"
 
 class AMannequinAICharacter;
@@ -13,6 +14,30 @@ class UCameraComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 struct FPlayerTuningRow;
+
+// 외부 음원 없이 낮고 둔한 단일 심장 박동을 생성하는 로컬 전용 신시사이저다.
+UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
+class PROJECTPROJECT01_API UHeartbeatSynthComponent final : public USynthComponent
+{
+	GENERATED_BODY()
+
+public:
+	UHeartbeatSynthComponent(const FObjectInitializer& ObjectInitializer);
+
+	// BPM에 따른 강도로 짧은 단일 박동을 다시 시작한다.
+	void TriggerHeartbeat(float Strength);
+
+protected:
+	virtual bool Init(int32& SampleRate) override;
+	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
+
+private:
+	int32 SynthSampleRate = 48000;
+	int32 PulseFrameIndex = 0;
+	float PulsePhase = 0.0f;
+	float PulseStrength = 0.0f;
+	bool bPulseActive = false;
+};
 
 // 각 마네킹의 인지, 노출, 재발견 상태를 보관한다.
 struct FHeartbeatMannequinState
@@ -103,8 +128,10 @@ private:
 	bool EnsureHeartbeatVFX(APawn& OwnerPawn);
 	// 연결한 카메라에서 후처리를 제거하고 런타임 상태를 초기화한다.
 	void ReleaseHeartbeatVFX();
-	// CurrentBPM을 실제 박동 간격으로 환산해 THUMP 로그를 출력한다.
-	void UpdateBeatLog(float DeltaTime);
+	// CurrentBPM을 실제 박동 간격으로 환산해 SFX와 THUMP 로그를 같은 시점에 출력한다.
+	void UpdateBeatOutput(float DeltaTime, APawn& OwnerPawn);
+	bool EnsureHeartbeatSFX(APawn& OwnerPawn);
+	void ReleaseHeartbeatSFX();
 	// 파괴된 마네킹의 약한 참조를 내부 상태에서 제거한다.
 	void RemoveInvalidMannequins();
 	// 소유 Pawn의 실제 플레이 시점과 정면 방향을 가져온다.
@@ -265,6 +292,7 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> HeartbeatVFXInstance;
 
 	TWeakObjectPtr<UCameraComponent> HeartbeatVFXCamera;
+	TWeakObjectPtr<UHeartbeatSynthComponent> HeartbeatSFXSynth;
 	bool bHeartbeatVFXBlendableAttached = false;
 	bool bHeartbeatVFXLoadFailureLogged = false;
 	int32 CurrentVFXNearbyMannequinCount = 0;

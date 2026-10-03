@@ -8,7 +8,7 @@ public class ProjectProject01 : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "NavigationSystem", "UMG" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "NavigationSystem", "UMG", "AudioMixer" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore" });
 

@@ -205,6 +205,8 @@ APlayerCharacter::APlayerCharacter()
 	
 	// 플레이어 심박수 관련 컴포넌트 연결
 	HeartbeatComponent = CreateDefaultSubobject<UPlayerHeartbeatComponent>(TEXT("Heartbeat Component"));
+	HeartbeatSFXComponent = CreateDefaultSubobject<UHeartbeatSynthComponent>(TEXT("Heartbeat SFX Component"));
+	HeartbeatSFXComponent->SetupAttachment(RootComponent);
 
 	// 카메라 B 키 디버깅 관련
 	static ConstructorHelpers::FObjectFinder<UInputAction> DebugCameraAction(

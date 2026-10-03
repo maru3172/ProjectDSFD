@@ -14,6 +14,7 @@ class UEnhancedInputLocalPlayerSubsystem;
 class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
 class UPlayerHeartbeatComponent;
+class UHeartbeatSynthComponent;
 
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
@@ -227,6 +228,9 @@ private:
 	// 플레이어 심박수 관련 변수
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta=(AllowPrivateAccess = "true"))
 	TObjectPtr<UPlayerHeartbeatComponent> HeartbeatComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|SFX", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UHeartbeatSynthComponent> HeartbeatSFXComponent;
 	bool bStaminaInitialized = false;
 	TWeakObjectPtr<AHelperRearGuardCharacter> StaminaHelper;
 

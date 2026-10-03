@@ -41,6 +41,84 @@ namespace ProjectProject01HeartbeatVFX
 	}
 }
 
+UHeartbeatSynthComponent::UHeartbeatSynthComponent(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	bAutoActivate = false;
+	bAutoDestroy = false;
+	bStopWhenOwnerDestroyed = true;
+	bAllowSpatialization = false;
+	bIsUISound = false;
+	NumChannels = 2;
+}
+
+void UHeartbeatSynthComponent::TriggerHeartbeat(const float Strength)
+{
+	const float SafeStrength = FMath::Clamp(Strength, 0.0f, 1.0f);
+	SynthCommand([this, SafeStrength]()
+	{
+		PulseFrameIndex = 0;
+		PulsePhase = 0.0f;
+		PulseStrength = SafeStrength;
+		bPulseActive = SafeStrength > UE_SMALL_NUMBER;
+	});
+}
+
+bool UHeartbeatSynthComponent::Init(int32& SampleRate)
+{
+	NumChannels = 2;
+	SynthSampleRate = FMath::Max(SampleRate, 8000);
+	PulseFrameIndex = 0;
+	PulsePhase = 0.0f;
+	PulseStrength = 0.0f;
+	bPulseActive = false;
+	return true;
+}
+
+int32 UHeartbeatSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumSamples)
+{
+	if (OutAudio == nullptr || NumSamples <= 0)
+	{
+		return 0;
+	}
+
+	FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
+	const int32 ChannelCount = FMath::Max(NumChannels, 1);
+	const int32 FrameCount = NumSamples / ChannelCount;
+	constexpr float PulseDurationSeconds = 0.22f;
+	constexpr float AttackSeconds = 0.006f;
+	const int32 PulseFrameCount = FMath::Max(1, FMath::RoundToInt(PulseDurationSeconds * SynthSampleRate));
+	for (int32 FrameIndex = 0; FrameIndex < FrameCount; ++FrameIndex)
+	{
+		float Sample = 0.0f;
+		if (bPulseActive && PulseFrameIndex < PulseFrameCount)
+		{
+			const float TimeSeconds = static_cast<float>(PulseFrameIndex) / static_cast<float>(SynthSampleRate);
+			const float Progress = FMath::Clamp(TimeSeconds / PulseDurationSeconds, 0.0f, 1.0f);
+			const float Attack = FMath::Clamp(TimeSeconds / AttackSeconds, 0.0f, 1.0f);
+			const float Envelope = Attack * FMath::Exp(-18.0f * TimeSeconds);
+			const float Frequency = FMath::Lerp(82.0f, 48.0f, Progress);
+			PulsePhase = FMath::Fmod(
+				PulsePhase + (2.0f * UE_PI * Frequency / static_cast<float>(SynthSampleRate)),
+				2.0f * UE_PI);
+			const float Fundamental = FMath::Sin(PulsePhase);
+			const float LowHarmonic = FMath::Sin(PulsePhase * 2.0f) * 0.18f;
+			Sample = FMath::Clamp((Fundamental + LowHarmonic) * Envelope * PulseStrength, -1.0f, 1.0f);
+			++PulseFrameIndex;
+			if (PulseFrameIndex >= PulseFrameCount)
+			{
+				bPulseActive = false;
+			}
+		}
+
+		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
+		{
+			OutAudio[FrameIndex * ChannelCount + ChannelIndex] = Sample;
+		}
+	}
+	return NumSamples;
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FProjectProject01HeartbeatVFXMappingTest,
@@ -161,6 +239,7 @@ void UPlayerHeartbeatComponent::BeginPlay()
 void UPlayerHeartbeatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	ReleaseHeartbeatVFX();
+	ReleaseHeartbeatSFX();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -173,6 +252,7 @@ void UPlayerHeartbeatComponent::TickComponent(
 	if (!IsValid(OwnerPawn) || !OwnerPawn->IsLocallyControlled())
 	{
 		ReleaseHeartbeatVFX();
+		ReleaseHeartbeatSFX();
 		return;
 	}
 
@@ -193,7 +273,7 @@ void UPlayerHeartbeatComponent::TickComponent(
 
 	UpdateBPM(DeltaTime, *OwnerPawn);
 	UpdateHeartbeatVFX(DeltaTime, *OwnerPawn);
-	UpdateBeatLog(DeltaTime);
+	UpdateBeatOutput(DeltaTime, *OwnerPawn);
 }
 
 void UPlayerHeartbeatComponent::ResetHeartbeatState()
@@ -213,6 +293,7 @@ void UPlayerHeartbeatComponent::ResetHeartbeatState()
 	HeartbeatVFXProximityAlpha = 0.0f;
 	HeartbeatVFXDensityAlpha = 0.0f;
 	ReleaseHeartbeatVFX();
+	ReleaseHeartbeatSFX();
 }
 
 int32 UPlayerHeartbeatComponent::GetKnownMannequinCount() const
@@ -544,10 +625,45 @@ void UPlayerHeartbeatComponent::ReleaseHeartbeatVFX()
 	HeartbeatVFXInstance = nullptr;
 }
 
-void UPlayerHeartbeatComponent::UpdateBeatLog(float DeltaTime)
+bool UPlayerHeartbeatComponent::EnsureHeartbeatSFX(APawn& OwnerPawn)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World) || World->GetNetMode() == NM_DedicatedServer || !OwnerPawn.IsLocallyControlled())
+	{
+		return false;
+	}
+
+	UHeartbeatSynthComponent* Synth = HeartbeatSFXSynth.Get();
+	if (!IsValid(Synth))
+	{
+		Synth = OwnerPawn.FindComponentByClass<UHeartbeatSynthComponent>();
+		HeartbeatSFXSynth = Synth;
+	}
+	if (!ensureMsgf(IsValid(Synth), TEXT("Player %s has no Heartbeat SFX synth component."), *GetNameSafe(&OwnerPawn)))
+	{
+		return false;
+	}
+	if (!Synth->IsPlaying())
+	{
+		Synth->Start();
+	}
+	return true;
+}
+
+void UPlayerHeartbeatComponent::ReleaseHeartbeatSFX()
+{
+	if (UHeartbeatSynthComponent* Synth = HeartbeatSFXSynth.Get(); IsValid(Synth) && Synth->IsPlaying())
+	{
+		Synth->Stop();
+	}
+	HeartbeatSFXSynth.Reset();
+}
+
+void UPlayerHeartbeatComponent::UpdateBeatOutput(float DeltaTime, APawn& OwnerPawn)
 {
 	if (!bHeartbeatActive || CurrentBPM <= 0.0f)
 	{
+		ReleaseHeartbeatSFX();
 		return;
 	}
 
@@ -557,6 +673,14 @@ void UPlayerHeartbeatComponent::UpdateBeatLog(float DeltaTime)
 	if (BeatAccumulator >= BeatIntervalSeconds)
 	{
 		BeatAccumulator = FMath::Fmod(BeatAccumulator, BeatIntervalSeconds);
+		if (EnsureHeartbeatSFX(OwnerPawn))
+		{
+			const float MinimumReferenceBPM = FMath::Max(BaseMinBPM, 1.0f);
+			const float MaximumReferenceBPM = FMath::Max3(BaseMaxBPM, EncounterMaxBPM, MinimumReferenceBPM + 1.0f);
+			const float BPMAlpha = FMath::GetRangePct(MinimumReferenceBPM, MaximumReferenceBPM, CurrentBPM);
+			const float Strength = FMath::Lerp(0.48f, 0.82f, FMath::Clamp(BPMAlpha, 0.0f, 1.0f));
+			HeartbeatSFXSynth->TriggerHeartbeat(Strength);
+		}
 		if (bEnableHeartbeatLog)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[Heartbeat] THUMP | BPM=%.1f | Interval=%.3fs"),
