@@ -767,7 +767,11 @@ namespace ProjectProject01TuningEditor
 	void RunCreateFrontendLevelsCommand()
 	{
 		FString Error;
-		const bool bLoginCreated = CreateFrontendLevel(
+		const bool bTitleCreated = CreateFrontendLevel(
+			TEXT("/Game/MyProject/Level/TitleLevel"),
+			AProjectProject01TitleGameMode::StaticClass(),
+			Error);
+		const bool bLoginCreated = bTitleCreated && CreateFrontendLevel(
 			TEXT("/Game/MyProject/Level/LoginLevel"),
 			AProjectProject01LoginGameMode::StaticClass(),
 			Error);
@@ -779,18 +783,19 @@ namespace ProjectProject01TuningEditor
 			TEXT("/Game/MyProject/Level/LeaderBoardTest"),
 			AProjectProject01LeaderboardGameMode::StaticClass(),
 			Error);
-		if (!bLoginCreated || !bLobbyCreated || !bLeaderboardCreated)
+		if (!bTitleCreated || !bLoginCreated || !bLobbyCreated || !bLeaderboardCreated)
 		{
 			UE_LOG(LogProjectProject01Tuning, Error, TEXT("Frontend level creation failed: %s"), *Error);
 			return;
 		}
 
-		UE_LOG(LogProjectProject01Tuning, Log, TEXT("LoginLevel, LobbyLevel, and LeaderBoardTest are ready."));
+		UE_LOG(LogProjectProject01Tuning, Log,
+			TEXT("TitleLevel, LoginLevel, LobbyLevel, and LeaderBoardTest are ready."));
 	}
 
 	FAutoConsoleCommand CreateFrontendLevelsCommand(
 		TEXT("ProjectProject01.CreateFrontendLevels"),
-		TEXT("Create LoginLevel, LobbyLevel, and LeaderBoardTest without overwriting existing map packages."),
+		TEXT("Create TitleLevel, LoginLevel, LobbyLevel, and LeaderBoardTest without overwriting existing map packages."),
 		FConsoleCommandDelegate::CreateStatic(&RunCreateFrontendLevelsCommand));
 }
 

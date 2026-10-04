@@ -9,6 +9,28 @@
 #include "ProjectProject01FrontendGameMode.generated.h"
 
 UCLASS()
+class PROJECTPROJECT01_API AProjectProject01TitlePlayerController final : public APlayerController
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BeginPlay() override;
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01TitleWidget> TitleWidget;
+};
+
+UCLASS()
+class PROJECTPROJECT01_API AProjectProject01TitleGameMode final : public AGameModeBase
+{
+	GENERATED_BODY()
+
+public:
+	AProjectProject01TitleGameMode();
+};
+
+UCLASS()
 class PROJECTPROJECT01_API AProjectProject01LoginPlayerController final : public APlayerController
 {
 	GENERATED_BODY()

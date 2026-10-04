@@ -11,6 +11,8 @@
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/MultiLineEditableTextBox.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/ScrollBox.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
@@ -22,7 +24,13 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Misc/PackageName.h"
+#endif
 
 namespace ProjectProject01LoginUI
 {
@@ -82,6 +90,182 @@ namespace ProjectProject01LoginUI
 	}
 }
 
+bool UProjectProject01TitleWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01TitleWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	bNavigationRequested = false;
+
+	if (IsValid(SinglePlayerButton))
+	{
+		SinglePlayerButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSinglePlayerClicked);
+	}
+	if (IsValid(MultiplayerButton))
+	{
+		MultiplayerButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleMultiplayerClicked);
+	}
+	if (IsValid(QuitButton))
+	{
+		QuitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
+	}
+}
+
+namespace ProjectProject01TitleRoutes
+{
+	const FName SinglePlayerLevel(TEXT("/Game/MyProject/Level/LevelTest01"));
+	const FName MultiplayerLoginLevel(TEXT("/Game/MyProject/Level/LoginLevel"));
+	const FName TitleLevel(TEXT("/Game/MyProject/Level/TitleLevel"));
+}
+
+void UProjectProject01TitleWidget::NativeDestruct()
+{
+	if (IsValid(SinglePlayerButton))
+	{
+		SinglePlayerButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSinglePlayerClicked);
+	}
+	if (IsValid(MultiplayerButton))
+	{
+		MultiplayerButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleMultiplayerClicked);
+	}
+	if (IsValid(QuitButton))
+	{
+		QuitButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
+	}
+	Super::NativeDestruct();
+}
+
+void UProjectProject01TitleWidget::HandleSinglePlayerClicked()
+{
+	if (bNavigationRequested || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	bNavigationRequested = true;
+	SetMenuEnabled(false);
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		PlayerController->bShowMouseCursor = false;
+		PlayerController->SetInputMode(FInputModeGameOnly());
+	}
+	// A local package name intentionally performs no backend, lobby, or dedicated-server connection.
+	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SinglePlayerLevel, true);
+}
+
+void UProjectProject01TitleWidget::HandleMultiplayerClicked()
+{
+	if (bNavigationRequested || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	bNavigationRequested = true;
+	SetMenuEnabled(false);
+	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::MultiplayerLoginLevel, true);
+}
+
+void UProjectProject01TitleWidget::HandleQuitClicked()
+{
+	if (bNavigationRequested)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = GetOwningPlayer();
+	if (!ensureMsgf(IsValid(PlayerController), TEXT("Title menu could not find its owning player controller.")))
+	{
+		return;
+	}
+
+	bNavigationRequested = true;
+	SetMenuEnabled(false);
+	UKismetSystemLibrary::QuitGame(this, PlayerController, EQuitPreference::Quit, false);
+}
+
+void UProjectProject01TitleWidget::BuildWidgetTree()
+{
+	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Title widget has no WidgetTree.")))
+	{
+		return;
+	}
+
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = Overlay;
+
+	UBorder* Background = WidgetTree->ConstructWidget<UBorder>();
+	Background->SetBrushColor(FLinearColor(0.01f, 0.01f, 0.015f, 1.0f));
+	if (UOverlaySlot* BackgroundSlot = Overlay->AddChildToOverlay(Background))
+	{
+		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	UVerticalBox* Menu = WidgetTree->ConstructWidget<UVerticalBox>();
+	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(Menu))
+	{
+		MenuSlot->SetHorizontalAlignment(HAlign_Center);
+		MenuSlot->SetVerticalAlignment(VAlign_Center);
+		MenuSlot->SetPadding(FMargin(40.0f));
+	}
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("ProjectProject01"), 32.0f);
+	ProjectProject01LoginUI::AddLabel(
+		WidgetTree,
+		Menu,
+		TEXT("싱글 플레이는 로컬 게임으로 시작하며, 멀티플레이는 로그인 화면으로 이동합니다."),
+		14.0f);
+	SinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("싱글 플레이"));
+	MultiplayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("멀티플레이"));
+	QuitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
+}
+
+void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
+{
+	if (IsValid(SinglePlayerButton))
+	{
+		SinglePlayerButton->SetIsEnabled(bEnabled);
+	}
+	if (IsValid(MultiplayerButton))
+	{
+		MultiplayerButton->SetIsEnabled(bEnabled);
+	}
+	if (IsValid(QuitButton))
+	{
+		QuitButton->SetIsEnabled(bEnabled);
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01TitleRoutesTest,
+	"ProjectProject01.Frontend.TitleRoutes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01TitleRoutesTest::RunTest(const FString& Parameters)
+{
+	TestTrue(
+		TEXT("TitleLevel package exists"),
+		FPackageName::DoesPackageExist(ProjectProject01TitleRoutes::TitleLevel.ToString()));
+	TestTrue(
+		TEXT("Single-player LevelTest01 package exists"),
+		FPackageName::DoesPackageExist(ProjectProject01TitleRoutes::SinglePlayerLevel.ToString()));
+	TestTrue(
+		TEXT("Multiplayer LoginLevel package exists"),
+		FPackageName::DoesPackageExist(ProjectProject01TitleRoutes::MultiplayerLoginLevel.ToString()));
+	return true;
+}
+#endif
+
 bool UProjectProject01LoginWidget::Initialize()
 {
 	if (!Super::Initialize())
@@ -104,6 +288,10 @@ void UProjectProject01LoginWidget::NativeConstruct()
 	{
 		RegisterButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleRegisterClicked);
 	}
+	if (IsValid(ReturnToTitleButton))
+	{
+		ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleReturnToTitleClicked);
+	}
 
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -117,6 +305,19 @@ void UProjectProject01LoginWidget::NativeConstruct()
 
 void UProjectProject01LoginWidget::NativeDestruct()
 {
+	if (IsValid(LoginButton))
+	{
+		LoginButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleLoginClicked);
+	}
+	if (IsValid(RegisterButton))
+	{
+		RegisterButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleRegisterClicked);
+	}
+	if (IsValid(ReturnToTitleButton))
+	{
+		ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleReturnToTitleClicked);
+	}
+
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
@@ -126,6 +327,18 @@ void UProjectProject01LoginWidget::NativeDestruct()
 		}
 	}
 	Super::NativeDestruct();
+}
+
+void UProjectProject01LoginWidget::HandleReturnToTitleClicked()
+{
+	if (!IsValid(GetWorld()))
+	{
+		SetStatus(TEXT("타이틀 화면을 열 수 없습니다."), true);
+		return;
+	}
+
+	SetRequestControlsEnabled(false);
+	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::TitleLevel, true);
 }
 
 void UProjectProject01LoginWidget::HandleLoginClicked()
@@ -231,6 +444,7 @@ void UProjectProject01LoginWidget::BuildWidgetTree()
 
 	LoginButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("로그인"));
 	RegisterButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("회원가입"));
+	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("타이틀로 돌아가기"));
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("인증 서버에 연결할 준비가 되었습니다."), 14.0f);
 }
 
@@ -243,6 +457,10 @@ void UProjectProject01LoginWidget::SetRequestControlsEnabled(const bool bEnabled
 	if (IsValid(RegisterButton))
 	{
 		RegisterButton->SetIsEnabled(bEnabled);
+	}
+	if (IsValid(ReturnToTitleButton))
+	{
+		ReturnToTitleButton->SetIsEnabled(bEnabled);
 	}
 }
 

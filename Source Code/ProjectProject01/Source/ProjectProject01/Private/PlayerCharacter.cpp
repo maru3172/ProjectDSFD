@@ -395,6 +395,11 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 		return;
 	}
 
+	// Front-end maps use UI-only input. Explicitly restore gameplay focus whenever this
+	// locally controlled gameplay pawn starts or is restarted after level travel.
+	PlayerController->bShowMouseCursor = false;
+	PlayerController->SetInputMode(FInputModeGameOnly());
+
 	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
 	UEnhancedInputLocalPlayerSubsystem* InputSubsystem = IsValid(LocalPlayer)
 		? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer)

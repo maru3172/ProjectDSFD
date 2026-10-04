@@ -6,6 +6,33 @@
 #include "Blueprint/UserWidget.h"
 #include "ProjectProject01LoginWidget.h"
 
+void AProjectProject01TitlePlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bShowMouseCursor = true;
+	FInputModeUIOnly InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
+
+	TitleWidget = CreateWidget<UProjectProject01TitleWidget>(this, UProjectProject01TitleWidget::StaticClass());
+	if (ensureMsgf(IsValid(TitleWidget), TEXT("ProjectProject01 title widget creation failed.")))
+	{
+		TitleWidget->AddToViewport(100);
+	}
+}
+
+AProjectProject01TitleGameMode::AProjectProject01TitleGameMode()
+{
+	DefaultPawnClass = nullptr;
+	PlayerControllerClass = AProjectProject01TitlePlayerController::StaticClass();
+	bStartPlayersAsSpectators = true;
+}
+
 void AProjectProject01LoginPlayerController::BeginPlay()
 {
 	Super::BeginPlay();

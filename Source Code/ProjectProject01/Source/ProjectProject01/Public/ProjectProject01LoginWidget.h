@@ -9,6 +9,41 @@
 #include "ProjectProject01LoginWidget.generated.h"
 
 UCLASS()
+class PROJECTPROJECT01_API UProjectProject01TitleWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+
+private:
+	UFUNCTION()
+	void HandleSinglePlayerClicked();
+
+	UFUNCTION()
+	void HandleMultiplayerClicked();
+
+	UFUNCTION()
+	void HandleQuitClicked();
+
+	void BuildWidgetTree();
+	void SetMenuEnabled(bool bEnabled);
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SinglePlayerButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> MultiplayerButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> QuitButton;
+
+	bool bNavigationRequested = false;
+};
+
+UCLASS()
 class PROJECTPROJECT01_API UProjectProject01LoginWidget final : public UUserWidget
 {
 	GENERATED_BODY()
@@ -24,6 +59,9 @@ private:
 
 	UFUNCTION()
 	void HandleRegisterClicked();
+
+	UFUNCTION()
+	void HandleReturnToTitleClicked();
 
 	UFUNCTION()
 	void HandleLoginResult(bool bSuccess, const FString& Message, const FString& DisplayName);
@@ -50,6 +88,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> RegisterButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReturnToTitleButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> StatusText;
