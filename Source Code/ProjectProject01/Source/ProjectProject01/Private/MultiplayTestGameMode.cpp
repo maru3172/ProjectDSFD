@@ -263,6 +263,39 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 	}
 
 	Super::Logout(Exiting);
+
+	// 방에 남은 모든 사용자가 복귀한 뒤 다음 경기를 시작하면 이전 경기의 Actor 상태가
+	// 남지 않도록, 마지막 접속자가 빠진 데디케이티드 서버 월드를 초기 맵으로 다시 연다.
+	// 짧은 지연은 같은 프레임의 Logout/PlayerArray 정리가 끝난 뒤 인원 수를 확인하기 위함이다.
+	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() == NM_DedicatedServer)
+	{
+		World->GetTimerManager().ClearTimer(EmptyDedicatedServerResetTimer);
+		World->GetTimerManager().SetTimer(
+			EmptyDedicatedServerResetTimer,
+			this,
+			&AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty,
+			1.0f,
+			false);
+	}
+}
+
+void AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty()
+{
+	UWorld* World = GetWorld();
+	if (!ensureMsgf(IsValid(World), TEXT("Dedicated server reset requires a valid world.")) ||
+		World->GetNetMode() != NM_DedicatedServer || GetNumPlayers() > 0)
+	{
+		return;
+	}
+
+	static const FString MultiplayTestMap = TEXT("/Game/MyProject/Level/MultiplayTest");
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("No players remain. Resetting the dedicated server world to %s."), *MultiplayTestMap);
+	if (!World->ServerTravel(MultiplayTestMap, true))
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("Failed to reset the dedicated server world to %s."), *MultiplayTestMap);
+	}
 }
 
 void AMultiplayTestGameMode::SetPlayerDefaults(APawn* PlayerPawn)

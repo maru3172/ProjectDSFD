@@ -56,6 +56,7 @@ private:
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;
 	void AssignRandomInitialMannequinView(class AMultiplayTestPlayerController* Controller);
 	void QueueDefaultAIControllerRestore(class AMannequinAICharacter* Mannequin) const;
+	void ResetDedicatedServerWorldIfEmpty();
 	bool IsMannequinController(const class AMultiplayTestPlayerController* Controller) const;
 	bool IsSurvivorController(const APlayerController* Controller) const;
 	bool CanSurvivorSeeMannequin(const APlayerController* SurvivorController,
@@ -77,6 +78,7 @@ private:
 	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> RequestedMannequinControllers;
 	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> ExplicitRoleControllers;
 	TMap<FString, FProjectProject01ValidatedJoinClaim> PendingValidatedJoinClaims;
+	FTimerHandle EmptyDedicatedServerResetTimer;
 
 	UPROPERTY(Config)
 	bool bRequireGameJoinTicket = true;

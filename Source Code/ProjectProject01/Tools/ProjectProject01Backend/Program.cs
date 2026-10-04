@@ -701,6 +701,17 @@ internal sealed class AuthDatabase
                 connection) { CommandTimeout = 15 };
             await addColumn.ExecuteNonQueryAsync(cancellationToken);
         }
+
+		await using var returnedColumnCommand = new MySqlCommand(
+			"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'room_members' AND column_name = 'returned_to_room';",
+			connection) { CommandTimeout = 5 };
+		if (Convert.ToInt32(await returnedColumnCommand.ExecuteScalarAsync(cancellationToken)) == 0)
+		{
+			await using var addReturnedColumn = new MySqlCommand(
+				"ALTER TABLE room_members ADD COLUMN returned_to_room BOOLEAN NOT NULL DEFAULT FALSE AFTER assigned_role;",
+				connection) { CommandTimeout = 15 };
+			await addReturnedColumn.ExecuteNonQueryAsync(cancellationToken);
+		}
     }
 
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

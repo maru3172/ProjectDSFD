@@ -3,6 +3,7 @@
 
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01LoginWidget.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 
@@ -370,6 +371,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Canceled, this, &APlayerCharacter::StopSprint);
+		if (GetNetMode() == NM_Standalone)
+		{
+			PlayerInputComponent->BindKey(EKeys::F1, IE_Pressed, this, &APlayerCharacter::ToggleSessionMenu);
+		}
 
 		if (IsValid(GetWorld()) && GetWorld()->WorldType == EWorldType::PIE)
         {
@@ -385,6 +390,42 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
             }
         }
 	}
+}
+
+void APlayerCharacter::ToggleSessionMenu()
+{
+	if (GetNetMode() != NM_Standalone)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!IsValid(PlayerController) || !PlayerController->IsLocalController())
+	{
+		return;
+	}
+	if (IsValid(SessionMenuWidget) && SessionMenuWidget->IsInViewport())
+	{
+		SessionMenuWidget->CloseMenu();
+		return;
+	}
+
+	SessionMenuWidget = CreateWidget<UProjectProject01SessionMenuWidget>(
+		PlayerController, UProjectProject01SessionMenuWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SessionMenuWidget), TEXT("Player %s could not create the session menu."), *GetName()))
+	{
+		return;
+	}
+	SessionMenuWidget->ConfigureForSession(false);
+	SessionMenuWidget->AddToViewport(500);
+	UGameplayStatics::SetGamePaused(this, true);
+
+	PlayerController->bShowMouseCursor = true;
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(SessionMenuWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	PlayerController->SetInputMode(InputMode);
 }
 
 void APlayerCharacter::InitializeLocalPlayerInput()

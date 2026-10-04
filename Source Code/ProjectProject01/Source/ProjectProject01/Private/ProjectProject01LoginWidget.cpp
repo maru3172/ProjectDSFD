@@ -24,6 +24,7 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "InputCoreTypes.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
 
@@ -479,6 +480,327 @@ void UProjectProject01LoginWidget::EnterLobby()
 	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")));
 }
 
+bool UProjectProject01SessionMenuWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+
+	SetIsFocusable(true);
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMultiplayer)
+{
+	bMultiplayer = bInMultiplayer;
+	if (IsValid(ReturnToRoomButton))
+	{
+		ReturnToRoomButton->SetVisibility(bMultiplayer ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+	if (IsValid(StatusText))
+	{
+		StatusText->SetText(FText::FromString(bMultiplayer
+			? TEXT("멀티플레이는 메뉴를 열어도 서버 경기가 계속 진행됩니다.")
+			: TEXT("싱글플레이가 일시정지되었습니다.")));
+	}
+}
+
+void UProjectProject01SessionMenuWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	if (IsValid(ContinueButton)) ContinueButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
+	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
+	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
+	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->OnRequestCompleted.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLobbyRequestResult);
+		}
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnLogoutCompleted.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLogoutResult);
+		}
+	}
+	SetKeyboardFocus();
+}
+
+void UProjectProject01SessionMenuWidget::NativeDestruct()
+{
+	if (IsValid(ContinueButton)) ContinueButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
+	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
+	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
+	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->OnRequestCompleted.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLobbyRequestResult);
+		}
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLogoutResult);
+		}
+	}
+	Super::NativeDestruct();
+}
+
+FReply UProjectProject01SessionMenuWidget::NativeOnKeyDown(
+	const FGeometry& InGeometry,
+	const FKeyEvent& InKeyEvent)
+{
+	if (InKeyEvent.GetKey() == EKeys::F1 && !bBusy)
+	{
+		CloseMenu();
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+}
+
+void UProjectProject01SessionMenuWidget::HandleContinueClicked()
+{
+	CloseMenu();
+}
+
+void UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked()
+{
+	if (!bMultiplayer || bBusy)
+	{
+		return;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom())
+	{
+		SetBusy(false, TEXT("유지할 대기방 정보를 찾지 못했습니다."), true);
+		return;
+	}
+
+	SetBusy(true, TEXT("게임 서버 접속을 끝내고 방으로 돌아가는 중..."));
+	Lobby->ReturnToRoom();
+}
+
+void UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked()
+{
+	if (bBusy)
+	{
+		return;
+	}
+	if (bMultiplayer)
+	{
+		BeginAuthenticatedExit(EPendingExitAction::ReturnToTitle);
+		return;
+	}
+
+	RestoreGameInput();
+	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::TitleLevel, true);
+}
+
+void UProjectProject01SessionMenuWidget::HandleQuitGameClicked()
+{
+	if (bBusy)
+	{
+		return;
+	}
+	if (bMultiplayer)
+	{
+		BeginAuthenticatedExit(EPendingExitAction::QuitGame);
+		return;
+	}
+
+	RestoreGameInput();
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		UKismetSystemLibrary::QuitGame(this, PlayerController, EQuitPreference::Quit, false);
+	}
+}
+
+void UProjectProject01SessionMenuWidget::BeginAuthenticatedExit(const EPendingExitAction ExitAction)
+{
+	PendingExitAction = ExitAction;
+	SetBusy(true, TEXT("방과 로그인 세션을 안전하게 정리하는 중..."));
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (IsValid(Lobby) && Lobby->HasCurrentRoom())
+	{
+		Lobby->LeaveRoom();
+		return;
+	}
+	BeginLogout();
+}
+
+void UProjectProject01SessionMenuWidget::BeginLogout()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	if (!IsValid(Auth))
+	{
+		PendingExitAction = EPendingExitAction::None;
+		SetBusy(false, TEXT("인증 시스템을 찾지 못해 로그아웃하지 않았습니다."), true);
+		return;
+	}
+	Auth->Logout();
+}
+
+void UProjectProject01SessionMenuWidget::HandleLobbyRequestResult(
+	const EProjectProject01LobbyOperation Operation,
+	const bool bSuccess,
+	const FString& Message)
+{
+	if (Operation == EProjectProject01LobbyOperation::ReturnToRoom)
+	{
+		if (!bSuccess)
+		{
+			SetBusy(false, Message, true);
+			return;
+		}
+		RestoreGameInput();
+		if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+		{
+			PlayerController->ClientTravel(TEXT("/Game/MyProject/Level/LobbyLevel"), TRAVEL_Absolute);
+		}
+		return;
+	}
+
+	if (Operation == EProjectProject01LobbyOperation::LeaveRoom &&
+		PendingExitAction != EPendingExitAction::None)
+	{
+		if (bSuccess)
+		{
+			BeginLogout();
+		}
+		else
+		{
+			PendingExitAction = EPendingExitAction::None;
+			SetBusy(false, Message, true);
+		}
+	}
+}
+
+void UProjectProject01SessionMenuWidget::HandleLogoutResult(
+	const bool bSuccess,
+	const FString& Message,
+	const FString& DisplayName)
+{
+	if (PendingExitAction == EPendingExitAction::None)
+	{
+		return;
+	}
+	if (!bSuccess)
+	{
+		PendingExitAction = EPendingExitAction::None;
+		SetBusy(false, Message, true);
+		return;
+	}
+	CompleteExit();
+}
+
+void UProjectProject01SessionMenuWidget::CompleteExit()
+{
+	const EPendingExitAction CompletedAction = PendingExitAction;
+	PendingExitAction = EPendingExitAction::None;
+	RestoreGameInput();
+
+	APlayerController* PlayerController = GetOwningPlayer();
+	if (!ensureMsgf(IsValid(PlayerController), TEXT("Session menu could not find its owning player controller.")))
+	{
+		SetBusy(false, TEXT("플레이어 컨트롤러를 찾지 못했습니다."), true);
+		return;
+	}
+	if (CompletedAction == EPendingExitAction::ReturnToTitle)
+	{
+		PlayerController->ClientTravel(ProjectProject01TitleRoutes::TitleLevel.ToString(), TRAVEL_Absolute);
+	}
+	else if (CompletedAction == EPendingExitAction::QuitGame)
+	{
+		UKismetSystemLibrary::QuitGame(this, PlayerController, EQuitPreference::Quit, false);
+	}
+}
+
+void UProjectProject01SessionMenuWidget::CloseMenu()
+{
+	if (bBusy)
+	{
+		return;
+	}
+	RestoreGameInput();
+	RemoveFromParent();
+}
+
+void UProjectProject01SessionMenuWidget::RestoreGameInput()
+{
+	if (!bMultiplayer)
+	{
+		UGameplayStatics::SetGamePaused(this, false);
+	}
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		PlayerController->bShowMouseCursor = false;
+		PlayerController->SetInputMode(FInputModeGameOnly());
+	}
+}
+
+void UProjectProject01SessionMenuWidget::SetBusy(
+	const bool bInBusy,
+	const FString& Message,
+	const bool bIsError)
+{
+	bBusy = bInBusy;
+	if (IsValid(ContinueButton)) ContinueButton->SetIsEnabled(!bBusy);
+	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(!bBusy);
+	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(!bBusy);
+	if (IsValid(QuitGameButton)) QuitGameButton->SetIsEnabled(!bBusy);
+	if (IsValid(StatusText) && !Message.IsEmpty())
+	{
+		StatusText->SetText(FText::FromString(Message));
+		StatusText->SetColorAndOpacity(bIsError
+			? FSlateColor(FLinearColor::Red)
+			: FSlateColor(FLinearColor::Black));
+	}
+}
+
+void UProjectProject01SessionMenuWidget::BuildWidgetTree()
+{
+	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Session menu widget has no WidgetTree.")))
+	{
+		return;
+	}
+
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = Overlay;
+	UBorder* DimBackground = WidgetTree->ConstructWidget<UBorder>();
+	DimBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.72f));
+	if (UOverlaySlot* BackgroundSlot = Overlay->AddChildToOverlay(DimBackground))
+	{
+		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	UVerticalBox* Menu = WidgetTree->ConstructWidget<UVerticalBox>();
+	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(Menu))
+	{
+		MenuSlot->SetHorizontalAlignment(HAlign_Center);
+		MenuSlot->SetVerticalAlignment(VAlign_Center);
+		MenuSlot->SetPadding(FMargin(40.0f));
+	}
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("게임 메뉴"), 30.0f);
+	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("F1을 다시 누르면 게임으로 돌아갑니다."), 14.0f);
+	ContinueButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 계속"));
+	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("방으로 돌아가기"));
+	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
+	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
+}
+
 bool UProjectProject01LobbyWidget::Initialize()
 {
 	if (!Super::Initialize())
@@ -897,10 +1219,11 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		const FString RoleText = Member.AssignedRole.IsEmpty()
 			? FString()
 			: FString::Printf(TEXT(" [%s]"), *Member.AssignedRole);
-		MembersText += FString::Printf(TEXT("%s%s - %s%s\n"), *Member.DisplayName,
+		const FString ReturnText = Member.bReturnedToRoom ? FString(TEXT(" [방 복귀]")) : FString();
+		MembersText += FString::Printf(TEXT("%s%s - %s%s%s\n"), *Member.DisplayName,
 			Member.bIsHost ? TEXT(" [방장]") : TEXT(""),
 			Member.bIsHost ? TEXT("시작 대기") : (Member.bIsReady ? TEXT("준비") : TEXT("대기")),
-			*RoleText);
+			*RoleText, *ReturnText);
 	}
 	if (IsValid(MemberListText)) MemberListText->SetText(FText::FromString(MembersText));
 	if (IsValid(HostTransferComboBox))
@@ -949,7 +1272,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		ChatText += FString::Printf(TEXT("%s: %s\n"), *Chat.DisplayName, *Chat.Message);
 	}
 	if (IsValid(ChatLogText)) ChatLogText->SetText(FText::FromString(ChatText));
-	if (Room.bStarted)
+	if (Room.bStarted && !Room.bReturnedToRoom)
 	{
 		if (Lobby->HasPendingGameJoinTicket())
 		{
@@ -960,6 +1283,10 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 			SetStatus(TEXT("일회용 게임 접속 티켓을 발급받는 중입니다..."), false);
 			Lobby->RequestGameJoinTicket();
 		}
+	}
+	else if (Room.bStarted && Room.bReturnedToRoom)
+	{
+		SetStatus(TEXT("진행 중인 경기에서 방으로 복귀했습니다. 남은 플레이어를 기다립니다."), false);
 	}
 }
 

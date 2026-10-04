@@ -15,6 +15,7 @@ class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
 class UPlayerHeartbeatComponent;
 class UHeartbeatSynthComponent;
+class UProjectProject01SessionMenuWidget;
 
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
@@ -119,6 +120,10 @@ private:
 	void SetSprinting(bool bNewSprinting);
 	void InitializeLocalPlayerInput();
 	void RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem);
+	void ToggleSessionMenu();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01SessionMenuWidget> SessionMenuWidget;
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSetSprinting(bool bNewSprinting);

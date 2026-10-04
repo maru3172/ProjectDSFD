@@ -96,6 +96,75 @@ private:
 	TObjectPtr<class UTextBlock> StatusText;
 };
 
+/** 싱글 및 멀티플레이 중 F1로 여는 세션 메뉴입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01SessionMenuWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void ConfigureForSession(bool bInMultiplayer);
+	void CloseMenu();
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+
+private:
+	enum class EPendingExitAction : uint8
+	{
+		None,
+		ReturnToTitle,
+		QuitGame
+	};
+
+	UFUNCTION()
+	void HandleContinueClicked();
+
+	UFUNCTION()
+	void HandleReturnToRoomClicked();
+
+	UFUNCTION()
+	void HandleReturnToTitleClicked();
+
+	UFUNCTION()
+	void HandleQuitGameClicked();
+
+	UFUNCTION()
+	void HandleLobbyRequestResult(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
+
+	UFUNCTION()
+	void HandleLogoutResult(bool bSuccess, const FString& Message, const FString& DisplayName);
+
+	void BuildWidgetTree();
+	void BeginAuthenticatedExit(EPendingExitAction ExitAction);
+	void BeginLogout();
+	void CompleteExit();
+	void SetBusy(bool bInBusy, const FString& Message = FString(), bool bIsError = false);
+	void RestoreGameInput();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ContinueButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReturnToRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReturnToTitleButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> QuitGameButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> StatusText;
+
+	bool bMultiplayer = false;
+	bool bBusy = false;
+	EPendingExitAction PendingExitAction = EPendingExitAction::None;
+};
+
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01LobbyWidget final : public UUserWidget
 {

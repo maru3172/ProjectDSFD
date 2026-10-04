@@ -7,6 +7,7 @@
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01LoginWidget.h"
 #include "Net/UnrealNetwork.h"
 
 void AMultiplayTestPlayerController::BeginPlay()
@@ -44,6 +45,36 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot9);
 	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
 	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AMultiplayTestPlayerController::RequestPostPossessionChaseCommand);
+	InputComponent->BindKey(EKeys::F1, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
+}
+
+void AMultiplayTestPlayerController::ToggleSessionMenu()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	if (IsValid(SessionMenuWidget) && SessionMenuWidget->IsInViewport())
+	{
+		SessionMenuWidget->CloseMenu();
+		return;
+	}
+
+	SessionMenuWidget = CreateWidget<UProjectProject01SessionMenuWidget>(
+		this, UProjectProject01SessionMenuWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SessionMenuWidget), TEXT("MultiplayTest player controller could not create the session menu.")))
+	{
+		return;
+	}
+	SessionMenuWidget->ConfigureForSession(true);
+	SessionMenuWidget->AddToViewport(500);
+
+	bShowMouseCursor = true;
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(SessionMenuWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	SetInputMode(InputMode);
 }
 
 AMannequinAICharacter* AMultiplayTestPlayerController::GetViewedMannequin() const

@@ -40,6 +40,9 @@ public:
 		const FString& MatchId,
 		const FString& Role);
 
+	/** 경기 접속을 끝내거나 취소할 때 메모리에 남은 일회용 티켓과 키를 제거합니다. */
+	void ClearPendingGameConnection();
+
 	/** PreLogin이 암호화 핸드셰이크에서 검증된 claim을 한 번 가져옵니다. */
 	static bool ConsumeValidatedJoinClaim(
 		const FString& Ticket,

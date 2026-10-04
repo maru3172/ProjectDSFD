@@ -14,6 +14,7 @@ enum class EProjectProject01LobbyOperation : uint8
 	RefreshCurrentRoom,
 	CreateRoom,
 	JoinRoom,
+	ReturnToRoom,
 	LeaveRoom,
 	TransferHost,
 	DeleteRoom,
@@ -124,6 +125,9 @@ struct PROJECTPROJECT01_API FProjectProject01RoomMember
 	bool bIsReady = false;
 
 	UPROPERTY(BlueprintReadOnly)
+	bool bReturnedToRoom = false;
+
+	UPROPERTY(BlueprintReadOnly)
 	FString AssignedRole;
 };
 
@@ -170,6 +174,10 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 
 	UPROPERTY(BlueprintReadOnly)
 	bool bStarted = false;
+
+	/** 현재 로컬 사용자가 진행 중인 경기 연결을 끝내고 방 화면으로 복귀했는지 표시합니다. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bReturnedToRoom = false;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString TravelUrl;
@@ -229,6 +237,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void LeaveRoom();
+
+	/** 게임 서버 접속만 끝내고 로그인과 현재 방 멤버십을 유지합니다. */
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
+	void ReturnToRoom();
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void TransferHost(const FString& TargetUserId);

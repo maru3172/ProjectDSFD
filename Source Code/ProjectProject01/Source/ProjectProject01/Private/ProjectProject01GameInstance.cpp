@@ -100,6 +100,12 @@ bool UProjectProject01GameInstance::ConfigurePendingGameConnection(
 	return true;
 }
 
+void UProjectProject01GameInstance::ClearPendingGameConnection()
+{
+	ProjectProject01NetworkSecurity::PendingClientTicket.Reset();
+	ProjectProject01NetworkSecurity::PendingClientEncryptionKey.Reset();
+}
+
 void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 	const FString& EncryptionToken,
 	const FOnEncryptionKeyResponse& Delegate)
@@ -224,6 +230,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionAck(const FOnEncryp
 	Response.EncryptionData.Key = ProjectProject01NetworkSecurity::PendingClientEncryptionKey;
 	Response.EncryptionData.Identifier = TEXT("ProjectProject01Match");
 	Delegate.ExecuteIfBound(Response);
+	ClearPendingGameConnection();
 }
 
 bool UProjectProject01GameInstance::ConsumeValidatedJoinClaim(

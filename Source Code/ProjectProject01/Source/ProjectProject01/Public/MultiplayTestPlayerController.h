@@ -43,6 +43,7 @@ private:
 	void RequestMannequinSlot(int32 Slot);
 	void RequestMannequinManualControl();
 	void RequestPostPossessionChaseCommand();
+	void ToggleSessionMenu();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinSlot(int32 Slot);
@@ -65,6 +66,9 @@ private:
 	/** 소유 클라이언트가 Pawn 복제 이후에도 다시 적용할 수 있는 마지막 선택 시점 대상입니다. */
 	UPROPERTY(ReplicatedUsing = OnRep_ViewedMannequin)
 	TObjectPtr<class AMannequinAICharacter> ViewedMannequin;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01SessionMenuWidget> SessionMenuWidget;
 
 	FString AuthenticatedUserId;
 	FString AuthenticatedMatchId;

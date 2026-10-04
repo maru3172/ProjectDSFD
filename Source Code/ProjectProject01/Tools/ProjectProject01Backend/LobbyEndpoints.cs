@@ -289,6 +289,7 @@ internal static class LobbyEndpoints
                     return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
                 }
                 var hostTransferred = false;
+                var roomDeleted = false;
                 if (membership.IsHost)
                 {
                     var successorUserId = await FindEarliestOtherMemberAsync(
@@ -310,6 +311,7 @@ internal static class LobbyEndpoints
                     {
                         await ExecuteAsync(connection, transaction,
                             "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
+                        roomDeleted = true;
                     }
                 }
                 else
@@ -317,6 +319,10 @@ internal static class LobbyEndpoints
                     await ExecuteAsync(connection, transaction,
                         "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
                         ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
+                }
+                if (!roomDeleted)
+                {
+                    await ResetStartedRoomIfAllMembersReturnedAsync(connection, transaction, membership.RoomId, ct);
                 }
                 await transaction.CommitAsync(ct);
                 return Results.Ok(new
@@ -327,6 +333,53 @@ internal static class LobbyEndpoints
                             ? "마지막 인원이 나가 방이 삭제되었습니다."
                             : "방에서 나왔습니다."
                 });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/rooms/current/return", async (HttpRequest request, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
+                if (membership is null)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
+                }
+                if (!string.Equals(membership.Status, "Started", StringComparison.Ordinal))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("현재 진행 중인 경기가 없습니다."));
+                }
+
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE room_members SET returned_to_room = TRUE, is_ready = FALSE, last_seen_at_utc = UTC_TIMESTAMP(6) WHERE room_id = @roomId AND user_id = @userId;",
+                    ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
+                var allReturned = await ResetStartedRoomIfAllMembersReturnedAsync(
+                    connection, transaction, membership.RoomId, ct);
+                await transaction.CommitAsync(ct);
+
+                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                return room is null
+                    ? Results.NotFound(new LobbyFailure("복귀할 방이 더 이상 존재하지 않습니다."))
+                    : Results.Ok(new
+                    {
+                        message = allReturned
+                            ? "남아 있는 모든 플레이어가 복귀하여 방을 다시 대기 상태로 전환했습니다."
+                            : "게임 서버 접속을 종료하고 방으로 복귀했습니다.",
+                        room
+                    });
             }
             catch (MySqlException)
             {
@@ -550,7 +603,7 @@ internal static class LobbyEndpoints
 
                 var mannequinIndex = RandomNumberGenerator.GetInt32(members.Count);
                 await ExecuteAsync(connection, transaction,
-                    "UPDATE room_members SET assigned_role = 'Survivor' WHERE room_id = @roomId;",
+                    "UPDATE room_members SET assigned_role = 'Survivor', returned_to_room = FALSE WHERE room_id = @roomId;",
                     ("@roomId", membership.RoomId), ct);
                 await ExecuteAsync(connection, transaction,
                     "UPDATE room_members SET assigned_role = 'Mannequin' WHERE room_id = @roomId AND user_id = @userId;",
@@ -1332,6 +1385,40 @@ internal static class LobbyEndpoints
         return value is null or DBNull ? null : Convert.ToUInt64(value);
     }
 
+    private static async Task<bool> ResetStartedRoomIfAllMembersReturnedAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string roomId,
+        CancellationToken ct)
+    {
+        var returnedStates = new List<bool>();
+        await using (var command = new MySqlCommand(
+            "SELECT returned_to_room FROM room_members WHERE room_id = @roomId FOR UPDATE;",
+            connection, transaction) { CommandTimeout = 5 })
+        {
+            command.Parameters.AddWithValue("@roomId", roomId);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                returnedStates.Add(reader.GetBoolean(0));
+            }
+        }
+        if (returnedStates.Count == 0 || returnedStates.Any(returned => !returned))
+        {
+            return false;
+        }
+
+        await ExecuteAsync(connection, transaction,
+            "DELETE FROM game_join_tickets WHERE room_id = @roomId;", ("@roomId", roomId), ct);
+        await ExecuteAsync(connection, transaction,
+            "UPDATE room_members SET is_ready = FALSE, assigned_role = NULL, returned_to_room = FALSE WHERE room_id = @roomId;",
+            ("@roomId", roomId), ct);
+        await ExecuteAsync(connection, transaction,
+            "UPDATE game_rooms SET status = 'Waiting', travel_url = NULL, match_id = NULL, started_at_utc = NULL WHERE id = @roomId AND status = 'Started';",
+            ("@roomId", roomId), ct);
+        return true;
+    }
+
     private static async Task<bool> IsMemberOfRoomAsync(
         MySqlConnection connection,
         MySqlTransaction transaction,
@@ -1357,10 +1444,12 @@ internal static class LobbyEndpoints
         string? travelUrl;
         bool isHost;
         bool isReady;
+        bool returnedToRoom;
         string? assignedRole;
         await using (var roomCommand = new MySqlCommand(
             """
-            SELECT r.id, r.join_code, r.name, r.status, r.travel_url, r.host_user_id = m.user_id AS is_host, m.is_ready, m.assigned_role
+            SELECT r.id, r.join_code, r.name, r.status, r.travel_url, r.host_user_id = m.user_id AS is_host,
+                   m.is_ready, m.assigned_role, m.returned_to_room
             FROM room_members m
             INNER JOIN game_rooms r ON r.id = m.room_id
             WHERE m.user_id = @userId
@@ -1381,12 +1470,14 @@ internal static class LobbyEndpoints
             isHost = reader.GetBoolean(5);
             isReady = reader.GetBoolean(6);
             assignedRole = reader.IsDBNull(7) ? null : reader.GetString(7);
+            returnedToRoom = reader.GetBoolean(8);
         }
 
         var members = new List<RoomMember>();
         await using (var memberCommand = new MySqlCommand(
             """
-            SELECT m.user_id, u.display_name, r.host_user_id = m.user_id AS is_host, m.is_ready, m.assigned_role
+            SELECT m.user_id, u.display_name, r.host_user_id = m.user_id AS is_host,
+                   m.is_ready, m.assigned_role, m.returned_to_room
             FROM room_members m
             INNER JOIN users u ON u.id = m.user_id
             INNER JOIN game_rooms r ON r.id = m.room_id
@@ -1401,7 +1492,7 @@ internal static class LobbyEndpoints
                 members.Add(new RoomMember(
                     reader.GetUInt64(0).ToString(System.Globalization.CultureInfo.InvariantCulture),
                     reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3),
-                    reader.IsDBNull(4) ? string.Empty : reader.GetString(4)));
+                    reader.IsDBNull(4) ? string.Empty : reader.GetString(4), reader.GetBoolean(5)));
             }
         }
 
@@ -1436,7 +1527,7 @@ internal static class LobbyEndpoints
             string.Equals(status, "Waiting", StringComparison.Ordinal);
         return new RoomState(
             roomId, joinCode, name, isHost, isReady, canStart, string.Equals(status, "Started", StringComparison.Ordinal),
-            travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages);
+            returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages);
     }
 
     private static async Task ExecuteAsync(
@@ -1530,7 +1621,8 @@ internal sealed record LobbyUser(ulong Id, string DisplayName);
 internal sealed record Membership(string RoomId, bool IsHost, string Status);
 internal sealed record RoomSummary(
     string RoomId, string JoinCode, string Name, string HostDisplayName, int MemberCount, int MaxPlayers, bool HasPassword);
-internal sealed record RoomMember(string UserId, string DisplayName, bool IsHost, bool Ready, string AssignedRole);
+internal sealed record RoomMember(
+    string UserId, string DisplayName, bool IsHost, bool Ready, string AssignedRole, bool ReturnedToRoom);
 internal sealed record RoomChatMessage(string MessageId, string DisplayName, string Message, string CreatedAtUtc);
 internal sealed record RoomState(
     string RoomId,
@@ -1540,6 +1632,7 @@ internal sealed record RoomState(
     bool IsReady,
     bool CanStart,
     bool Started,
+    bool ReturnedToRoom,
     string TravelUrl,
     string AssignedRole,
     IReadOnlyList<RoomMember> Members,

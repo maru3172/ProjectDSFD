@@ -153,6 +153,13 @@ void UProjectProject01LobbySubsystem::LeaveRoom()
 	SendRequest(EProjectProject01LobbyOperation::LeaveRoom, TEXT("POST"), TEXT("/api/rooms/current/leave"), TEXT("{}"));
 }
 
+void UProjectProject01LobbySubsystem::ReturnToRoom()
+{
+	ClearGameJoinTicket();
+	SendRequest(EProjectProject01LobbyOperation::ReturnToRoom, TEXT("POST"),
+		TEXT("/api/rooms/current/return"), TEXT("{}"));
+}
+
 void UProjectProject01LobbySubsystem::TransferHost(const FString& TargetUserId)
 {
 	const FString CleanTargetUserId = TargetUserId.TrimStartAndEnd();
@@ -492,6 +499,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		OutError = TEXT("방 상태의 필수 값이 올바르지 않습니다.");
 		return false;
 	}
+	StateJson->TryGetBoolField(TEXT("returnedToRoom"), Parsed.bReturnedToRoom);
 	StateJson->TryGetStringField(TEXT("travelUrl"), Parsed.TravelUrl);
 	StateJson->TryGetStringField(TEXT("assignedRole"), Parsed.AssignedRole);
 
@@ -513,6 +521,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 			OutError = TEXT("방 참가자 형식이 올바르지 않습니다.");
 			return false;
 		}
+		MemberJson->TryGetBoolField(TEXT("returnedToRoom"), Member.bReturnedToRoom);
 		MemberJson->TryGetStringField(TEXT("assignedRole"), Member.AssignedRole);
 		Parsed.Members.Add(MoveTemp(Member));
 	}
@@ -624,6 +633,10 @@ bool UProjectProject01LobbySubsystem::ParseGameJoinTicket(
 
 void UProjectProject01LobbySubsystem::ClearGameJoinTicket()
 {
+	if (UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->ClearPendingGameConnection();
+	}
 	GameJoinTicket.Reset();
 	GameEncryptionKeyBase64.Reset();
 	GameTicketTravelUrl.Reset();
