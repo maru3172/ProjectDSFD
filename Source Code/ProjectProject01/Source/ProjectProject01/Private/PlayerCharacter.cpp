@@ -4,6 +4,7 @@
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01LoginWidget.h"
+#include "ProjectProject01GameInstance.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 
@@ -452,14 +453,12 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 		return;
 	}
 
-	if (ensureMsgf(IsValid(IMC_PlayerInput),
-		TEXT("Player %s cannot initialize movement input because IMC_PlayerInput is missing."), *GetName()) &&
-		!InputSubsystem->HasMappingContext(IMC_PlayerInput))
-	{
-		InputSubsystem->AddMappingContext(IMC_PlayerInput, 0);
-	}
-
 	RegisterRuntimeSprintMapping(InputSubsystem);
+}
+
+void APlayerCharacter::ApplyUserInputSettings()
+{
+	InitializeLocalPlayerInput();
 }
 
 void APlayerCharacter::Move(const FInputActionValue& Value)
@@ -510,8 +509,10 @@ void APlayerCharacter::Look(const FInputActionValue& Value)
         return;
     }
 
-	AddControllerYawInput(LookVector.X);
-	AddControllerPitchInput(LookVector.Y);
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const float Sensitivity = IsValid(Settings) ? Settings->GetMouseSensitivity() : 1.0f;
+	AddControllerYawInput(LookVector.X * Sensitivity);
+	AddControllerPitchInput(LookVector.Y * Sensitivity);
 }
 
 void APlayerCharacter::StartSprint()
@@ -596,26 +597,57 @@ void APlayerCharacter::ApplySprintingState(const bool bNewSprinting)
 
 void APlayerCharacter::RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem)
 {
-	if (!ensureMsgf(IsValid(InputSubsystem) && IsValid(IA_Sprint),
-		TEXT("Player %s cannot register LShift sprint: input subsystem or IA_Sprint is missing."), *GetName()))
+	if (!ensureMsgf(IsValid(InputSubsystem) && IsValid(IMC_PlayerInput) && IsValid(IA_Move) && IsValid(IA_Sprint),
+		TEXT("Player %s cannot register user input mappings because an input asset is missing."), *GetName()))
 	{
 		return;
 	}
 
-	if (!IsValid(RuntimeSprintInputContext))
+	if (InputSubsystem->HasMappingContext(IMC_PlayerInput))
 	{
-		RuntimeSprintInputContext = NewObject<UInputMappingContext>(this, TEXT("RuntimeSprintInputContext"));
-		if (!ensureMsgf(IsValid(RuntimeSprintInputContext), TEXT("Player %s could not create LShift sprint mapping context."), *GetName()))
-		{
-			return;
-		}
-		RuntimeSprintInputContext->MapKey(IA_Sprint, EKeys::LeftShift);
+		InputSubsystem->RemoveMappingContext(IMC_PlayerInput);
+	}
+	if (IsValid(RuntimeSprintInputContext) && InputSubsystem->HasMappingContext(RuntimeSprintInputContext))
+	{
+		InputSubsystem->RemoveMappingContext(RuntimeSprintInputContext);
 	}
 
-	if (!InputSubsystem->HasMappingContext(RuntimeSprintInputContext))
+	RuntimeSprintInputContext = NewObject<UInputMappingContext>(this);
+	if (!ensureMsgf(IsValid(RuntimeSprintInputContext),
+		TEXT("Player %s could not create its runtime input mapping context."), *GetName()))
 	{
-		InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 1);
+		return;
 	}
+
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const FKey ForwardKey = IsValid(Settings) ? Settings->GetMoveForwardKey() : EKeys::W;
+	const FKey BackwardKey = IsValid(Settings) ? Settings->GetMoveBackwardKey() : EKeys::S;
+	const FKey LeftKey = IsValid(Settings) ? Settings->GetMoveLeftKey() : EKeys::A;
+	const FKey RightKey = IsValid(Settings) ? Settings->GetMoveRightKey() : EKeys::D;
+	const FKey SprintKey = IsValid(Settings) ? Settings->GetSprintKey() : EKeys::LeftShift;
+
+	for (const FEnhancedActionKeyMapping& SourceMapping : IMC_PlayerInput->GetMappings())
+	{
+		if (!IsValid(SourceMapping.Action) || SourceMapping.Action == IA_Sprint)
+		{
+			continue;
+		}
+
+		FKey MappedKey = SourceMapping.Key;
+		if (SourceMapping.Action == IA_Move)
+		{
+			if (SourceMapping.Key == EKeys::W) MappedKey = ForwardKey;
+			else if (SourceMapping.Key == EKeys::S) MappedKey = BackwardKey;
+			else if (SourceMapping.Key == EKeys::A) MappedKey = LeftKey;
+			else if (SourceMapping.Key == EKeys::D) MappedKey = RightKey;
+		}
+
+		FEnhancedActionKeyMapping& RuntimeMapping = RuntimeSprintInputContext->MapKey(SourceMapping.Action, MappedKey);
+		RuntimeMapping.Modifiers = SourceMapping.Modifiers;
+		RuntimeMapping.Triggers = SourceMapping.Triggers;
+	}
+	RuntimeSprintInputContext->MapKey(IA_Sprint, SprintKey);
+	InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 0);
 }
 
 // =========================================================================================================================

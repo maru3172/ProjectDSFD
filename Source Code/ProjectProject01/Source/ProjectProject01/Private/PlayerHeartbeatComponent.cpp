@@ -2,6 +2,7 @@
 // Target: ProjectProject01 / ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 
 #include "PlayerHeartbeatComponent.h"
+#include "ProjectProject01GameInstance.h"
 
 #include "Camera/CameraComponent.h"
 #include "Engine/World.h"
@@ -547,8 +548,10 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 	HeartbeatVFXDensityAlpha = InterpAlpha(
 		HeartbeatVFXDensityAlpha, TargetDensity, DeltaTime, BlendSpeed);
 
+	const UProjectProject01GameUserSettings* UserSettings = UProjectProject01GameUserSettings::Get();
+	const float LocalVFXScale = IsValid(UserSettings) ? UserSettings->GetLocalVFXScale() : 1.0f;
 	const float EffectOpacity = FMath::Clamp(
-		HeartbeatVFXProximityAlpha * HeartbeatVFXMaxOpacity, 0.0f, 1.0f);
+		HeartbeatVFXProximityAlpha * HeartbeatVFXMaxOpacity * LocalVFXScale, 0.0f, 1.0f);
 	if (EffectOpacity <= KINDA_SMALL_NUMBER && TargetProximity <= KINDA_SMALL_NUMBER)
 	{
 		HeartbeatVFXProximityAlpha = 0.0f;
@@ -568,7 +571,7 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 
 	HeartbeatVFXInstance->SetScalarParameterValue(EffectOpacityParameter, EffectOpacity);
 	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * HeartbeatVFXDensityAlpha);
+		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * HeartbeatVFXDensityAlpha * LocalVFXScale);
 	HeartbeatVFXInstance->SetScalarParameterValue(
 		DistortionSpeedParameter, FMath::Lerp(HeartbeatVFXMinDistortionSpeed, HeartbeatVFXMaxDistortionSpeed, HeartbeatVFXDensityAlpha));
 	HeartbeatVFXInstance->SetScalarParameterValue(
@@ -648,6 +651,10 @@ bool UPlayerHeartbeatComponent::EnsureHeartbeatSFX(APawn& OwnerPawn)
 	if (!ensureMsgf(IsValid(Synth), TEXT("Player %s has no Heartbeat SFX synth component."), *GetNameSafe(&OwnerPawn)))
 	{
 		return false;
+	}
+	if (UProjectProject01GameUserSettings* UserSettings = UProjectProject01GameUserSettings::Get(); IsValid(UserSettings))
+	{
+		Synth->SoundClass = UserSettings->GetSFXSoundClass();
 	}
 	Synth->SetVolumeMultiplier(HeartbeatSFXVolumeMultiplier);
 	if (!Synth->IsPlaying())

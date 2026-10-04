@@ -6,7 +6,142 @@
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
 #include "Engine/NetworkDelegates.h"
+#include "GameFramework/GameUserSettings.h"
+#include "InputCoreTypes.h"
 #include "ProjectProject01GameInstance.generated.h"
+
+UENUM(BlueprintType)
+enum class EProjectProject01VFXIntensity : uint8
+{
+	Standard,
+	Reduced
+};
+
+/** 로컬 PC에만 저장되는 화면·음향·입력 환경설정입니다. */
+UCLASS(Config=GameUserSettings)
+class PROJECTPROJECT01_API UProjectProject01GameUserSettings final : public UGameUserSettings
+{
+	GENERATED_BODY()
+
+public:
+	UProjectProject01GameUserSettings(const FObjectInitializer& ObjectInitializer);
+
+	static UProjectProject01GameUserSettings* Get();
+
+	virtual void SetToDefaults() override;
+	virtual void LoadSettings(bool bForceReload = false) override;
+	virtual void ApplySettings(bool bCheckForCommandLineOverrides) override;
+	virtual void ApplyNonResolutionSettings() override;
+
+	void ValidateProjectSettings();
+	void ApplyProjectSettings(bool bApplicationActive = true);
+	void ApplyAudioSettings(bool bApplicationActive = true);
+
+	float GetMasterVolume() const { return MasterVolume; }
+	float GetSFXVolume() const { return SFXVolume; }
+	float GetMusicVolume() const { return MusicVolume; }
+	float GetUIVolume() const { return UIVolume; }
+	bool IsMuteAllEnabled() const { return bMuteAll; }
+	bool IsMuteWhenUnfocusedEnabled() const { return bMuteWhenUnfocused; }
+	bool IsMotionBlurEnabled() const { return bMotionBlurEnabled; }
+	float GetDisplayGammaSetting() const { return DisplayGammaSetting; }
+	float GetMouseSensitivity() const { return MouseSensitivity; }
+	EProjectProject01VFXIntensity GetVFXIntensity() const { return VFXIntensity; }
+	float GetLocalVFXScale() const { return VFXIntensity == EProjectProject01VFXIntensity::Reduced ? 0.4f : 1.0f; }
+	FKey GetMoveForwardKey() const;
+	FKey GetMoveBackwardKey() const;
+	FKey GetMoveLeftKey() const;
+	FKey GetMoveRightKey() const;
+	FKey GetSprintKey() const;
+
+	void SetMasterVolume(float Value) { MasterVolume = Value; }
+	void SetSFXVolume(float Value) { SFXVolume = Value; }
+	void SetMusicVolume(float Value) { MusicVolume = Value; }
+	void SetUIVolume(float Value) { UIVolume = Value; }
+	void SetMuteAllEnabled(bool bValue) { bMuteAll = bValue; }
+	void SetMuteWhenUnfocusedEnabled(bool bValue) { bMuteWhenUnfocused = bValue; }
+	void SetMotionBlurEnabled(bool bValue) { bMotionBlurEnabled = bValue; }
+	void SetDisplayGammaSetting(float Value) { DisplayGammaSetting = Value; }
+	void SetMouseSensitivity(float Value) { MouseSensitivity = Value; }
+	void SetVFXIntensity(EProjectProject01VFXIntensity Value) { VFXIntensity = Value; }
+	void SetMoveForwardKey(FKey Key) { MoveForwardKeyName = Key.GetFName(); }
+	void SetMoveBackwardKey(FKey Key) { MoveBackwardKeyName = Key.GetFName(); }
+	void SetMoveLeftKey(FKey Key) { MoveLeftKeyName = Key.GetFName(); }
+	void SetMoveRightKey(FKey Key) { MoveRightKeyName = Key.GetFName(); }
+	void SetSprintKey(FKey Key) { SprintKeyName = Key.GetFName(); }
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Audio")
+	class USoundClass* GetSFXSoundClass();
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Audio")
+	class USoundClass* GetMusicSoundClass();
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Audio")
+	class USoundClass* GetUISoundClass();
+
+private:
+	void EnsureRuntimeAudioObjects();
+	FKey GetValidatedKey(FName StoredName, FKey Fallback) const;
+
+	UPROPERTY(Config)
+	float MasterVolume = 1.0f;
+
+	UPROPERTY(Config)
+	float SFXVolume = 1.0f;
+
+	UPROPERTY(Config)
+	float MusicVolume = 1.0f;
+
+	UPROPERTY(Config)
+	float UIVolume = 1.0f;
+
+	UPROPERTY(Config)
+	bool bMuteAll = false;
+
+	UPROPERTY(Config)
+	bool bMuteWhenUnfocused = true;
+
+	UPROPERTY(Config)
+	bool bMotionBlurEnabled = true;
+
+	UPROPERTY(Config)
+	float DisplayGammaSetting = 2.2f;
+
+	UPROPERTY(Config)
+	float MouseSensitivity = 1.0f;
+
+	UPROPERTY(Config)
+	EProjectProject01VFXIntensity VFXIntensity = EProjectProject01VFXIntensity::Standard;
+
+	UPROPERTY(Config)
+	FName MoveForwardKeyName = TEXT("W");
+
+	UPROPERTY(Config)
+	FName MoveBackwardKeyName = TEXT("S");
+
+	UPROPERTY(Config)
+	FName MoveLeftKeyName = TEXT("A");
+
+	UPROPERTY(Config)
+	FName MoveRightKeyName = TEXT("D");
+
+	UPROPERTY(Config)
+	FName SprintKeyName = TEXT("LeftShift");
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USoundClass> RuntimeSFXSoundClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USoundClass> RuntimeMusicSoundClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USoundClass> RuntimeUISoundClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USoundMix> RuntimeSoundMix;
+
+	bool bRuntimeSoundMixPushed = false;
+};
 
 struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim
 {
@@ -62,6 +197,7 @@ public:
 		double EscapeSeconds);
 
 private:
+	void HandleApplicationActivationChanged(bool bApplicationActive);
 	FString LoadGameServerSharedSecret() const;
 	bool IsBackendUrlAllowed() const;
 	void RemovePendingRequest(const TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe>& Request);
@@ -73,4 +209,5 @@ private:
 	float SecurityRequestTimeoutSeconds = 8.0f;
 
 	TArray<TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe>> PendingSecurityRequests;
+	FDelegateHandle ApplicationActivationHandle;
 };

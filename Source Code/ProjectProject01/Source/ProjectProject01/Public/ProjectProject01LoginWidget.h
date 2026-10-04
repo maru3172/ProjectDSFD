@@ -5,8 +5,13 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "GenericPlatform/GenericWindow.h"
+#include "InputCoreTypes.h"
+#include "ProjectProject01GameInstance.h"
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01LoginWidget.generated.h"
+
+class UProjectProject01SettingsWidget;
 
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01TitleWidget final : public UUserWidget
@@ -26,6 +31,9 @@ private:
 	void HandleMultiplayerClicked();
 
 	UFUNCTION()
+	void HandleSettingsClicked();
+
+	UFUNCTION()
 	void HandleQuitClicked();
 
 	void BuildWidgetTree();
@@ -38,7 +46,13 @@ private:
 	TObjectPtr<class UButton> MultiplayerButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SettingsButton;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> QuitButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
 	bool bNavigationRequested = false;
 };
@@ -130,6 +144,9 @@ private:
 	void HandleReturnToTitleClicked();
 
 	UFUNCTION()
+	void HandleSettingsClicked();
+
+	UFUNCTION()
 	void HandleQuitGameClicked();
 
 	UFUNCTION()
@@ -152,6 +169,9 @@ private:
 	TObjectPtr<class UButton> ReturnToRoomButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SettingsButton;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToTitleButton;
 
 	UPROPERTY(Transient)
@@ -160,9 +180,166 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> StatusText;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
+
 	bool bMultiplayer = false;
 	bool bBusy = false;
 	EPendingExitAction PendingExitAction = EPendingExitAction::None;
+};
+
+/** 타이틀과 F1 메뉴에서 공통으로 사용하는 로컬 환경설정 화면입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01SettingsWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void ConfigureReturnWidget(UUserWidget* InReturnWidget);
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+
+private:
+	enum class EBindingTarget : uint8
+	{
+		None,
+		Forward,
+		Backward,
+		Left,
+		Right,
+		Sprint
+	};
+
+	UFUNCTION() void HandleMasterVolumeChanged(float Value);
+	UFUNCTION() void HandleSFXVolumeChanged(float Value);
+	UFUNCTION() void HandleMusicVolumeChanged(float Value);
+	UFUNCTION() void HandleUIVolumeChanged(float Value);
+	UFUNCTION() void HandleFrameRateChanged(float Value);
+	UFUNCTION() void HandleResolutionScaleChanged(float Value);
+	UFUNCTION() void HandleBrightnessChanged(float Value);
+	UFUNCTION() void HandleSensitivityChanged(float Value);
+	UFUNCTION() void HandleMuteAllChanged(bool bChecked);
+	UFUNCTION() void HandleMuteWhenUnfocusedChanged(bool bChecked);
+	UFUNCTION() void HandleVSyncChanged(bool bChecked);
+	UFUNCTION() void HandleMotionBlurChanged(bool bChecked);
+	UFUNCTION() void HandleWindowModeChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleResolutionChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleOverallQualityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleAAQualityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleShadowQualityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleTextureQualityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleEffectsQualityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandlePostProcessQualityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleVFXIntensityChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleForwardBindingClicked();
+	UFUNCTION() void HandleBackwardBindingClicked();
+	UFUNCTION() void HandleLeftBindingClicked();
+	UFUNCTION() void HandleRightBindingClicked();
+	UFUNCTION() void HandleSprintBindingClicked();
+	UFUNCTION() void HandleApplyClicked();
+	UFUNCTION() void HandleCancelClicked();
+	UFUNCTION() void HandleDefaultsClicked();
+	UFUNCTION() void HandleConfirmVideoClicked();
+	UFUNCTION() void HandleRevertVideoClicked();
+
+	void BuildWidgetTree();
+	void LoadPendingFromSettings();
+	void SetPendingDefaults();
+	void RefreshAllControls();
+	void RefreshValueLabels();
+	void RefreshBindingLabels();
+	void BeginBindingCapture(EBindingTarget Target);
+	bool TryAssignBinding(FKey Key);
+	void ApplyPendingSettings();
+	void ConfirmPendingVideoMode();
+	void RevertPendingVideoMode();
+	void CloseToReturnWidget();
+	void SetStatus(const FString& Message, bool bIsError = false);
+	void SetQualityCombo(class UComboBoxString* Combo, int32 Quality);
+	int32 QualityFromString(const FString& Item) const;
+	FString QualityToString(int32 Quality) const;
+	bool ParseResolution(const FString& Item, FIntPoint& OutResolution) const;
+	void RefreshLocalPlayerInput() const;
+
+	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> StatusText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> VideoConfirmText;
+	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> VideoConfirmPanel;
+	UPROPERTY(Transient) TObjectPtr<class USlider> MasterVolumeSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> SFXVolumeSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> MusicVolumeSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> UIVolumeSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> FrameRateSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> ResolutionScaleSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> BrightnessSlider;
+	UPROPERTY(Transient) TObjectPtr<class USlider> SensitivitySlider;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> MasterVolumeValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SFXVolumeValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> MusicVolumeValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> UIVolumeValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> FrameRateValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> ResolutionScaleValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> BrightnessValueText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SensitivityValueText;
+	UPROPERTY(Transient) TObjectPtr<class UCheckBox> MuteAllCheckBox;
+	UPROPERTY(Transient) TObjectPtr<class UCheckBox> MuteWhenUnfocusedCheckBox;
+	UPROPERTY(Transient) TObjectPtr<class UCheckBox> VSyncCheckBox;
+	UPROPERTY(Transient) TObjectPtr<class UCheckBox> MotionBlurCheckBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> WindowModeComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> ResolutionComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> OverallQualityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> AAQualityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> ShadowQualityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> TextureQualityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> EffectsQualityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> PostProcessQualityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> VFXIntensityComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ForwardKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> BackwardKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> LeftKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> RightKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> SprintKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ApplyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> CancelButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> DefaultsButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ConfirmVideoButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> RevertVideoButton;
+
+	float PendingMasterVolume = 1.0f;
+	float PendingSFXVolume = 1.0f;
+	float PendingMusicVolume = 1.0f;
+	float PendingUIVolume = 1.0f;
+	float PendingFrameRate = 120.0f;
+	float PendingResolutionScale = 100.0f;
+	float PendingBrightness = 2.2f;
+	float PendingSensitivity = 1.0f;
+	bool bPendingMuteAll = false;
+	bool bPendingMuteWhenUnfocused = true;
+	bool bPendingVSync = false;
+	bool bPendingMotionBlur = true;
+	EWindowMode::Type PendingWindowMode = EWindowMode::WindowedFullscreen;
+	FIntPoint PendingResolution = FIntPoint(1920, 1080);
+	int32 PendingOverallQuality = 3;
+	int32 PendingAAQuality = 3;
+	int32 PendingShadowQuality = 3;
+	int32 PendingTextureQuality = 3;
+	int32 PendingEffectsQuality = 3;
+	int32 PendingPostProcessQuality = 3;
+	EProjectProject01VFXIntensity PendingVFXIntensity = EProjectProject01VFXIntensity::Standard;
+	FKey PendingForwardKey = EKeys::W;
+	FKey PendingBackwardKey = EKeys::S;
+	FKey PendingLeftKey = EKeys::A;
+	FKey PendingRightKey = EKeys::D;
+	FKey PendingSprintKey = EKeys::LeftShift;
+	EBindingTarget BindingTarget = EBindingTarget::None;
+	bool bRefreshingControls = false;
+	bool bAwaitingVideoConfirmation = false;
+	float VideoConfirmationSecondsRemaining = 0.0f;
 };
 
 UCLASS()

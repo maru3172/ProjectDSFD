@@ -4,8 +4,12 @@
 #include "ProjectProject01GameInstance.h"
 
 #include "Dom/JsonObject.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "AudioDevice.h"
+#include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/IConsoleManager.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -15,8 +19,207 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Sound/SoundClass.h"
+#include "Sound/SoundMix.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01NetworkSecurity, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01UserSettings, Log, All);
+
+namespace ProjectProject01UserSettings
+{
+	bool IsAllowedBinding(const FKey Key)
+	{
+		return Key.IsValid() && !Key.IsGamepadKey() && Key != EKeys::F1 && Key != EKeys::Escape;
+	}
+}
+
+UProjectProject01GameUserSettings::UProjectProject01GameUserSettings(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+}
+
+UProjectProject01GameUserSettings* UProjectProject01GameUserSettings::Get()
+{
+	return IsValid(GEngine) ? Cast<UProjectProject01GameUserSettings>(GEngine->GetGameUserSettings()) : nullptr;
+}
+
+void UProjectProject01GameUserSettings::SetToDefaults()
+{
+	Super::SetToDefaults();
+	MasterVolume = 1.0f;
+	SFXVolume = 1.0f;
+	MusicVolume = 1.0f;
+	UIVolume = 1.0f;
+	bMuteAll = false;
+	bMuteWhenUnfocused = true;
+	bMotionBlurEnabled = true;
+	DisplayGammaSetting = 2.2f;
+	MouseSensitivity = 1.0f;
+	VFXIntensity = EProjectProject01VFXIntensity::Standard;
+	MoveForwardKeyName = EKeys::W.GetFName();
+	MoveBackwardKeyName = EKeys::S.GetFName();
+	MoveLeftKeyName = EKeys::A.GetFName();
+	MoveRightKeyName = EKeys::D.GetFName();
+	SprintKeyName = EKeys::LeftShift.GetFName();
+	SetFrameRateLimit(120.0f);
+	SetResolutionScaleValueEx(100.0f);
+	SetOverallScalabilityLevel(3);
+}
+
+void UProjectProject01GameUserSettings::LoadSettings(const bool bForceReload)
+{
+	Super::LoadSettings(bForceReload);
+	ValidateProjectSettings();
+}
+
+void UProjectProject01GameUserSettings::ApplySettings(const bool bCheckForCommandLineOverrides)
+{
+	ValidateProjectSettings();
+	Super::ApplySettings(bCheckForCommandLineOverrides);
+	ApplyProjectSettings(true);
+}
+
+void UProjectProject01GameUserSettings::ApplyNonResolutionSettings()
+{
+	ValidateProjectSettings();
+	Super::ApplyNonResolutionSettings();
+	ApplyProjectSettings(true);
+}
+
+void UProjectProject01GameUserSettings::ValidateProjectSettings()
+{
+	MasterVolume = FMath::Clamp(MasterVolume, 0.0f, 1.0f);
+	SFXVolume = FMath::Clamp(SFXVolume, 0.0f, 1.0f);
+	MusicVolume = FMath::Clamp(MusicVolume, 0.0f, 1.0f);
+	UIVolume = FMath::Clamp(UIVolume, 0.0f, 1.0f);
+	DisplayGammaSetting = FMath::Clamp(DisplayGammaSetting, 1.8f, 2.6f);
+	MouseSensitivity = FMath::Clamp(MouseSensitivity, 0.1f, 3.0f);
+	if (VFXIntensity != EProjectProject01VFXIntensity::Standard &&
+		VFXIntensity != EProjectProject01VFXIntensity::Reduced)
+	{
+		VFXIntensity = EProjectProject01VFXIntensity::Standard;
+	}
+
+	TArray<FKey> Keys = {
+		GetValidatedKey(MoveForwardKeyName, EKeys::W),
+		GetValidatedKey(MoveBackwardKeyName, EKeys::S),
+		GetValidatedKey(MoveLeftKeyName, EKeys::A),
+		GetValidatedKey(MoveRightKeyName, EKeys::D),
+		GetValidatedKey(SprintKeyName, EKeys::LeftShift)
+	};
+	TSet<FKey> UniqueKeys;
+	bool bHasInvalidOrDuplicate = false;
+	for (const FKey Key : Keys)
+	{
+		if (!ProjectProject01UserSettings::IsAllowedBinding(Key) || UniqueKeys.Contains(Key))
+		{
+			bHasInvalidOrDuplicate = true;
+			break;
+		}
+		UniqueKeys.Add(Key);
+	}
+	if (bHasInvalidOrDuplicate)
+	{
+		UE_LOG(LogProjectProject01UserSettings, Warning,
+			TEXT("Invalid, reserved, or duplicate input bindings were reset to safe defaults."));
+		MoveForwardKeyName = EKeys::W.GetFName();
+		MoveBackwardKeyName = EKeys::S.GetFName();
+		MoveLeftKeyName = EKeys::A.GetFName();
+		MoveRightKeyName = EKeys::D.GetFName();
+		SprintKeyName = EKeys::LeftShift.GetFName();
+	}
+}
+
+void UProjectProject01GameUserSettings::ApplyProjectSettings(const bool bApplicationActive)
+{
+	ValidateProjectSettings();
+	if (IsValid(GEngine))
+	{
+		GEngine->DisplayGamma = DisplayGammaSetting;
+	}
+	if (IConsoleVariable* MotionBlurQuality = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")))
+	{
+		MotionBlurQuality->Set(bMotionBlurEnabled ? 4 : 0, ECVF_SetByGameSetting);
+	}
+	ApplyAudioSettings(bApplicationActive);
+}
+
+void UProjectProject01GameUserSettings::ApplyAudioSettings(const bool bApplicationActive)
+{
+	EnsureRuntimeAudioObjects();
+	if (!IsValid(GEngine))
+	{
+		return;
+	}
+	FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice();
+	if (!AudioDevice.IsValid())
+	{
+		return;
+	}
+	const bool bMuted = bMuteAll || (bMuteWhenUnfocused && !bApplicationActive);
+	AudioDevice->SetTransientPrimaryVolume(bMuted ? 0.0f : MasterVolume);
+	if (IsValid(RuntimeSoundMix))
+	{
+		if (!bRuntimeSoundMixPushed)
+		{
+			AudioDevice->PushSoundMixModifier(RuntimeSoundMix);
+			bRuntimeSoundMixPushed = true;
+		}
+		AudioDevice->SetSoundMixClassOverride(RuntimeSoundMix, RuntimeSFXSoundClass, SFXVolume, 1.0f, 0.05f, true);
+		AudioDevice->SetSoundMixClassOverride(RuntimeSoundMix, RuntimeMusicSoundClass, MusicVolume, 1.0f, 0.05f, true);
+		AudioDevice->SetSoundMixClassOverride(RuntimeSoundMix, RuntimeUISoundClass, UIVolume, 1.0f, 0.05f, true);
+	}
+}
+
+FKey UProjectProject01GameUserSettings::GetValidatedKey(const FName StoredName, const FKey Fallback) const
+{
+	const FKey Key(StoredName);
+	return ProjectProject01UserSettings::IsAllowedBinding(Key) ? Key : Fallback;
+}
+
+FKey UProjectProject01GameUserSettings::GetMoveForwardKey() const { return GetValidatedKey(MoveForwardKeyName, EKeys::W); }
+FKey UProjectProject01GameUserSettings::GetMoveBackwardKey() const { return GetValidatedKey(MoveBackwardKeyName, EKeys::S); }
+FKey UProjectProject01GameUserSettings::GetMoveLeftKey() const { return GetValidatedKey(MoveLeftKeyName, EKeys::A); }
+FKey UProjectProject01GameUserSettings::GetMoveRightKey() const { return GetValidatedKey(MoveRightKeyName, EKeys::D); }
+FKey UProjectProject01GameUserSettings::GetSprintKey() const { return GetValidatedKey(SprintKeyName, EKeys::LeftShift); }
+
+void UProjectProject01GameUserSettings::EnsureRuntimeAudioObjects()
+{
+	if (!IsValid(RuntimeSFXSoundClass))
+	{
+		RuntimeSFXSoundClass = NewObject<USoundClass>(this, TEXT("ProjectProject01SFXSoundClass"));
+	}
+	if (!IsValid(RuntimeMusicSoundClass))
+	{
+		RuntimeMusicSoundClass = NewObject<USoundClass>(this, TEXT("ProjectProject01MusicSoundClass"));
+	}
+	if (!IsValid(RuntimeUISoundClass))
+	{
+		RuntimeUISoundClass = NewObject<USoundClass>(this, TEXT("ProjectProject01UISoundClass"));
+	}
+	if (!IsValid(RuntimeSoundMix))
+	{
+		RuntimeSoundMix = NewObject<USoundMix>(this, TEXT("ProjectProject01UserSoundMix"));
+	}
+}
+
+USoundClass* UProjectProject01GameUserSettings::GetSFXSoundClass()
+{
+	EnsureRuntimeAudioObjects();
+	return RuntimeSFXSoundClass;
+}
+
+USoundClass* UProjectProject01GameUserSettings::GetMusicSoundClass()
+{
+	EnsureRuntimeAudioObjects();
+	return RuntimeMusicSoundClass;
+}
+
+USoundClass* UProjectProject01GameUserSettings::GetUISoundClass()
+{
+	EnsureRuntimeAudioObjects();
+	return RuntimeUISoundClass;
+}
 
 namespace ProjectProject01NetworkSecurity
 {
@@ -56,6 +259,16 @@ void UProjectProject01GameInstance::Init()
 	SecurityApiBaseUrl = ProjectProject01NetworkSecurity::NormalizeBaseUrl(SecurityApiBaseUrl);
 	SecurityRequestTimeoutSeconds = FMath::Clamp(SecurityRequestTimeoutSeconds, 2.0f, 30.0f);
 	Super::Init();
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		Settings->LoadSettings(false);
+		Settings->ApplyProjectSettings(true);
+	}
+	if (!IsRunningDedicatedServer() && FSlateApplication::IsInitialized())
+	{
+		ApplicationActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged().AddUObject(
+			this, &UProjectProject01GameInstance::HandleApplicationActivationChanged);
+	}
 
 	if (!IsBackendUrlAllowed())
 	{
@@ -66,6 +279,11 @@ void UProjectProject01GameInstance::Init()
 
 void UProjectProject01GameInstance::Shutdown()
 {
+	if (ApplicationActivationHandle.IsValid() && FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(ApplicationActivationHandle);
+		ApplicationActivationHandle.Reset();
+	}
 	for (const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& Request : PendingSecurityRequests)
 	{
 		if (Request.IsValid())
@@ -76,6 +294,14 @@ void UProjectProject01GameInstance::Shutdown()
 	}
 	PendingSecurityRequests.Reset();
 	Super::Shutdown();
+}
+
+void UProjectProject01GameInstance::HandleApplicationActivationChanged(const bool bApplicationActive)
+{
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		Settings->ApplyAudioSettings(bApplicationActive);
+	}
 }
 
 bool UProjectProject01GameInstance::ConfigurePendingGameConnection(

@@ -10,15 +10,20 @@
 #include "Components/ComboBoxString.h"
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/MultiLineEditableTextBox.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
+#include "Components/PanelWidget.h"
 #include "Components/ScrollBox.h"
+#include "Components/Slider.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Kismet/GameplayStatics.h"
+#include "PlayerCharacter.h"
+#include "ProjectProject01GameInstance.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
 #include "Engine/World.h"
@@ -89,6 +94,127 @@ namespace ProjectProject01LoginUI
 		ItemStyle.SetTextColor(Black).SetSelectedTextColor(Black);
 		ComboBox->SetItemStyle(ItemStyle);
 	}
+
+	UTextBlock* AddPlainText(UWidgetTree* WidgetTree, UPanelWidget* Parent, const FString& Text, const float FontSize = 14.0f)
+	{
+		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
+		Label->SetText(FText::FromString(Text));
+		Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+		FSlateFontInfo Font = Label->GetFont();
+		Font.Size = FontSize;
+		Label->SetFont(Font);
+		Parent->AddChild(Label);
+		return Label;
+	}
+
+	USlider* AddSliderRow(
+		UWidgetTree* WidgetTree,
+		UVerticalBox* Root,
+		const FString& LabelText,
+		const float MinValue,
+		const float MaxValue,
+		const float Step,
+		TObjectPtr<UTextBlock>& OutValueText)
+	{
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		if (UVerticalBoxSlot* RowSlot = Root->AddChildToVerticalBox(Row))
+		{
+			RowSlot->SetPadding(FMargin(8.0f, 3.0f));
+			RowSlot->SetHorizontalAlignment(HAlign_Fill);
+		}
+		UTextBlock* Label = AddPlainText(WidgetTree, Row, LabelText);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Label->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+		USlider* Slider = WidgetTree->ConstructWidget<USlider>();
+		Slider->SetMinValue(MinValue);
+		Slider->SetMaxValue(MaxValue);
+		Slider->SetStepSize(Step);
+		Row->AddChild(Slider);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Slider->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			Slot->SetPadding(FMargin(8.0f, 0.0f));
+		}
+		OutValueText = AddPlainText(WidgetTree, Row, TEXT("0"));
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(OutValueText->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+		}
+		return Slider;
+	}
+
+	UCheckBox* AddCheckRow(UWidgetTree* WidgetTree, UVerticalBox* Root, const FString& LabelText)
+	{
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		if (UVerticalBoxSlot* RowSlot = Root->AddChildToVerticalBox(Row))
+		{
+			RowSlot->SetPadding(FMargin(8.0f, 3.0f));
+		}
+		UTextBlock* Label = AddPlainText(WidgetTree, Row, LabelText);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Label->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+		UCheckBox* CheckBox = WidgetTree->ConstructWidget<UCheckBox>();
+		Row->AddChild(CheckBox);
+		return CheckBox;
+	}
+
+	UComboBoxString* AddComboRow(UWidgetTree* WidgetTree, UVerticalBox* Root, const FString& LabelText)
+	{
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		if (UVerticalBoxSlot* RowSlot = Root->AddChildToVerticalBox(Row))
+		{
+			RowSlot->SetPadding(FMargin(8.0f, 3.0f));
+		}
+		UTextBlock* Label = AddPlainText(WidgetTree, Row, LabelText);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Label->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+		UComboBoxString* Combo = WidgetTree->ConstructWidget<UComboBoxString>();
+		SetComboBoxTextBlack(Combo);
+		Row->AddChild(Combo);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Combo->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+		return Combo;
+	}
+
+	UButton* AddKeyRow(UWidgetTree* WidgetTree, UVerticalBox* Root, const FString& LabelText)
+	{
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		if (UVerticalBoxSlot* RowSlot = Root->AddChildToVerticalBox(Row))
+		{
+			RowSlot->SetPadding(FMargin(8.0f, 3.0f));
+		}
+		UTextBlock* Label = AddPlainText(WidgetTree, Row, LabelText);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Label->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+		UButton* Button = WidgetTree->ConstructWidget<UButton>();
+		UTextBlock* ButtonText = WidgetTree->ConstructWidget<UTextBlock>();
+		ButtonText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+		ButtonText->SetJustification(ETextJustify::Center);
+		Button->AddChild(ButtonText);
+		Row->AddChild(Button);
+		return Button;
+	}
+
+	void SetButtonText(UButton* Button, const FString& Text)
+	{
+		if (IsValid(Button))
+		{
+			if (UTextBlock* TextBlock = Cast<UTextBlock>(Button->GetContent()))
+			{
+				TextBlock->SetText(FText::FromString(Text));
+			}
+		}
+	}
 }
 
 bool UProjectProject01TitleWidget::Initialize()
@@ -98,6 +224,7 @@ bool UProjectProject01TitleWidget::Initialize()
 		return false;
 	}
 
+	SetIsFocusable(true);
 	BuildWidgetTree();
 	return true;
 }
@@ -114,6 +241,10 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	if (IsValid(MultiplayerButton))
 	{
 		MultiplayerButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleMultiplayerClicked);
+	}
+	if (IsValid(SettingsButton))
+	{
+		SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSettingsClicked);
 	}
 	if (IsValid(QuitButton))
 	{
@@ -137,6 +268,10 @@ void UProjectProject01TitleWidget::NativeDestruct()
 	if (IsValid(MultiplayerButton))
 	{
 		MultiplayerButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleMultiplayerClicked);
+	}
+	if (IsValid(SettingsButton))
+	{
+		SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSettingsClicked);
 	}
 	if (IsValid(QuitButton))
 	{
@@ -173,6 +308,23 @@ void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 	bNavigationRequested = true;
 	SetMenuEnabled(false);
 	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::MultiplayerLoginLevel, true);
+}
+
+void UProjectProject01TitleWidget::HandleSettingsClicked()
+{
+	if (bNavigationRequested || !IsValid(GetOwningPlayer()))
+	{
+		return;
+	}
+	SettingsWidget = CreateWidget<UProjectProject01SettingsWidget>(
+		GetOwningPlayer(), UProjectProject01SettingsWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SettingsWidget), TEXT("Title menu could not create settings widget.")))
+	{
+		return;
+	}
+	SettingsWidget->ConfigureReturnWidget(this);
+	SetVisibility(ESlateVisibility::Collapsed);
+	SettingsWidget->AddToViewport(600);
 }
 
 void UProjectProject01TitleWidget::HandleQuitClicked()
@@ -227,6 +379,7 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		14.0f);
 	SinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("싱글 플레이"));
 	MultiplayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("멀티플레이"));
+	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	QuitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 }
 
@@ -239,6 +392,10 @@ void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
 	if (IsValid(MultiplayerButton))
 	{
 		MultiplayerButton->SetIsEnabled(bEnabled);
+	}
+	if (IsValid(SettingsButton))
+	{
+		SettingsButton->SetIsEnabled(bEnabled);
 	}
 	if (IsValid(QuitButton))
 	{
@@ -512,6 +669,7 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 	Super::NativeConstruct();
 	if (IsValid(ContinueButton)) ContinueButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
+	if (IsValid(SettingsButton)) SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
 
@@ -533,6 +691,7 @@ void UProjectProject01SessionMenuWidget::NativeDestruct()
 {
 	if (IsValid(ContinueButton)) ContinueButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
+	if (IsValid(SettingsButton)) SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
 
@@ -585,6 +744,23 @@ void UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked()
 
 	SetBusy(true, TEXT("게임 서버 접속을 끝내고 방으로 돌아가는 중..."));
 	Lobby->ReturnToRoom();
+}
+
+void UProjectProject01SessionMenuWidget::HandleSettingsClicked()
+{
+	if (bBusy || !IsValid(GetOwningPlayer()))
+	{
+		return;
+	}
+	SettingsWidget = CreateWidget<UProjectProject01SettingsWidget>(
+		GetOwningPlayer(), UProjectProject01SettingsWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SettingsWidget), TEXT("Session menu could not create settings widget.")))
+	{
+		return;
+	}
+	SettingsWidget->ConfigureReturnWidget(this);
+	SetVisibility(ESlateVisibility::Collapsed);
+	SettingsWidget->AddToViewport(600);
 }
 
 void UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked()
@@ -758,6 +934,7 @@ void UProjectProject01SessionMenuWidget::SetBusy(
 	bBusy = bInBusy;
 	if (IsValid(ContinueButton)) ContinueButton->SetIsEnabled(!bBusy);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(!bBusy);
+	if (IsValid(SettingsButton)) SettingsButton->SetIsEnabled(!bBusy);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(!bBusy);
 	if (IsValid(QuitGameButton)) QuitGameButton->SetIsEnabled(!bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
@@ -797,9 +974,669 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("F1을 다시 누르면 게임으로 돌아갑니다."), 14.0f);
 	ContinueButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 계속"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("방으로 돌아가기"));
+	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 }
+
+void UProjectProject01SettingsWidget::ConfigureReturnWidget(UUserWidget* InReturnWidget)
+{
+	ReturnWidget = InReturnWidget;
+}
+
+bool UProjectProject01SettingsWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	SetIsFocusable(true);
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01SettingsWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	LoadPendingFromSettings();
+	RefreshAllControls();
+
+	MasterVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
+	SFXVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSFXVolumeChanged);
+	MusicVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMusicVolumeChanged);
+	UIVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleUIVolumeChanged);
+	FrameRateSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleFrameRateChanged);
+	ResolutionScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionScaleChanged);
+	BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleBrightnessChanged);
+	SensitivitySlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSensitivityChanged);
+	MuteAllCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMuteAllChanged);
+	MuteWhenUnfocusedCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged);
+	VSyncCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVSyncChanged);
+	MotionBlurCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMotionBlurChanged);
+	WindowModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleWindowModeChanged);
+	ResolutionComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionChanged);
+	OverallQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleOverallQualityChanged);
+	AAQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleAAQualityChanged);
+	ShadowQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleShadowQualityChanged);
+	TextureQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleTextureQualityChanged);
+	EffectsQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleEffectsQualityChanged);
+	PostProcessQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
+	VFXIntensityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
+	ForwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
+	BackwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
+	LeftKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
+	RightKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleRightBindingClicked);
+	SprintKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSprintBindingClicked);
+	ApplyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleApplyClicked);
+	CancelButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleCancelClicked);
+	DefaultsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleDefaultsClicked);
+	ConfirmVideoButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleConfirmVideoClicked);
+	RevertVideoButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleRevertVideoClicked);
+	SetKeyboardFocus();
+}
+
+void UProjectProject01SettingsWidget::NativeDestruct()
+{
+	if (IsValid(MasterVolumeSlider)) MasterVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
+	if (IsValid(SFXVolumeSlider)) SFXVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSFXVolumeChanged);
+	if (IsValid(MusicVolumeSlider)) MusicVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMusicVolumeChanged);
+	if (IsValid(UIVolumeSlider)) UIVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleUIVolumeChanged);
+	if (IsValid(FrameRateSlider)) FrameRateSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleFrameRateChanged);
+	if (IsValid(ResolutionScaleSlider)) ResolutionScaleSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionScaleChanged);
+	if (IsValid(BrightnessSlider)) BrightnessSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleBrightnessChanged);
+	if (IsValid(SensitivitySlider)) SensitivitySlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSensitivityChanged);
+	if (IsValid(MuteAllCheckBox)) MuteAllCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMuteAllChanged);
+	if (IsValid(MuteWhenUnfocusedCheckBox)) MuteWhenUnfocusedCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged);
+	if (IsValid(VSyncCheckBox)) VSyncCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVSyncChanged);
+	if (IsValid(MotionBlurCheckBox)) MotionBlurCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMotionBlurChanged);
+	if (IsValid(WindowModeComboBox)) WindowModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleWindowModeChanged);
+	if (IsValid(ResolutionComboBox)) ResolutionComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionChanged);
+	if (IsValid(OverallQualityComboBox)) OverallQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleOverallQualityChanged);
+	if (IsValid(AAQualityComboBox)) AAQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleAAQualityChanged);
+	if (IsValid(ShadowQualityComboBox)) ShadowQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleShadowQualityChanged);
+	if (IsValid(TextureQualityComboBox)) TextureQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleTextureQualityChanged);
+	if (IsValid(EffectsQualityComboBox)) EffectsQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleEffectsQualityChanged);
+	if (IsValid(PostProcessQualityComboBox)) PostProcessQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
+	if (IsValid(VFXIntensityComboBox)) VFXIntensityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
+	if (IsValid(ForwardKeyButton)) ForwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
+	if (IsValid(BackwardKeyButton)) BackwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
+	if (IsValid(LeftKeyButton)) LeftKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
+	if (IsValid(RightKeyButton)) RightKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleRightBindingClicked);
+	if (IsValid(SprintKeyButton)) SprintKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSprintBindingClicked);
+	if (IsValid(ApplyButton)) ApplyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleApplyClicked);
+	if (IsValid(CancelButton)) CancelButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleCancelClicked);
+	if (IsValid(DefaultsButton)) DefaultsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleDefaultsClicked);
+	if (IsValid(ConfirmVideoButton)) ConfirmVideoButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleConfirmVideoClicked);
+	if (IsValid(RevertVideoButton)) RevertVideoButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleRevertVideoClicked);
+	Super::NativeDestruct();
+}
+
+void UProjectProject01SettingsWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (!bAwaitingVideoConfirmation)
+	{
+		return;
+	}
+	VideoConfirmationSecondsRemaining -= InDeltaTime;
+	if (VideoConfirmationSecondsRemaining <= 0.0f)
+	{
+		RevertPendingVideoMode();
+		return;
+	}
+	if (IsValid(VideoConfirmText))
+	{
+		VideoConfirmText->SetText(FText::FromString(FString::Printf(
+			TEXT("이 화면 설정을 유지하시겠습니까? %.0f초 후 자동 복구됩니다."),
+			FMath::CeilToFloat(VideoConfirmationSecondsRemaining))));
+	}
+}
+
+FReply UProjectProject01SettingsWidget::NativeOnKeyDown(
+	const FGeometry& InGeometry,
+	const FKeyEvent& InKeyEvent)
+{
+	const FKey Key = InKeyEvent.GetKey();
+	if (BindingTarget != EBindingTarget::None)
+	{
+		if (Key == EKeys::Escape)
+		{
+			BindingTarget = EBindingTarget::None;
+			RefreshBindingLabels();
+			SetStatus(TEXT("키 변경을 취소했습니다."));
+			return FReply::Handled();
+		}
+		TryAssignBinding(Key);
+		return FReply::Handled();
+	}
+	if (Key == EKeys::F1 || Key == EKeys::Escape)
+	{
+		HandleCancelClicked();
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+}
+
+void UProjectProject01SettingsWidget::HandleMasterVolumeChanged(const float Value) { if (!bRefreshingControls) { PendingMasterVolume = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleSFXVolumeChanged(const float Value) { if (!bRefreshingControls) { PendingSFXVolume = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleMusicVolumeChanged(const float Value) { if (!bRefreshingControls) { PendingMusicVolume = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleUIVolumeChanged(const float Value) { if (!bRefreshingControls) { PendingUIVolume = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleFrameRateChanged(const float Value) { if (!bRefreshingControls) { PendingFrameRate = FMath::RoundToFloat(Value); RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleResolutionScaleChanged(const float Value) { if (!bRefreshingControls) { PendingResolutionScale = FMath::RoundToFloat(Value); RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleBrightnessChanged(const float Value) { if (!bRefreshingControls) { PendingBrightness = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleSensitivityChanged(const float Value) { if (!bRefreshingControls) { PendingSensitivity = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleMuteAllChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMuteAll = bChecked; }
+void UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMuteWhenUnfocused = bChecked; }
+void UProjectProject01SettingsWidget::HandleVSyncChanged(const bool bChecked) { if (!bRefreshingControls) bPendingVSync = bChecked; }
+void UProjectProject01SettingsWidget::HandleMotionBlurChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMotionBlur = bChecked; }
+
+void UProjectProject01SettingsWidget::HandleWindowModeChanged(const FString Item, ESelectInfo::Type)
+{
+	if (bRefreshingControls) return;
+	if (Item == TEXT("전체화면")) PendingWindowMode = EWindowMode::Fullscreen;
+	else if (Item == TEXT("테두리 없는 창")) PendingWindowMode = EWindowMode::WindowedFullscreen;
+	else PendingWindowMode = EWindowMode::Windowed;
+}
+
+void UProjectProject01SettingsWidget::HandleResolutionChanged(const FString Item, ESelectInfo::Type)
+{
+	if (!bRefreshingControls) ParseResolution(Item, PendingResolution);
+}
+
+void UProjectProject01SettingsWidget::HandleOverallQualityChanged(const FString Item, ESelectInfo::Type)
+{
+	if (bRefreshingControls) return;
+	const int32 Quality = QualityFromString(Item);
+	PendingOverallQuality = Quality;
+	if (Quality >= 0)
+	{
+		PendingAAQuality = Quality;
+		PendingShadowQuality = Quality;
+		PendingTextureQuality = Quality;
+		PendingEffectsQuality = Quality;
+		PendingPostProcessQuality = Quality;
+		RefreshAllControls();
+	}
+}
+
+void UProjectProject01SettingsWidget::HandleAAQualityChanged(const FString Item, ESelectInfo::Type) { if (!bRefreshingControls) { PendingAAQuality = QualityFromString(Item); PendingOverallQuality = -1; OverallQualityComboBox->SetSelectedOption(TEXT("사용자 지정")); } }
+void UProjectProject01SettingsWidget::HandleShadowQualityChanged(const FString Item, ESelectInfo::Type) { if (!bRefreshingControls) { PendingShadowQuality = QualityFromString(Item); PendingOverallQuality = -1; OverallQualityComboBox->SetSelectedOption(TEXT("사용자 지정")); } }
+void UProjectProject01SettingsWidget::HandleTextureQualityChanged(const FString Item, ESelectInfo::Type) { if (!bRefreshingControls) { PendingTextureQuality = QualityFromString(Item); PendingOverallQuality = -1; OverallQualityComboBox->SetSelectedOption(TEXT("사용자 지정")); } }
+void UProjectProject01SettingsWidget::HandleEffectsQualityChanged(const FString Item, ESelectInfo::Type) { if (!bRefreshingControls) { PendingEffectsQuality = QualityFromString(Item); PendingOverallQuality = -1; OverallQualityComboBox->SetSelectedOption(TEXT("사용자 지정")); } }
+void UProjectProject01SettingsWidget::HandlePostProcessQualityChanged(const FString Item, ESelectInfo::Type) { if (!bRefreshingControls) { PendingPostProcessQuality = QualityFromString(Item); PendingOverallQuality = -1; OverallQualityComboBox->SetSelectedOption(TEXT("사용자 지정")); } }
+
+void UProjectProject01SettingsWidget::HandleVFXIntensityChanged(const FString Item, ESelectInfo::Type)
+{
+	if (!bRefreshingControls)
+	{
+		PendingVFXIntensity = Item == TEXT("약하게")
+			? EProjectProject01VFXIntensity::Reduced : EProjectProject01VFXIntensity::Standard;
+	}
+}
+
+void UProjectProject01SettingsWidget::HandleForwardBindingClicked() { BeginBindingCapture(EBindingTarget::Forward); }
+void UProjectProject01SettingsWidget::HandleBackwardBindingClicked() { BeginBindingCapture(EBindingTarget::Backward); }
+void UProjectProject01SettingsWidget::HandleLeftBindingClicked() { BeginBindingCapture(EBindingTarget::Left); }
+void UProjectProject01SettingsWidget::HandleRightBindingClicked() { BeginBindingCapture(EBindingTarget::Right); }
+void UProjectProject01SettingsWidget::HandleSprintBindingClicked() { BeginBindingCapture(EBindingTarget::Sprint); }
+void UProjectProject01SettingsWidget::HandleApplyClicked() { ApplyPendingSettings(); }
+
+void UProjectProject01SettingsWidget::HandleCancelClicked()
+{
+	if (bAwaitingVideoConfirmation) RevertPendingVideoMode();
+	CloseToReturnWidget();
+}
+
+void UProjectProject01SettingsWidget::HandleDefaultsClicked()
+{
+	SetPendingDefaults();
+	RefreshAllControls();
+	SetStatus(TEXT("기본값을 불러왔습니다. 적용 버튼을 눌러 저장하세요."));
+}
+
+void UProjectProject01SettingsWidget::HandleConfirmVideoClicked() { ConfirmPendingVideoMode(); }
+void UProjectProject01SettingsWidget::HandleRevertVideoClicked() { RevertPendingVideoMode(); }
+
+void UProjectProject01SettingsWidget::LoadPendingFromSettings()
+{
+	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	if (!IsValid(Settings))
+	{
+		SetStatus(TEXT("사용자 설정 객체를 찾지 못했습니다."), true);
+		SetPendingDefaults();
+		return;
+	}
+	PendingMasterVolume = Settings->GetMasterVolume();
+	PendingSFXVolume = Settings->GetSFXVolume();
+	PendingMusicVolume = Settings->GetMusicVolume();
+	PendingUIVolume = Settings->GetUIVolume();
+	bPendingMuteAll = Settings->IsMuteAllEnabled();
+	bPendingMuteWhenUnfocused = Settings->IsMuteWhenUnfocusedEnabled();
+	bPendingVSync = Settings->IsVSyncEnabled();
+	bPendingMotionBlur = Settings->IsMotionBlurEnabled();
+	PendingFrameRate = FMath::Clamp(Settings->GetFrameRateLimit() <= 0.0f ? 240.0f : Settings->GetFrameRateLimit(), 30.0f, 240.0f);
+	float Normalized = 0.0f, CurrentScale = 100.0f, MinScale = 50.0f, MaxScale = 100.0f;
+	Settings->GetResolutionScaleInformationEx(Normalized, CurrentScale, MinScale, MaxScale);
+	PendingResolutionScale = FMath::Clamp(CurrentScale, 50.0f, 100.0f);
+	PendingBrightness = Settings->GetDisplayGammaSetting();
+	PendingSensitivity = Settings->GetMouseSensitivity();
+	PendingWindowMode = Settings->GetFullscreenMode();
+	PendingResolution = Settings->GetScreenResolution();
+	PendingOverallQuality = Settings->GetOverallScalabilityLevel();
+	PendingAAQuality = Settings->GetAntiAliasingQuality();
+	PendingShadowQuality = Settings->GetShadowQuality();
+	PendingTextureQuality = Settings->GetTextureQuality();
+	PendingEffectsQuality = Settings->GetVisualEffectQuality();
+	PendingPostProcessQuality = Settings->GetPostProcessingQuality();
+	PendingVFXIntensity = Settings->GetVFXIntensity();
+	PendingForwardKey = Settings->GetMoveForwardKey();
+	PendingBackwardKey = Settings->GetMoveBackwardKey();
+	PendingLeftKey = Settings->GetMoveLeftKey();
+	PendingRightKey = Settings->GetMoveRightKey();
+	PendingSprintKey = Settings->GetSprintKey();
+}
+
+void UProjectProject01SettingsWidget::SetPendingDefaults()
+{
+	PendingMasterVolume = PendingSFXVolume = PendingMusicVolume = PendingUIVolume = 1.0f;
+	bPendingMuteAll = false;
+	bPendingMuteWhenUnfocused = true;
+	bPendingVSync = false;
+	bPendingMotionBlur = true;
+	PendingFrameRate = 120.0f;
+	PendingResolutionScale = 100.0f;
+	PendingBrightness = 2.2f;
+	PendingSensitivity = 1.0f;
+	PendingWindowMode = EWindowMode::WindowedFullscreen;
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		PendingResolution = Settings->GetDesktopResolution();
+	}
+	PendingOverallQuality = PendingAAQuality = PendingShadowQuality = PendingTextureQuality =
+		PendingEffectsQuality = PendingPostProcessQuality = 3;
+	PendingVFXIntensity = EProjectProject01VFXIntensity::Standard;
+	PendingForwardKey = EKeys::W;
+	PendingBackwardKey = EKeys::S;
+	PendingLeftKey = EKeys::A;
+	PendingRightKey = EKeys::D;
+	PendingSprintKey = EKeys::LeftShift;
+}
+
+void UProjectProject01SettingsWidget::RefreshAllControls()
+{
+	bRefreshingControls = true;
+	MasterVolumeSlider->SetValue(PendingMasterVolume);
+	SFXVolumeSlider->SetValue(PendingSFXVolume);
+	MusicVolumeSlider->SetValue(PendingMusicVolume);
+	UIVolumeSlider->SetValue(PendingUIVolume);
+	FrameRateSlider->SetValue(PendingFrameRate);
+	ResolutionScaleSlider->SetValue(PendingResolutionScale);
+	BrightnessSlider->SetValue(PendingBrightness);
+	SensitivitySlider->SetValue(PendingSensitivity);
+	MuteAllCheckBox->SetIsChecked(bPendingMuteAll);
+	MuteWhenUnfocusedCheckBox->SetIsChecked(bPendingMuteWhenUnfocused);
+	VSyncCheckBox->SetIsChecked(bPendingVSync);
+	MotionBlurCheckBox->SetIsChecked(bPendingMotionBlur);
+	WindowModeComboBox->SetSelectedOption(PendingWindowMode == EWindowMode::Fullscreen
+		? TEXT("전체화면") : PendingWindowMode == EWindowMode::WindowedFullscreen
+		? TEXT("테두리 없는 창") : TEXT("창모드"));
+	const FString ResolutionText = FString::Printf(TEXT("%d x %d"), PendingResolution.X, PendingResolution.Y);
+	if (ResolutionComboBox->FindOptionIndex(ResolutionText) == INDEX_NONE) ResolutionComboBox->AddOption(ResolutionText);
+	ResolutionComboBox->SetSelectedOption(ResolutionText);
+	OverallQualityComboBox->SetSelectedOption(PendingOverallQuality < 0 ? TEXT("사용자 지정") : QualityToString(PendingOverallQuality));
+	SetQualityCombo(AAQualityComboBox, PendingAAQuality);
+	SetQualityCombo(ShadowQualityComboBox, PendingShadowQuality);
+	SetQualityCombo(TextureQualityComboBox, PendingTextureQuality);
+	SetQualityCombo(EffectsQualityComboBox, PendingEffectsQuality);
+	SetQualityCombo(PostProcessQualityComboBox, PendingPostProcessQuality);
+	VFXIntensityComboBox->SetSelectedOption(PendingVFXIntensity == EProjectProject01VFXIntensity::Reduced
+		? TEXT("약하게") : TEXT("기본"));
+	bRefreshingControls = false;
+	RefreshValueLabels();
+	RefreshBindingLabels();
+}
+
+void UProjectProject01SettingsWidget::RefreshValueLabels()
+{
+	MasterVolumeValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingMasterVolume * 100.0f))));
+	SFXVolumeValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingSFXVolume * 100.0f))));
+	MusicVolumeValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingMusicVolume * 100.0f))));
+	UIVolumeValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingUIVolume * 100.0f))));
+	FrameRateValueText->SetText(FText::AsNumber(FMath::RoundToInt(PendingFrameRate)));
+	ResolutionScaleValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingResolutionScale))));
+	BrightnessValueText->SetText(FText::FromString(FString::Printf(TEXT("%.2f"), PendingBrightness)));
+	SensitivityValueText->SetText(FText::FromString(FString::Printf(TEXT("%.2f"), PendingSensitivity)));
+}
+
+void UProjectProject01SettingsWidget::RefreshBindingLabels()
+{
+	auto LabelFor = [this](const EBindingTarget Target, const FKey Key)
+	{
+		return BindingTarget == Target ? TEXT("키를 누르세요 (Esc 취소)") : Key.GetDisplayName().ToString();
+	};
+	ProjectProject01LoginUI::SetButtonText(ForwardKeyButton, LabelFor(EBindingTarget::Forward, PendingForwardKey));
+	ProjectProject01LoginUI::SetButtonText(BackwardKeyButton, LabelFor(EBindingTarget::Backward, PendingBackwardKey));
+	ProjectProject01LoginUI::SetButtonText(LeftKeyButton, LabelFor(EBindingTarget::Left, PendingLeftKey));
+	ProjectProject01LoginUI::SetButtonText(RightKeyButton, LabelFor(EBindingTarget::Right, PendingRightKey));
+	ProjectProject01LoginUI::SetButtonText(SprintKeyButton, LabelFor(EBindingTarget::Sprint, PendingSprintKey));
+}
+
+void UProjectProject01SettingsWidget::BeginBindingCapture(const EBindingTarget Target)
+{
+	BindingTarget = Target;
+	RefreshBindingLabels();
+	SetStatus(TEXT("새 키를 누르세요. F1은 안전 메뉴 키로 고정되어 있습니다."));
+	SetKeyboardFocus();
+}
+
+bool UProjectProject01SettingsWidget::TryAssignBinding(const FKey Key)
+{
+	if (!Key.IsValid() || Key.IsGamepadKey() || Key == EKeys::F1 || Key == EKeys::Escape)
+	{
+		SetStatus(TEXT("사용할 수 없는 키입니다. F1과 Esc는 안전을 위해 예약되어 있습니다."), true);
+		return false;
+	}
+	const TArray<FKey> Existing = { PendingForwardKey, PendingBackwardKey, PendingLeftKey, PendingRightKey, PendingSprintKey };
+	int32 CurrentIndex = static_cast<int32>(BindingTarget) - 1;
+	for (int32 Index = 0; Index < Existing.Num(); ++Index)
+	{
+		if (Index != CurrentIndex && Existing[Index] == Key)
+		{
+			SetStatus(FString::Printf(TEXT("%s 키는 이미 다른 필수 행동에 사용 중입니다."), *Key.GetDisplayName().ToString()), true);
+			return false;
+		}
+	}
+	switch (BindingTarget)
+	{
+	case EBindingTarget::Forward: PendingForwardKey = Key; break;
+	case EBindingTarget::Backward: PendingBackwardKey = Key; break;
+	case EBindingTarget::Left: PendingLeftKey = Key; break;
+	case EBindingTarget::Right: PendingRightKey = Key; break;
+	case EBindingTarget::Sprint: PendingSprintKey = Key; break;
+	default: return false;
+	}
+	BindingTarget = EBindingTarget::None;
+	RefreshBindingLabels();
+	SetStatus(TEXT("키를 변경했습니다. 적용 버튼을 눌러 저장하세요."));
+	return true;
+}
+
+void UProjectProject01SettingsWidget::ApplyPendingSettings()
+{
+	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	if (!IsValid(Settings))
+	{
+		SetStatus(TEXT("사용자 설정 객체를 찾지 못했습니다."), true);
+		return;
+	}
+	const bool bVideoModeChanged = Settings->GetScreenResolution() != PendingResolution ||
+		Settings->GetFullscreenMode() != PendingWindowMode;
+	Settings->SetMasterVolume(PendingMasterVolume);
+	Settings->SetSFXVolume(PendingSFXVolume);
+	Settings->SetMusicVolume(PendingMusicVolume);
+	Settings->SetUIVolume(PendingUIVolume);
+	Settings->SetMuteAllEnabled(bPendingMuteAll);
+	Settings->SetMuteWhenUnfocusedEnabled(bPendingMuteWhenUnfocused);
+	Settings->SetVSyncEnabled(bPendingVSync);
+	Settings->SetMotionBlurEnabled(bPendingMotionBlur);
+	Settings->SetFrameRateLimit(PendingFrameRate);
+	Settings->SetResolutionScaleValueEx(PendingResolutionScale);
+	Settings->SetDisplayGammaSetting(PendingBrightness);
+	Settings->SetMouseSensitivity(PendingSensitivity);
+	if (PendingOverallQuality >= 0)
+	{
+		Settings->SetOverallScalabilityLevel(PendingOverallQuality);
+	}
+	Settings->SetAntiAliasingQuality(PendingAAQuality);
+	Settings->SetShadowQuality(PendingShadowQuality);
+	Settings->SetTextureQuality(PendingTextureQuality);
+	Settings->SetVisualEffectQuality(PendingEffectsQuality);
+	Settings->SetPostProcessingQuality(PendingPostProcessQuality);
+	Settings->SetVFXIntensity(PendingVFXIntensity);
+	Settings->SetMoveForwardKey(PendingForwardKey);
+	Settings->SetMoveBackwardKey(PendingBackwardKey);
+	Settings->SetMoveLeftKey(PendingLeftKey);
+	Settings->SetMoveRightKey(PendingRightKey);
+	Settings->SetSprintKey(PendingSprintKey);
+	Settings->SetScreenResolution(PendingResolution);
+	Settings->SetFullscreenMode(PendingWindowMode);
+	Settings->ApplyNonResolutionSettings();
+	RefreshLocalPlayerInput();
+	if (bVideoModeChanged)
+	{
+		Settings->ApplyResolutionSettings(false);
+		bAwaitingVideoConfirmation = true;
+		VideoConfirmationSecondsRemaining = 15.0f;
+		VideoConfirmPanel->SetVisibility(ESlateVisibility::Visible);
+		SetStatus(TEXT("화면 설정을 확인해 주세요."));
+		return;
+	}
+	Settings->SaveSettings();
+	SetStatus(TEXT("환경설정을 적용하고 저장했습니다."));
+}
+
+void UProjectProject01SettingsWidget::ConfirmPendingVideoMode()
+{
+	if (!bAwaitingVideoConfirmation) return;
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		Settings->ConfirmVideoMode();
+		Settings->SaveSettings();
+	}
+	bAwaitingVideoConfirmation = false;
+	VideoConfirmPanel->SetVisibility(ESlateVisibility::Collapsed);
+	SetStatus(TEXT("화면 설정을 유지하고 저장했습니다."));
+}
+
+void UProjectProject01SettingsWidget::RevertPendingVideoMode()
+{
+	if (!bAwaitingVideoConfirmation) return;
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		Settings->RevertVideoMode();
+		Settings->ApplyResolutionSettings(false);
+		Settings->SaveSettings();
+		PendingResolution = Settings->GetScreenResolution();
+		PendingWindowMode = Settings->GetFullscreenMode();
+	}
+	bAwaitingVideoConfirmation = false;
+	VideoConfirmPanel->SetVisibility(ESlateVisibility::Collapsed);
+	RefreshAllControls();
+	SetStatus(TEXT("이전 화면 설정으로 자동 복구했습니다."));
+}
+
+void UProjectProject01SettingsWidget::CloseToReturnWidget()
+{
+	BindingTarget = EBindingTarget::None;
+	RemoveFromParent();
+	if (IsValid(ReturnWidget))
+	{
+		ReturnWidget->SetVisibility(ESlateVisibility::Visible);
+		ReturnWidget->SetKeyboardFocus();
+		if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+		{
+			FInputModeGameAndUI InputMode;
+			InputMode.SetWidgetToFocus(ReturnWidget->TakeWidget());
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			InputMode.SetHideCursorDuringCapture(false);
+			PlayerController->SetInputMode(InputMode);
+		}
+	}
+}
+
+void UProjectProject01SettingsWidget::SetStatus(const FString& Message, const bool bIsError)
+{
+	if (IsValid(StatusText))
+	{
+		StatusText->SetText(FText::FromString(Message));
+		StatusText->SetColorAndOpacity(bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
+	}
+}
+
+void UProjectProject01SettingsWidget::SetQualityCombo(UComboBoxString* Combo, const int32 Quality)
+{
+	if (IsValid(Combo)) Combo->SetSelectedOption(QualityToString(Quality));
+}
+
+int32 UProjectProject01SettingsWidget::QualityFromString(const FString& Item) const
+{
+	if (Item == TEXT("낮음")) return 0;
+	if (Item == TEXT("중간")) return 1;
+	if (Item == TEXT("높음")) return 2;
+	if (Item == TEXT("매우 높음")) return 3;
+	return -1;
+}
+
+FString UProjectProject01SettingsWidget::QualityToString(const int32 Quality) const
+{
+	switch (FMath::Clamp(Quality, 0, 3))
+	{
+	case 0: return TEXT("낮음");
+	case 1: return TEXT("중간");
+	case 2: return TEXT("높음");
+	default: return TEXT("매우 높음");
+	}
+}
+
+bool UProjectProject01SettingsWidget::ParseResolution(const FString& Item, FIntPoint& OutResolution) const
+{
+	FString Left, Right;
+	if (!Item.Split(TEXT("x"), &Left, &Right)) return false;
+	Left.TrimStartAndEndInline();
+	Right.TrimStartAndEndInline();
+	const int32 X = FCString::Atoi(*Left);
+	const int32 Y = FCString::Atoi(*Right);
+	if (X < 640 || Y < 480) return false;
+	OutResolution = FIntPoint(X, Y);
+	return true;
+}
+
+void UProjectProject01SettingsWidget::RefreshLocalPlayerInput() const
+{
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		if (APlayerCharacter* Player = Cast<APlayerCharacter>(PlayerController->GetPawn()); IsValid(Player))
+		{
+			Player->ApplyUserInputSettings();
+		}
+	}
+}
+
+void UProjectProject01SettingsWidget::BuildWidgetTree()
+{
+	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Settings widget has no WidgetTree."))) return;
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = Overlay;
+	UBorder* Background = WidgetTree->ConstructWidget<UBorder>();
+	Background->SetBrushColor(FLinearColor(0.02f, 0.02f, 0.025f, 0.96f));
+	if (UOverlaySlot* BackgroundSlot = Overlay->AddChildToOverlay(Background))
+	{
+		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+	UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>();
+	Background->AddChild(Scroll);
+	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
+	Scroll->AddChild(Root);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("환경설정"), 30.0f);
+	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("변경 후 적용을 눌러 저장하세요."), 14.0f);
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("사운드"), 20.0f);
+	MasterVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("전체 음량"), 0.0f, 1.0f, 0.01f, MasterVolumeValueText);
+	SFXVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("효과음 음량"), 0.0f, 1.0f, 0.01f, SFXVolumeValueText);
+	MusicVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("배경음악 음량"), 0.0f, 1.0f, 0.01f, MusicVolumeValueText);
+	UIVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("UI 음량"), 0.0f, 1.0f, 0.01f, UIVolumeValueText);
+	MuteAllCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("전체 음소거"));
+	MuteWhenUnfocusedCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("게임이 백그라운드일 때 음소거"));
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("화면 및 그래픽"), 20.0f);
+	WindowModeComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("화면 모드"));
+	WindowModeComboBox->AddOption(TEXT("전체화면")); WindowModeComboBox->AddOption(TEXT("테두리 없는 창")); WindowModeComboBox->AddOption(TEXT("창모드"));
+	ResolutionComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("해상도"));
+	TArray<FIntPoint> Resolutions;
+	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
+	Resolutions.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.X == B.X ? A.Y < B.Y : A.X < B.X; });
+	for (const FIntPoint Resolution : Resolutions)
+	{
+		const FString Text = FString::Printf(TEXT("%d x %d"), Resolution.X, Resolution.Y);
+		if (ResolutionComboBox->FindOptionIndex(Text) == INDEX_NONE) ResolutionComboBox->AddOption(Text);
+	}
+	VSyncCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("수직동기화"));
+	FrameRateSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("최대 FPS"), 30.0f, 240.0f, 1.0f, FrameRateValueText);
+	ResolutionScaleSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("해상도 스케일"), 50.0f, 100.0f, 1.0f, ResolutionScaleValueText);
+	OverallQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("전체 그래픽 프리셋"));
+	const TArray<FString> OverallOptions = {
+		TEXT("낮음"), TEXT("중간"), TEXT("높음"), TEXT("매우 높음"), TEXT("사용자 지정") };
+	for (const FString& Option : OverallOptions) OverallQualityComboBox->AddOption(Option);
+	auto PopulateQuality = [](UComboBoxString* Combo)
+	{
+		Combo->AddOption(TEXT("낮음")); Combo->AddOption(TEXT("중간")); Combo->AddOption(TEXT("높음")); Combo->AddOption(TEXT("매우 높음"));
+	};
+	AAQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("안티앨리어싱 품질")); PopulateQuality(AAQualityComboBox);
+	ShadowQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("그림자 품질")); PopulateQuality(ShadowQualityComboBox);
+	TextureQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("텍스처 품질")); PopulateQuality(TextureQualityComboBox);
+	EffectsQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("이펙트 품질")); PopulateQuality(EffectsQualityComboBox);
+	PostProcessQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("후처리 품질")); PopulateQuality(PostProcessQualityComboBox);
+	MotionBlurCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("모션 블러"));
+	BrightnessSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("밝기 (안전 범위)"), 1.8f, 2.6f, 0.01f, BrightnessValueText);
+	VFXIntensityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("화면 번쩍임·일렁임"));
+	VFXIntensityComboBox->AddOption(TEXT("기본")); VFXIntensityComboBox->AddOption(TEXT("약하게"));
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("조작"), 20.0f);
+	SensitivitySlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("마우스 감도"), 0.1f, 3.0f, 0.01f, SensitivityValueText);
+	ForwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("앞으로 이동"));
+	BackwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("뒤로 이동"));
+	LeftKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("왼쪽 이동"));
+	RightKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("오른쪽 이동"));
+	SprintKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("달리기"));
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("상호작용: 현재 공용 Input Action이 없어 아직 재설정할 수 없습니다. F1 게임 메뉴는 고정입니다."), 12.0f);
+
+	DefaultsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("설정 초기화"));
+	ApplyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("적용"));
+	CancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("취소 / 돌아가기"));
+	VideoConfirmPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+	Root->AddChildToVerticalBox(VideoConfirmPanel);
+	VideoConfirmText = ProjectProject01LoginUI::AddLabel(WidgetTree, VideoConfirmPanel, TEXT("이 화면 설정을 유지하시겠습니까?"), 14.0f);
+	ConfirmVideoButton = ProjectProject01LoginUI::AddButton(WidgetTree, VideoConfirmPanel, TEXT("유지"));
+	RevertVideoButton = ProjectProject01LoginUI::AddButton(WidgetTree, VideoConfirmPanel, TEXT("이전 설정으로 복구"));
+	VideoConfirmPanel->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01UserSettingsValidationTest,
+	"ProjectProject01.Settings.ValidationAndSafeBindings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01UserSettingsValidationTest::RunTest(const FString& Parameters)
+{
+	UProjectProject01GameUserSettings* Settings = NewObject<UProjectProject01GameUserSettings>();
+	TestNotNull(TEXT("Settings object can be created"), Settings);
+	if (!IsValid(Settings)) return false;
+
+	Settings->SetMasterVolume(4.0f);
+	Settings->SetSFXVolume(-2.0f);
+	Settings->SetDisplayGammaSetting(9.0f);
+	Settings->SetMouseSensitivity(0.0f);
+	Settings->SetSprintKey(EKeys::F1);
+	Settings->ValidateProjectSettings();
+	TestEqual(TEXT("Master volume is clamped"), Settings->GetMasterVolume(), 1.0f);
+	TestEqual(TEXT("SFX volume is clamped"), Settings->GetSFXVolume(), 0.0f);
+	TestEqual(TEXT("Brightness is clamped"), Settings->GetDisplayGammaSetting(), 2.6f);
+	TestEqual(TEXT("Mouse sensitivity is clamped"), Settings->GetMouseSensitivity(), 0.1f);
+	TestTrue(TEXT("Reserved F1 restores safe sprint key"), Settings->GetSprintKey() == EKeys::LeftShift);
+
+	Settings->SetMoveForwardKey(EKeys::Up);
+	Settings->SetMoveBackwardKey(EKeys::Down);
+	Settings->SetMoveLeftKey(EKeys::Left);
+	Settings->SetMoveRightKey(EKeys::Right);
+	Settings->SetSprintKey(EKeys::RightShift);
+	Settings->ValidateProjectSettings();
+	TestTrue(TEXT("Unique custom forward key remains"), Settings->GetMoveForwardKey() == EKeys::Up);
+	TestTrue(TEXT("Unique custom sprint key remains"), Settings->GetSprintKey() == EKeys::RightShift);
+	return true;
+}
+#endif
 
 bool UProjectProject01LobbyWidget::Initialize()
 {

@@ -74,6 +74,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Player|Stamina")
 	float GetMaxStamina() const { return MaxStamina; }
 
+	/** 저장된 로컬 키 설정을 현재 Enhanced Input 컨텍스트에 다시 적용합니다. */
+	void ApplyUserInputSettings();
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
