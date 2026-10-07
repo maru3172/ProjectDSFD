@@ -107,6 +107,29 @@ void AMultiplayTestPlayerController::SetAuthenticatedLobbyIdentity(
 	AuthenticatedRole = Claim.Role;
 }
 
+void AMultiplayTestPlayerController::SetServerMatchState(
+	const EMultiplayTestMatchPhase NewPhase,
+	const EMultiplayTestSurvivorState NewSurvivorState)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	MatchPhase = NewPhase;
+	SurvivorState = NewSurvivorState;
+	ForceNetUpdate();
+}
+
+void AMultiplayTestPlayerController::DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	ClientPresentMatchResult(Result);
+}
+
 void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
@@ -116,6 +139,42 @@ void AMultiplayTestPlayerController::OnRep_Pawn()
 void AMultiplayTestPlayerController::ClientApplyViewedMannequin_Implementation(AMannequinAICharacter* Mannequin)
 {
 	ApplyViewedMannequinCamera(Mannequin);
+}
+
+void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
+	const FMultiplayTestMatchResult& Result)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+	if (IsValid(SessionMenuWidget))
+	{
+		SessionMenuWidget->RemoveFromParent();
+		SessionMenuWidget = nullptr;
+	}
+	if (IsValid(MatchResultWidget))
+	{
+		MatchResultWidget->RemoveFromParent();
+	}
+
+	MatchResultWidget = CreateWidget<UProjectProject01MatchResultWidget>(
+		this, UProjectProject01MatchResultWidget::StaticClass());
+	if (!ensureMsgf(IsValid(MatchResultWidget), TEXT("Unable to create the multiplayer match result widget.")))
+	{
+		return;
+	}
+	MatchResultWidget->ConfigureResult(Result);
+	MatchResultWidget->AddToViewport(700);
+	bShowMouseCursor = true;
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(MatchResultWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	SetInputMode(InputMode);
 }
 
 void AMultiplayTestPlayerController::OnRep_ViewedMannequin()
@@ -286,4 +345,6 @@ void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetime
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, ViewedMannequin, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, MatchPhase, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorState, COND_OwnerOnly);
 }

@@ -64,6 +64,9 @@ public:
 	/** 서버 GameMode가 게임 규칙별 시작 데스카운트를 설정한다. */
 	void SetRemainingDeathCountForGameMode(int32 NewDeathCount);
 
+	/** 싱글플레이의 서버 권위 승패 판정이 암전 결과 화면을 한 번만 표시한다. */
+	void PresentSinglePlayerResult(bool bEscaped);
+
 	/** 파트너 후방 이격 경로가 플레이어를 밀어낼 때 서버가 한 번만 호출합니다. 게임 오버는 발생시키지 않습니다. */
 	bool HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper);
 	void GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTuning) const;
@@ -127,6 +130,11 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SessionMenuWidget> SessionMenuWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01MatchResultWidget> SinglePlayerResultWidget;
+
+	bool bSinglePlayerResultPresented = false;
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSetSprinting(bool bNewSprinting);

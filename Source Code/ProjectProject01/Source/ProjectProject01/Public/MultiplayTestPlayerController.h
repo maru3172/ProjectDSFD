@@ -9,6 +9,66 @@
 
 struct FProjectProject01ValidatedJoinClaim;
 
+UENUM(BlueprintType)
+enum class EMultiplayTestMatchPhase : uint8
+{
+	Waiting,
+	RoleAssignment,
+	InProgress,
+	Ending,
+	Results,
+	ReturningToRoom
+};
+
+UENUM(BlueprintType)
+enum class EMultiplayTestSurvivorState : uint8
+{
+	NotApplicable,
+	Active,
+	Eliminated,
+	Escaped
+};
+
+/** 서버가 확정하여 해당 소유 클라이언트에만 전달하는 한 경기의 결과입니다. */
+USTRUCT(BlueprintType)
+struct PROJECTPROJECT01_API FMultiplayTestMatchResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly)
+	FString MatchId;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString Role;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString Outcome;
+
+	UPROPERTY(BlueprintReadOnly)
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadOnly)
+	bool bLeaderboardVerificationReady = false;
+
+	UPROPERTY(BlueprintReadOnly)
+	double MatchDurationSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 CaptureCount = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double FirstCaptureSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double AllCapturedSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 RescueCount = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double EscapeSeconds = 0.0;
+};
+
 /** 마네킹 슬롯 선택 입력을 서버에 요청하는 MultiplayTest 전용 컨트롤러입니다. */
 UCLASS()
 class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerController
@@ -19,9 +79,13 @@ public:
 	class AMannequinAICharacter* GetViewedMannequin() const;
 	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
 	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
+	void SetServerMatchState(EMultiplayTestMatchPhase NewPhase, EMultiplayTestSurvivorState NewSurvivorState);
+	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
 	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
 	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
+	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
+	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
@@ -57,6 +121,9 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientApplyViewedMannequin(class AMannequinAICharacter* Mannequin);
 
+	UFUNCTION(Client, Reliable)
+	void ClientPresentMatchResult(const FMultiplayTestMatchResult& Result);
+
 	UFUNCTION()
 	void OnRep_ViewedMannequin();
 
@@ -69,6 +136,15 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01SessionMenuWidget> SessionMenuWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01MatchResultWidget> MatchResultWidget;
+
+	UPROPERTY(Replicated)
+	EMultiplayTestMatchPhase MatchPhase = EMultiplayTestMatchPhase::Waiting;
+
+	UPROPERTY(Replicated)
+	EMultiplayTestSurvivorState SurvivorState = EMultiplayTestSurvivorState::NotApplicable;
 
 	FString AuthenticatedUserId;
 	FString AuthenticatedMatchId;

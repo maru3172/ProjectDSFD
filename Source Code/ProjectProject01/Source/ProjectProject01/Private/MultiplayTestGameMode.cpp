@@ -10,6 +10,8 @@
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "Components/CapsuleComponent.h"
+#include "Engine/TriggerBox.h"
+#include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -27,6 +29,30 @@ DEFINE_LOG_CATEGORY(LogProjectProject01Multiplayer);
 
 namespace
 {
+	struct FMatchResolutionSummary
+	{
+		int32 SurvivorCount = 0;
+		int32 ResolvedCount = 0;
+		int32 EliminatedCount = 0;
+
+		bool IsComplete() const { return SurvivorCount > 0 && ResolvedCount == SurvivorCount; }
+		bool DidMannequinWin() const { return IsComplete() && EliminatedCount == SurvivorCount; }
+	};
+
+	FMatchResolutionSummary EvaluateMatchResolution(
+		const TArray<EMultiplayTestSurvivorState>& SurvivorStates)
+	{
+		FMatchResolutionSummary Summary;
+		Summary.SurvivorCount = SurvivorStates.Num();
+		for (const EMultiplayTestSurvivorState State : SurvivorStates)
+		{
+			Summary.ResolvedCount += State == EMultiplayTestSurvivorState::Eliminated ||
+				State == EMultiplayTestSurvivorState::Escaped ? 1 : 0;
+			Summary.EliminatedCount += State == EMultiplayTestSurvivorState::Eliminated ? 1 : 0;
+		}
+		return Summary;
+	}
+
 	bool IsPointInsideVisionCone(
 		const FVector& ViewOrigin,
 		const FVector& ViewDirection,
@@ -60,6 +86,32 @@ bool FProjectProject01SurvivorVisionConeTest::RunTest(const FString& Parameters)
 		IsPointInsideVisionCone(FVector::ZeroVector, FVector::ForwardVector, FVector::ZeroVector, 55.0f));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01MatchResolutionTest,
+	"ProjectProject01.Multiplayer.MatchResolution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01MatchResolutionTest::RunTest(const FString& Parameters)
+{
+	const FMatchResolutionSummary InProgress = EvaluateMatchResolution({
+		EMultiplayTestSurvivorState::Eliminated,
+		EMultiplayTestSurvivorState::Active });
+	TestFalse(TEXT("One active survivor keeps the match in progress"), InProgress.IsComplete());
+
+	const FMatchResolutionSummary MannequinVictory = EvaluateMatchResolution({
+		EMultiplayTestSurvivorState::Eliminated,
+		EMultiplayTestSurvivorState::Eliminated });
+	TestTrue(TEXT("All eliminated survivors complete the match"), MannequinVictory.IsComplete());
+	TestTrue(TEXT("All eliminated survivors produce a mannequin victory"), MannequinVictory.DidMannequinWin());
+
+	const FMatchResolutionSummary MixedResolution = EvaluateMatchResolution({
+		EMultiplayTestSurvivorState::Eliminated,
+		EMultiplayTestSurvivorState::Escaped });
+	TestTrue(TEXT("Escaped and eliminated survivors complete the match"), MixedResolution.IsComplete());
+	TestFalse(TEXT("Any escaped survivor prevents a mannequin victory"), MixedResolution.DidMannequinWin());
+	return true;
+}
 #endif
 
 AMultiplayTestGameMode::AMultiplayTestGameMode()
@@ -89,6 +141,8 @@ AMultiplayTestGameMode::AMultiplayTestGameMode()
 void AMultiplayTestGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
+	BindEscapeTriggers();
 
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
@@ -118,6 +172,12 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 		return;
 	}
 
+	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
+		MatchTimeLimitSeconds > 0.0f && GetElapsedMatchSeconds() >= MatchTimeLimitSeconds)
+	{
+		FinishAuthoritativeMatch(TEXT("TimeLimit"));
+	}
+
 	SurvivorVisionCheckAccumulatorSeconds += DeltaSeconds;
 	if (SurvivorVisionCheckAccumulatorSeconds < FMath::Max(SurvivorVisionCheckIntervalSeconds, 0.01f))
 	{
@@ -135,7 +195,19 @@ void AMultiplayTestGameMode::PreLogin(
 	FString& ErrorMessage)
 {
 	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
-	if (!ErrorMessage.IsEmpty() || GetNetMode() == NM_Standalone || !bRequireGameJoinTicket)
+	if (!ErrorMessage.IsEmpty())
+	{
+		return;
+	}
+	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress ||
+		AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Ending ||
+		AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Results ||
+		GetNumPlayers() >= ExpectedMatchPlayers)
+	{
+		ErrorMessage = TEXT("The match is already full or in progress.");
+		return;
+	}
+	if (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket)
 	{
 		return;
 	}
@@ -228,6 +300,9 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 	{
 		AssignRandomInitialMannequinView(NewMultiplayController);
 	}
+
+	RegisterMatchPlayer(NewMultiplayController);
+	TryStartAuthoritativeMatch();
 }
 
 void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
@@ -262,6 +337,13 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 		UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("The mannequin controller disconnected."));
 	}
 
+	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::Ending &&
+		AuthoritativeMatchPhase != EMultiplayTestMatchPhase::Results)
+	{
+		MatchPlayerRecords.Remove(ExitingMultiplayController);
+		ResultVerificationStatus.Remove(ExitingMultiplayController);
+	}
+
 	Super::Logout(Exiting);
 
 	// 방에 남은 모든 사용자가 복귀한 뒤 다음 경기를 시작하면 이전 경기의 Actor 상태가
@@ -276,6 +358,442 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 			&AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty,
 			1.0f,
 			false);
+	}
+}
+
+void AMultiplayTestGameMode::BindEscapeTriggers()
+{
+	if (!HasAuthority() || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	int32 BoundTriggerCount = 0;
+	for (TActorIterator<ATriggerBox> It(GetWorld()); It; ++It)
+	{
+		ATriggerBox* Trigger = *It;
+		if (!IsValid(Trigger) || !Trigger->ActorHasTag(EscapeTriggerActorTag))
+		{
+			continue;
+		}
+
+		Trigger->OnActorBeginOverlap.AddUniqueDynamic(
+			this, &AMultiplayTestGameMode::HandleEscapeTriggerBeginOverlap);
+		++BoundTriggerCount;
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Bound %d escape TriggerBox actor(s) tagged %s."),
+		BoundTriggerCount, *EscapeTriggerActorTag.ToString());
+}
+
+void AMultiplayTestGameMode::HandleEscapeTriggerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor)
+{
+	MarkSurvivorEscaped(Cast<APlayerCharacter>(OtherActor));
+}
+
+void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController* Controller)
+{
+	if (!HasAuthority() || !IsValid(Controller) || MatchPlayerRecords.Contains(Controller))
+	{
+		return;
+	}
+
+	FMultiplayTestServerPlayerRecord Record;
+	Record.UserId = Controller->GetAuthenticatedUserId();
+	Record.MatchId = Controller->GetAuthenticatedMatchId();
+	Record.Role = IsMannequinController(Controller) ? TEXT("Mannequin") : TEXT("Survivor");
+	Record.SurvivorState = Record.Role == TEXT("Survivor")
+		? EMultiplayTestSurvivorState::Active
+		: EMultiplayTestSurvivorState::NotApplicable;
+	Record.SurvivorPawn = Record.Role == TEXT("Survivor")
+		? Cast<APlayerCharacter>(Controller->GetPawn())
+		: nullptr;
+
+	if (AuthoritativeMatchId.IsEmpty() && !Record.MatchId.IsEmpty())
+	{
+		AuthoritativeMatchId = Record.MatchId;
+	}
+	MatchPlayerRecords.Add(Controller, MoveTemp(Record));
+	Controller->SetServerMatchState(
+		EMultiplayTestMatchPhase::RoleAssignment,
+		MatchPlayerRecords.FindChecked(Controller).SurvivorState);
+}
+
+void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
+{
+	if (!HasAuthority() || AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress ||
+		AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Ending ||
+		AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Results ||
+		MatchPlayerRecords.Num() < ExpectedMatchPlayers)
+	{
+		return;
+	}
+
+	int32 MannequinCount = 0;
+	int32 SurvivorCount = 0;
+	FString ValidatedMatchId;
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		const FMultiplayTestServerPlayerRecord& Record = Pair.Value;
+		MannequinCount += Record.Role == TEXT("Mannequin") ? 1 : 0;
+		SurvivorCount += Record.Role == TEXT("Survivor") ? 1 : 0;
+		if (!Record.MatchId.IsEmpty())
+		{
+			if (ValidatedMatchId.IsEmpty())
+			{
+				ValidatedMatchId = Record.MatchId;
+			}
+			else if (ValidatedMatchId != Record.MatchId)
+			{
+				UE_LOG(LogProjectProject01Multiplayer, Error,
+					TEXT("Cannot start: authenticated players have different MatchId values."));
+				return;
+			}
+		}
+	}
+
+	if (MannequinCount != 1 || SurvivorCount != ExpectedMatchPlayers - 1)
+	{
+		return;
+	}
+
+	AuthoritativeMatchId = ValidatedMatchId.IsEmpty()
+		? FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower)
+		: ValidatedMatchId;
+	MatchStartWorldSeconds = GetWorld()->GetTimeSeconds();
+	MatchEndWorldSeconds = 0.0;
+	bFinishCommitted = false;
+	ResultVerificationStatus.Reset();
+	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Authoritative match %s started with %d player(s)."),
+		*AuthoritativeMatchId, MatchPlayerRecords.Num());
+}
+
+void AMultiplayTestGameMode::SetAuthoritativeMatchPhase(const EMultiplayTestMatchPhase NewPhase)
+{
+	AuthoritativeMatchPhase = NewPhase;
+	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+		{
+			Controller->SetServerMatchState(NewPhase, Pair.Value.SurvivorState);
+		}
+	}
+}
+
+FMultiplayTestServerPlayerRecord* AMultiplayTestGameMode::FindSurvivorRecord(APlayerCharacter* Survivor)
+{
+	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		AMultiplayTestPlayerController* Controller = Pair.Key.Get();
+		if (Pair.Value.Role == TEXT("Survivor") &&
+			(Pair.Value.SurvivorPawn.Get() == Survivor ||
+			 (IsValid(Controller) && Controller->GetPawn() == Survivor)))
+		{
+			Pair.Value.SurvivorPawn = Survivor;
+			return &Pair.Value;
+		}
+	}
+	return nullptr;
+}
+
+const FMultiplayTestServerPlayerRecord* AMultiplayTestGameMode::FindSurvivorRecord(
+	const APlayerCharacter* Survivor) const
+{
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		const AMultiplayTestPlayerController* Controller = Pair.Key.Get();
+		if (Pair.Value.Role == TEXT("Survivor") &&
+			(Pair.Value.SurvivorPawn.Get() == Survivor ||
+			 (IsValid(Controller) && Controller->GetPawn() == Survivor)))
+		{
+			return &Pair.Value;
+		}
+	}
+	return nullptr;
+}
+
+void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Survivor)
+{
+	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress ||
+		!IsValid(Survivor) || !Survivor->IsGameOver())
+	{
+		return;
+	}
+
+	FMultiplayTestServerPlayerRecord* SurvivorRecord = FindSurvivorRecord(Survivor);
+	if (SurvivorRecord == nullptr || SurvivorRecord->SurvivorState != EMultiplayTestSurvivorState::Active)
+	{
+		return;
+	}
+
+	SurvivorRecord->SurvivorState = EMultiplayTestSurvivorState::Eliminated;
+	const double CaptureSeconds = GetElapsedMatchSeconds();
+	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+	Survivor->SetActorEnableCollision(false);
+	Survivor->SetActorHiddenInGame(true);
+	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		if (Pair.Value.Role == TEXT("Mannequin"))
+		{
+			++Pair.Value.CaptureCount;
+			if (Pair.Value.FirstCaptureSeconds <= 0.0)
+			{
+				Pair.Value.FirstCaptureSeconds = CaptureSeconds;
+			}
+		}
+		if (Pair.Value.SurvivorPawn.Get() == Survivor)
+		{
+			if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+			{
+				Controller->SetServerMatchState(AuthoritativeMatchPhase, SurvivorRecord->SurvivorState);
+			}
+		}
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Survivor %s was authoritatively eliminated at %.2f seconds."),
+		*GetNameSafe(Survivor), CaptureSeconds);
+	CheckForMatchCompletion();
+}
+
+bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
+{
+	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress || !IsValid(Survivor))
+	{
+		return false;
+	}
+
+	FMultiplayTestServerPlayerRecord* Record = FindSurvivorRecord(Survivor);
+	if (Record == nullptr || Record->SurvivorState != EMultiplayTestSurvivorState::Active)
+	{
+		return false;
+	}
+
+	Record->SurvivorState = EMultiplayTestSurvivorState::Escaped;
+	Record->EscapeSeconds = GetElapsedMatchSeconds();
+	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+	Survivor->SetActorEnableCollision(false);
+	Survivor->SetActorHiddenInGame(true);
+	if (AMultiplayTestPlayerController* Controller = Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+		IsValid(Controller))
+	{
+		Controller->SetServerMatchState(AuthoritativeMatchPhase, Record->SurvivorState);
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Survivor %s escaped at %.2f seconds."), *GetNameSafe(Survivor), Record->EscapeSeconds);
+	CheckForMatchCompletion();
+	return true;
+}
+
+void AMultiplayTestGameMode::CheckForMatchCompletion()
+{
+	TArray<EMultiplayTestSurvivorState> SurvivorStates;
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		if (Pair.Value.Role == TEXT("Survivor"))
+		{
+			SurvivorStates.Add(Pair.Value.SurvivorState);
+		}
+	}
+
+	const FMatchResolutionSummary Summary = EvaluateMatchResolution(SurvivorStates);
+	if (Summary.IsComplete())
+	{
+		if (Summary.DidMannequinWin())
+		{
+			for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+			{
+				if (Pair.Value.Role == TEXT("Mannequin"))
+				{
+					Pair.Value.AllCapturedSeconds = GetElapsedMatchSeconds();
+				}
+			}
+		}
+		FinishAuthoritativeMatch(Summary.DidMannequinWin()
+			? TEXT("AllSurvivorsEliminated") : TEXT("AllSurvivorsResolved"));
+	}
+}
+
+double AMultiplayTestGameMode::GetElapsedMatchSeconds() const
+{
+	const UWorld* World = GetWorld();
+	if (!IsValid(World) || MatchStartWorldSeconds <= 0.0)
+	{
+		return 0.001;
+	}
+	const double EndSeconds = MatchEndWorldSeconds > 0.0
+		? MatchEndWorldSeconds
+		: static_cast<double>(World->GetTimeSeconds());
+	return FMath::Max(0.001, EndSeconds - MatchStartWorldSeconds);
+}
+
+void AMultiplayTestGameMode::FinishAuthoritativeMatch(const FString& Reason)
+{
+	if (!HasAuthority() || bFinishCommitted || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
+	{
+		return;
+	}
+
+	bFinishCommitted = true;
+	MatchEndWorldSeconds = GetWorld()->GetTimeSeconds();
+	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending);
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+		{
+			if (APawn* Pawn = Controller->GetPawn(); IsValid(Pawn))
+			{
+				if (UCharacterMovementComponent* Movement = Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent());
+					IsValid(Movement))
+				{
+					Movement->StopMovementImmediately();
+					Movement->DisableMovement();
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Authoritative match %s finished once: %s."), *AuthoritativeMatchId, *Reason);
+	SubmitAuthoritativeResults();
+}
+
+FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
+	const AMultiplayTestPlayerController* Controller,
+	const FMultiplayTestServerPlayerRecord& Record) const
+{
+	FMultiplayTestMatchResult Result;
+	Result.MatchId = AuthoritativeMatchId;
+	Result.Role = Record.Role;
+	Result.MatchDurationSeconds = GetElapsedMatchSeconds();
+	Result.CaptureCount = Record.CaptureCount;
+	Result.FirstCaptureSeconds = Record.FirstCaptureSeconds;
+	Result.AllCapturedSeconds = Record.AllCapturedSeconds;
+	Result.RescueCount = Record.RescueCount;
+	Result.EscapeSeconds = Record.EscapeSeconds;
+	if (Record.Role == TEXT("Mannequin"))
+	{
+		Result.bSuccess = Record.AllCapturedSeconds > 0.0;
+		Result.Outcome = Result.bSuccess ? TEXT("MannequinVictory") : TEXT("SurvivorVictory");
+	}
+	else
+	{
+		Result.bSuccess = Record.SurvivorState == EMultiplayTestSurvivorState::Escaped;
+		Result.Outcome = Result.bSuccess
+			? TEXT("Escaped")
+			: Record.SurvivorState == EMultiplayTestSurvivorState::Eliminated
+				? TEXT("Eliminated")
+				: TEXT("NotEscaped");
+	}
+	if (const bool* Verification = ResultVerificationStatus.Find(Controller))
+	{
+		Result.bLeaderboardVerificationReady = *Verification;
+	}
+	return Result;
+}
+
+void AMultiplayTestGameMode::SubmitAuthoritativeResults()
+{
+	UProjectProject01GameInstance* GameInstance = GetGameInstance<UProjectProject01GameInstance>();
+	ResultVerificationStatus.Reset();
+	struct FPendingAuthoritativeSubmission
+	{
+		TWeakObjectPtr<AMultiplayTestPlayerController> Controller;
+		FString UserId;
+		FMultiplayTestMatchResult Result;
+	};
+	TArray<FPendingAuthoritativeSubmission> Submissions;
+
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		AMultiplayTestPlayerController* Controller = Pair.Key.Get();
+		if (!IsValid(Controller))
+		{
+			continue;
+		}
+		ResultVerificationStatus.Add(Controller, false);
+		if (!IsValid(GameInstance) || Pair.Value.UserId.IsEmpty() || AuthoritativeMatchId.IsEmpty())
+		{
+			continue;
+		}
+
+		FPendingAuthoritativeSubmission& Submission = Submissions.AddDefaulted_GetRef();
+		Submission.Controller = Controller;
+		Submission.UserId = Pair.Value.UserId;
+		Submission.Result = BuildFinalResult(Controller, Pair.Value);
+	}
+
+	PendingResultSubmissions = Submissions.Num();
+	if (PendingResultSubmissions == 0)
+	{
+		PresentFinalResults();
+		return;
+	}
+
+	for (const FPendingAuthoritativeSubmission& Submission : Submissions)
+	{
+		const TWeakObjectPtr<AMultiplayTestGameMode> WeakThis(this);
+		const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController = Submission.Controller;
+		GameInstance->SubmitAuthoritativeMatchResultWithCallback(
+			Submission.Result.MatchId,
+			Submission.UserId,
+			Submission.Result.Role,
+			Submission.Result.bSuccess,
+			Submission.Result.CaptureCount,
+			Submission.Result.FirstCaptureSeconds,
+			Submission.Result.AllCapturedSeconds,
+			Submission.Result.RescueCount,
+			Submission.Result.EscapeSeconds,
+			[WeakThis, WeakController](const bool bSucceeded)
+			{
+				if (AMultiplayTestGameMode* GameMode = WeakThis.Get(); IsValid(GameMode))
+				{
+					GameMode->HandleResultSubmissionComplete(WeakController, bSucceeded);
+				}
+			});
+	}
+}
+
+void AMultiplayTestGameMode::HandleResultSubmissionComplete(
+	const TWeakObjectPtr<AMultiplayTestPlayerController> Controller,
+	const bool bSucceeded)
+{
+	if (ResultVerificationStatus.Contains(Controller))
+	{
+		ResultVerificationStatus.FindChecked(Controller) = bSucceeded;
+	}
+	PendingResultSubmissions = FMath::Max(0, PendingResultSubmissions - 1);
+	if (PendingResultSubmissions == 0)
+	{
+		PresentFinalResults();
+	}
+}
+
+void AMultiplayTestGameMode::PresentFinalResults()
+{
+	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Results)
+	{
+		return;
+	}
+	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Results);
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+		{
+			Controller->DeliverMatchResultToOwner(BuildFinalResult(Controller, Pair.Value));
+		}
 	}
 }
 

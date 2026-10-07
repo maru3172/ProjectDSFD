@@ -5,11 +5,26 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "MultiplayTestPlayerController.h"
 #include "ProjectProject01GameInstance.h"
 #include "MultiplayTestGameMode.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Multiplayer, Log, All);
 struct FMannequinAITuningRow;
+
+struct FMultiplayTestServerPlayerRecord
+{
+	FString UserId;
+	FString MatchId;
+	FString Role;
+	TWeakObjectPtr<class APlayerCharacter> SurvivorPawn;
+	EMultiplayTestSurvivorState SurvivorState = EMultiplayTestSurvivorState::NotApplicable;
+	int32 CaptureCount = 0;
+	int32 RescueCount = 0;
+	double FirstCaptureSeconds = 0.0;
+	double AllCapturedSeconds = 0.0;
+	double EscapeSeconds = 0.0;
+};
 
 /**
  * MultiplayTest 전용 게임 모드입니다.
@@ -35,6 +50,13 @@ public:
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
 	bool TryEnableMannequinManualControl(class AMultiplayTestPlayerController* RequestingController);
 	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
+
+	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
+	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
+
+	/** Escape 태그 TriggerBox 또는 이후의 탈출 장치가 서버에서 호출하는 탈출 확정 경로다. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Multiplayer|Match")
+	bool MarkSurvivorEscaped(class APlayerCharacter* Survivor);
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PreLogin(
@@ -62,6 +84,26 @@ private:
 	bool CanSurvivorSeeMannequin(const APlayerController* SurvivorController,
 		const class AMannequinAICharacter* Mannequin) const;
 	void UpdateSurvivorVisionFrozenStates();
+	void BindEscapeTriggers();
+	void RegisterMatchPlayer(class AMultiplayTestPlayerController* Controller);
+	void TryStartAuthoritativeMatch();
+	void SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase NewPhase);
+	void CheckForMatchCompletion();
+	void FinishAuthoritativeMatch(const FString& Reason);
+	void SubmitAuthoritativeResults();
+	void HandleResultSubmissionComplete(
+		TWeakObjectPtr<class AMultiplayTestPlayerController> Controller,
+		bool bSucceeded);
+	void PresentFinalResults();
+	FMultiplayTestMatchResult BuildFinalResult(
+		const class AMultiplayTestPlayerController* Controller,
+		const FMultiplayTestServerPlayerRecord& Record) const;
+	FMultiplayTestServerPlayerRecord* FindSurvivorRecord(class APlayerCharacter* Survivor);
+	const FMultiplayTestServerPlayerRecord* FindSurvivorRecord(const class APlayerCharacter* Survivor) const;
+	double GetElapsedMatchSeconds() const;
+
+	UFUNCTION()
+	void HandleEscapeTriggerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Survivor Vision",
 		meta = (ClampMin = "0.01", UIMin = "0.01", Units = "s"))
@@ -79,6 +121,23 @@ private:
 	TSet<TWeakObjectPtr<class AMultiplayTestPlayerController>> ExplicitRoleControllers;
 	TMap<FString, FProjectProject01ValidatedJoinClaim> PendingValidatedJoinClaims;
 	FTimerHandle EmptyDedicatedServerResetTimer;
+	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord> MatchPlayerRecords;
+	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, bool> ResultVerificationStatus;
+	EMultiplayTestMatchPhase AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
+	FString AuthoritativeMatchId;
+	double MatchStartWorldSeconds = 0.0;
+	double MatchEndWorldSeconds = 0.0;
+	int32 PendingResultSubmissions = 0;
+	bool bFinishCommitted = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1", UIMin = "1"))
+	int32 ExpectedMatchPlayers = 3;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1.0", UIMin = "1.0", Units = "s"))
+	float MatchTimeLimitSeconds = 1800.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match")
+	FName EscapeTriggerActorTag = TEXT("ProjectProject01Escape");
 
 	UPROPERTY(Config)
 	bool bRequireGameJoinTicket = true;
