@@ -488,11 +488,29 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResult(
 	const int32 RescueCount,
 	const double EscapeSeconds)
 {
+	SubmitAuthoritativeMatchResultWithCallback(
+		MatchId, UserId, Role, bSuccess, CaptureCount, FirstCaptureSeconds,
+		AllCapturedSeconds, RescueCount, EscapeSeconds, TFunction<void(bool)>());
+}
+
+void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
+	const FString& MatchId,
+	const FString& UserId,
+	const FString& Role,
+	const bool bSuccess,
+	const int32 CaptureCount,
+	const double FirstCaptureSeconds,
+	const double AllCapturedSeconds,
+	const int32 RescueCount,
+	const double EscapeSeconds,
+	TFunction<void(bool)> Completion)
+{
 	const UWorld* World = GetWorld();
 	if (!IsValid(World) || World->GetNetMode() == NM_Client || !IsBackendUrlAllowed())
 	{
 		UE_LOG(LogProjectProject01NetworkSecurity, Warning,
 			TEXT("Rejected authoritative match result outside a server world."));
+		if (Completion) Completion(false);
 		return;
 	}
 	const FString ServerSecret = LoadGameServerSharedSecret();
@@ -500,8 +518,25 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResult(
 	{
 		UE_LOG(LogProjectProject01NetworkSecurity, Error,
 			TEXT("Cannot submit match result because the server secret is unavailable."));
+		if (Completion) Completion(false);
 		return;
 	}
+
+	TSharedRef<TFunction<void(bool)>> CompletionRef =
+		MakeShared<TFunction<void(bool)>>(MoveTemp(Completion));
+	TSharedRef<bool> bCompletionCalled = MakeShared<bool>(false);
+	auto CompleteOnce = [CompletionRef, bCompletionCalled](const bool bSubmissionSucceeded)
+	{
+		if (*bCompletionCalled)
+		{
+			return;
+		}
+		*bCompletionCalled = true;
+		if (*CompletionRef)
+		{
+			(*CompletionRef)(bSubmissionSucceeded);
+		}
+	};
 
 	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetStringField(TEXT("matchId"), MatchId);
@@ -524,24 +559,27 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResult(
 	Request->SetContentAsString(Body);
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	Request->OnProcessRequestComplete().BindWeakLambda(this,
-		[this](const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& CompletedRequest,
+		[this, CompleteOnce](const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& CompletedRequest,
 			const TSharedPtr<IHttpResponse, ESPMode::ThreadSafe>& Response,
 			const bool bConnectedSuccessfully)
 		{
 			RemovePendingRequest(CompletedRequest);
-			if (!bConnectedSuccessfully || !Response.IsValid() ||
-				Response->GetResponseCode() < 200 || Response->GetResponseCode() >= 300)
+			const bool bSucceeded = bConnectedSuccessfully && Response.IsValid() &&
+				Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300;
+			if (!bSucceeded)
 			{
 				UE_LOG(LogProjectProject01NetworkSecurity, Error,
 					TEXT("Authoritative match result submission failed with status %d."),
 					Response.IsValid() ? Response->GetResponseCode() : 0);
 			}
+			CompleteOnce(bSucceeded);
 		});
 	PendingSecurityRequests.Add(Request);
 	if (!Request->ProcessRequest())
 	{
 		RemovePendingRequest(Request);
 		UE_LOG(LogProjectProject01NetworkSecurity, Error, TEXT("Unable to start authoritative result submission."));
+		CompleteOnce(false);
 	}
 }
 

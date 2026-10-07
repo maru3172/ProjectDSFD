@@ -979,6 +979,521 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 }
 
+bool UProjectProject01MatchResultWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	SetIsFocusable(true);
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMatchResult& InResult)
+{
+	Result = InResult;
+	bSinglePlayer = false;
+	bConfigured = true;
+	RefreshResultText();
+}
+
+void UProjectProject01MatchResultWidget::ConfigureSinglePlayerResult(const bool bEscaped)
+{
+	Result = FMultiplayTestMatchResult();
+	Result.Role = TEXT("SinglePlayer");
+	Result.Outcome = bEscaped ? TEXT("Escaped") : TEXT("Eliminated");
+	Result.bSuccess = bEscaped;
+	bSinglePlayer = true;
+	bConfigured = true;
+	RefreshResultText();
+}
+
+void UProjectProject01MatchResultWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	if (IsValid(RegisterButton))
+	{
+		RegisterButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleRegisterClicked);
+	}
+	if (IsValid(ReturnToRoomButton))
+	{
+		ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToRoomClicked);
+	}
+	if (IsValid(LeaderboardButton))
+	{
+		LeaderboardButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleLeaderboardClicked);
+	}
+	if (IsValid(ReturnToTitleButton))
+	{
+		ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToTitleClicked);
+	}
+	if (IsValid(LogoutButton))
+	{
+		LogoutButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleLogoutClicked);
+	}
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->OnRequestCompleted.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleLobbyRequestResult);
+		}
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnLogoutCompleted.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleLogoutResult);
+		}
+	}
+	FadeElapsedSeconds = 0.0f;
+	if (IsValid(FadeBackground))
+	{
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+	}
+	if (IsValid(ResultMenu))
+	{
+		ResultMenu->SetRenderOpacity(0.0f);
+		ResultMenu->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	SetBusy(false);
+	RefreshResultText();
+	SetKeyboardFocus();
+}
+
+void UProjectProject01MatchResultWidget::NativeDestruct()
+{
+	if (IsValid(RegisterButton))
+	{
+		RegisterButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleRegisterClicked);
+	}
+	if (IsValid(ReturnToRoomButton))
+	{
+		ReturnToRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToRoomClicked);
+	}
+	if (IsValid(LeaderboardButton))
+	{
+		LeaderboardButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleLeaderboardClicked);
+	}
+	if (IsValid(ReturnToTitleButton))
+	{
+		ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToTitleClicked);
+	}
+	if (IsValid(LogoutButton))
+	{
+		LogoutButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleLogoutClicked);
+	}
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->OnRequestCompleted.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleLobbyRequestResult);
+		}
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleLogoutResult);
+		}
+	}
+	Super::NativeDestruct();
+}
+
+void UProjectProject01MatchResultWidget::NativeTick(
+	const FGeometry& MyGeometry,
+	const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (FadeElapsedSeconds >= FadeDurationSeconds)
+	{
+		return;
+	}
+
+	FadeElapsedSeconds = FMath::Min(FadeDurationSeconds, FadeElapsedSeconds + FMath::Max(0.0f, InDeltaTime));
+	const float FadeAlpha = FadeDurationSeconds > KINDA_SMALL_NUMBER
+		? FMath::Clamp(FadeElapsedSeconds / FadeDurationSeconds, 0.0f, 1.0f)
+		: 1.0f;
+	if (IsValid(FadeBackground))
+	{
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.98f * FadeAlpha));
+	}
+	if (IsValid(ResultMenu))
+	{
+		const float MenuAlpha = FMath::Clamp((FadeAlpha - 0.72f) / 0.28f, 0.0f, 1.0f);
+		ResultMenu->SetRenderOpacity(MenuAlpha);
+		if (FadeAlpha >= 1.0f)
+		{
+			ResultMenu->SetVisibility(ESlateVisibility::Visible);
+			SetBusy(bBusy);
+		}
+	}
+}
+
+void UProjectProject01MatchResultWidget::HandleRegisterClicked()
+{
+	if (bSinglePlayer || bBusy || FadeElapsedSeconds < FadeDurationSeconds ||
+		!bConfigured || !Result.bSuccess || !Result.bLeaderboardVerificationReady)
+	{
+		return;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Lobby) || Result.MatchId.IsEmpty())
+	{
+		SetBusy(false, TEXT("리더보드에 등록할 경기 정보를 찾지 못했습니다."), true);
+		return;
+	}
+
+	const EProjectProject01LeaderboardRole Role = Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
+		? EProjectProject01LeaderboardRole::Mannequin
+		: EProjectProject01LeaderboardRole::Survivor;
+	bReturnAfterRegistration = true;
+	SetBusy(true, TEXT("서버가 검증한 성공 기록을 리더보드에 등록하는 중..."));
+	Lobby->SubmitLeaderboardRecord(Result.MatchId, Role, true,
+		Result.CaptureCount, Result.FirstCaptureSeconds, Result.AllCapturedSeconds,
+		Result.RescueCount, Result.EscapeSeconds);
+}
+
+void UProjectProject01MatchResultWidget::HandleReturnToRoomClicked()
+{
+	if (!bSinglePlayer && !bBusy && FadeElapsedSeconds >= FadeDurationSeconds)
+	{
+		bReturnAfterRegistration = false;
+		BeginReturnToRoom();
+	}
+}
+
+void UProjectProject01MatchResultWidget::HandleLeaderboardClicked()
+{
+	if (bSinglePlayer || bBusy || FadeElapsedSeconds < FadeDurationSeconds)
+	{
+		return;
+	}
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (IsValid(Lobby) && Lobby->HasCurrentRoom())
+	{
+		bOpenLeaderboardAfterReturn = true;
+		SetBusy(true, TEXT("경기 종료 상태를 방에 반영한 뒤 리더보드를 여는 중..."));
+		Lobby->ReturnToRoom();
+		return;
+	}
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		PlayerController->ClientTravel(TEXT("/Game/MyProject/Level/LeaderBoardTest"), TRAVEL_Absolute);
+	}
+}
+
+void UProjectProject01MatchResultWidget::HandleReturnToTitleClicked()
+{
+	if (bBusy || FadeElapsedSeconds < FadeDurationSeconds)
+	{
+		return;
+	}
+	if (!bSinglePlayer)
+	{
+		BeginAuthenticatedExit(true);
+		return;
+	}
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		PlayerController->SetIgnoreMoveInput(false);
+		PlayerController->SetIgnoreLookInput(false);
+		PlayerController->ClientTravel(ProjectProject01TitleRoutes::TitleLevel.ToString(), TRAVEL_Absolute);
+	}
+}
+
+void UProjectProject01MatchResultWidget::HandleLogoutClicked()
+{
+	if (!bSinglePlayer && !bBusy && FadeElapsedSeconds >= FadeDurationSeconds)
+	{
+		BeginAuthenticatedExit(false);
+	}
+}
+
+void UProjectProject01MatchResultWidget::HandleLobbyRequestResult(
+	const EProjectProject01LobbyOperation Operation,
+	const bool bSuccess,
+	const FString& Message)
+{
+	if (Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord && bReturnAfterRegistration)
+	{
+		if (!bSuccess)
+		{
+			bReturnAfterRegistration = false;
+			SetBusy(false, Message, true);
+			return;
+		}
+		SetBusy(true, TEXT("기록 등록이 완료되어 기존 방으로 돌아갑니다..."));
+		BeginReturnToRoom();
+		return;
+	}
+
+	if (Operation == EProjectProject01LobbyOperation::LeaveRoom && bPendingAuthenticatedExit)
+	{
+		if (bSuccess)
+		{
+			BeginLogout();
+		}
+		else
+		{
+			bPendingAuthenticatedExit = false;
+			SetBusy(false, Message, true);
+		}
+		return;
+	}
+
+	if (Operation != EProjectProject01LobbyOperation::ReturnToRoom)
+	{
+		return;
+	}
+	if (!bSuccess)
+	{
+		SetBusy(false, Message, true);
+		return;
+	}
+
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		const FString Destination = bOpenLeaderboardAfterReturn
+			? TEXT("/Game/MyProject/Level/LeaderBoardTest")
+			: TEXT("/Game/MyProject/Level/LobbyLevel");
+		bOpenLeaderboardAfterReturn = false;
+		PlayerController->SetIgnoreMoveInput(false);
+		PlayerController->SetIgnoreLookInput(false);
+		PlayerController->bShowMouseCursor = false;
+		PlayerController->SetInputMode(FInputModeGameOnly());
+		PlayerController->ClientTravel(Destination, TRAVEL_Absolute);
+	}
+}
+
+void UProjectProject01MatchResultWidget::BeginReturnToRoom()
+{
+	bOpenLeaderboardAfterReturn = false;
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom())
+	{
+		// 방을 거치지 않은 직접 PIE 검증에서는 복귀 API를 호출할 방이 없으므로
+		// 결과 화면에 갇히지 않고 로비 테스트 레벨로 안전하게 돌아간다.
+		if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+		{
+			PlayerController->SetIgnoreMoveInput(false);
+			PlayerController->SetIgnoreLookInput(false);
+			PlayerController->bShowMouseCursor = false;
+			PlayerController->SetInputMode(FInputModeGameOnly());
+			PlayerController->ClientTravel(TEXT("/Game/MyProject/Level/LobbyLevel"), TRAVEL_Absolute);
+			return;
+		}
+		SetBusy(false, TEXT("복귀할 기존 방 또는 로컬 플레이어를 찾지 못했습니다."), true);
+		return;
+	}
+	SetBusy(true, TEXT("게임 서버 접속을 끝내고 기존 방으로 돌아가는 중..."));
+	Lobby->ReturnToRoom();
+}
+
+void UProjectProject01MatchResultWidget::BeginAuthenticatedExit(const bool bReturnToTitle)
+{
+	bPendingAuthenticatedExit = true;
+	bPendingReturnToTitle = bReturnToTitle;
+	SetBusy(true, TEXT("방과 로그인 세션을 안전하게 정리하는 중..."));
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (IsValid(Lobby) && Lobby->HasCurrentRoom())
+	{
+		Lobby->LeaveRoom();
+		return;
+	}
+	BeginLogout();
+}
+
+void UProjectProject01MatchResultWidget::BeginLogout()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	if (!IsValid(Auth))
+	{
+		bPendingAuthenticatedExit = false;
+		SetBusy(false, TEXT("인증 시스템을 찾지 못해 로그아웃하지 않았습니다."), true);
+		return;
+	}
+	Auth->Logout();
+}
+
+void UProjectProject01MatchResultWidget::HandleLogoutResult(
+	const bool bSuccess,
+	const FString& Message,
+	const FString& DisplayName)
+{
+	(void)DisplayName;
+	if (!bPendingAuthenticatedExit)
+	{
+		return;
+	}
+	if (!bSuccess)
+	{
+		bPendingAuthenticatedExit = false;
+		SetBusy(false, Message, true);
+		return;
+	}
+	CompleteAuthenticatedExit();
+}
+
+void UProjectProject01MatchResultWidget::CompleteAuthenticatedExit()
+{
+	const bool bGoToTitle = bPendingReturnToTitle;
+	bPendingAuthenticatedExit = false;
+	bPendingReturnToTitle = false;
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		PlayerController->SetIgnoreMoveInput(false);
+		PlayerController->SetIgnoreLookInput(false);
+		PlayerController->ClientTravel(
+			(bGoToTitle ? ProjectProject01TitleRoutes::TitleLevel : ProjectProject01TitleRoutes::MultiplayerLoginLevel).ToString(),
+			TRAVEL_Absolute);
+	}
+}
+
+void UProjectProject01MatchResultWidget::RefreshResultText()
+{
+	if (!bConfigured || !IsValid(ResultText))
+	{
+		return;
+	}
+
+	FString Details;
+	if (bSinglePlayer)
+	{
+		Details = Result.bSuccess ? TEXT("탈출하였습니다") : TEXT("죽었습니다");
+	}
+	else if (!Result.bSuccess)
+	{
+		Details = TEXT("패배했습니다");
+	}
+	else if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+	{
+		Details = TEXT("전원 붙잡았습니다");
+	}
+	else
+	{
+		Details = TEXT("탈출하였습니다");
+	}
+
+	if (!bSinglePlayer)
+	{
+		Details += FString::Printf(TEXT("\n역할: %s\n전체 경기 시간: %.2f초"),
+			*Result.Role, Result.MatchDurationSeconds);
+		if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+		{
+			Details += FString::Printf(TEXT("\n붙잡은 횟수: %d\n첫 포획 시간: %.2f초\n전원 제거 시간: %.2f초"),
+				Result.CaptureCount, Result.FirstCaptureSeconds, Result.AllCapturedSeconds);
+		}
+		else
+		{
+			Details += FString::Printf(TEXT("\n구출 횟수: %d\n탈출 시간: %.2f초"),
+				Result.RescueCount, Result.EscapeSeconds);
+		}
+	}
+	ResultText->SetText(FText::FromString(Details));
+
+	const bool bCanRegister = !bSinglePlayer && Result.bSuccess && Result.bLeaderboardVerificationReady;
+	if (IsValid(RegisterButton))
+	{
+		RegisterButton->SetVisibility(!bSinglePlayer && Result.bSuccess
+			? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		RegisterButton->SetIsEnabled(bCanRegister && !bBusy);
+	}
+	if (IsValid(LeaderboardButton)) LeaderboardButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(LogoutButton)) LogoutButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(StatusText))
+	{
+		const FString Status = bSinglePlayer
+			? FString()
+			: !Result.bSuccess
+			? TEXT("실패 기록은 리더보드에 등록되지 않습니다.")
+			: Result.bLeaderboardVerificationReady
+				? TEXT("기록을 등록하거나 등록하지 않고 기존 방으로 돌아갈 수 있습니다.")
+				: TEXT("서버의 리더보드 검증 기록에 실패했습니다. 방 복귀만 가능합니다.");
+		StatusText->SetText(FText::FromString(Status));
+		StatusText->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		StatusText->SetColorAndOpacity(Result.bSuccess && !Result.bLeaderboardVerificationReady
+			? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::White));
+	}
+}
+
+void UProjectProject01MatchResultWidget::SetBusy(
+	const bool bInBusy,
+	const FString& Message,
+	const bool bIsError)
+{
+	bBusy = bInBusy;
+	const bool bFadeFinished = FadeElapsedSeconds >= FadeDurationSeconds;
+	if (IsValid(RegisterButton))
+	{
+		RegisterButton->SetIsEnabled(bFadeFinished && !bBusy && !bSinglePlayer &&
+			Result.bSuccess && Result.bLeaderboardVerificationReady);
+	}
+	if (IsValid(LeaderboardButton)) LeaderboardButton->SetIsEnabled(bFadeFinished && !bBusy);
+	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(bFadeFinished && !bBusy);
+	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(bFadeFinished && !bBusy);
+	if (IsValid(LogoutButton)) LogoutButton->SetIsEnabled(bFadeFinished && !bBusy);
+	if (IsValid(StatusText) && !Message.IsEmpty())
+	{
+		StatusText->SetText(FText::FromString(Message));
+		StatusText->SetColorAndOpacity(bIsError
+			? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::White));
+	}
+}
+
+void UProjectProject01MatchResultWidget::BuildWidgetTree()
+{
+	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Match result widget has no WidgetTree.")) ||
+		IsValid(WidgetTree->RootWidget))
+	{
+		return;
+	}
+
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = Overlay;
+	FadeBackground = WidgetTree->ConstructWidget<UBorder>();
+	FadeBackground->SetBrushColor(FLinearColor::Transparent);
+	if (UOverlaySlot* BackgroundSlot = Overlay->AddChildToOverlay(FadeBackground))
+	{
+		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	ResultMenu = WidgetTree->ConstructWidget<UVerticalBox>();
+	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(ResultMenu))
+	{
+		MenuSlot->SetHorizontalAlignment(HAlign_Center);
+		MenuSlot->SetVerticalAlignment(VAlign_Center);
+	}
+	ResultText = WidgetTree->ConstructWidget<UTextBlock>();
+	ResultText->SetText(FText::FromString(TEXT("결과를 불러오는 중...")));
+	ResultText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	ResultText->SetJustification(ETextJustify::Center);
+	FSlateFontInfo ResultFont = ResultText->GetFont();
+	ResultFont.Size = 36;
+	ResultText->SetFont(ResultFont);
+	ResultMenu->AddChildToVerticalBox(ResultText)->SetPadding(FMargin(12.0f));
+
+	StatusText = WidgetTree->ConstructWidget<UTextBlock>();
+	StatusText->SetText(FText::FromString(TEXT("결과를 처리하는 중...")));
+	StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	StatusText->SetJustification(ETextJustify::Center);
+	ResultMenu->AddChildToVerticalBox(StatusText)->SetPadding(FMargin(8.0f));
+
+	RegisterButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("성공 기록을 리더보드에 등록"));
+	LeaderboardButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("리더보드"));
+	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("방으로 돌아가기"));
+	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("로그아웃"));
+	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("타이틀로 돌아가기"));
+}
+
 void UProjectProject01SettingsWidget::ConfigureReturnWidget(UUserWidget* InReturnWidget)
 {
 	ReturnWidget = InReturnWidget;

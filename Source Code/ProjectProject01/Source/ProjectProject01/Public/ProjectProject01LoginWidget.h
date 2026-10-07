@@ -7,6 +7,7 @@
 #include "Blueprint/UserWidget.h"
 #include "GenericPlatform/GenericWindow.h"
 #include "InputCoreTypes.h"
+#include "MultiplayTestPlayerController.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01LoginWidget.generated.h"
@@ -186,6 +187,92 @@ private:
 	bool bMultiplayer = false;
 	bool bBusy = false;
 	EPendingExitAction PendingExitAction = EPendingExitAction::None;
+};
+
+/** 서버가 확정한 멀티플레이 경기 결과를 표시하고 리더보드 등록 또는 방 복귀를 수행합니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01MatchResultWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void ConfigureResult(const FMultiplayTestMatchResult& InResult);
+	void ConfigureSinglePlayerResult(bool bEscaped);
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+private:
+	UFUNCTION()
+	void HandleRegisterClicked();
+
+	UFUNCTION()
+	void HandleReturnToRoomClicked();
+
+	UFUNCTION()
+	void HandleLeaderboardClicked();
+
+	UFUNCTION()
+	void HandleReturnToTitleClicked();
+
+	UFUNCTION()
+	void HandleLogoutClicked();
+
+	UFUNCTION()
+	void HandleLobbyRequestResult(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
+
+	UFUNCTION()
+	void HandleLogoutResult(bool bSuccess, const FString& Message, const FString& DisplayName);
+
+	void BuildWidgetTree();
+	void RefreshResultText();
+	void BeginReturnToRoom();
+	void BeginAuthenticatedExit(bool bReturnToTitle);
+	void BeginLogout();
+	void CompleteAuthenticatedExit();
+	void SetBusy(bool bInBusy, const FString& Message = FString(), bool bIsError = false);
+
+	FMultiplayTestMatchResult Result;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> ResultText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> StatusText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> RegisterButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReturnToRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LeaderboardButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReturnToTitleButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LogoutButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> FadeBackground;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UVerticalBox> ResultMenu;
+
+	bool bConfigured = false;
+	bool bSinglePlayer = false;
+	bool bBusy = false;
+	bool bReturnAfterRegistration = false;
+	bool bOpenLeaderboardAfterReturn = false;
+	bool bPendingAuthenticatedExit = false;
+	bool bPendingReturnToTitle = false;
+	float FadeElapsedSeconds = 0.0f;
+	float FadeDurationSeconds = 1.5f;
 };
 
 /** 타이틀과 F1 메뉴에서 공통으로 사용하는 로컬 환경설정 화면입니다. */

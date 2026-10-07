@@ -7,6 +7,7 @@
 #include "ProjectProject01GameInstance.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
+#include "MultiplayTestGameMode.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -939,6 +940,14 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	bGameOver = true;
 	ApplyGameOverState();
 	ForceNetUpdate();
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		if (AMultiplayTestGameMode* MultiplayGameMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
+			IsValid(MultiplayGameMode))
+		{
+			MultiplayGameMode->NotifyExistingMannequinCatch(this);
+		}
+	}
 	UE_LOG(LogTemp, Warning, TEXT("Player %s reached game over after being caught by mannequin %s."),
 		*GetName(), *CatchingMannequin->GetName());
 	return true;
@@ -953,6 +962,56 @@ void APlayerCharacter::SetRemainingDeathCountForGameMode(int32 NewDeathCount)
 
 	RemainingDeathCount = FMath::Max(0, NewDeathCount);
 	ForceNetUpdate();
+}
+
+void APlayerCharacter::PresentSinglePlayerResult(const bool bEscaped)
+{
+	UWorld* World = GetWorld();
+	if (bSinglePlayerResultPresented || !IsValid(World) || World->GetNetMode() != NM_Standalone ||
+		!IsLocallyControlled())
+	{
+		return;
+	}
+
+	bSinglePlayerResultPresented = true;
+	ApplySprintingState(false);
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!ensureMsgf(IsValid(PlayerController), TEXT("Single-player result requires a local player controller.")))
+	{
+		return;
+	}
+	PlayerController->SetIgnoreMoveInput(true);
+	PlayerController->SetIgnoreLookInput(true);
+	if (IsValid(SessionMenuWidget))
+	{
+		SessionMenuWidget->RemoveFromParent();
+		SessionMenuWidget = nullptr;
+	}
+	if (IsValid(SinglePlayerResultWidget))
+	{
+		SinglePlayerResultWidget->RemoveFromParent();
+	}
+
+	SinglePlayerResultWidget = CreateWidget<UProjectProject01MatchResultWidget>(
+		PlayerController, UProjectProject01MatchResultWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SinglePlayerResultWidget), TEXT("Unable to create the single-player result widget.")))
+	{
+		return;
+	}
+	SinglePlayerResultWidget->ConfigureSinglePlayerResult(bEscaped);
+	SinglePlayerResultWidget->AddToViewport(700);
+	PlayerController->bShowMouseCursor = true;
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(SinglePlayerResultWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	PlayerController->SetInputMode(InputMode);
 }
 
 bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper)
@@ -1007,6 +1066,8 @@ void APlayerCharacter::ApplyGameOverState()
 	{
 		ensureMsgf(false, TEXT("Player %s has no CharacterMovementComponent for game over."), *GetName());
 	}
+
+	PresentSinglePlayerResult(false);
 }
 
 void APlayerCharacter::OnRep_GameOver()

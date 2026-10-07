@@ -196,6 +196,19 @@ public:
 		int32 RescueCount,
 		double EscapeSeconds);
 
+	/** 서버 검증 저장이 끝난 뒤 결과 화면을 열 수 있도록 성공 여부를 돌려주는 네이티브 경로입니다. */
+	void SubmitAuthoritativeMatchResultWithCallback(
+		const FString& MatchId,
+		const FString& UserId,
+		const FString& Role,
+		bool bSuccess,
+		int32 CaptureCount,
+		double FirstCaptureSeconds,
+		double AllCapturedSeconds,
+		int32 RescueCount,
+		double EscapeSeconds,
+		TFunction<void(bool)> Completion);
+
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
 	FString LoadGameServerSharedSecret() const;
