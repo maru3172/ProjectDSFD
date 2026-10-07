@@ -6,6 +6,8 @@
 #include "Dom/JsonObject.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "AudioDevice.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformMisc.h"
@@ -21,6 +23,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01NetworkSecurity, Log, All);
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01UserSettings, Log, All);
@@ -269,6 +272,11 @@ void UProjectProject01GameInstance::Init()
 		ApplicationActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged().AddUObject(
 			this, &UProjectProject01GameInstance::HandleApplicationActivationChanged);
 	}
+	if (!IsRunningDedicatedServer() && GEngine)
+	{
+		NetworkFailureHandle = GEngine->OnNetworkFailure().AddUObject(
+			this, &UProjectProject01GameInstance::HandleNetworkFailure);
+	}
 
 	if (!IsBackendUrlAllowed())
 	{
@@ -279,6 +287,11 @@ void UProjectProject01GameInstance::Init()
 
 void UProjectProject01GameInstance::Shutdown()
 {
+	if (NetworkFailureHandle.IsValid() && GEngine)
+	{
+		GEngine->OnNetworkFailure().Remove(NetworkFailureHandle);
+		NetworkFailureHandle.Reset();
+	}
 	if (ApplicationActivationHandle.IsValid() && FSlateApplication::IsInitialized())
 	{
 		FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(ApplicationActivationHandle);
@@ -294,6 +307,39 @@ void UProjectProject01GameInstance::Shutdown()
 	}
 	PendingSecurityRequests.Reset();
 	Super::Shutdown();
+}
+
+void UProjectProject01GameInstance::HandleNetworkFailure(
+	UWorld* World,
+	UNetDriver* NetDriver,
+	const ENetworkFailure::Type FailureType,
+	const FString& ErrorString)
+{
+	if (IsRunningDedicatedServer() || !IsValid(World) ||
+		!World->GetMapName().Contains(TEXT("MultiplayTest")))
+	{
+		return;
+	}
+	UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+		TEXT("Game server connection ended (%d): %s. Returning to the lobby for reconnect handling."),
+		static_cast<int32>(FailureType), *ErrorString);
+	if (APlayerController* PlayerController = World->GetFirstPlayerController(); IsValid(PlayerController))
+	{
+		if (IsValid(PlayerController->PlayerCameraManager))
+		{
+			PlayerController->PlayerCameraManager->StartCameraFade(
+				0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
+		}
+		const TWeakObjectPtr<APlayerController> WeakController(PlayerController);
+		FTimerHandle ReturnTimer;
+		World->GetTimerManager().SetTimer(ReturnTimer, [WeakController]()
+		{
+			if (APlayerController* Controller = WeakController.Get(); IsValid(Controller))
+			{
+				Controller->ClientTravel(TEXT("/Game/MyProject/Level/LobbyLevel"), TRAVEL_Absolute);
+			}
+		}, 0.5f, false);
+	}
 }
 
 void UProjectProject01GameInstance::HandleApplicationActivationChanged(const bool bApplicationActive)
@@ -580,6 +626,59 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 		RemovePendingRequest(Request);
 		UE_LOG(LogProjectProject01NetworkSecurity, Error, TEXT("Unable to start authoritative result submission."));
 		CompleteOnce(false);
+	}
+}
+
+void UProjectProject01GameInstance::NotifyAuthoritativePlayerForfeit(
+	const FString& MatchId,
+	const FString& UserId,
+	const FString& Role)
+{
+	const UWorld* World = GetWorld();
+	if (!IsValid(World) || World->GetNetMode() == NM_Client || MatchId.IsEmpty() || UserId.IsEmpty() ||
+		!IsBackendUrlAllowed())
+	{
+		return;
+	}
+	const FString ServerSecret = LoadGameServerSharedSecret();
+	if (ServerSecret.Len() < 32)
+	{
+		UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+			TEXT("Cannot notify the backend about forfeit because the server secret is unavailable."));
+		return;
+	}
+
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("matchId"), MatchId);
+	Json->SetStringField(TEXT("userId"), UserId);
+	Json->SetStringField(TEXT("role"), Role);
+	FString Body;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/server/matches/forfeit"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	Request->SetContentAsString(Body);
+	Request->SetTimeout(SecurityRequestTimeoutSeconds);
+	Request->OnProcessRequestComplete().BindWeakLambda(this,
+		[this](const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& CompletedRequest,
+			const TSharedPtr<IHttpResponse, ESPMode::ThreadSafe>& Response,
+			const bool bConnectedSuccessfully)
+		{
+			RemovePendingRequest(CompletedRequest);
+			if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() < 200 ||
+				Response->GetResponseCode() >= 300)
+			{
+				UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+					TEXT("Backend forfeit notification failed with status %d; match authority remains on the game server."),
+					Response.IsValid() ? Response->GetResponseCode() : 0);
+			}
+		});
+	PendingSecurityRequests.Add(Request);
+	if (!Request->ProcessRequest())
+	{
+		RemovePendingRequest(Request);
 	}
 }
 

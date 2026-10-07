@@ -24,6 +24,13 @@ struct FMultiplayTestServerPlayerRecord
 	double FirstCaptureSeconds = 0.0;
 	double AllCapturedSeconds = 0.0;
 	double EscapeSeconds = 0.0;
+	FTransform LastPawnTransform = FTransform::Identity;
+	int32 RemainingDeathCount = 0;
+	int32 ViewedMannequinSlot = -1;
+	bool bWasManualMannequinControl = false;
+	bool bForfeited = false;
+	bool bDisconnected = false;
+	double ReconnectDeadlineWorldSeconds = 0.0;
 };
 
 /**
@@ -50,6 +57,8 @@ public:
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
 	bool TryEnableMannequinManualControl(class AMultiplayTestPlayerController* RequestingController);
 	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
+	void DeclareVoluntaryExit(class AMultiplayTestPlayerController* RequestingController);
+	void CycleSurvivorSpectator(class AMultiplayTestPlayerController* RequestingController, int32 Direction);
 
 	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
 	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
@@ -86,6 +95,12 @@ private:
 	void UpdateSurvivorVisionFrozenStates();
 	void BindEscapeTriggers();
 	void RegisterMatchPlayer(class AMultiplayTestPlayerController* Controller);
+	bool RestoreDisconnectedMatchPlayer(class AMultiplayTestPlayerController* Controller);
+	void SnapshotPlayerRecord(class AMultiplayTestPlayerController* Controller, FMultiplayTestServerPlayerRecord& Record);
+	void ApplyForfeit(FMultiplayTestServerPlayerRecord& Record, const FString& Reason);
+	void ProcessReconnectTimeouts();
+	void EnterSurvivorSpectator(class AMultiplayTestPlayerController* Controller);
+	class APlayerCharacter* FindLivingSurvivorSpectatorTarget(const class AMultiplayTestPlayerController* RequestingController, int32 Direction) const;
 	void TryStartAuthoritativeMatch();
 	void SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase NewPhase);
 	void CheckForMatchCompletion();
@@ -122,6 +137,8 @@ private:
 	TMap<FString, FProjectProject01ValidatedJoinClaim> PendingValidatedJoinClaims;
 	FTimerHandle EmptyDedicatedServerResetTimer;
 	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord> MatchPlayerRecords;
+	TMap<FString, FMultiplayTestServerPlayerRecord> DisconnectedMatchRecords;
+	TMap<FString, FMultiplayTestMatchResult> CompletedResultsByUserId;
 	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, bool> ResultVerificationStatus;
 	EMultiplayTestMatchPhase AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
 	FString AuthoritativeMatchId;
@@ -129,12 +146,17 @@ private:
 	double MatchEndWorldSeconds = 0.0;
 	int32 PendingResultSubmissions = 0;
 	bool bFinishCommitted = false;
+	bool bMatchEndedByForfeit = false;
+	bool bSurvivorVictoryByMannequinForfeit = false;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1", UIMin = "1"))
 	int32 ExpectedMatchPlayers = 3;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1.0", UIMin = "1.0", Units = "s"))
 	float MatchTimeLimitSeconds = 1800.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Reconnect", meta = (ClampMin = "1.0", UIMin = "1.0", Units = "s"))
+	float ReconnectGraceSeconds = 30.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match")
 	FName EscapeTriggerActorTag = TEXT("ProjectProject01Escape");

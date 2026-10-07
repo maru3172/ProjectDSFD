@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/EngineBaseTypes.h"
 #include "Engine/GameInstance.h"
 #include "Engine/NetworkDelegates.h"
 #include "GameFramework/GameUserSettings.h"
@@ -209,8 +210,13 @@ public:
 		double EscapeSeconds,
 		TFunction<void(bool)> Completion);
 
+	/** 재접속 유예시간이 만료된 플레이어를 백엔드 방에서도 서버 권위로 정리합니다. */
+	void NotifyAuthoritativePlayerForfeit(const FString& MatchId, const FString& UserId, const FString& Role);
+
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
+	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
+		ENetworkFailure::Type FailureType, const FString& ErrorString);
 	FString LoadGameServerSharedSecret() const;
 	bool IsBackendUrlAllowed() const;
 	void RemovePendingRequest(const TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe>& Request);
@@ -223,4 +229,5 @@ private:
 
 	TArray<TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe>> PendingSecurityRequests;
 	FDelegateHandle ApplicationActivationHandle;
+	FDelegateHandle NetworkFailureHandle;
 };

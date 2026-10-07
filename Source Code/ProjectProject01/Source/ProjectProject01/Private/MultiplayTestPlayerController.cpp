@@ -8,7 +8,9 @@
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01LoginWidget.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 
 void AMultiplayTestPlayerController::BeginPlay()
 {
@@ -46,6 +48,8 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
 	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AMultiplayTestPlayerController::RequestPostPossessionChaseCommand);
 	InputComponent->BindKey(EKeys::F1, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
+	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
+	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
 }
 
 void AMultiplayTestPlayerController::ToggleSessionMenu()
@@ -130,6 +134,27 @@ void AMultiplayTestPlayerController::DeliverMatchResultToOwner(const FMultiplayT
 	ClientPresentMatchResult(Result);
 }
 
+void AMultiplayTestPlayerController::DeclareVoluntaryExit()
+{
+	if (IsLocalController())
+	{
+		ServerDeclareVoluntaryExit();
+	}
+}
+
+void AMultiplayTestPlayerController::EnterSurvivorSpectator(
+	AActor* InitialTarget,
+	const bool bFadeTransition)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(false);
+	ClientEnterSurvivorSpectator(InitialTarget, bFadeTransition);
+}
+
 void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
@@ -175,6 +200,62 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	InputMode.SetHideCursorDuringCapture(false);
 	SetInputMode(InputMode);
+}
+
+void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation(
+	AActor* InitialTarget,
+	const bool bFadeTransition)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = false;
+	SetInputMode(FInputModeGameOnly());
+	if (!bFadeTransition)
+	{
+		if (IsValid(InitialTarget))
+		{
+			SetViewTarget(InitialTarget);
+		}
+		return;
+	}
+	if (!IsValid(PlayerCameraManager) || !IsValid(GetWorld()))
+	{
+		if (IsValid(InitialTarget))
+		{
+			SetViewTarget(InitialTarget);
+		}
+		return;
+	}
+
+	PlayerCameraManager->StartCameraFade(0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
+	// 마지막 생존자의 탈락처럼 관전 대상이 없는 경우에는 암전을 유지한다.
+	// 곧 표시되는 경기 결과 위젯은 검은 게임 화면 위에 정상적으로 나타난다.
+	if (!IsValid(InitialTarget))
+	{
+		return;
+	}
+	const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(this);
+	const TWeakObjectPtr<AActor> WeakTarget(InitialTarget);
+	FTimerHandle SpectatorFadeTimer;
+	GetWorld()->GetTimerManager().SetTimer(SpectatorFadeTimer, [WeakController, WeakTarget]()
+	{
+		AMultiplayTestPlayerController* Controller = WeakController.Get();
+		AActor* Target = WeakTarget.Get();
+		if (!IsValid(Controller) || !IsValid(Target))
+		{
+			return;
+		}
+		Controller->SetViewTarget(Target);
+		if (IsValid(Controller->PlayerCameraManager))
+		{
+			Controller->PlayerCameraManager->StartCameraFade(
+				1.0f, 0.0f, 0.5f, FLinearColor::Black, false, false);
+		}
+	}, 0.5f, false);
 }
 
 void AMultiplayTestPlayerController::OnRep_ViewedMannequin()
@@ -231,6 +312,26 @@ void AMultiplayTestPlayerController::RequestPostPossessionChaseCommand()
 	if (IsLocalController())
 	{
 		ServerRequestPostPossessionChaseCommand();
+	}
+}
+
+void AMultiplayTestPlayerController::SelectPreviousSpectatorTarget()
+{
+	if (IsLocalController() &&
+		(SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
+		 SurvivorState == EMultiplayTestSurvivorState::Escaped))
+	{
+		ServerCycleSurvivorSpectator(-1);
+	}
+}
+
+void AMultiplayTestPlayerController::SelectNextSpectatorTarget()
+{
+	if (IsLocalController() &&
+		(SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
+		 SurvivorState == EMultiplayTestSurvivorState::Escaped))
+	{
+		ServerCycleSurvivorSpectator(1);
 	}
 }
 
@@ -308,6 +409,47 @@ void AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Imp
 bool AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Validate()
 {
 	return true;
+}
+
+void AMultiplayTestPlayerController::ServerDeclareVoluntaryExit_Implementation()
+{
+	if (!AllowServerRequest(3, 2, 2.0f))
+	{
+		return;
+	}
+	bVoluntaryExitDeclared = true;
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		if (AMultiplayTestGameMode* GameMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(GameMode))
+		{
+			GameMode->DeclareVoluntaryExit(this);
+		}
+	}
+}
+
+bool AMultiplayTestPlayerController::ServerDeclareVoluntaryExit_Validate()
+{
+	return true;
+}
+
+void AMultiplayTestPlayerController::ServerCycleSurvivorSpectator_Implementation(const int32 Direction)
+{
+	if (!AllowServerRequest(4, 4, 1.0f) || Direction == 0)
+	{
+		return;
+	}
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		if (AMultiplayTestGameMode* GameMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(GameMode))
+		{
+			GameMode->CycleSurvivorSpectator(this, Direction);
+		}
+	}
+}
+
+bool AMultiplayTestPlayerController::ServerCycleSurvivorSpectator_Validate(const int32 Direction)
+{
+	return Direction == -1 || Direction == 1;
 }
 
 bool AMultiplayTestPlayerController::AllowServerRequest(

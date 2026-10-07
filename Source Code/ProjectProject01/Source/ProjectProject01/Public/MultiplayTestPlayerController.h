@@ -81,6 +81,8 @@ public:
 	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
 	void SetServerMatchState(EMultiplayTestMatchPhase NewPhase, EMultiplayTestSurvivorState NewSurvivorState);
 	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
+	void DeclareVoluntaryExit();
+	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
 	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
 	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
@@ -108,6 +110,8 @@ private:
 	void RequestMannequinManualControl();
 	void RequestPostPossessionChaseCommand();
 	void ToggleSessionMenu();
+	void SelectPreviousSpectatorTarget();
+	void SelectNextSpectatorTarget();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinSlot(int32 Slot);
@@ -118,11 +122,20 @@ private:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestPostPossessionChaseCommand();
 
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDeclareVoluntaryExit();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerCycleSurvivorSpectator(int32 Direction);
+
 	UFUNCTION(Client, Reliable)
 	void ClientApplyViewedMannequin(class AMannequinAICharacter* Mannequin);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPresentMatchResult(const FMultiplayTestMatchResult& Result);
+
+	UFUNCTION(Client, Reliable)
+	void ClientEnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition);
 
 	UFUNCTION()
 	void OnRep_ViewedMannequin();
@@ -149,6 +162,9 @@ private:
 	FString AuthenticatedUserId;
 	FString AuthenticatedMatchId;
 	FString AuthenticatedRole;
-	float RpcWindowStartSeconds[3] = { 0.0f, 0.0f, 0.0f };
-	int32 RpcWindowCallCount[3] = { 0, 0, 0 };
+	float RpcWindowStartSeconds[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+	int32 RpcWindowCallCount[5] = { 0, 0, 0, 0, 0 };
+	bool bVoluntaryExitDeclared = false;
+
+	friend class AMultiplayTestGameMode;
 };

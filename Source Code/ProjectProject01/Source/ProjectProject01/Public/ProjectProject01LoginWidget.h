@@ -125,12 +125,14 @@ protected:
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
 	enum class EPendingExitAction : uint8
 	{
 		None,
+		ReturnToRoom,
 		ReturnToTitle,
 		QuitGame
 	};
@@ -158,6 +160,8 @@ private:
 
 	void BuildWidgetTree();
 	void BeginAuthenticatedExit(EPendingExitAction ExitAction);
+	void BeginExitFade(EPendingExitAction ExitAction, const FString& Message);
+	void ExecutePendingExitAfterFade();
 	void BeginLogout();
 	void CompleteExit();
 	void SetBusy(bool bInBusy, const FString& Message = FString(), bool bIsError = false);
@@ -182,10 +186,16 @@ private:
 	TObjectPtr<class UTextBlock> StatusText;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> ExitFadeOverlay;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
 	bool bMultiplayer = false;
 	bool bBusy = false;
+	bool bExitFadeActive = false;
+	float ExitFadeElapsedSeconds = 0.0f;
+	float ExitFadeDurationSeconds = 0.65f;
 	EPendingExitAction PendingExitAction = EPendingExitAction::None;
 };
 
@@ -441,10 +451,19 @@ protected:
 
 private:
 	UFUNCTION()
+	void HandleOpenCreateRoomClicked();
+
+	UFUNCTION()
+	void HandleCancelCreateRoomClicked();
+
+	UFUNCTION()
 	void HandleCreateRoomClicked();
 
 	UFUNCTION()
 	void HandleRefreshRoomsClicked();
+
+	UFUNCTION()
+	void HandleRoomSearchChanged(const FText& SearchText);
 
 	UFUNCTION()
 	void HandleJoinRoomClicked();
@@ -495,6 +514,16 @@ private:
 	void RefreshCurrentRoomView();
 	void BeginLogout();
 	void TravelToStartedGame(const FProjectProject01RoomState& RoomState);
+	void ShowLobbyView(int32 ViewIndex);
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UWidgetSwitcher> LobbyViewSwitcher;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> OpenCreateRoomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> CancelCreateRoomButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UEditableTextBox> RoomNameInput;
@@ -510,6 +539,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> RefreshRoomsButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UEditableTextBox> RoomSearchInput;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UComboBoxString> RoomListComboBox;
@@ -573,6 +605,7 @@ private:
 	FTimerHandle LobbyRefreshTimer;
 	bool bLogoutAfterLeave = false;
 	bool bTravelRequested = false;
+	bool bShowingCreateRoom = false;
 };
 
 UCLASS()

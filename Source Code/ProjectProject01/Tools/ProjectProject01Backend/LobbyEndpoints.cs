@@ -892,6 +892,91 @@ internal static class LobbyEndpoints
             }
         }).RequireRateLimiting("game-server");
 
+		app.MapPost("/api/server/matches/forfeit", async (
+			HttpRequest request,
+			AuthoritativeForfeitRequest body,
+			AuthDatabase database,
+			CancellationToken ct) =>
+		{
+			if (!securityOptions.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))
+			{
+				await SecurityAudit.WriteAsync(database, request, "MatchForfeit", "UnauthorizedServer", null, null, ct);
+				return Results.Unauthorized();
+			}
+			if (!Guid.TryParse(body.MatchId, out var matchId) || !ulong.TryParse(body.UserId, out var userId))
+			{
+				return Results.BadRequest(new LobbyFailure("경기 또는 사용자 ID 형식이 올바르지 않습니다."));
+			}
+
+			try
+			{
+				await using var connection = await database.OpenConnectionAsync(ct);
+				await using var transaction = await connection.BeginTransactionAsync(ct);
+				string? roomId = null;
+				ulong hostUserId = 0;
+				await using (var membership = new MySqlCommand(
+					"""
+					SELECT r.id, r.host_user_id
+					FROM game_rooms r
+					INNER JOIN room_members m ON m.room_id = r.id
+					WHERE r.match_id = @matchId AND m.user_id = @userId
+					LIMIT 1 FOR UPDATE;
+					""", connection, transaction) { CommandTimeout = 5 })
+				{
+					membership.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
+					membership.Parameters.AddWithValue("@userId", userId);
+					await using var reader = await membership.ExecuteReaderAsync(ct);
+					if (await reader.ReadAsync(ct))
+					{
+						roomId = ReadRoomId(reader, 0);
+						hostUserId = reader.GetUInt64(1);
+					}
+				}
+
+				if (roomId is null)
+				{
+					await transaction.RollbackAsync(ct);
+					return Results.Ok(new { message = "이미 정리된 경기 참가자입니다." });
+				}
+
+				if (hostUserId == userId)
+				{
+					var successor = await FindEarliestOtherMemberAsync(connection, transaction, roomId, userId, ct);
+					if (successor is ulong successorUserId)
+					{
+						await ExecuteAsync(connection, transaction,
+							"UPDATE game_rooms SET host_user_id = @successorUserId WHERE id = @roomId;",
+							("@successorUserId", successorUserId), ("@roomId", roomId), ct);
+						await ExecuteAsync(connection, transaction,
+							"UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id = @successorUserId;",
+							("@roomId", roomId), ("@successorUserId", successorUserId), ct);
+					}
+				}
+				await ExecuteAsync(connection, transaction,
+					"DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
+					("@roomId", roomId), ("@userId", userId), ct);
+
+				await using (var count = new MySqlCommand(
+					"SELECT COUNT(*) FROM room_members WHERE room_id = @roomId;", connection, transaction) { CommandTimeout = 5 })
+				{
+					count.Parameters.AddWithValue("@roomId", roomId);
+					if (Convert.ToInt32(await count.ExecuteScalarAsync(ct)) == 0)
+					{
+						await ExecuteAsync(connection, transaction,
+							"DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", roomId), ct);
+					}
+				}
+				await transaction.CommitAsync(ct);
+				await SecurityAudit.WriteAsync(database, request, "MatchForfeit", "Success", userId,
+					$"MatchId={matchId:D}; Role={body.Role}", ct);
+				return Results.Ok(new { message = "재접속 유예시간이 만료된 참가자를 방과 경기에서 정리했습니다." });
+			}
+			catch (MySqlException)
+			{
+				return DatabaseUnavailable();
+			}
+		}).RequireRateLimiting("game-server");
+
         app.MapGet("/api/leaderboards/{role}", async (
             string role, HttpRequest request, AuthDatabase database, CancellationToken ct) =>
         {
@@ -1607,6 +1692,7 @@ internal sealed record SubmitVerifiedMatchResultRequest(
     double? AllCapturedSeconds,
     int? RescueCount,
     double? EscapeSeconds);
+internal sealed record AuthoritativeForfeitRequest(string? MatchId, string? UserId, string? Role);
 internal sealed record SubmitLeaderboardRecordRequest(
     string? MatchId,
     string? Role,
