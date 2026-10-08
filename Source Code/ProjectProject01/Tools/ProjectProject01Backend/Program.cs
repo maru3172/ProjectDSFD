@@ -106,6 +106,16 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    options.AddPolicy("crash-report", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
 var app = builder.Build();
@@ -408,6 +418,53 @@ app.MapProjectProject01Lobby(
     builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777",
     securityOptions);
 
+app.MapPost("/api/crash-reports", async (
+    CrashReportRequest report,
+    AuthDatabase database,
+    CancellationToken cancellationToken) =>
+{
+    if (!database.IsConfigured)
+    {
+        return DatabaseUnavailable();
+    }
+    if (!CrashReportValidation.TryValidate(report, out var validationError))
+    {
+        return Results.BadRequest(new AuthFailure(validationError));
+    }
+    try
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = new MySqlCommand(
+            """
+            INSERT INTO crash_reports
+                (report_id, detected_at_utc, started_at_utc, last_updated_at_utc, build_version,
+                 map_name, game_mode, process_role, player_role, last_log_path, diagnostic_run_id, match_id)
+            VALUES
+                (@reportId, @detectedAt, @startedAt, @lastUpdatedAt, @buildVersion,
+                 @mapName, @gameMode, @processRole, @playerRole, @lastLogPath, @diagnosticRunId, @matchId)
+            ON DUPLICATE KEY UPDATE detected_at_utc = VALUES(detected_at_utc);
+            """, connection) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@reportId", report.ReportId);
+        command.Parameters.AddWithValue("@detectedAt", report.DetectedAtUtc.ToUniversalTime());
+        command.Parameters.AddWithValue("@startedAt", report.StartedAtUtc.ToUniversalTime());
+        command.Parameters.AddWithValue("@lastUpdatedAt", report.LastUpdatedAtUtc.ToUniversalTime());
+        command.Parameters.AddWithValue("@buildVersion", report.BuildVersion.Trim());
+        command.Parameters.AddWithValue("@mapName", report.MapName.Trim());
+        command.Parameters.AddWithValue("@gameMode", report.GameMode.Trim());
+        command.Parameters.AddWithValue("@processRole", report.ProcessRole.Trim());
+        command.Parameters.AddWithValue("@playerRole", string.IsNullOrWhiteSpace(report.PlayerRole) ? DBNull.Value : report.PlayerRole.Trim());
+        command.Parameters.AddWithValue("@lastLogPath", report.LastLogPath.Trim());
+        command.Parameters.AddWithValue("@diagnosticRunId", report.DiagnosticRunId.Trim());
+        command.Parameters.AddWithValue("@matchId", string.IsNullOrWhiteSpace(report.MatchId) ? DBNull.Value : report.MatchId.Trim());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return Results.Created($"/api/crash-reports/{report.ReportId}", new { reportId = report.ReportId });
+    }
+    catch (MySqlException)
+    {
+        return DatabaseUnavailable();
+    }
+}).RequireRateLimiting("crash-report");
+
 app.Run();
 
 static IResult DatabaseUnavailable() =>
@@ -549,6 +606,41 @@ internal static class AuthValidation
         }
         return null;
     }
+}
+
+internal static class CrashReportValidation
+{
+    private static readonly HashSet<string> ProcessRoles = new(StringComparer.Ordinal)
+    {
+        "Client", "DedicatedServer", "ListenServer", "Standalone"
+    };
+    private static readonly HashSet<string> PlayerRoles = new(StringComparer.Ordinal)
+    {
+        "", "Mannequin", "Survivor"
+    };
+
+    public static bool TryValidate(CrashReportRequest report, out string error)
+    {
+        error = "크래시 보고서 형식이 올바르지 않습니다.";
+        if (!Guid.TryParse(report.ReportId, out _) ||
+            report.DetectedAtUtc == default || report.StartedAtUtc == default || report.LastUpdatedAtUtc == default ||
+            !ValidText(report.BuildVersion, 128) || !ValidText(report.MapName, 128) ||
+            !ValidText(report.GameMode, 128) || !ProcessRoles.Contains(report.ProcessRole ?? "") ||
+            !PlayerRoles.Contains(report.PlayerRole?.Trim() ?? "") ||
+            !ValidText(report.DiagnosticRunId, 128) || !ValidText(report.LastLogPath, 256) ||
+            report.LastLogPath.Contains("..", StringComparison.Ordinal) ||
+            report.LastLogPath.Contains(':') ||
+            (!string.IsNullOrWhiteSpace(report.MatchId) && !Guid.TryParse(report.MatchId, out _)))
+        {
+            return false;
+        }
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool ValidText(string? value, int maximumLength) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= maximumLength &&
+        !value.Contains('\r') && !value.Contains('\n');
 }
 
 internal sealed class AuthDatabase
@@ -729,6 +821,19 @@ internal sealed class AuthDatabase
 internal sealed record RegisterRequest(string AccountId, string Password, string DisplayName);
 internal sealed record LoginRequest(string AccountId, string Password);
 internal sealed record RefreshRequest(string RefreshToken);
+internal sealed record CrashReportRequest(
+    string ReportId,
+    DateTime DetectedAtUtc,
+    DateTime StartedAtUtc,
+    DateTime LastUpdatedAtUtc,
+    string BuildVersion,
+    string MapName,
+    string GameMode,
+    string ProcessRole,
+    string? PlayerRole,
+    string LastLogPath,
+    string DiagnosticRunId,
+    string? MatchId);
 internal sealed record AuthFailure(string Message);
 internal sealed record AuthSuccess(
     string Message,

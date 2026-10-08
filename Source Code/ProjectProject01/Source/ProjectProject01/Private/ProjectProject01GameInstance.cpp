@@ -4,20 +4,33 @@
 #include "ProjectProject01GameInstance.h"
 
 #include "Dom/JsonObject.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/GameModeBase.h"
+#include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "AudioDevice.h"
 #include "Framework/Application/SlateApplication.h"
+#include "GenericPlatform/GenericPlatformCrashContext.h"
+#include "HAL/FileManager.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProcess.h"
 #include "HAL/IConsoleManager.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Misc/Base64.h"
+#include "Misc/App.h"
+#include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "Misc/NetworkVersion.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
+#include "Rendering/RenderingCommon.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -59,6 +72,14 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	DisplayGammaSetting = 2.2f;
 	MouseSensitivity = 1.0f;
 	VFXIntensity = EProjectProject01VFXIntensity::Standard;
+	bSubtitlesEnabled = true;
+	bEnhancedVisualCues = true;
+	ColorVisionMode = EProjectProject01ColorVisionMode::Normal;
+	ColorVisionSeverity = 5.0f;
+	ScreenFlashScale = 1.0f;
+	ScreenDistortionScale = 1.0f;
+	ScreenShakeScale = 1.0f;
+	UIReadableScale = 1.0f;
 	MoveForwardKeyName = EKeys::W.GetFName();
 	MoveBackwardKeyName = EKeys::S.GetFName();
 	MoveLeftKeyName = EKeys::A.GetFName();
@@ -102,10 +123,22 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 	UIVolume = FMath::Clamp(UIVolume, 0.0f, 1.0f);
 	DisplayGammaSetting = FMath::Clamp(DisplayGammaSetting, 1.8f, 2.6f);
 	MouseSensitivity = FMath::Clamp(MouseSensitivity, 0.1f, 3.0f);
+	ColorVisionSeverity = FMath::Clamp(ColorVisionSeverity, 0.0f, 10.0f);
+	ScreenFlashScale = FMath::Clamp(ScreenFlashScale, 0.0f, 1.0f);
+	ScreenDistortionScale = FMath::Clamp(ScreenDistortionScale, 0.0f, 1.0f);
+	ScreenShakeScale = FMath::Clamp(ScreenShakeScale, 0.0f, 1.0f);
+	UIReadableScale = FMath::Clamp(UIReadableScale, 0.8f, 1.3f);
 	if (VFXIntensity != EProjectProject01VFXIntensity::Standard &&
 		VFXIntensity != EProjectProject01VFXIntensity::Reduced)
 	{
 		VFXIntensity = EProjectProject01VFXIntensity::Standard;
+	}
+	if (ColorVisionMode != EProjectProject01ColorVisionMode::Normal &&
+		ColorVisionMode != EProjectProject01ColorVisionMode::Deuteranopia &&
+		ColorVisionMode != EProjectProject01ColorVisionMode::Protanopia &&
+		ColorVisionMode != EProjectProject01ColorVisionMode::Tritanopia)
+	{
+		ColorVisionMode = EProjectProject01ColorVisionMode::Normal;
 	}
 
 	TArray<FKey> Keys = {
@@ -158,6 +191,42 @@ void UProjectProject01GameUserSettings::ApplyProjectSettings(const bool bApplica
 	if (IConsoleVariable* MotionBlurQuality = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")))
 	{
 		MotionBlurQuality->Set(bMotionBlurEnabled ? 4 : 0, ECVF_SetByGameSetting);
+	}
+	UGameplayStatics::SetSubtitlesEnabled(bSubtitlesEnabled);
+	if (!IsRunningDedicatedServer())
+	{
+		EColorVisionDeficiency Deficiency = EColorVisionDeficiency::NormalVision;
+		switch (ColorVisionMode)
+		{
+		case EProjectProject01ColorVisionMode::Deuteranopia: Deficiency = EColorVisionDeficiency::Deuteranope; break;
+		case EProjectProject01ColorVisionMode::Protanopia: Deficiency = EColorVisionDeficiency::Protanope; break;
+		case EProjectProject01ColorVisionMode::Tritanopia: Deficiency = EColorVisionDeficiency::Tritanope; break;
+		default: break;
+		}
+		UWidgetBlueprintLibrary::SetColorVisionDeficiencyType(
+			Deficiency, ColorVisionSeverity, Deficiency != EColorVisionDeficiency::NormalVision, false);
+		// FSlateApplication is shared with the editor during PIE. Scaling it there would
+		// resize the editor itself, so apply the game-wide UI scale only to standalone/package runs.
+		if (FSlateApplication::IsInitialized() && !GIsEditor)
+		{
+			FSlateApplication::Get().SetApplicationScale(UIReadableScale);
+		}
+		if (ScreenShakeScale <= KINDA_SMALL_NUMBER && GEngine)
+		{
+			for (const FWorldContext& Context : GEngine->GetWorldContexts())
+			{
+				if (UWorld* World = Context.World(); IsValid(World))
+				{
+					for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+					{
+						if (APlayerController* Controller = It->Get(); IsValid(Controller) && IsValid(Controller->PlayerCameraManager))
+						{
+							Controller->PlayerCameraManager->StopAllCameraShakes(true);
+						}
+					}
+				}
+			}
+		}
 	}
 	ApplyAudioSettings(bApplicationActive);
 }
@@ -277,6 +346,73 @@ namespace ProjectProject01NetworkSecurity
 	}
 }
 
+namespace ProjectProject01CrashReports
+{
+	constexpr int32 MaxShortFieldLength = 128;
+	constexpr int32 MaxPathFieldLength = 256;
+
+	FString LimitField(FString Value, const int32 MaxLength = MaxShortFieldLength)
+	{
+		Value.TrimStartAndEndInline();
+		Value.ReplaceInline(TEXT("\r"), TEXT(" "));
+		Value.ReplaceInline(TEXT("\n"), TEXT(" "));
+		return Value.Left(MaxLength);
+	}
+
+	FString GetProcessRole(const UWorld* World)
+	{
+		if (IsRunningDedicatedServer() || (IsValid(World) && World->GetNetMode() == NM_DedicatedServer))
+		{
+			return TEXT("DedicatedServer");
+		}
+		if (!IsValid(World)) return TEXT("Client");
+		switch (World->GetNetMode())
+		{
+		case NM_ListenServer: return TEXT("ListenServer");
+		case NM_Standalone: return TEXT("Standalone");
+		default: return TEXT("Client");
+		}
+	}
+
+	FString GetBuildVersion()
+	{
+		FString Version = FNetworkVersion::GetProjectVersion();
+		if (Version.IsEmpty()) Version = FApp::GetBuildVersion();
+		return Version.IsEmpty() ? TEXT("Unknown") : LimitField(Version);
+	}
+
+	FString SanitizeStoredReport(const FString& Input)
+	{
+		TSharedPtr<FJsonObject> Source;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Input), Source) || !Source.IsValid())
+		{
+			return FString();
+		}
+		const TArray<FString> Required = {
+			TEXT("reportId"), TEXT("startedAtUtc"), TEXT("lastUpdatedAtUtc"), TEXT("buildVersion"),
+			TEXT("mapName"), TEXT("gameMode"), TEXT("processRole"), TEXT("lastLogPath"), TEXT("diagnosticRunId") };
+		TSharedRef<FJsonObject> Safe = MakeShared<FJsonObject>();
+		for (const FString& Key : Required)
+		{
+			FString Value;
+			if (!Source->TryGetStringField(Key, Value)) return FString();
+			Safe->SetStringField(Key, LimitField(Value, Key == TEXT("lastLogPath") ? MaxPathFieldLength : MaxShortFieldLength));
+		}
+		for (const FString& Key : { FString(TEXT("matchId")), FString(TEXT("playerRole")) })
+		{
+			FString Value;
+			if (Source->TryGetStringField(Key, Value) && !Value.IsEmpty())
+			{
+				Safe->SetStringField(Key, LimitField(Value));
+			}
+		}
+		Safe->SetStringField(TEXT("detectedAtUtc"), FDateTime::UtcNow().ToIso8601());
+		FString Output;
+		FJsonSerializer::Serialize(Safe, TJsonWriterFactory<>::Create(&Output));
+		return Output;
+	}
+}
+
 void UProjectProject01GameInstance::Init()
 {
 	SecurityApiBaseUrl = ProjectProject01NetworkSecurity::NormalizeBaseUrl(SecurityApiBaseUrl);
@@ -303,10 +439,20 @@ void UProjectProject01GameInstance::Init()
 		UE_LOG(LogProjectProject01NetworkSecurity, Error,
 			TEXT("Security API must use HTTPS except for loopback development: %s"), *SecurityApiBaseUrl);
 	}
+	InitializeCrashReportCollection();
 }
 
 void UProjectProject01GameInstance::Shutdown()
 {
+	if (PostWorldInitializationHandle.IsValid())
+	{
+		FWorldDelegates::OnPostWorldInitialization.Remove(PostWorldInitializationHandle);
+		PostWorldInitializationHandle.Reset();
+	}
+	if (!ActiveCrashMarkerPath.IsEmpty())
+	{
+		IFileManager::Get().Delete(*ActiveCrashMarkerPath, false, true, true);
+	}
 	if (NetworkFailureHandle.IsValid() && GEngine)
 	{
 		GEngine->OnNetworkFailure().Remove(NetworkFailureHandle);
@@ -327,6 +473,168 @@ void UProjectProject01GameInstance::Shutdown()
 	}
 	PendingSecurityRequests.Reset();
 	Super::Shutdown();
+}
+
+void UProjectProject01GameInstance::InitializeCrashReportCollection()
+{
+	CrashRunId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+	CrashStartedAtUtc = FDateTime::UtcNow().ToIso8601();
+	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CrashReports"));
+	IFileManager::Get().MakeDirectory(*Directory, true);
+	RecoverPendingCrashReports();
+	ActiveCrashMarkerPath = FPaths::Combine(Directory, FString::Printf(TEXT("Active-%u-%s.json"),
+		FPlatformProcess::GetCurrentProcessId(), *CrashRunId));
+	WriteActiveCrashMarker(GetWorld());
+
+	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
+	PostWorldInitializationHandle = FWorldDelegates::OnPostWorldInitialization.AddLambda(
+		[WeakThis](UWorld* World, const UWorld::InitializationValues)
+		{
+			UProjectProject01GameInstance* Instance = WeakThis.Get();
+			if (IsValid(Instance) && IsValid(World) && World->GetGameInstance() == Instance &&
+				(World->WorldType == EWorldType::Game || World->WorldType == EWorldType::PIE))
+			{
+				Instance->RefreshCrashReportContext(World);
+				const TWeakObjectPtr<UWorld> WeakWorld(World);
+				World->OnWorldBeginPlay.AddWeakLambda(Instance, [WeakThis, WeakWorld]()
+				{
+					if (UProjectProject01GameInstance* LiveInstance = WeakThis.Get(); IsValid(LiveInstance))
+					{
+						LiveInstance->RefreshCrashReportContext(WeakWorld.Get());
+					}
+				});
+			}
+		});
+	RefreshCrashReportContext(GetWorld());
+}
+
+void UProjectProject01GameInstance::RefreshCrashReportContext(UWorld* World)
+{
+	WriteActiveCrashMarker(World);
+	FGenericCrashContext::SetGameData(TEXT("ProjectReportId"), CrashRunId);
+	FGenericCrashContext::SetGameData(TEXT("ProjectBuildVersion"), ProjectProject01CrashReports::GetBuildVersion());
+	FGenericCrashContext::SetGameData(TEXT("ProjectMap"),
+		IsValid(World) ? ProjectProject01CrashReports::LimitField(World->GetMapName()) : TEXT("Unavailable"));
+	FGenericCrashContext::SetGameData(TEXT("ProjectProcessRole"), ProjectProject01CrashReports::GetProcessRole(World));
+	FGenericCrashContext::SetGameData(TEXT("ProjectPlayerRole"), PendingCrashPlayerRole);
+	FGenericCrashContext::SetGameData(TEXT("ProjectMatchId"), PendingCrashMatchId);
+	if (IsValid(World))
+	{
+		if (const UProjectProject01DiagnosticsSubsystem* Diagnostics = World->GetSubsystem<UProjectProject01DiagnosticsSubsystem>();
+			IsValid(Diagnostics))
+		{
+			FGenericCrashContext::SetGameData(TEXT("ProjectTestRunId"), Diagnostics->GetTestRunId());
+		}
+	}
+}
+
+FString UProjectProject01GameInstance::BuildSafeCrashReportJson(UWorld* World) const
+{
+	FString GameModeName = TEXT("Unavailable");
+	if (IsValid(World))
+	{
+		if (const AGameModeBase* GameMode = World->GetAuthGameMode(); IsValid(GameMode))
+		{
+			GameModeName = GameMode->GetClass()->GetName();
+		}
+		else if (const AGameStateBase* GameState = World->GetGameState(); IsValid(GameState) && GameState->GameModeClass)
+		{
+			GameModeName = GameState->GameModeClass->GetName();
+		}
+	}
+	FString DiagnosticRunId = CrashRunId;
+	if (IsValid(World))
+	{
+		if (const UProjectProject01DiagnosticsSubsystem* Diagnostics = World->GetSubsystem<UProjectProject01DiagnosticsSubsystem>();
+			IsValid(Diagnostics) && !Diagnostics->GetTestRunId().IsEmpty())
+		{
+			DiagnosticRunId = Diagnostics->GetTestRunId();
+		}
+	}
+	const FString Now = FDateTime::UtcNow().ToIso8601();
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("reportId"), CrashRunId);
+	Json->SetStringField(TEXT("startedAtUtc"), CrashStartedAtUtc.IsEmpty() ? Now : CrashStartedAtUtc);
+	Json->SetStringField(TEXT("lastUpdatedAtUtc"), Now);
+	Json->SetStringField(TEXT("buildVersion"), ProjectProject01CrashReports::GetBuildVersion());
+	Json->SetStringField(TEXT("mapName"), IsValid(World)
+		? ProjectProject01CrashReports::LimitField(World->GetMapName()) : TEXT("Unavailable"));
+	Json->SetStringField(TEXT("gameMode"), ProjectProject01CrashReports::LimitField(GameModeName));
+	Json->SetStringField(TEXT("processRole"), ProjectProject01CrashReports::GetProcessRole(World));
+	Json->SetStringField(TEXT("playerRole"), ProjectProject01CrashReports::LimitField(PendingCrashPlayerRole));
+	Json->SetStringField(TEXT("matchId"), ProjectProject01CrashReports::LimitField(PendingCrashMatchId));
+	Json->SetStringField(TEXT("lastLogPath"), TEXT("Saved/Logs/ProjectProject01.log"));
+	Json->SetStringField(TEXT("diagnosticRunId"), ProjectProject01CrashReports::LimitField(DiagnosticRunId));
+	FString Output;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Output));
+	return Output;
+}
+
+void UProjectProject01GameInstance::WriteActiveCrashMarker(UWorld* World)
+{
+	if (!ActiveCrashMarkerPath.IsEmpty())
+	{
+		FFileHelper::SaveStringToFile(BuildSafeCrashReportJson(World), *ActiveCrashMarkerPath,
+			FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+}
+
+void UProjectProject01GameInstance::RecoverPendingCrashReports()
+{
+	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CrashReports"));
+	IFileManager& FileManager = IFileManager::Get();
+	TArray<FString> ActiveFiles;
+	FileManager.FindFiles(ActiveFiles, *FPaths::Combine(Directory, TEXT("Active-*.json")), true, false);
+	const FString CurrentProcessPrefix = FString::Printf(TEXT("Active-%u-"), FPlatformProcess::GetCurrentProcessId());
+	for (const FString& FileName : ActiveFiles)
+	{
+		if (FileName.StartsWith(CurrentProcessPrefix)) continue;
+		const FString Source = FPaths::Combine(Directory, FileName);
+		const FString Destination = FPaths::Combine(Directory, TEXT("Pending-") + FileName.RightChop(7));
+		FileManager.Move(*Destination, *Source, true, true, false, true);
+	}
+
+	TArray<FString> PendingFiles;
+	FileManager.FindFiles(PendingFiles, *FPaths::Combine(Directory, TEXT("Pending-*.json")), true, false);
+	for (const FString& FileName : PendingFiles)
+	{
+		UploadPendingCrashReport(FPaths::Combine(Directory, FileName));
+	}
+}
+
+void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& ReportPath)
+{
+	if (!IsBackendUrlAllowed()) return;
+	FString Stored;
+	if (!FFileHelper::LoadFileToString(Stored, *ReportPath)) return;
+	const FString Body = ProjectProject01CrashReports::SanitizeStoredReport(Stored);
+	if (Body.IsEmpty()) return;
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/crash-reports"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetTimeout(SecurityRequestTimeoutSeconds);
+	Request->SetContentAsString(Body);
+	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
+	const TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> WeakRequest(Request);
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakThis, WeakRequest, ReportPath](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
+		{
+			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
+			{
+				Instance->RemovePendingRequest(WeakRequest.Pin());
+			}
+			if (bSucceeded && Response.IsValid() && Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300)
+			{
+				IFileManager::Get().Delete(*ReportPath, false, true, true);
+			}
+		});
+	PendingSecurityRequests.Add(Request);
+	if (!Request->ProcessRequest())
+	{
+		PendingSecurityRequests.Remove(Request);
+	}
 }
 
 void UProjectProject01GameInstance::HandleNetworkFailure(
@@ -389,6 +697,9 @@ bool UProjectProject01GameInstance::ConfigurePendingGameConnection(
 
 	ProjectProject01NetworkSecurity::PendingClientTicket = Ticket;
 	ProjectProject01NetworkSecurity::PendingClientEncryptionKey = MoveTemp(Key);
+	PendingCrashMatchId = MatchId.Left(ProjectProject01CrashReports::MaxShortFieldLength);
+	PendingCrashPlayerRole = Role.Left(ProjectProject01CrashReports::MaxShortFieldLength);
+	RefreshCrashReportContext(GetWorld());
 	return true;
 }
 
@@ -396,6 +707,9 @@ void UProjectProject01GameInstance::ClearPendingGameConnection()
 {
 	ProjectProject01NetworkSecurity::PendingClientTicket.Reset();
 	ProjectProject01NetworkSecurity::PendingClientEncryptionKey.Reset();
+	PendingCrashMatchId.Reset();
+	PendingCrashPlayerRole.Reset();
+	RefreshCrashReportContext(GetWorld());
 }
 
 void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(

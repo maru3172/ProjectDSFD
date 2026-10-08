@@ -18,6 +18,15 @@ enum class EProjectProject01VFXIntensity : uint8
 	Reduced
 };
 
+UENUM(BlueprintType)
+enum class EProjectProject01ColorVisionMode : uint8
+{
+	Normal,
+	Deuteranopia,
+	Protanopia,
+	Tritanopia
+};
+
 /** 로컬 PC에만 저장되는 화면·음향·입력 환경설정입니다. */
 UCLASS(Config=GameUserSettings)
 class PROJECTPROJECT01_API UProjectProject01GameUserSettings final : public UGameUserSettings
@@ -49,6 +58,24 @@ public:
 	float GetMouseSensitivity() const { return MouseSensitivity; }
 	EProjectProject01VFXIntensity GetVFXIntensity() const { return VFXIntensity; }
 	float GetLocalVFXScale() const { return VFXIntensity == EProjectProject01VFXIntensity::Reduced ? 0.4f : 1.0f; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	bool AreSubtitlesEnabled() const { return bSubtitlesEnabled; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	bool AreEnhancedVisualCuesEnabled() const { return bEnhancedVisualCues; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	EProjectProject01ColorVisionMode GetColorVisionMode() const { return ColorVisionMode; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	float GetColorVisionSeverity() const { return ColorVisionSeverity; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	float GetScreenFlashScale() const { return ScreenFlashScale; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	float GetScreenDistortionScale() const { return ScreenDistortionScale; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	float GetScreenShakeScale() const { return ScreenShakeScale; }
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
+	float GetUIReadableScale() const { return UIReadableScale; }
+	float GetLocalFlashScale() const { return GetLocalVFXScale() * ScreenFlashScale; }
+	float GetLocalDistortionScale() const { return GetLocalVFXScale() * ScreenDistortionScale; }
 	FKey GetMoveForwardKey() const;
 	FKey GetMoveBackwardKey() const;
 	FKey GetMoveLeftKey() const;
@@ -70,6 +97,14 @@ public:
 	void SetDisplayGammaSetting(float Value) { DisplayGammaSetting = Value; }
 	void SetMouseSensitivity(float Value) { MouseSensitivity = Value; }
 	void SetVFXIntensity(EProjectProject01VFXIntensity Value) { VFXIntensity = Value; }
+	void SetSubtitlesEnabled(bool bValue) { bSubtitlesEnabled = bValue; }
+	void SetEnhancedVisualCuesEnabled(bool bValue) { bEnhancedVisualCues = bValue; }
+	void SetColorVisionMode(EProjectProject01ColorVisionMode Value) { ColorVisionMode = Value; }
+	void SetColorVisionSeverity(float Value) { ColorVisionSeverity = Value; }
+	void SetScreenFlashScale(float Value) { ScreenFlashScale = Value; }
+	void SetScreenDistortionScale(float Value) { ScreenDistortionScale = Value; }
+	void SetScreenShakeScale(float Value) { ScreenShakeScale = Value; }
+	void SetUIReadableScale(float Value) { UIReadableScale = Value; }
 	void SetMoveForwardKey(FKey Key) { MoveForwardKeyName = Key.GetFName(); }
 	void SetMoveBackwardKey(FKey Key) { MoveBackwardKeyName = Key.GetFName(); }
 	void SetMoveLeftKey(FKey Key) { MoveLeftKeyName = Key.GetFName(); }
@@ -123,6 +158,30 @@ private:
 
 	UPROPERTY(Config)
 	EProjectProject01VFXIntensity VFXIntensity = EProjectProject01VFXIntensity::Standard;
+
+	UPROPERTY(Config)
+	bool bSubtitlesEnabled = true;
+
+	UPROPERTY(Config)
+	bool bEnhancedVisualCues = true;
+
+	UPROPERTY(Config)
+	EProjectProject01ColorVisionMode ColorVisionMode = EProjectProject01ColorVisionMode::Normal;
+
+	UPROPERTY(Config)
+	float ColorVisionSeverity = 5.0f;
+
+	UPROPERTY(Config)
+	float ScreenFlashScale = 1.0f;
+
+	UPROPERTY(Config)
+	float ScreenDistortionScale = 1.0f;
+
+	UPROPERTY(Config)
+	float ScreenShakeScale = 1.0f;
+
+	UPROPERTY(Config)
+	float UIReadableScale = 1.0f;
 
 	UPROPERTY(Config)
 	FName MoveForwardKeyName = TEXT("W");
@@ -242,6 +301,12 @@ private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
 		ENetworkFailure::Type FailureType, const FString& ErrorString);
+	void InitializeCrashReportCollection();
+	void RefreshCrashReportContext(UWorld* World);
+	void RecoverPendingCrashReports();
+	void UploadPendingCrashReport(const FString& ReportPath);
+	void WriteActiveCrashMarker(UWorld* World);
+	FString BuildSafeCrashReportJson(UWorld* World) const;
 	FString LoadGameServerSharedSecret() const;
 	bool IsBackendUrlAllowed() const;
 	void RemovePendingRequest(const TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe>& Request);
@@ -255,4 +320,10 @@ private:
 	TArray<TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe>> PendingSecurityRequests;
 	FDelegateHandle ApplicationActivationHandle;
 	FDelegateHandle NetworkFailureHandle;
+	FDelegateHandle PostWorldInitializationHandle;
+	FString CrashRunId;
+	FString CrashStartedAtUtc;
+	FString ActiveCrashMarkerPath;
+	FString PendingCrashMatchId;
+	FString PendingCrashPlayerRole;
 };

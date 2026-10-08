@@ -549,10 +549,12 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 		HeartbeatVFXDensityAlpha, TargetDensity, DeltaTime, BlendSpeed);
 
 	const UProjectProject01GameUserSettings* UserSettings = UProjectProject01GameUserSettings::Get();
-	const float LocalVFXScale = IsValid(UserSettings) ? UserSettings->GetLocalVFXScale() : 1.0f;
+	const float LocalFlashScale = IsValid(UserSettings) ? UserSettings->GetLocalFlashScale() : 1.0f;
+	const float LocalDistortionScale = IsValid(UserSettings) ? UserSettings->GetLocalDistortionScale() : 1.0f;
 	const float EffectOpacity = FMath::Clamp(
-		HeartbeatVFXProximityAlpha * HeartbeatVFXMaxOpacity * LocalVFXScale, 0.0f, 1.0f);
-	if (EffectOpacity <= KINDA_SMALL_NUMBER && TargetProximity <= KINDA_SMALL_NUMBER)
+		HeartbeatVFXProximityAlpha * HeartbeatVFXMaxOpacity * LocalFlashScale, 0.0f, 1.0f);
+	const float DistortionAlpha = FMath::Clamp(HeartbeatVFXDensityAlpha * LocalDistortionScale, 0.0f, 1.0f);
+	if (EffectOpacity <= KINDA_SMALL_NUMBER && DistortionAlpha <= KINDA_SMALL_NUMBER && TargetProximity <= KINDA_SMALL_NUMBER)
 	{
 		HeartbeatVFXProximityAlpha = 0.0f;
 		HeartbeatVFXDensityAlpha = 0.0f;
@@ -571,11 +573,11 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 
 	HeartbeatVFXInstance->SetScalarParameterValue(EffectOpacityParameter, EffectOpacity);
 	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * HeartbeatVFXDensityAlpha * LocalVFXScale);
+		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * DistortionAlpha);
 	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionSpeedParameter, FMath::Lerp(HeartbeatVFXMinDistortionSpeed, HeartbeatVFXMaxDistortionSpeed, HeartbeatVFXDensityAlpha));
+		DistortionSpeedParameter, FMath::Lerp(HeartbeatVFXMinDistortionSpeed, HeartbeatVFXMaxDistortionSpeed, DistortionAlpha));
 	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionFrequencyParameter, FMath::Lerp(HeartbeatVFXMinDistortionFrequency, HeartbeatVFXMaxDistortionFrequency, HeartbeatVFXDensityAlpha));
+		DistortionFrequencyParameter, FMath::Lerp(HeartbeatVFXMinDistortionFrequency, HeartbeatVFXMaxDistortionFrequency, DistortionAlpha));
 }
 
 bool UPlayerHeartbeatComponent::EnsureHeartbeatVFX(APawn& OwnerPawn)

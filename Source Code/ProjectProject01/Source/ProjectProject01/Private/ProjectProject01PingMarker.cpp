@@ -1,4 +1,5 @@
 #include "ProjectProject01PingMarker.h"
+#include "ProjectProject01GameInstance.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/TextRenderComponent.h"
@@ -23,14 +24,16 @@ void AProjectProject01PingMarker::Configure(const EProjectProject01PingType Type
 {
 	FString Label;
 	FColor Color;
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const bool bUseShapeAndText = !IsValid(Settings) || Settings->AreEnhancedVisualCuesEnabled();
 	switch (Type)
 	{
 	case EProjectProject01PingType::Help:
-		Label = TEXT("도움 요청"); Color = FColor(40, 160, 255); break;
+		Label = bUseShapeAndText ? TEXT("[+] 도움 요청") : TEXT("도움 요청"); Color = FColor(40, 160, 255); break;
 	case EProjectProject01PingType::Danger:
-		Label = TEXT("위험!"); Color = FColor(255, 55, 30); break;
+		Label = bUseShapeAndText ? TEXT("[!] 위험!") : TEXT("위험!"); Color = FColor(255, 55, 30); break;
 	default:
-		Label = TEXT("위치 표시"); Color = FColor(255, 220, 40); break;
+		Label = bUseShapeAndText ? TEXT("[O] 위치 표시") : TEXT("위치 표시"); Color = FColor(255, 220, 40); break;
 	}
 	Text->SetText(FText::FromString(SenderName.IsEmpty() ? Label : FString::Printf(TEXT("%s\n%s"), *Label, *SenderName)));
 	Text->SetTextRenderColor(Color);

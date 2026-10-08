@@ -1745,10 +1745,17 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	ResolutionScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionScaleChanged);
 	BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleBrightnessChanged);
 	SensitivitySlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSensitivityChanged);
+	ColorVisionSeveritySlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionSeverityChanged);
+	ScreenFlashSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleScreenFlashChanged);
+	ScreenDistortionSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleScreenDistortionChanged);
+	ScreenShakeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleScreenShakeChanged);
+	UIReadableScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleUIReadableScaleChanged);
 	MuteAllCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMuteAllChanged);
 	MuteWhenUnfocusedCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged);
 	VSyncCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVSyncChanged);
 	MotionBlurCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMotionBlurChanged);
+	SubtitlesCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSubtitlesChanged);
+	EnhancedVisualCuesCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleEnhancedVisualCuesChanged);
 	WindowModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleWindowModeChanged);
 	ResolutionComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionChanged);
 	OverallQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleOverallQualityChanged);
@@ -1758,6 +1765,7 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	EffectsQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleEffectsQualityChanged);
 	PostProcessQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
 	VFXIntensityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
+	ColorVisionModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionModeChanged);
 	ForwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
 	BackwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
 	LeftKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
@@ -1786,10 +1794,17 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(ResolutionScaleSlider)) ResolutionScaleSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionScaleChanged);
 	if (IsValid(BrightnessSlider)) BrightnessSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleBrightnessChanged);
 	if (IsValid(SensitivitySlider)) SensitivitySlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSensitivityChanged);
+	if (IsValid(ColorVisionSeveritySlider)) ColorVisionSeveritySlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionSeverityChanged);
+	if (IsValid(ScreenFlashSlider)) ScreenFlashSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleScreenFlashChanged);
+	if (IsValid(ScreenDistortionSlider)) ScreenDistortionSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleScreenDistortionChanged);
+	if (IsValid(ScreenShakeSlider)) ScreenShakeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleScreenShakeChanged);
+	if (IsValid(UIReadableScaleSlider)) UIReadableScaleSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleUIReadableScaleChanged);
 	if (IsValid(MuteAllCheckBox)) MuteAllCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMuteAllChanged);
 	if (IsValid(MuteWhenUnfocusedCheckBox)) MuteWhenUnfocusedCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged);
 	if (IsValid(VSyncCheckBox)) VSyncCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVSyncChanged);
 	if (IsValid(MotionBlurCheckBox)) MotionBlurCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMotionBlurChanged);
+	if (IsValid(SubtitlesCheckBox)) SubtitlesCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSubtitlesChanged);
+	if (IsValid(EnhancedVisualCuesCheckBox)) EnhancedVisualCuesCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleEnhancedVisualCuesChanged);
 	if (IsValid(WindowModeComboBox)) WindowModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleWindowModeChanged);
 	if (IsValid(ResolutionComboBox)) ResolutionComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleResolutionChanged);
 	if (IsValid(OverallQualityComboBox)) OverallQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleOverallQualityChanged);
@@ -1799,6 +1814,7 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(EffectsQualityComboBox)) EffectsQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleEffectsQualityChanged);
 	if (IsValid(PostProcessQualityComboBox)) PostProcessQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
 	if (IsValid(VFXIntensityComboBox)) VFXIntensityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
+	if (IsValid(ColorVisionModeComboBox)) ColorVisionModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionModeChanged);
 	if (IsValid(ForwardKeyButton)) ForwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
 	if (IsValid(BackwardKeyButton)) BackwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
 	if (IsValid(LeftKeyButton)) LeftKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
@@ -1871,10 +1887,17 @@ void UProjectProject01SettingsWidget::HandleFrameRateChanged(const float Value) 
 void UProjectProject01SettingsWidget::HandleResolutionScaleChanged(const float Value) { if (!bRefreshingControls) { PendingResolutionScale = FMath::RoundToFloat(Value); RefreshValueLabels(); } }
 void UProjectProject01SettingsWidget::HandleBrightnessChanged(const float Value) { if (!bRefreshingControls) { PendingBrightness = Value; RefreshValueLabels(); } }
 void UProjectProject01SettingsWidget::HandleSensitivityChanged(const float Value) { if (!bRefreshingControls) { PendingSensitivity = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleColorVisionSeverityChanged(const float Value) { if (!bRefreshingControls) { PendingColorVisionSeverity = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleScreenFlashChanged(const float Value) { if (!bRefreshingControls) { PendingScreenFlashScale = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleScreenDistortionChanged(const float Value) { if (!bRefreshingControls) { PendingScreenDistortionScale = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleScreenShakeChanged(const float Value) { if (!bRefreshingControls) { PendingScreenShakeScale = Value; RefreshValueLabels(); } }
+void UProjectProject01SettingsWidget::HandleUIReadableScaleChanged(const float Value) { if (!bRefreshingControls) { PendingUIReadableScale = Value; RefreshValueLabels(); } }
 void UProjectProject01SettingsWidget::HandleMuteAllChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMuteAll = bChecked; }
 void UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMuteWhenUnfocused = bChecked; }
 void UProjectProject01SettingsWidget::HandleVSyncChanged(const bool bChecked) { if (!bRefreshingControls) bPendingVSync = bChecked; }
 void UProjectProject01SettingsWidget::HandleMotionBlurChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMotionBlur = bChecked; }
+void UProjectProject01SettingsWidget::HandleSubtitlesChanged(const bool bChecked) { if (!bRefreshingControls) bPendingSubtitles = bChecked; }
+void UProjectProject01SettingsWidget::HandleEnhancedVisualCuesChanged(const bool bChecked) { if (!bRefreshingControls) bPendingEnhancedVisualCues = bChecked; }
 
 void UProjectProject01SettingsWidget::HandleWindowModeChanged(const FString Item, ESelectInfo::Type)
 {
@@ -1918,6 +1941,15 @@ void UProjectProject01SettingsWidget::HandleVFXIntensityChanged(const FString It
 		PendingVFXIntensity = Item == TEXT("약하게")
 			? EProjectProject01VFXIntensity::Reduced : EProjectProject01VFXIntensity::Standard;
 	}
+}
+
+void UProjectProject01SettingsWidget::HandleColorVisionModeChanged(const FString Item, ESelectInfo::Type)
+{
+	if (bRefreshingControls) return;
+	if (Item == TEXT("녹색약 보정")) PendingColorVisionMode = EProjectProject01ColorVisionMode::Deuteranopia;
+	else if (Item == TEXT("적색약 보정")) PendingColorVisionMode = EProjectProject01ColorVisionMode::Protanopia;
+	else if (Item == TEXT("청황색약 보정")) PendingColorVisionMode = EProjectProject01ColorVisionMode::Tritanopia;
+	else PendingColorVisionMode = EProjectProject01ColorVisionMode::Normal;
 }
 
 void UProjectProject01SettingsWidget::HandleForwardBindingClicked() { BeginBindingCapture(EBindingTarget::Forward); }
@@ -1971,6 +2003,14 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 	PendingResolutionScale = FMath::Clamp(CurrentScale, 50.0f, 100.0f);
 	PendingBrightness = Settings->GetDisplayGammaSetting();
 	PendingSensitivity = Settings->GetMouseSensitivity();
+	bPendingSubtitles = Settings->AreSubtitlesEnabled();
+	bPendingEnhancedVisualCues = Settings->AreEnhancedVisualCuesEnabled();
+	PendingColorVisionMode = Settings->GetColorVisionMode();
+	PendingColorVisionSeverity = Settings->GetColorVisionSeverity();
+	PendingScreenFlashScale = Settings->GetScreenFlashScale();
+	PendingScreenDistortionScale = Settings->GetScreenDistortionScale();
+	PendingScreenShakeScale = Settings->GetScreenShakeScale();
+	PendingUIReadableScale = Settings->GetUIReadableScale();
 	PendingWindowMode = Settings->GetFullscreenMode();
 	PendingResolution = Settings->GetScreenResolution();
 	PendingOverallQuality = Settings->GetOverallScalabilityLevel();
@@ -2003,6 +2043,14 @@ void UProjectProject01SettingsWidget::SetPendingDefaults()
 	PendingResolutionScale = 100.0f;
 	PendingBrightness = 2.2f;
 	PendingSensitivity = 1.0f;
+	bPendingSubtitles = true;
+	bPendingEnhancedVisualCues = true;
+	PendingColorVisionMode = EProjectProject01ColorVisionMode::Normal;
+	PendingColorVisionSeverity = 5.0f;
+	PendingScreenFlashScale = 1.0f;
+	PendingScreenDistortionScale = 1.0f;
+	PendingScreenShakeScale = 1.0f;
+	PendingUIReadableScale = 1.0f;
 	PendingWindowMode = EWindowMode::WindowedFullscreen;
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 	{
@@ -2034,10 +2082,17 @@ void UProjectProject01SettingsWidget::RefreshAllControls()
 	ResolutionScaleSlider->SetValue(PendingResolutionScale);
 	BrightnessSlider->SetValue(PendingBrightness);
 	SensitivitySlider->SetValue(PendingSensitivity);
+	ColorVisionSeveritySlider->SetValue(PendingColorVisionSeverity);
+	ScreenFlashSlider->SetValue(PendingScreenFlashScale);
+	ScreenDistortionSlider->SetValue(PendingScreenDistortionScale);
+	ScreenShakeSlider->SetValue(PendingScreenShakeScale);
+	UIReadableScaleSlider->SetValue(PendingUIReadableScale);
 	MuteAllCheckBox->SetIsChecked(bPendingMuteAll);
 	MuteWhenUnfocusedCheckBox->SetIsChecked(bPendingMuteWhenUnfocused);
 	VSyncCheckBox->SetIsChecked(bPendingVSync);
 	MotionBlurCheckBox->SetIsChecked(bPendingMotionBlur);
+	SubtitlesCheckBox->SetIsChecked(bPendingSubtitles);
+	EnhancedVisualCuesCheckBox->SetIsChecked(bPendingEnhancedVisualCues);
 	WindowModeComboBox->SetSelectedOption(PendingWindowMode == EWindowMode::Fullscreen
 		? TEXT("전체화면") : PendingWindowMode == EWindowMode::WindowedFullscreen
 		? TEXT("테두리 없는 창") : TEXT("창모드"));
@@ -2052,6 +2107,13 @@ void UProjectProject01SettingsWidget::RefreshAllControls()
 	SetQualityCombo(PostProcessQualityComboBox, PendingPostProcessQuality);
 	VFXIntensityComboBox->SetSelectedOption(PendingVFXIntensity == EProjectProject01VFXIntensity::Reduced
 		? TEXT("약하게") : TEXT("기본"));
+	switch (PendingColorVisionMode)
+	{
+	case EProjectProject01ColorVisionMode::Deuteranopia: ColorVisionModeComboBox->SetSelectedOption(TEXT("녹색약 보정")); break;
+	case EProjectProject01ColorVisionMode::Protanopia: ColorVisionModeComboBox->SetSelectedOption(TEXT("적색약 보정")); break;
+	case EProjectProject01ColorVisionMode::Tritanopia: ColorVisionModeComboBox->SetSelectedOption(TEXT("청황색약 보정")); break;
+	default: ColorVisionModeComboBox->SetSelectedOption(TEXT("보정 없음")); break;
+	}
 	bRefreshingControls = false;
 	RefreshValueLabels();
 	RefreshBindingLabels();
@@ -2067,6 +2129,11 @@ void UProjectProject01SettingsWidget::RefreshValueLabels()
 	ResolutionScaleValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingResolutionScale))));
 	BrightnessValueText->SetText(FText::FromString(FString::Printf(TEXT("%.2f"), PendingBrightness)));
 	SensitivityValueText->SetText(FText::FromString(FString::Printf(TEXT("%.2f"), PendingSensitivity)));
+	ColorVisionSeverityValueText->SetText(FText::FromString(FString::Printf(TEXT("%.0f/10"), PendingColorVisionSeverity)));
+	ScreenFlashValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingScreenFlashScale * 100.0f))));
+	ScreenDistortionValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingScreenDistortionScale * 100.0f))));
+	ScreenShakeValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingScreenShakeScale * 100.0f))));
+	UIReadableScaleValueText->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(PendingUIReadableScale * 100.0f))));
 }
 
 void UProjectProject01SettingsWidget::RefreshBindingLabels()
@@ -2155,6 +2222,14 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetResolutionScaleValueEx(PendingResolutionScale);
 	Settings->SetDisplayGammaSetting(PendingBrightness);
 	Settings->SetMouseSensitivity(PendingSensitivity);
+	Settings->SetSubtitlesEnabled(bPendingSubtitles);
+	Settings->SetEnhancedVisualCuesEnabled(bPendingEnhancedVisualCues);
+	Settings->SetColorVisionMode(PendingColorVisionMode);
+	Settings->SetColorVisionSeverity(PendingColorVisionSeverity);
+	Settings->SetScreenFlashScale(PendingScreenFlashScale);
+	Settings->SetScreenDistortionScale(PendingScreenDistortionScale);
+	Settings->SetScreenShakeScale(PendingScreenShakeScale);
+	Settings->SetUIReadableScale(PendingUIReadableScale);
 	if (PendingOverallQuality >= 0)
 	{
 		Settings->SetOverallScalabilityLevel(PendingOverallQuality);
@@ -2383,6 +2458,28 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	VFXIntensityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("화면 번쩍임·일렁임"));
 	VFXIntensityComboBox->AddOption(TEXT("기본")); VFXIntensityComboBox->AddOption(TEXT("약하게"));
 
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("접근성"), 20.0f);
+	SubtitlesCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("자막 표시"));
+	EnhancedVisualCuesCheckBox = ProjectProject01LoginUI::AddCheckRow(
+		WidgetTree, Root, TEXT("색상 외 형태·문구로 정보 표시"));
+	ColorVisionModeComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("색각 보정"));
+	ColorVisionModeComboBox->AddOption(TEXT("보정 없음"));
+	ColorVisionModeComboBox->AddOption(TEXT("녹색약 보정"));
+	ColorVisionModeComboBox->AddOption(TEXT("적색약 보정"));
+	ColorVisionModeComboBox->AddOption(TEXT("청황색약 보정"));
+	ColorVisionSeveritySlider = ProjectProject01LoginUI::AddSliderRow(
+		WidgetTree, Root, TEXT("색각 보정 강도"), 0.0f, 10.0f, 1.0f, ColorVisionSeverityValueText);
+	ScreenFlashSlider = ProjectProject01LoginUI::AddSliderRow(
+		WidgetTree, Root, TEXT("화면 번쩍임 강도"), 0.0f, 1.0f, 0.05f, ScreenFlashValueText);
+	ScreenDistortionSlider = ProjectProject01LoginUI::AddSliderRow(
+		WidgetTree, Root, TEXT("화면 일렁임 강도"), 0.0f, 1.0f, 0.05f, ScreenDistortionValueText);
+	ScreenShakeSlider = ProjectProject01LoginUI::AddSliderRow(
+		WidgetTree, Root, TEXT("화면 흔들림 강도"), 0.0f, 1.0f, 0.05f, ScreenShakeValueText);
+	UIReadableScaleSlider = ProjectProject01LoginUI::AddSliderRow(
+		WidgetTree, Root, TEXT("UI 크기·가독성"), 0.8f, 1.3f, 0.05f, UIReadableScaleValueText);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
+		TEXT("자막은 자막 데이터가 있는 음성에 적용됩니다. 화면 흔들림 0%는 현재 흔들림을 즉시 중지하고 이후 효과의 기준값으로 저장합니다."), 12.0f);
+
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("조작"), 20.0f);
 	SensitivitySlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("마우스 감도"), 0.1f, 3.0f, 0.01f, SensitivityValueText);
 	ForwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("앞으로 이동"));
@@ -2424,12 +2521,22 @@ bool FProjectProject01UserSettingsValidationTest::RunTest(const FString& Paramet
 	Settings->SetSFXVolume(-2.0f);
 	Settings->SetDisplayGammaSetting(9.0f);
 	Settings->SetMouseSensitivity(0.0f);
+	Settings->SetColorVisionSeverity(99.0f);
+	Settings->SetScreenFlashScale(-1.0f);
+	Settings->SetScreenDistortionScale(2.0f);
+	Settings->SetScreenShakeScale(-5.0f);
+	Settings->SetUIReadableScale(4.0f);
 	Settings->SetSprintKey(EKeys::F1);
 	Settings->ValidateProjectSettings();
 	TestEqual(TEXT("Master volume is clamped"), Settings->GetMasterVolume(), 1.0f);
 	TestEqual(TEXT("SFX volume is clamped"), Settings->GetSFXVolume(), 0.0f);
 	TestEqual(TEXT("Brightness is clamped"), Settings->GetDisplayGammaSetting(), 2.6f);
 	TestEqual(TEXT("Mouse sensitivity is clamped"), Settings->GetMouseSensitivity(), 0.1f);
+	TestEqual(TEXT("Color vision severity is clamped"), Settings->GetColorVisionSeverity(), 10.0f);
+	TestEqual(TEXT("Screen flash scale is clamped"), Settings->GetScreenFlashScale(), 0.0f);
+	TestEqual(TEXT("Screen distortion scale is clamped"), Settings->GetScreenDistortionScale(), 1.0f);
+	TestEqual(TEXT("Screen shake scale is clamped"), Settings->GetScreenShakeScale(), 0.0f);
+	TestEqual(TEXT("Readable UI scale is clamped"), Settings->GetUIReadableScale(), 1.3f);
 	TestTrue(TEXT("Reserved F1 restores safe sprint key"), Settings->GetSprintKey() == EKeys::LeftShift);
 
 	Settings->SetMoveForwardKey(EKeys::Up);

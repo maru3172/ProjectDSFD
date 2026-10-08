@@ -181,3 +181,26 @@ CREATE TABLE IF NOT EXISTS leaderboard_records
   CONSTRAINT fk_leaderboard_user
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS crash_reports
+(
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  report_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  detected_at_utc DATETIME(6) NOT NULL,
+  started_at_utc DATETIME(6) NOT NULL,
+  last_updated_at_utc DATETIME(6) NOT NULL,
+  build_version VARCHAR(128) NOT NULL,
+  map_name VARCHAR(128) NOT NULL,
+  game_mode VARCHAR(128) NOT NULL,
+  process_role VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  player_role VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  last_log_path VARCHAR(256) NOT NULL,
+  diagnostic_run_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_crash_reports_report_id (report_id),
+  KEY ix_crash_reports_detected (detected_at_utc),
+  KEY ix_crash_reports_role_detected (process_role, detected_at_utc),
+  KEY ix_crash_reports_match (match_id)
+) ENGINE=InnoDB;
