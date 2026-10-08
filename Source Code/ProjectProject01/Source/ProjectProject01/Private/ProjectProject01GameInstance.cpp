@@ -30,6 +30,7 @@
 #include "Misc/Paths.h"
 #include "Misc/NetworkVersion.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "ProjectProject01VersionContract.h"
 #include "Rendering/RenderingCommon.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -744,6 +745,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
 	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetContentAsString(Body);
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	Request->OnProcessRequestComplete().BindWeakLambda(this,
@@ -780,10 +782,24 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 				!JsonResponse->TryGetStringField(TEXT("displayName"), Claim.DisplayName) ||
 				!JsonResponse->TryGetStringField(TEXT("roomId"), Claim.RoomId) ||
 				!JsonResponse->TryGetStringField(TEXT("matchId"), Claim.MatchId) ||
-				!JsonResponse->TryGetStringField(TEXT("role"), Claim.Role))
+				!JsonResponse->TryGetStringField(TEXT("role"), Claim.Role) ||
+				!JsonResponse->TryGetStringField(TEXT("clientBuildVersion"), Claim.ClientBuildVersion) ||
+				!JsonResponse->TryGetStringField(TEXT("dedicatedServerBuildVersion"), Claim.DedicatedServerBuildVersion) ||
+				!JsonResponse->TryGetStringField(TEXT("apiVersion"), Claim.ApiVersion) ||
+				!JsonResponse->TryGetStringField(TEXT("gameDataVersion"), Claim.GameDataVersion) ||
+				!JsonResponse->TryGetStringField(TEXT("networkProtocolVersion"), Claim.NetworkProtocolVersion))
 			{
 				ProjectProject01NetworkSecurity::CompleteEncryptionFailure(
 					Delegate, EEncryptionResponse::Failure, TEXT("Incomplete game ticket validation response."));
+				return;
+			}
+			FString VersionError;
+			if (!FProjectProject01VersionContract::Matches(
+				Claim.ClientBuildVersion, Claim.DedicatedServerBuildVersion, Claim.ApiVersion, Claim.GameDataVersion,
+				Claim.NetworkProtocolVersion, VersionError))
+			{
+				ProjectProject01NetworkSecurity::CompleteEncryptionFailure(
+					Delegate, EEncryptionResponse::InvalidToken, VersionError);
 				return;
 			}
 
@@ -936,6 +952,7 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetContentAsString(Body);
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	Request->OnProcessRequestComplete().BindWeakLambda(this,
@@ -993,6 +1010,7 @@ void UProjectProject01GameInstance::NotifyAuthoritativePlayerForfeit(
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetContentAsString(Body);
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	Request->OnProcessRequestComplete().BindWeakLambda(this,

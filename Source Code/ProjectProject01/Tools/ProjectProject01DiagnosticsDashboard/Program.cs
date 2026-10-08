@@ -43,6 +43,11 @@ internal static class DashboardSelfTest
         var roleDirectory = Path.Combine(directory, "ListenServer_PIE0_P0");
         Directory.CreateDirectory(roleDirectory);
         var report = new DiagnosticReport("SelfTest", "SelfTest", "ListenServer_PIE0_P0", "ListenServer", "Map", "GameMode", "Pass", Path.Combine(roleDirectory, "TestReport.xml"), 0, 1, 1, null, "Tuning");
+        var directReportDirectory = Path.Combine(directory, "DirectSmokeRun");
+        Directory.CreateDirectory(directReportDirectory);
+        var directReport = new DiagnosticReport("DirectSmokeRun", "FullGameFlowSmoke", "SmokeTest", "External", "Map", "SmokeRunner", "Pass", Path.Combine(directReportDirectory, "TestReport.xml"), 0, 0, 3, null, "Unavailable");
+        if (DashboardForm.ResolveRunDirectory(directReport, directory) != directReportDirectory ||
+            DashboardForm.ResolveRunDirectory(report, directory) != directory) return 12;
         var sample = new PerformanceSample(
             UtcTime: "2026-01-01T00:00:00Z", Role: report.Role, NetMode: report.NetMode, GameSeconds: 1,
             Fps: 60, FrameMs: 16.7, GameMs: 5, DrawMs: 4, GpuMs: 3,
@@ -335,12 +340,13 @@ internal sealed class DashboardForm : Form
                 if (root?.Name != "TestReport") continue;
                 string Value(string name) => root.Attribute(name)?.Value ?? "Unknown";
                 var collection = root.Element("Collection");
-                var runDirectory = Directory.GetParent(Path.GetDirectoryName(file)!)?.FullName ?? path;
-                reports.Add(new DiagnosticReport(
+                var report = new DiagnosticReport(
                     Value("TestRunId"), Value("TestName"), Value("Role"), Value("NetMode"), Value("Map"), Value("GameMode"), Value("Outcome"), file,
                     ParseInt(collection?.Attribute("RiskCandidateCount")?.Value), ParseInt(collection?.Attribute("SampleCount")?.Value),
-                    ParseInt(root.Attribute("ConnectedPlayerCount")?.Value), Directory.EnumerateFiles(runDirectory, "*.utrace", SearchOption.TopDirectoryOnly).FirstOrDefault(),
-                    ComputeTuningFingerprint(Path.GetDirectoryName(file)!)));
+                    ParseInt(root.Attribute("ConnectedPlayerCount")?.Value), null,
+                    ComputeTuningFingerprint(Path.GetDirectoryName(file)!));
+                var runDirectory = ResolveRunDirectory(report, path);
+                reports.Add(report with { TracePath = Directory.EnumerateFiles(runDirectory, "*.utrace", SearchOption.TopDirectoryOnly).FirstOrDefault() });
             }
             catch (Exception exception)
             {
@@ -355,7 +361,7 @@ internal sealed class DashboardForm : Form
             var events = LoadEvents(runReports);
             var mismatchCandidates = FindMultiplayerMismatchCandidates(events);
             var riskBreakdown = BuildRiskBreakdown(events.Concat(mismatchCandidates));
-            var runDirectory = Directory.GetParent(Path.GetDirectoryName(runReports[0].FilePath)!)?.FullName ?? path;
+            var runDirectory = ResolveRunDirectory(runReports[0], path);
             GenerateMergedArtifacts(runDirectory, runReports, samples, events);
             var combinedOutcome = ReadCombinedOutcome(runDirectory) ?? string.Join(",", runReports.Select(report => report.Outcome).Distinct());
             runSummaries.Add(new RunSummary
@@ -1258,6 +1264,14 @@ internal sealed class DashboardForm : Form
     {
         try { return XDocument.Load(Path.Combine(runDirectory, "CombinedReport.xml")).Root?.Attribute("Outcome")?.Value; }
         catch { return null; }
+    }
+
+    internal static string ResolveRunDirectory(DiagnosticReport report, string fallbackRoot)
+    {
+        var reportDirectory = Path.GetDirectoryName(report.FilePath);
+        if (string.IsNullOrWhiteSpace(reportDirectory)) return fallbackRoot;
+        if (string.Equals(Path.GetFileName(reportDirectory), report.TestRunId, StringComparison.Ordinal)) return reportDirectory;
+        return Directory.GetParent(reportDirectory)?.FullName ?? fallbackRoot;
     }
 
     private static string? FindProjectRoot(string diagnosticsPath)

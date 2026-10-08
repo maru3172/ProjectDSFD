@@ -34,6 +34,29 @@ dotnet run --urls http://127.0.0.1:5080
 
 `http://127.0.0.1:5080/health`가 HTTP 200과 `healthy`를 반환하면 로컬 로그인·로비 테스트 준비가 끝난 것입니다. HTTP는 루프백 개발 접속에만 허용됩니다.
 
+## 전체 흐름 스모크 테스트와 버전 계약
+
+MySQL과 백엔드를 실행한 뒤 Build + Server Helper의 `전체 흐름 스모크 테스트`를 누르면 로그인,
+3인 방, 준비·시작, 역할 배정, 일회용 티켓 검증, 서버 권위 경기 결과, 리더보드 등록과 기존 방 복귀를
+순서대로 검사합니다. 실패한 단계와 원본 로그는 `Saved/Diagnostics/Smoke_*`에 저장되며 토큰·티켓·암호화
+키는 제거됩니다.
+
+클라이언트, 데디케이티드 서버, API, 게임 데이터와 네트워크 프로토콜 버전은 모두 일치해야 합니다.
+불일치 요청은 HTTP 426과 업데이트 안내로 거부됩니다. Unreal 기본값은 `Config/DefaultGame.ini`, 백엔드
+기본값은 `appsettings.json`의 `Compatibility`에 있으며 배포 환경에서는 다음 환경변수로 덮어쓸 수 있습니다.
+
+```text
+Compatibility__ClientBuildVersion=1.0.0
+Compatibility__DedicatedServerBuildVersion=1.0.0
+Compatibility__ApiVersion=1
+Compatibility__GameDataVersion=1
+Compatibility__NetworkProtocolVersion=1
+Compatibility__UpdateMessage=<사용자 안내 문구>
+```
+
+호환되지 않는 변경을 배포할 때 해당 값을 올리고 새 클라이언트·서버·백엔드 설정을 같은 계약으로
+배포해야 서로 다른 버전이 로그인하거나 같은 방에 섞이지 않습니다.
+
 ## 로비와 보안 게임 접속
 
 - 공개/비공개 방, 선택적 방 비밀번호, 6~8자리 참가 코드, 최대 30개 대기방을 지원합니다.

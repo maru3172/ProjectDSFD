@@ -68,7 +68,9 @@ internal sealed class MainForm : Form
         AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
         AddButton(buttons, "게임 서버 시작", StartServer);
         AddButton(buttons, "게임 서버 중지", () => { StopProcess(serverProcess, "게임 서버"); return Task.CompletedTask; });
+        AddButton(buttons, "전체 흐름 스모크 테스트", RunSmokeTestAsync);
         AddButton(buttons, "로그 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Logs"); return Task.CompletedTask; });
+        AddButton(buttons, "진단 결과 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Diagnostics"); return Task.CompletedTask; });
         AddButton(buttons, "빌드 폴더", () => { OpenFolder(archiveRoot.Text, ""); return Task.CompletedTask; });
         root.Controls.Add(buttons);
         root.Controls.Add(output);
@@ -163,6 +165,26 @@ internal sealed class MainForm : Form
         serverProcess = StartStreamingProcess(candidates[0], serverArgs.Text, Path.GetDirectoryName(candidates[0])!, "SERVER");
         await Task.Delay(1200);
         Append(serverProcess is { HasExited: false } ? "[OK] 데디케이티드 서버 시작" : "[실패] 서버가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+    }
+
+    private async Task RunSmokeTestAsync()
+    {
+        string smokeProject = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01SmokeTest", "ProjectProject01SmokeTest.csproj");
+        if (!File.Exists(smokeProject))
+        {
+            Append("[실패] 전체 흐름 스모크 테스트 프로젝트가 없습니다.");
+            return;
+        }
+        if (!IsPortListening(3307) || !IsPortListening(5080))
+        {
+            Append("[차단] MySQL 초기화/시작과 백엔드 시작을 먼저 실행하세요.");
+            return;
+        }
+        SetStatus("전체 흐름 스모크 테스트 중...");
+        int code = await RunCapturedAsync("dotnet",
+            $"run --project \"{smokeProject}\" -- --project-root \"{ProjectRoot()}\"",
+            ProjectRoot());
+        SetStatus(code == 0 ? "전체 흐름 스모크 테스트 통과" : $"스모크 테스트 실패 (코드 {code})");
     }
 
     private async Task<int> RunCapturedAsync(string file, string args, string workingDirectory)

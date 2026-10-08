@@ -235,6 +235,11 @@ struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim
 	FString RoomId;
 	FString MatchId;
 	FString Role;
+	FString ClientBuildVersion;
+	FString DedicatedServerBuildVersion;
+	FString ApiVersion;
+	FString GameDataVersion;
+	FString NetworkProtocolVersion;
 	FDateTime ValidUntilUtc;
 };
 

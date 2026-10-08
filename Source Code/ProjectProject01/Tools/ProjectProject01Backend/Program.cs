@@ -35,6 +35,8 @@ builder.Logging.AddConsole();
 
 var securityOptions = ProjectSecurityOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(securityOptions);
+var versionCompatibility = VersionCompatibilityOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(versionCompatibility);
 
 builder.Services.AddSingleton<IPasswordHasher<AuthUser>, PasswordHasher<AuthUser>>();
 builder.Services.AddSingleton<IPasswordHasher<RoomPasswordRecord>, PasswordHasher<RoomPasswordRecord>>();
@@ -138,6 +140,7 @@ app.Use(async (context, next) =>
     }
     await next();
 });
+app.UseProjectProject01VersionCompatibility();
 app.UseRateLimiter();
 
 var startupDatabase = app.Services.GetRequiredService<AuthDatabase>();
@@ -177,6 +180,9 @@ app.MapGet("/health", async (AuthDatabase database, CancellationToken cancellati
         return Results.Json(new { status = "unavailable", message = "MySQL connection failed." }, statusCode: 503);
     }
 });
+
+app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
+    Results.Ok(contract.ToResponse()));
 
 app.MapPost("/api/auth/register", async (
     HttpRequest httpRequest,
@@ -416,7 +422,8 @@ app.MapPost("/api/auth/logout", async (
 
 app.MapProjectProject01Lobby(
     builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777",
-    securityOptions);
+    securityOptions,
+    versionCompatibility);
 
 app.MapPost("/api/crash-reports", async (
     CrashReportRequest report,

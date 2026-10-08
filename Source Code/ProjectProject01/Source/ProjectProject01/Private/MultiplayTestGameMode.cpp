@@ -9,6 +9,7 @@
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "ProjectProject01VersionContract.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/TriggerBox.h"
 #include "EngineUtils.h"
@@ -227,6 +228,16 @@ void AMultiplayTestGameMode::PreLogin(
 		ErrorMessage = TEXT("The game connection ticket does not match this room.");
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
 			TEXT("Security rejected a game ticket with inconsistent room or role data."));
+		return;
+	}
+	FString VersionError;
+	if (!FProjectProject01VersionContract::Matches(
+		Claim.ClientBuildVersion, Claim.DedicatedServerBuildVersion, Claim.ApiVersion, Claim.GameDataVersion,
+		Claim.NetworkProtocolVersion, VersionError))
+	{
+		ErrorMessage = VersionError;
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("Security rejected an incompatible client: %s"), *VersionError);
 		return;
 	}
 

@@ -2,6 +2,7 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01LobbySubsystem.h"
+#include "ProjectProject01VersionContract.h"
 
 #include "Dom/JsonObject.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
@@ -307,6 +308,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	Request->SetVerb(Verb);
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Auth->GetAccessTokenForAuthenticatedRequest());
+	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetTimeout(RequestTimeoutSeconds);
 	if (!JsonBody.IsEmpty())
 	{

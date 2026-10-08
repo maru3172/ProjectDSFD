@@ -2,6 +2,7 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01VersionContract.h"
 
 #include "Dom/JsonObject.h"
 #include "HttpModule.h"
@@ -172,6 +173,7 @@ void UProjectProject01AuthSubsystem::SendRequest(
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
+	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetTimeout(RequestTimeoutSeconds);
 	if (Operation == EAuthOperation::Logout && !AccessToken.IsEmpty())
 	{

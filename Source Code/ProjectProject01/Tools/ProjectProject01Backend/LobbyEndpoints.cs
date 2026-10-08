@@ -17,7 +17,8 @@ internal static class LobbyEndpoints
     public static void MapProjectProject01Lobby(
         this WebApplication app,
         string configuredTravelUrl,
-        ProjectSecurityOptions securityOptions)
+        ProjectSecurityOptions securityOptions,
+        VersionCompatibilityOptions versionCompatibility)
     {
         var travelUrl = string.IsNullOrWhiteSpace(configuredTravelUrl)
             ? "127.0.0.1:7777"
@@ -708,7 +709,12 @@ internal static class LobbyEndpoints
                     matchId,
                     role,
                     travelUrl = gameServerTravelUrl,
-                    expiresAtUtc
+                    expiresAtUtc,
+                    clientBuildVersion = versionCompatibility.ClientBuildVersion,
+                    dedicatedServerBuildVersion = versionCompatibility.DedicatedServerBuildVersion,
+                    apiVersion = versionCompatibility.ApiVersion,
+                    gameDataVersion = versionCompatibility.GameDataVersion,
+                    networkProtocolVersion = versionCompatibility.NetworkProtocolVersion
                 });
             }
             catch (MySqlException)
@@ -788,7 +794,12 @@ internal static class LobbyEndpoints
                     roomId,
                     matchId,
                     role,
-                    encryptionKey
+                    encryptionKey,
+                    clientBuildVersion = versionCompatibility.ClientBuildVersion,
+                    dedicatedServerBuildVersion = versionCompatibility.DedicatedServerBuildVersion,
+                    apiVersion = versionCompatibility.ApiVersion,
+                    gameDataVersion = versionCompatibility.GameDataVersion,
+                    networkProtocolVersion = versionCompatibility.NetworkProtocolVersion
                 });
             }
             catch (MySqlException)
