@@ -16,6 +16,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
@@ -486,6 +487,20 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 	FMultiplayTestServerPlayerRecord Record;
 	Record.UserId = Controller->GetAuthenticatedUserId();
 	Record.MatchId = Controller->GetAuthenticatedMatchId();
+	// 티켓 검증을 생략하는 Standalone/로컬 PIE에서도 통신 기능을 서로 격리된
+	// 하나의 테스트 매치로 묶는다. 실제 티켓 기반 접속에서는 인증된 값을 그대로 쓴다.
+	if (Record.UserId.IsEmpty() && (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket))
+	{
+		Record.UserId = FString::Printf(TEXT("LocalPIE-%d"), Controller->GetUniqueID());
+	}
+	if (Record.MatchId.IsEmpty() && (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket))
+	{
+		if (AuthoritativeMatchId.IsEmpty())
+		{
+			AuthoritativeMatchId = FString::Printf(TEXT("LocalPIE-%s"), *GetWorld()->GetMapName());
+		}
+		Record.MatchId = AuthoritativeMatchId;
+	}
 	Record.Role = IsMannequinController(Controller) ? TEXT("Mannequin") : TEXT("Survivor");
 	Record.SurvivorState = Record.Role == TEXT("Survivor")
 		? EMultiplayTestSurvivorState::Active
@@ -502,6 +517,10 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 	Controller->SetServerMatchState(
 		EMultiplayTestMatchPhase::RoleAssignment,
 		MatchPlayerRecords.FindChecked(Controller).SurvivorState);
+	Controller->ClientConfigureSurvivorCommunication(
+		MatchPlayerRecords.FindChecked(Controller).UserId,
+		MatchPlayerRecords.FindChecked(Controller).MatchId,
+		MatchPlayerRecords.FindChecked(Controller).Role);
 }
 
 bool AMultiplayTestGameMode::RestoreDisconnectedMatchPlayer(AMultiplayTestPlayerController* Controller)
@@ -542,6 +561,8 @@ bool AMultiplayTestGameMode::RestoreDisconnectedMatchPlayer(AMultiplayTestPlayer
 	}
 	MatchPlayerRecords.Add(Controller, Restored);
 	Controller->SetServerMatchState(AuthoritativeMatchPhase, Restored.SurvivorState);
+	Controller->ClientConfigureSurvivorCommunication(
+		Restored.UserId, Restored.MatchId, Restored.Role);
 
 	if (Restored.Role == TEXT("Mannequin"))
 	{
@@ -825,6 +846,36 @@ void AMultiplayTestGameMode::CycleSurvivorSpectator(
 	}
 	RequestingController->EnterSurvivorSpectator(
 		FindLivingSurvivorSpectatorTarget(RequestingController, Direction));
+}
+
+bool AMultiplayTestGameMode::TryBroadcastSurvivorPing(
+	AMultiplayTestPlayerController* RequestingController,
+	const EProjectProject01PingType Type,
+	const FVector& Location)
+{
+	if (!HasAuthority() || !IsValid(RequestingController) || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
+	{
+		return false;
+	}
+	const FMultiplayTestServerPlayerRecord* SenderRecord = MatchPlayerRecords.Find(RequestingController);
+	if (SenderRecord == nullptr || !SenderRecord->Role.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase) ||
+		SenderRecord->SurvivorState != EMultiplayTestSurvivorState::Active || !IsValid(RequestingController->GetPawn()) ||
+		FVector::DistSquared(RequestingController->GetPawn()->GetActorLocation(), Location) > FMath::Square(3100.0f))
+	{
+		return false;
+	}
+	const FString SenderName = IsValid(RequestingController->PlayerState)
+		? RequestingController->PlayerState->GetPlayerName() : TEXT("생존자");
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		AMultiplayTestPlayerController* Target = Pair.Key.Get();
+		if (IsValid(Target) && Pair.Value.Role.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase) &&
+			Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active)
+		{
+			Target->ClientReceiveTeamPing(Type, Location, SenderName);
+		}
+	}
+	return true;
 }
 
 void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Survivor)

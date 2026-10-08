@@ -59,6 +59,8 @@ public:
 	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
 	void DeclareVoluntaryExit(class AMultiplayTestPlayerController* RequestingController);
 	void CycleSurvivorSpectator(class AMultiplayTestPlayerController* RequestingController, int32 Direction);
+	bool TryBroadcastSurvivorPing(class AMultiplayTestPlayerController* RequestingController,
+		EProjectProject01PingType Type, const FVector& Location);
 
 	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
 	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);

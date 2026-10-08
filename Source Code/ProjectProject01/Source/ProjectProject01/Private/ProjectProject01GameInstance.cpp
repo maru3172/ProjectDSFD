@@ -64,6 +64,11 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	MoveLeftKeyName = EKeys::A.GetFName();
 	MoveRightKeyName = EKeys::D.GetFName();
 	SprintKeyName = EKeys::LeftShift.GetFName();
+	VoicePushToTalkKeyName = EKeys::F2.GetFName();
+	VoiceToggleKeyName = EKeys::U.GetFName();
+	HelpPingKeyName = EKeys::Z.GetFName();
+	DangerPingKeyName = EKeys::X.GetFName();
+	LocationPingKeyName = EKeys::C.GetFName();
 	SetFrameRateLimit(120.0f);
 	SetResolutionScaleValueEx(100.0f);
 	SetOverallScalabilityLevel(3);
@@ -108,7 +113,12 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 		GetValidatedKey(MoveBackwardKeyName, EKeys::S),
 		GetValidatedKey(MoveLeftKeyName, EKeys::A),
 		GetValidatedKey(MoveRightKeyName, EKeys::D),
-		GetValidatedKey(SprintKeyName, EKeys::LeftShift)
+		GetValidatedKey(SprintKeyName, EKeys::LeftShift),
+		GetValidatedKey(VoicePushToTalkKeyName, EKeys::F2),
+		GetValidatedKey(VoiceToggleKeyName, EKeys::U),
+		GetValidatedKey(HelpPingKeyName, EKeys::Z),
+		GetValidatedKey(DangerPingKeyName, EKeys::X),
+		GetValidatedKey(LocationPingKeyName, EKeys::C)
 	};
 	TSet<FKey> UniqueKeys;
 	bool bHasInvalidOrDuplicate = false;
@@ -130,6 +140,11 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 		MoveLeftKeyName = EKeys::A.GetFName();
 		MoveRightKeyName = EKeys::D.GetFName();
 		SprintKeyName = EKeys::LeftShift.GetFName();
+		VoicePushToTalkKeyName = EKeys::F2.GetFName();
+		VoiceToggleKeyName = EKeys::U.GetFName();
+		HelpPingKeyName = EKeys::Z.GetFName();
+		DangerPingKeyName = EKeys::X.GetFName();
+		LocationPingKeyName = EKeys::C.GetFName();
 	}
 }
 
@@ -185,6 +200,11 @@ FKey UProjectProject01GameUserSettings::GetMoveBackwardKey() const { return GetV
 FKey UProjectProject01GameUserSettings::GetMoveLeftKey() const { return GetValidatedKey(MoveLeftKeyName, EKeys::A); }
 FKey UProjectProject01GameUserSettings::GetMoveRightKey() const { return GetValidatedKey(MoveRightKeyName, EKeys::D); }
 FKey UProjectProject01GameUserSettings::GetSprintKey() const { return GetValidatedKey(SprintKeyName, EKeys::LeftShift); }
+FKey UProjectProject01GameUserSettings::GetVoicePushToTalkKey() const { return GetValidatedKey(VoicePushToTalkKeyName, EKeys::F2); }
+FKey UProjectProject01GameUserSettings::GetVoiceToggleKey() const { return GetValidatedKey(VoiceToggleKeyName, EKeys::U); }
+FKey UProjectProject01GameUserSettings::GetHelpPingKey() const { return GetValidatedKey(HelpPingKeyName, EKeys::Z); }
+FKey UProjectProject01GameUserSettings::GetDangerPingKey() const { return GetValidatedKey(DangerPingKeyName, EKeys::X); }
+FKey UProjectProject01GameUserSettings::GetLocationPingKey() const { return GetValidatedKey(LocationPingKeyName, EKeys::C); }
 
 void UProjectProject01GameUserSettings::EnsureRuntimeAudioObjects()
 {

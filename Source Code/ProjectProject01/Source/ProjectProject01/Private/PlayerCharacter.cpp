@@ -964,6 +964,38 @@ void APlayerCharacter::SetRemainingDeathCountForGameMode(int32 NewDeathCount)
 	ForceNetUpdate();
 }
 
+void APlayerCharacter::RestoreSinglePlayerState(
+	const FTransform& SavedTransform,
+	const int32 SavedDeathCount,
+	const float SavedStamina)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World) || World->GetNetMode() != NM_Standalone || !HasAuthority())
+	{
+		return;
+	}
+
+	bGameOver = false;
+	bSinglePlayerResultPresented = false;
+	RemainingDeathCount = FMath::Max(0, SavedDeathCount);
+	CurrentStamina = FMath::Clamp(SavedStamina, 0.0f, MaxStamina);
+	ApplySprintingState(false);
+	SetActorHiddenInGame(false);
+	SetActorEnableCollision(true);
+	SetActorTransform(SavedTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->SetMovementMode(MOVE_Walking);
+		Movement->StopMovementImmediately();
+	}
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()); IsValid(PlayerController))
+	{
+		PlayerController->SetIgnoreMoveInput(false);
+		PlayerController->SetIgnoreLookInput(false);
+	}
+	ForceNetUpdate();
+}
+
 void APlayerCharacter::PresentSinglePlayerResult(const bool bEscaped)
 {
 	UWorld* World = GetWorld();

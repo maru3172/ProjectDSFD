@@ -8,7 +8,11 @@
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01LoginWidget.h"
+#include "ProjectProject01PingMarker.h"
+#include "ProjectProject01VoiceChatSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
+#include "InputKeyEventArgs.h"
+#include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
@@ -24,6 +28,127 @@ void AMultiplayTestPlayerController::BeginPlay()
 	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+}
+
+void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (IsLocalController())
+	{
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (UProjectProject01VoiceChatSubsystem* Voice = GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
+			{
+				Voice->LeaveMatch();
+			}
+		}
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+bool AMultiplayTestPlayerController::InputKey(const FInputKeyEventArgs& Params)
+{
+	if (IsLocalController())
+	{
+		const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+		if (IsValid(Settings))
+		{
+			if (Params.Key == Settings->GetVoicePushToTalkKey())
+			{
+				if (UGameInstance* GI = GetGameInstance())
+				{
+					if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
+					{
+						if (Params.Event == IE_Pressed) Voice->SetPushToTalkHeld(true);
+						else if (Params.Event == IE_Released) Voice->SetPushToTalkHeld(false);
+					}
+				}
+			}
+			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetVoiceToggleKey())
+			{
+				if (UGameInstance* GI = GetGameInstance())
+				{
+					if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>()) Voice->ToggleOpenMic();
+				}
+				return true;
+			}
+			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetHelpPingKey())
+			{
+				RequestTeamPing(EProjectProject01PingType::Help); return true;
+			}
+			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetDangerPingKey())
+			{
+				RequestTeamPing(EProjectProject01PingType::Danger); return true;
+			}
+			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetLocationPingKey())
+			{
+				RequestTeamPing(EProjectProject01PingType::Location); return true;
+			}
+		}
+	}
+	return Super::InputKey(Params);
+}
+
+void AMultiplayTestPlayerController::RequestTeamPing(const EProjectProject01PingType Type)
+{
+	if (IsLocalController())
+	{
+		ServerRequestTeamPing(Type);
+	}
+}
+
+bool AMultiplayTestPlayerController::ServerRequestTeamPing_Validate(const EProjectProject01PingType Type)
+{
+	return static_cast<uint8>(Type) <= static_cast<uint8>(EProjectProject01PingType::Location);
+}
+
+void AMultiplayTestPlayerController::ServerRequestTeamPing_Implementation(const EProjectProject01PingType Type)
+{
+	if (!AllowServerRequest(5, 4, 5.0f)) return;
+	AMultiplayTestGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr;
+	if (!IsValid(GameMode)) return;
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	GetPlayerViewPoint(ViewLocation, ViewRotation);
+	const FVector End = ViewLocation + ViewRotation.Vector() * 3000.0f;
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(ProjectProject01TeamPing), false, GetPawn());
+	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, ECC_Visibility, Params);
+	GameMode->TryBroadcastSurvivorPing(this, Type, bHit ? Hit.ImpactPoint : End);
+}
+
+void AMultiplayTestPlayerController::ClientReceiveTeamPing_Implementation(
+	const EProjectProject01PingType Type,
+	const FVector_NetQuantize Location,
+	const FString& SenderName)
+{
+	if (!IsLocalController() || SurvivorState != EMultiplayTestSurvivorState::Active || !IsValid(GetWorld())) return;
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	const FVector MarkerLocation = FVector(Location) + FVector(0, 0, 60);
+	const FVector ViewLocation = PlayerCameraManager
+		? PlayerCameraManager->GetCameraLocation()
+		: GetFocalLocation();
+	const FRotator MarkerRotation = (ViewLocation - MarkerLocation).Rotation();
+	if (AProjectProject01PingMarker* Marker = GetWorld()->SpawnActor<AProjectProject01PingMarker>(
+		AProjectProject01PingMarker::StaticClass(), MarkerLocation, MarkerRotation, SpawnParams))
+	{
+		Marker->Configure(Type, SenderName);
+	}
+}
+
+void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implementation(
+	const FString& UserId,
+	const FString& MatchId,
+	const FString& InRole)
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
+		{
+			Voice->ConfigureForMatch(UserId, MatchId, InRole, this);
+		}
+	}
 }
 
 void AMultiplayTestPlayerController::SetupInputComponent()
@@ -120,9 +245,15 @@ void AMultiplayTestPlayerController::SetServerMatchState(
 		return;
 	}
 
+	const EMultiplayTestSurvivorState PreviousSurvivorState = SurvivorState;
 	MatchPhase = NewPhase;
 	SurvivorState = NewSurvivorState;
 	ForceNetUpdate();
+	if (PreviousSurvivorState == EMultiplayTestSurvivorState::Active &&
+		NewSurvivorState != EMultiplayTestSurvivorState::Active)
+	{
+		ClientConfigureSurvivorCommunication(FString(), FString(), TEXT("Disabled"));
+	}
 }
 
 void AMultiplayTestPlayerController::DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result)

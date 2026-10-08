@@ -10,6 +10,14 @@
 struct FProjectProject01ValidatedJoinClaim;
 
 UENUM(BlueprintType)
+enum class EProjectProject01PingType : uint8
+{
+	Help,
+	Danger,
+	Location
+};
+
+UENUM(BlueprintType)
 enum class EMultiplayTestMatchPhase : uint8
 {
 	Waiting,
@@ -89,11 +97,13 @@ public:
 	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
 	virtual void OnRep_Pawn() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	void SelectMannequinSlot0();
@@ -112,6 +122,7 @@ private:
 	void ToggleSessionMenu();
 	void SelectPreviousSpectatorTarget();
 	void SelectNextSpectatorTarget();
+	void RequestTeamPing(EProjectProject01PingType Type);
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinSlot(int32 Slot);
@@ -128,6 +139,9 @@ private:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerCycleSurvivorSpectator(int32 Direction);
 
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerRequestTeamPing(EProjectProject01PingType Type);
+
 	UFUNCTION(Client, Reliable)
 	void ClientApplyViewedMannequin(class AMannequinAICharacter* Mannequin);
 
@@ -136,6 +150,12 @@ private:
 
 	UFUNCTION(Client, Reliable)
 	void ClientEnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition);
+
+	UFUNCTION(Client, Unreliable)
+	void ClientReceiveTeamPing(EProjectProject01PingType Type, FVector_NetQuantize Location, const FString& SenderName);
+
+	UFUNCTION(Client, Reliable)
+	void ClientConfigureSurvivorCommunication(const FString& UserId, const FString& MatchId, const FString& InRole);
 
 	UFUNCTION()
 	void OnRep_ViewedMannequin();
@@ -162,8 +182,8 @@ private:
 	FString AuthenticatedUserId;
 	FString AuthenticatedMatchId;
 	FString AuthenticatedRole;
-	float RpcWindowStartSeconds[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-	int32 RpcWindowCallCount[5] = { 0, 0, 0, 0, 0 };
+	float RpcWindowStartSeconds[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+	int32 RpcWindowCallCount[6] = { 0, 0, 0, 0, 0, 0 };
 	bool bVoluntaryExitDeclared = false;
 
 	friend class AMultiplayTestGameMode;

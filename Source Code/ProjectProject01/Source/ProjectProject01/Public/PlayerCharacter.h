@@ -77,6 +77,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Player|Stamina")
 	float GetMaxStamina() const { return MaxStamina; }
 
+	/** 검증된 싱글플레이 저장 파일의 상태를 현재 Pawn에 복원합니다. */
+	void RestoreSinglePlayerState(const FTransform& SavedTransform, int32 SavedDeathCount, float SavedStamina);
+
 	/** 저장된 로컬 키 설정을 현재 Enhanced Input 컨텍스트에 다시 적용합니다. */
 	void ApplyUserInputSettings();
 

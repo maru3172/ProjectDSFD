@@ -54,6 +54,11 @@ public:
 	FKey GetMoveLeftKey() const;
 	FKey GetMoveRightKey() const;
 	FKey GetSprintKey() const;
+	FKey GetVoicePushToTalkKey() const;
+	FKey GetVoiceToggleKey() const;
+	FKey GetHelpPingKey() const;
+	FKey GetDangerPingKey() const;
+	FKey GetLocationPingKey() const;
 
 	void SetMasterVolume(float Value) { MasterVolume = Value; }
 	void SetSFXVolume(float Value) { SFXVolume = Value; }
@@ -70,6 +75,11 @@ public:
 	void SetMoveLeftKey(FKey Key) { MoveLeftKeyName = Key.GetFName(); }
 	void SetMoveRightKey(FKey Key) { MoveRightKeyName = Key.GetFName(); }
 	void SetSprintKey(FKey Key) { SprintKeyName = Key.GetFName(); }
+	void SetVoicePushToTalkKey(FKey Key) { VoicePushToTalkKeyName = Key.GetFName(); }
+	void SetVoiceToggleKey(FKey Key) { VoiceToggleKeyName = Key.GetFName(); }
+	void SetHelpPingKey(FKey Key) { HelpPingKeyName = Key.GetFName(); }
+	void SetDangerPingKey(FKey Key) { DangerPingKeyName = Key.GetFName(); }
+	void SetLocationPingKey(FKey Key) { LocationPingKeyName = Key.GetFName(); }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Audio")
 	class USoundClass* GetSFXSoundClass();
@@ -128,6 +138,21 @@ private:
 
 	UPROPERTY(Config)
 	FName SprintKeyName = TEXT("LeftShift");
+
+	UPROPERTY(Config)
+	FName VoicePushToTalkKeyName = TEXT("F2");
+
+	UPROPERTY(Config)
+	FName VoiceToggleKeyName = TEXT("U");
+
+	UPROPERTY(Config)
+	FName HelpPingKeyName = TEXT("Z");
+
+	UPROPERTY(Config)
+	FName DangerPingKeyName = TEXT("X");
+
+	UPROPERTY(Config)
+	FName LocationPingKeyName = TEXT("C");
 
 	UPROPERTY(Transient)
 	TObjectPtr<class USoundClass> RuntimeSFXSoundClass;

@@ -29,6 +29,9 @@ private:
 	void HandleSinglePlayerClicked();
 
 	UFUNCTION()
+	void HandleContinueSinglePlayerClicked();
+
+	UFUNCTION()
 	void HandleMultiplayerClicked();
 
 	UFUNCTION()
@@ -42,6 +45,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> SinglePlayerButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ContinueSinglePlayerButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> MultiplayerButton;
@@ -141,6 +147,15 @@ private:
 	void HandleContinueClicked();
 
 	UFUNCTION()
+	void HandleSaveCheckpointClicked();
+
+	UFUNCTION()
+	void HandleLoadCheckpointClicked();
+
+	UFUNCTION()
+	void HandleSaveOperationCompleted(bool bSucceeded, const FString& Message);
+
+	UFUNCTION()
 	void HandleReturnToRoomClicked();
 
 	UFUNCTION()
@@ -169,6 +184,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ContinueButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SaveCheckpointButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LoadCheckpointButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToRoomButton;
@@ -309,7 +330,12 @@ private:
 		Backward,
 		Left,
 		Right,
-		Sprint
+		Sprint,
+		VoicePushToTalk,
+		VoiceToggle,
+		HelpPing,
+		DangerPing,
+		LocationPing
 	};
 
 	UFUNCTION() void HandleMasterVolumeChanged(float Value);
@@ -338,6 +364,11 @@ private:
 	UFUNCTION() void HandleLeftBindingClicked();
 	UFUNCTION() void HandleRightBindingClicked();
 	UFUNCTION() void HandleSprintBindingClicked();
+	UFUNCTION() void HandleVoicePushToTalkBindingClicked();
+	UFUNCTION() void HandleVoiceToggleBindingClicked();
+	UFUNCTION() void HandleHelpPingBindingClicked();
+	UFUNCTION() void HandleDangerPingBindingClicked();
+	UFUNCTION() void HandleLocationPingBindingClicked();
 	UFUNCTION() void HandleApplyClicked();
 	UFUNCTION() void HandleCancelClicked();
 	UFUNCTION() void HandleDefaultsClicked();
@@ -362,6 +393,7 @@ private:
 	FString QualityToString(int32 Quality) const;
 	bool ParseResolution(const FString& Item, FIntPoint& OutResolution) const;
 	void RefreshLocalPlayerInput() const;
+	void RestoreSettingsInputFocus();
 
 	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> StatusText;
@@ -401,6 +433,11 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UButton> LeftKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> RightKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> SprintKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> VoicePushToTalkKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> VoiceToggleKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> HelpPingKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> DangerPingKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> LocationPingKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> ApplyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> CancelButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> DefaultsButton;
@@ -433,6 +470,11 @@ private:
 	FKey PendingLeftKey = EKeys::A;
 	FKey PendingRightKey = EKeys::D;
 	FKey PendingSprintKey = EKeys::LeftShift;
+	FKey PendingVoicePushToTalkKey = EKeys::F2;
+	FKey PendingVoiceToggleKey = EKeys::U;
+	FKey PendingHelpPingKey = EKeys::Z;
+	FKey PendingDangerPingKey = EKeys::X;
+	FKey PendingLocationPingKey = EKeys::C;
 	EBindingTarget BindingTarget = EBindingTarget::None;
 	bool bRefreshingControls = false;
 	bool bAwaitingVideoConfirmation = false;

@@ -76,6 +76,10 @@
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/obj/
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/LocalMySql/
 
+# ProjectProject01 build/server helper (.NET generated output)
+/Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/bin/
+/Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/obj/
+
 # Generated map build data
 *_BuiltData.uasset
 

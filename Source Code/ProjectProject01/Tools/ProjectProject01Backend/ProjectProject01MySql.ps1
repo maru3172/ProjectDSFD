@@ -392,7 +392,9 @@ function Read-AdminPassword {
 
 function Initialize-ProjectProject01Server {
     if (Test-Path -LiteralPath $provisionedMarker) {
-        throw "The isolated instance is already provisioned at $dataDirectory. Initialization will not overwrite it."
+        Write-Host "The isolated instance is already provisioned at $dataDirectory. Starting it without replacing any data."
+        Start-ProjectProject01Server
+        return
     }
     if (Test-ProjectProject01Port) {
         throw "Port $port is already in use. No existing process was changed."

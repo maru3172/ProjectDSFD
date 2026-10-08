@@ -38,6 +38,14 @@
 		{
 			"Name": "AESGCMHandlerComponent",
 			"Enabled": true
+		},
+		{
+			"Name": "VoiceChat",
+			"Enabled": true
+		},
+		{
+			"Name": "EOSVoiceChat",
+			"Enabled": true
 		}
 	]
 }
