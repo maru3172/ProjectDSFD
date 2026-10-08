@@ -70,6 +70,10 @@ public:
 	bool ShouldChasePostPossessionCommand(double ServerTimeSeconds) const;
 	FString GetDiagnosticCommandState(double ServerTimeSeconds) const;
 	void GetDiagnosticAppliedTuning(struct FMannequinAITuningRow& OutTuning) const;
+	
+	// 발소리 함수
+	UFUNCTION(BlueprintCallable, Category = "Audio|Footstep")
+	void PlayFootstep(FName FootBoneName);
 
 private:
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",
@@ -137,4 +141,30 @@ private:
 
 	/** 같은 접촉 동안 포획이 반복 차감되지 않도록 서버에서만 보관합니다. */
 	TArray<TWeakObjectPtr<APlayerCharacter>> CaughtSurvivorsInCurrentContact;
+	
+	// 사운드 트레이스 설정 변수들
+	// 기본 발소리 사운드
+	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep")
+	TObjectPtr<class USoundBase> DefaultFootstepSound;
+	
+	// 지금은 사용할 필요가 없다.
+	// 발소리의 거리별 감소 설정
+	// 사운드의 개수와 관계없이 소리가 발생한 위치와 청취자 사이의 거리에 따라 볼륨이 감소하는 방식 등을 설정
+	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep")
+	TObjectPtr<class USoundAttenuation> FootstepAttenuation;
+	
+	// 발 위치에서 위쪽으로 트레이스를 시작할 거리
+	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep", meta = (ClampMin = "0.0", Units = "cm"))
+	float FootstepTraceUpDistance = 20.0f;
+	
+	// 트레이스 시작 위치에서 아래쪽으로 검사할 거리
+	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep", meta = (ClampMin = "0.0", Units = "cm"))
+	float FootstepTraceDownDistance = 60.0f;
+	
+	// 발소리가 연속으로 재생되지 않도록 하는 최소 시간 간격 - 애니메이션 등의 영향으로 발소리가 너무 짧은 간격으로 중복 재생되는 현상을 방지하기 위한 값
+	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep", meta = (ClampMin = "0.0", Units = "s"))
+	float MinimumFootstepInterval = 0.05f;
+	
+	// 마지막으로 발소리를 재생한 시간
+	double LastFootstepTimeSeconds = -1.0;
 };

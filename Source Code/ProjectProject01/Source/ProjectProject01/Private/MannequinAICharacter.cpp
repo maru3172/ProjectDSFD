@@ -17,6 +17,12 @@
 #include "PlayerCharacter.h"
 #include "UObject/ConstructorHelpers.h"
 
+// 바닥 검사 및 재생 헤더
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "Sound/SoundAttenuation.h"
+
+
 // Sets default values
 AMannequinAICharacter::AMannequinAICharacter()
 {
@@ -392,4 +398,68 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
 	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
+}
+
+// 발소리 함수
+void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
+{
+	UWorld* World = GetWorld();
+	USkeletalMeshComponent* MannequinMesh = GetMesh();
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	
+	if (!IsValid(World) || !IsValid(MannequinMesh) || !IsValid(Movement) || !IsValid(DefaultFootstepSound))
+	{
+		return;
+	}
+	
+	// 정지하거나 공중에 있을 때 잘못 재생되는 Notify 를 방지한다.
+	const float HorizontalSpeed = GetVelocity().Size2D();
+	if (HorizontalSpeed < 10.0f || !Movement->IsMovingOnGround())
+	{
+		return;
+	}
+	
+	// Blend Space 등에서 거의 동시에 들어오는 중복 Notify 를 방지한다.
+	const double CurrentTime = World->GetTimeSeconds();
+	if (CurrentTime - LastFootstepTimeSeconds < MinimumFootstepInterval)
+	{
+		return;
+	}
+	
+	if (!MannequinMesh->DoesSocketExist(FootBoneName))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Foot bone or socket '%s' was not found on %s."), *FootBoneName.ToString(), *GetName());
+		return;
+	}
+	
+	const FVector FootLocation = MannequinMesh->GetSocketLocation(FootBoneName);
+	const FVector TraceStart = FootLocation + FVector::UpVector * FootstepTraceUpDistance;
+	const FVector TraceEnd = FootLocation - FVector::UpVector * FootstepTraceDownDistance;
+	
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(MannequinFootstep), false, this);
+	QueryParams.bReturnPhysicalMaterial = true;
+	
+	FHitResult Hit;
+	const bool bHit = World->LineTraceSingleByChannel(
+		Hit,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams);
+	
+	if (!bHit)
+	{
+		return;
+	}
+	
+	LastFootstepTimeSeconds = CurrentTime;
+	
+	UGameplayStatics::PlaySoundAtLocation(
+		this,
+		DefaultFootstepSound,
+		Hit.ImpactPoint,
+		1.0f,									// Volume
+		FMath::FRandRange(0.95f, 1.05),		// Pitch
+		0.0f,									// Start Time
+		FootstepAttenuation);
 }
