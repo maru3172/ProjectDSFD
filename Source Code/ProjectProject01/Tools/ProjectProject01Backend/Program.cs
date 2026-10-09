@@ -134,6 +134,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+var allowedInsecureVpnHost = builder.Configuration["Security:AllowedInsecureVpnHost"]?.Trim();
 app.Use(async (context, next) =>
 {
     var remoteAddress = context.Connection.RemoteIpAddress;
@@ -141,7 +142,8 @@ app.Use(async (context, next) =>
     var forwardedByLocalProxy = isLoopback && context.Request.Headers.ContainsKey("X-Forwarded-For");
     var forwardedHttps = string.Equals(
         context.Request.Headers["X-Forwarded-Proto"].ToString(), "https", StringComparison.OrdinalIgnoreCase);
-    if (!context.Request.IsHttps && (!isLoopback || (forwardedByLocalProxy && !forwardedHttps)))
+    var isAllowedVpnHttp = RequestSecurity.IsAllowedInsecureVpnHttp(context, allowedInsecureVpnHost);
+    if (!context.Request.IsHttps && !isAllowedVpnHttp && (!isLoopback || (forwardedByLocalProxy && !forwardedHttps)))
     {
         app.Logger.LogWarning(
             "Rejected insecure public HTTP request {Method} {Path} from {RemoteAddress}.",
@@ -995,6 +997,21 @@ internal static class SecurityAudit
 
 internal static class RequestSecurity
 {
+    public static bool IsAllowedInsecureVpnHttp(HttpContext context, string? allowedHost)
+    {
+        if (string.IsNullOrWhiteSpace(allowedHost) ||
+            !string.Equals(context.Request.Host.Host, allowedHost, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var remoteAddress = context.Connection.RemoteIpAddress?.MapToIPv4();
+        var localAddress = context.Connection.LocalIpAddress?.MapToIPv4();
+        return remoteAddress is not null && localAddress is not null &&
+            remoteAddress.GetAddressBytes()[0] == 25 &&
+            string.Equals(localAddress.ToString(), allowedHost, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static string GetClientAddress(HttpContext context)
     {
         var directAddress = context.Connection.RemoteIpAddress;

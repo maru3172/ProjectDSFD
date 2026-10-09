@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 
 namespace ProjectProject01BuildServerHelper;
@@ -66,6 +67,7 @@ internal sealed class MainForm : Form
         AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
         AddButton(buttons, "백엔드 시작", StartBackend);
         AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
+        AddButton(buttons, "Hamachi 방화벽 설정", ConfigureHamachiFirewallAsync);
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 시작", StartServer);
         AddButton(buttons, "게임 서버 중지", () => { StopProcess(serverProcess, "게임 서버"); return Task.CompletedTask; });
@@ -159,9 +161,89 @@ internal sealed class MainForm : Form
     {
         if (backendProcess is { HasExited: false }) { Append("[정보] 백엔드가 이미 실행 중입니다."); return; }
         string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
-        backendProcess = StartStreamingProcess("dotnet", "run --urls http://127.0.0.1:5080", backend, "BACKEND");
+        string urls = GetBackendListenUrls(backend);
+        Append($"[정보] 백엔드 수신 주소: {urls}");
+        backendProcess = StartStreamingProcess("dotnet", $"run --urls \"{urls}\"", backend, "BACKEND");
         await Task.Delay(1200);
         Append(backendProcess is { HasExited: false } ? "[OK] 백엔드 프로세스 시작" : "[실패] 백엔드가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+    }
+
+    private static string GetBackendListenUrls(string backendDirectory)
+    {
+        const string loopbackUrl = "http://127.0.0.1:5080";
+        string? host = GetConfiguredVpnHost(backendDirectory);
+        return host is null ? loopbackUrl : $"{loopbackUrl};http://{host}:5080";
+    }
+
+    private static string? GetConfiguredVpnHost(string backendDirectory)
+    {
+        string localConfigurationPath = Path.Combine(
+            backendDirectory, "LocalMySql", "ProjectProject01Backend.local.json");
+        if (!File.Exists(localConfigurationPath)) return null;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(localConfigurationPath));
+            if (document.RootElement.TryGetProperty("Security", out JsonElement security) &&
+                security.TryGetProperty("AllowedInsecureVpnHost", out JsonElement hostElement))
+            {
+                string? host = hostElement.GetString()?.Trim();
+                if (IPAddress.TryParse(host, out IPAddress? address) && address.GetAddressBytes()[0] == 25)
+                {
+                    return host;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // 로컬 설정을 읽지 못하면 안전하게 루프백만 사용한다.
+        }
+        return null;
+    }
+
+    private async Task ConfigureHamachiFirewallAsync()
+    {
+        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string? host = GetConfiguredVpnHost(backend);
+        if (host is null)
+        {
+            Append("[실패] LocalMySql 설정에서 유효한 Hamachi 25.x 주소를 찾지 못했습니다.");
+            return;
+        }
+
+        string script =
+            "$ErrorActionPreference='Stop';" +
+            "$specs=@(" +
+            "@{Name='ProjectProject01 Hamachi Backend';Protocol='TCP';Port=5080}," +
+            "@{Name='ProjectProject01 Hamachi Game Server';Protocol='UDP';Port=7777}" +
+            ");" +
+            "foreach($spec in $specs){" +
+            "Get-NetFirewallRule -DisplayName $spec.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule;" +
+            $"New-NetFirewallRule -DisplayName $spec.Name -Direction Inbound -Action Allow -Protocol $($spec.Protocol) -LocalPort $($spec.Port) -LocalAddress '{host}' -RemoteAddress '25.0.0.0/8' -Profile Any | Out-Null;" +
+            "}";
+        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("powershell.exe")
+            {
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            if (process is null)
+            {
+                Append("[실패] 관리자 권한 방화벽 설정을 시작하지 못했습니다.");
+                return;
+            }
+            await process.WaitForExitAsync(lifetime.Token);
+            Append(process.ExitCode == 0
+                ? $"[OK] Hamachi {host} 전용 TCP 5080 / UDP 7777 방화벽 규칙 적용"
+                : $"[실패] 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            Append("[취소] Windows 관리자 권한 요청이 취소되었습니다.");
+        }
     }
 
     private async Task StartServer()

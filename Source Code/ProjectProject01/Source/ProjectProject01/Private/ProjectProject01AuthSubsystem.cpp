@@ -41,14 +41,21 @@ void UProjectProject01AuthSubsystem::Initialize(FSubsystemCollectionBase& Collec
 {
 	Super::Initialize(Collection);
 	ApiBaseUrl = ProjectProject01Auth::NormalizeBaseUrl(ApiBaseUrl);
+	AllowedInsecureVpnApiBaseUrl = ProjectProject01Auth::NormalizeBaseUrl(AllowedInsecureVpnApiBaseUrl);
 	RequestTimeoutSeconds = FMath::Clamp(RequestTimeoutSeconds, 2.0f, 60.0f);
 	MaxRetryCount = FMath::Clamp(MaxRetryCount, 0, 2);
 
-	if (!ApiBaseUrl.StartsWith(TEXT("https://")) && !ApiBaseUrl.StartsWith(TEXT("http://127.0.0.1")) &&
-		!ApiBaseUrl.StartsWith(TEXT("http://localhost")))
+	if (!IsApiBaseUrlAllowed())
 	{
 		UE_LOG(LogProjectProject01Auth, Error,
-			TEXT("Authentication API must use HTTPS except for loopback development: %s"), *ApiBaseUrl);
+			TEXT("Authentication API must use HTTPS except for loopback or the explicitly configured VPN test endpoint: %s"),
+			*ApiBaseUrl);
+	}
+	else if (ApiBaseUrl.Equals(AllowedInsecureVpnApiBaseUrl, ESearchCase::IgnoreCase) &&
+		ApiBaseUrl.StartsWith(TEXT("http://")))
+	{
+		UE_LOG(LogProjectProject01Auth, Warning,
+			TEXT("Authentication API is using the explicitly configured Hamachi/VPN HTTP test endpoint. Do not use this mode for public release."));
 	}
 }
 
@@ -435,5 +442,7 @@ void UProjectProject01AuthSubsystem::ClearSession()
 bool UProjectProject01AuthSubsystem::IsApiBaseUrlAllowed() const
 {
 	return ApiBaseUrl.StartsWith(TEXT("https://")) || ApiBaseUrl.StartsWith(TEXT("http://127.0.0.1")) ||
-		ApiBaseUrl.StartsWith(TEXT("http://localhost"));
+		ApiBaseUrl.StartsWith(TEXT("http://localhost")) ||
+		(!AllowedInsecureVpnApiBaseUrl.IsEmpty() &&
+			ApiBaseUrl.Equals(AllowedInsecureVpnApiBaseUrl, ESearchCase::IgnoreCase));
 }

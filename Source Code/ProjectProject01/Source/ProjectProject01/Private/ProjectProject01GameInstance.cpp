@@ -417,6 +417,8 @@ namespace ProjectProject01CrashReports
 void UProjectProject01GameInstance::Init()
 {
 	SecurityApiBaseUrl = ProjectProject01NetworkSecurity::NormalizeBaseUrl(SecurityApiBaseUrl);
+	AllowedInsecureVpnSecurityApiBaseUrl =
+		ProjectProject01NetworkSecurity::NormalizeBaseUrl(AllowedInsecureVpnSecurityApiBaseUrl);
 	SecurityRequestTimeoutSeconds = FMath::Clamp(SecurityRequestTimeoutSeconds, 2.0f, 30.0f);
 	Super::Init();
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
@@ -1064,7 +1066,9 @@ bool UProjectProject01GameInstance::IsBackendUrlAllowed() const
 {
 	return SecurityApiBaseUrl.StartsWith(TEXT("https://")) ||
 		SecurityApiBaseUrl.StartsWith(TEXT("http://127.0.0.1")) ||
-		SecurityApiBaseUrl.StartsWith(TEXT("http://localhost"));
+		SecurityApiBaseUrl.StartsWith(TEXT("http://localhost")) ||
+		(!AllowedInsecureVpnSecurityApiBaseUrl.IsEmpty() &&
+			SecurityApiBaseUrl.Equals(AllowedInsecureVpnSecurityApiBaseUrl, ESearchCase::IgnoreCase));
 }
 
 void UProjectProject01GameInstance::RemovePendingRequest(

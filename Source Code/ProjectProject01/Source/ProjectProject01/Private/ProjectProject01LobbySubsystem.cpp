@@ -19,10 +19,11 @@ DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01Lobby, Log, All);
 
 namespace ProjectProject01Lobby
 {
-	bool IsApiBaseUrlAllowed(const FString& Url)
+	bool IsApiBaseUrlAllowed(const FString& Url, const FString& AllowedInsecureVpnUrl)
 	{
 		return Url.StartsWith(TEXT("https://")) || Url.StartsWith(TEXT("http://127.0.0.1")) ||
-			Url.StartsWith(TEXT("http://localhost"));
+			Url.StartsWith(TEXT("http://localhost")) ||
+			(!AllowedInsecureVpnUrl.IsEmpty() && Url.Equals(AllowedInsecureVpnUrl, ESearchCase::IgnoreCase));
 	}
 
 	bool IsReadOperation(const EProjectProject01LobbyOperation Operation)
@@ -70,12 +71,13 @@ void UProjectProject01LobbySubsystem::Initialize(FSubsystemCollectionBase& Colle
 {
 	Super::Initialize(Collection);
 	ApiBaseUrl = ProjectProject01Lobby::NormalizeBaseUrl(ApiBaseUrl);
+	AllowedInsecureVpnApiBaseUrl = ProjectProject01Lobby::NormalizeBaseUrl(AllowedInsecureVpnApiBaseUrl);
 	RequestTimeoutSeconds = FMath::Clamp(RequestTimeoutSeconds, 2.0f, 60.0f);
-	if (!ApiBaseUrl.StartsWith(TEXT("https://")) && !ApiBaseUrl.StartsWith(TEXT("http://127.0.0.1")) &&
-		!ApiBaseUrl.StartsWith(TEXT("http://localhost")))
+	if (!ProjectProject01Lobby::IsApiBaseUrlAllowed(ApiBaseUrl, AllowedInsecureVpnApiBaseUrl))
 	{
 		UE_LOG(LogProjectProject01Lobby, Error,
-			TEXT("Lobby API must use HTTPS except for loopback development: %s"), *ApiBaseUrl);
+			TEXT("Lobby API must use HTTPS except for loopback or the explicitly configured VPN test endpoint: %s"),
+			*ApiBaseUrl);
 	}
 }
 
@@ -297,7 +299,8 @@ void UProjectProject01LobbySubsystem::SendRequest(
 		Complete(Operation, false, TEXT("로그인 세션이 필요합니다."));
 		return;
 	}
-	if (ApiBaseUrl.IsEmpty() || !ProjectProject01Lobby::IsApiBaseUrlAllowed(ApiBaseUrl))
+	if (ApiBaseUrl.IsEmpty() ||
+		!ProjectProject01Lobby::IsApiBaseUrlAllowed(ApiBaseUrl, AllowedInsecureVpnApiBaseUrl))
 	{
 		Complete(Operation, false, TEXT("로비 API 주소가 설정되지 않았습니다."));
 		return;

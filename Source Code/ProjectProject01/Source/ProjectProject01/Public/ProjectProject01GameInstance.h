@@ -319,6 +319,10 @@ private:
 	UPROPERTY(Config)
 	FString SecurityApiBaseUrl = TEXT("http://127.0.0.1:5080");
 
+	/** Hamachi 등 암호화된 개발 VPN에서만 허용할 정확한 HTTP API 주소입니다. 운영 배포에서는 비워 둡니다. */
+	UPROPERTY(Config)
+	FString AllowedInsecureVpnSecurityApiBaseUrl;
+
 	UPROPERTY(Config)
 	float SecurityRequestTimeoutSeconds = 8.0f;
 
