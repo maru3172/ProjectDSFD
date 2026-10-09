@@ -68,7 +68,10 @@ internal sealed class MainForm : Form
         AddButton(buttons, "백엔드 시작", StartBackend);
         AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
         AddButton(buttons, "EOS 보이스 자격 증명", OpenEosVoiceSetupAsync);
-        AddButton(buttons, "Hamachi 방화벽 설정", ConfigureHamachiFirewallAsync);
+        AddButton(buttons, "자동 연결 방화벽 설정", ConfigureHamachiFirewallAsync);
+        AddButton(buttons, "자동 연결 검사", () => ValidateHamachiConnectivityAsync(false));
+        AddButton(buttons, "IP 직접 연결 방화벽 설정", ConfigureDirectIpFirewallAsync);
+        AddButton(buttons, "IP 직접 연결 검사", ValidateDirectIpConnectivityAsync);
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 시작", StartServer);
         AddButton(buttons, "게임 서버 중지", () => { StopProcess(serverProcess, "게임 서버"); return Task.CompletedTask; });
@@ -97,10 +100,38 @@ internal sealed class MainForm : Form
         panel.Controls.Add(control, 1, row);
     }
 
-    private static void AddButton(FlowLayoutPanel panel, string text, Func<Task> action)
+    private void AddButton(FlowLayoutPanel panel, string text, Func<Task> action)
     {
         var button = new Button { Text = text, AutoSize = true, Height = 34 };
-        button.Click += async (_, _) => { button.Enabled = false; try { await action(); } finally { button.Enabled = true; } };
+        button.Click += async (_, _) =>
+        {
+            button.Enabled = false;
+            try
+            {
+                await action();
+            }
+            catch (OperationCanceledException)
+            {
+                if (!lifetime.IsCancellationRequested && !IsDisposed && !Disposing)
+                {
+                    Append($"[실패] {text}: 서버 응답 대기 시간이 초과되었습니다.");
+                }
+            }
+            catch (Exception exception)
+            {
+                if (!IsDisposed && !Disposing)
+                {
+                    Append($"[실패] {text}: {exception.Message}");
+                }
+            }
+            finally
+            {
+                if (!button.IsDisposed)
+                {
+                    button.Enabled = true;
+                }
+            }
+        };
         panel.Controls.Add(button);
     }
 
@@ -134,6 +165,31 @@ internal sealed class MainForm : Form
         Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_VOICE_SERVER_CLIENT_SECRET") is { Length: > 0 }
             ? "[OK] EOS 보이스 서버 자격 증명이 구성되었습니다."
             : "[주의] EOS 보이스 서버 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 실행하세요.");
+        string backendDirectory = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string? vpnHost = GetConfiguredVpnHost(backendDirectory);
+        if (vpnHost is null)
+        {
+            Append("[주의] 외부 테스트용 자동 연결 주소가 구성되지 않았습니다.");
+        }
+        else
+        {
+            Append(IsLocalIpv4Address(vpnHost)
+                ? $"[OK] 자동 연결 주소 {vpnHost}가 이 PC에 활성화되어 있습니다."
+                : $"[실패] 설정된 자동 연결 주소 {vpnHost}가 현재 이 PC에 없습니다. 자동 연결 프로그램을 먼저 켜세요.");
+            Append($"[정보] 외부 클라이언트 백엔드: http://{vpnHost}:5080 / 게임 서버: {vpnHost}:7777");
+        }
+        var directAddresses = GetLocalLanAddresses();
+        if (directAddresses.Count == 0)
+        {
+            Append("[정보] IP 직접 입력에 사용할 활성 사설 IPv4 주소가 없습니다.");
+        }
+        else
+        {
+            foreach (var (address, interfaceName) in directAddresses)
+            {
+                Append($"[OK] IP 직접 입력 주소: {address} ({interfaceName}) / 백엔드 {address}:5080 / 게임 서버 {address}:7777");
+            }
+        }
         foreach (string issue in issues) Append("[실패] " + issue);
         SetStatus(issues.Count == 0 ? "환경 검사 완료" : $"환경 검사: {issues.Count}개 필수 문제");
     }
@@ -173,9 +229,9 @@ internal sealed class MainForm : Form
             Append("[차단] EOS 게임 클라이언트 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 먼저 실행하고 도우미를 다시 시작하세요.");
             return 2;
         }
-        if (clientSecret.Contains('\r') || clientSecret.Contains('\n'))
+        if (clientSecret.Length is < 32 or > 64 || clientSecret.Contains('\r') || clientSecret.Contains('\n'))
         {
-            Append("[차단] EOS 게임 클라이언트 비밀키 형식이 올바르지 않습니다.");
+            Append("[차단] EOS 게임 클라이언트 비밀키 형식이 올바르지 않습니다. 포털에서 발급된 Client Secret 전체를 다시 입력하세요.");
             return 2;
         }
 
@@ -211,8 +267,14 @@ internal sealed class MainForm : Form
         string urls = GetBackendListenUrls(backend);
         Append($"[정보] 백엔드 수신 주소: {urls}");
         backendProcess = StartStreamingProcess("dotnet", $"run --urls \"{urls}\"", backend, "BACKEND");
-        await Task.Delay(1200);
-        Append(backendProcess is { HasExited: false } ? "[OK] 백엔드 프로세스 시작" : "[실패] 백엔드가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+        await Task.Delay(1800);
+        if (backendProcess is not { HasExited: false })
+        {
+            Append("[실패] 백엔드가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+            return;
+        }
+        Append("[OK] 백엔드 프로세스 시작");
+        await ValidateHamachiConnectivityAsync(true);
     }
 
     private Task OpenEosVoiceSetupAsync()
@@ -237,7 +299,31 @@ internal sealed class MainForm : Form
     {
         const string loopbackUrl = "http://127.0.0.1:5080";
         string? host = GetConfiguredVpnHost(backendDirectory);
-        return host is null ? loopbackUrl : $"{loopbackUrl};http://{host}:5080";
+        var urls = new List<string> { loopbackUrl };
+        if (host is not null) urls.Add($"http://{host}:5080");
+        urls.AddRange(GetLocalLanAddresses().Select(item => $"http://{item.Address}:5080"));
+        return string.Join(';', urls.Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<(string Address, string InterfaceName)> GetLocalLanAddresses() =>
+        NetworkInterface.GetAllNetworkInterfaces()
+            .Where(network => network.OperationalStatus == OperationalStatus.Up &&
+                network.NetworkInterfaceType is NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.Ethernet &&
+                !network.Name.Contains("Hamachi", StringComparison.OrdinalIgnoreCase) &&
+                !network.Name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase) &&
+                !network.Description.Contains("Virtual", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(network => network.GetIPProperties().UnicastAddresses
+                .Where(unicast => unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+                    IsPrivateIpv4(unicast.Address))
+                .Select(unicast => (unicast.Address.ToString(), network.Name)))
+            .Distinct()
+            .ToArray();
+
+    private static bool IsPrivateIpv4(IPAddress address)
+    {
+        byte[] bytes = address.GetAddressBytes();
+        return bytes[0] == 10 || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+            (bytes[0] == 192 && bytes[1] == 168);
     }
 
     private static string? GetConfiguredVpnHost(string backendDirectory)
@@ -271,20 +357,35 @@ internal sealed class MainForm : Form
         string? host = GetConfiguredVpnHost(backend);
         if (host is null)
         {
-            Append("[실패] LocalMySql 설정에서 유효한 Hamachi 25.x 주소를 찾지 못했습니다.");
+            Append("[실패] LocalMySql 설정에서 유효한 자동 연결 25.x 주소를 찾지 못했습니다.");
             return;
         }
 
+        string dotnetPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        if (!File.Exists(dotnetPath))
+        {
+            Append("[실패] dotnet.exe 경로를 찾지 못해 백엔드 방화벽 규칙을 만들 수 없습니다.");
+            return;
+        }
+        string? serverExecutable = Directory.Exists(archiveRoot.Text.Trim())
+            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories)
+                .FirstOrDefault()
+            : null;
+        string escapedDotnetPath = dotnetPath.Replace("'", "''");
+        string escapedServerPath = serverExecutable?.Replace("'", "''") ?? string.Empty;
         string script =
             "$ErrorActionPreference='Stop';" +
-            "$specs=@(" +
-            "@{Name='ProjectProject01 Hamachi Backend';Protocol='TCP';Port=5080}," +
-            "@{Name='ProjectProject01 Hamachi Game Server';Protocol='UDP';Port=7777}" +
-            ");" +
-            "foreach($spec in $specs){" +
-            "Get-NetFirewallRule -DisplayName $spec.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule;" +
-            $"New-NetFirewallRule -DisplayName $spec.Name -Direction Inbound -Action Allow -Protocol $($spec.Protocol) -LocalPort $($spec.Port) -LocalAddress '{host}' -RemoteAddress '25.0.0.0/8' -Profile Any | Out-Null;" +
-            "}";
+            "$backendName='ProjectProject01 Hamachi Backend';" +
+            "$serverName='ProjectProject01 Hamachi Game Server';" +
+            "Get-NetFirewallRule -DisplayName $backendName -ErrorAction SilentlyContinue | Remove-NetFirewallRule;" +
+            "Get-NetFirewallRule -DisplayName $serverName -ErrorAction SilentlyContinue | Remove-NetFirewallRule;" +
+            $"New-NetFirewallRule -DisplayName $backendName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{host}' -RemoteAddress '25.0.0.0/8' -InterfaceAlias 'Hamachi' -Program '{escapedDotnetPath}' -Profile Any | Out-Null;";
+        if (serverExecutable is not null)
+        {
+            script +=
+                $"New-NetFirewallRule -DisplayName $serverName -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777 -LocalAddress '{host}' -RemoteAddress '25.0.0.0/8' -InterfaceAlias 'Hamachi' -Program '{escapedServerPath}' -Profile Any | Out-Null;";
+        }
         string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         try
         {
@@ -301,14 +402,173 @@ internal sealed class MainForm : Form
                 return;
             }
             await process.WaitForExitAsync(lifetime.Token);
-            Append(process.ExitCode == 0
-                ? $"[OK] Hamachi {host} 전용 TCP 5080 / UDP 7777 방화벽 규칙 적용"
-                : $"[실패] 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
+            if (process.ExitCode != 0)
+            {
+                Append($"[실패] 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
+                return;
+            }
+            Append($"[OK] 자동 연결 {host}의 백엔드 TCP 5080을 같은 가상 네트워크 참가자에게 허용했습니다.");
+            Append(serverExecutable is null
+                ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 이 버튼을 다시 누르세요."
+                : $"[OK] 자동 연결 {host}의 게임 서버 UDP 7777을 같은 가상 네트워크 참가자에게 허용했습니다.");
         }
         catch (System.ComponentModel.Win32Exception)
         {
             Append("[취소] Windows 관리자 권한 요청이 취소되었습니다.");
         }
+    }
+
+    private async Task ValidateHamachiConnectivityAsync(bool waitForBackendStartup)
+    {
+        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string? host = GetConfiguredVpnHost(backend);
+        if (host is null)
+        {
+            Append("[실패] LocalMySql 설정에서 유효한 자동 연결 25.x 주소를 찾지 못했습니다.");
+            return;
+        }
+        if (!IsLocalIpv4Address(host))
+        {
+            Append($"[실패] 자동 연결 주소 {host}가 현재 이 PC에 할당되어 있지 않습니다.");
+            return;
+        }
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        bool backendReady = false;
+        string lastFailure = string.Empty;
+        int attempts = waitForBackendStartup ? 20 : 1;
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                using var response = await http.GetAsync($"http://{host}:5080/health", lifetime.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    backendReady = true;
+                    break;
+                }
+                lastFailure = $"HTTP {(int)response.StatusCode}";
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                lastFailure = "서버 응답 대기 시간 초과";
+            }
+            catch (Exception exception)
+            {
+                lastFailure = exception.Message;
+            }
+            if (attempt < attempts)
+            {
+                await Task.Delay(750, lifetime.Token);
+            }
+        }
+        if (backendReady)
+        {
+            Append($"[OK] 이 PC에서 자동 연결 백엔드 http://{host}:5080/health 응답 확인");
+        }
+        else
+        {
+            Append($"[실패] 자동 연결 백엔드 {host}:5080 연결 실패: {lastFailure}");
+        }
+
+        Append(IsUdpPortBound(7777)
+            ? $"[OK] 게임 서버 UDP {host}:7777 수신 중"
+            : "[정보] 게임 서버 UDP 7777은 아직 수신 중이 아닙니다. 멀티 경기 전에 게임 서버를 시작하세요.");
+        Append("[안내] 클라이언트는 같은 가상 네트워크에 참가한 뒤 환경설정에서 '자동 연결'만 선택하면 됩니다. 상대방 IP를 서버에 입력할 필요는 없습니다.");
+    }
+
+    private async Task ConfigureDirectIpFirewallAsync()
+    {
+        var lanAddresses = GetLocalLanAddresses();
+        if (lanAddresses.Count == 0)
+        {
+            Append("[실패] 활성화된 사설 IPv4 유선/Wi-Fi 어댑터를 찾지 못했습니다.");
+            return;
+        }
+        string dotnetPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        string? serverExecutable = Directory.Exists(archiveRoot.Text.Trim())
+            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories)
+                .FirstOrDefault()
+            : null;
+        if (!File.Exists(dotnetPath))
+        {
+            Append("[실패] dotnet.exe 경로를 찾지 못했습니다.");
+            return;
+        }
+        var script = new StringBuilder("$ErrorActionPreference='Stop';");
+        foreach (var (address, interfaceName) in lanAddresses)
+        {
+            string suffix = address.Replace('.', '-');
+            string backendName = $"ProjectProject01 Direct IP Backend {suffix}";
+            string serverName = $"ProjectProject01 Direct IP Game Server {suffix}";
+            script.Append($"Get-NetFirewallRule -DisplayName '{backendName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
+            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{address}' -RemoteAddress LocalSubnet -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{dotnetPath.Replace("'", "''")}' -Profile Any | Out-Null;");
+            if (serverExecutable is not null)
+            {
+                script.Append($"Get-NetFirewallRule -DisplayName '{serverName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
+                script.Append($"New-NetFirewallRule -DisplayName '{serverName}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777 -LocalAddress '{address}' -RemoteAddress LocalSubnet -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{serverExecutable.Replace("'", "''")}' -Profile Any | Out-Null;");
+            }
+        }
+        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script.ToString()));
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("powershell.exe")
+            {
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            if (process is null) return;
+            await process.WaitForExitAsync(lifetime.Token);
+            if (process.ExitCode != 0)
+            {
+                Append($"[실패] IP 직접 연결 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
+                return;
+            }
+            Append($"[OK] IP 직접 연결용 백엔드 TCP 5080을 로컬 서브넷에만 허용했습니다: {string.Join(", ", lanAddresses.Select(item => item.Address))}");
+            Append(serverExecutable is null
+                ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 다시 실행하세요."
+                : "[OK] IP 직접 연결용 게임 서버 UDP 7777을 로컬 서브넷에만 허용했습니다.");
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            Append("[취소] Windows 관리자 권한 요청이 취소되었습니다.");
+        }
+    }
+
+    private async Task ValidateDirectIpConnectivityAsync()
+    {
+        var lanAddresses = GetLocalLanAddresses();
+        if (lanAddresses.Count == 0)
+        {
+            Append("[실패] IP 직접 연결에 사용할 활성 사설 IPv4 주소가 없습니다.");
+            return;
+        }
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        foreach (var (address, interfaceName) in lanAddresses)
+        {
+            try
+            {
+                using var response = await http.GetAsync($"http://{address}:5080/health", lifetime.Token);
+                Append(response.IsSuccessStatusCode
+                    ? $"[OK] IP 직접 연결 주소 http://{address}:5080 ({interfaceName}) 응답 확인"
+                    : $"[실패] {address}:5080이 HTTP {(int)response.StatusCode}를 반환했습니다.");
+            }
+            catch (Exception exception)
+            {
+                Append($"[실패] {address}:5080 연결 실패: {exception.Message}");
+            }
+        }
+        Append(IsUdpPortBound(7777)
+            ? "[OK] 게임 서버 UDP 7777 수신 중"
+            : "[정보] 게임 서버 UDP 7777은 아직 수신 중이 아닙니다.");
+        Append("[안내] 외부 PC의 환경설정에서 'IP 직접 입력'을 선택하고 위 IPv4 주소를 입력하세요.");
     }
 
     private async Task StartServer()
@@ -317,9 +577,21 @@ internal sealed class MainForm : Form
         string[] candidates = Directory.Exists(archiveRoot.Text.Trim())
             ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories) : [];
         if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectProject01Server.exe가 없습니다."); return; }
-        serverProcess = StartStreamingProcess(candidates[0], serverArgs.Text, Path.GetDirectoryName(candidates[0])!, "SERVER");
+        string arguments = serverArgs.Text.Trim();
+        if (arguments.Contains("-MULTIHOME=", StringComparison.OrdinalIgnoreCase))
+        {
+            Append("[주의] -MULTIHOME이 지정되어 있으면 그 주소만 수신합니다. 자동 연결과 IP 직접 입력을 함께 쓰려면 해당 인자를 지우세요.");
+        }
+        serverProcess = StartStreamingProcess(candidates[0], arguments, Path.GetDirectoryName(candidates[0])!, "SERVER");
         await Task.Delay(1200);
-        Append(serverProcess is { HasExited: false } ? "[OK] 데디케이티드 서버 시작" : "[실패] 서버가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+        if (serverProcess is { HasExited: false })
+        {
+            Append("[OK] 데디케이티드 서버 시작: 활성 네트워크의 UDP 7777 수신");
+        }
+        else
+        {
+            Append("[실패] 서버가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+        }
     }
 
     private async Task RunSmokeTestAsync()
@@ -380,6 +652,15 @@ internal sealed class MainForm : Form
 
     private static bool IsPortListening(int port) => IPGlobalProperties.GetIPGlobalProperties()
         .GetActiveTcpListeners().Any(endpoint => endpoint.Port == port);
+
+    private static bool IsUdpPortBound(int port) => IPGlobalProperties.GetIPGlobalProperties()
+        .GetActiveUdpListeners().Any(endpoint => endpoint.Port == port);
+
+    private static bool IsLocalIpv4Address(string address) => NetworkInterface.GetAllNetworkInterfaces()
+        .Where(network => network.OperationalStatus == OperationalStatus.Up)
+        .SelectMany(network => network.GetIPProperties().UnicastAddresses)
+        .Any(unicast => unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+            string.Equals(unicast.Address.ToString(), address, StringComparison.OrdinalIgnoreCase));
 
     private string ProjectRoot() => Path.GetDirectoryName(projectFile.Text.Trim()) ?? Environment.CurrentDirectory;
     private void OpenFolder(string root, string child)

@@ -30,6 +30,8 @@
 #include "Misc/Paths.h"
 #include "Misc/NetworkVersion.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01VersionContract.h"
 #include "Rendering/RenderingCommon.h"
 #include "Serialization/JsonReader.h"
@@ -81,6 +83,8 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	ScreenDistortionScale = 1.0f;
 	ScreenShakeScale = 1.0f;
 	UIReadableScale = 1.0f;
+	bAutomaticServerConnection = true;
+	DirectServerAddress.Reset();
 	MoveForwardKeyName = EKeys::W.GetFName();
 	MoveBackwardKeyName = EKeys::S.GetFName();
 	MoveLeftKeyName = EKeys::A.GetFName();
@@ -129,6 +133,7 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 	ScreenDistortionScale = FMath::Clamp(ScreenDistortionScale, 0.0f, 1.0f);
 	ScreenShakeScale = FMath::Clamp(ScreenShakeScale, 0.0f, 1.0f);
 	UIReadableScale = FMath::Clamp(UIReadableScale, 0.8f, 1.3f);
+	DirectServerAddress.TrimStartAndEndInline();
 	if (VFXIntensity != EProjectProject01VFXIntensity::Standard &&
 		VFXIntensity != EProjectProject01VFXIntensity::Reduced)
 	{
@@ -331,6 +336,58 @@ namespace ProjectProject01NetworkSecurity
 		return Url;
 	}
 
+	bool ParseIpv4Address(const FString& Input, FString& OutAddress)
+	{
+		FString Address = Input;
+		Address.TrimStartAndEndInline();
+		TArray<FString> Parts;
+		Address.ParseIntoArray(Parts, TEXT("."), false);
+		if (Parts.Num() != 4)
+		{
+			return false;
+		}
+		for (const FString& Part : Parts)
+		{
+			if (Part.IsEmpty() || !Part.IsNumeric())
+			{
+				return false;
+			}
+			const int32 Octet = FCString::Atoi(*Part);
+			if (Octet < 0 || Octet > 255)
+			{
+				return false;
+			}
+		}
+		OutAddress = FString::Printf(TEXT("%d.%d.%d.%d"),
+			FCString::Atoi(*Parts[0]), FCString::Atoi(*Parts[1]),
+			FCString::Atoi(*Parts[2]), FCString::Atoi(*Parts[3]));
+		return true;
+	}
+
+	bool IsSupportedTestAddress(const FString& Address)
+	{
+		TArray<FString> Parts;
+		Address.ParseIntoArray(Parts, TEXT("."), false);
+		if (Parts.Num() != 4) return false;
+		const int32 A = FCString::Atoi(*Parts[0]);
+		const int32 B = FCString::Atoi(*Parts[1]);
+		return A == 25 || A == 10 || (A == 172 && B >= 16 && B <= 31) ||
+			(A == 192 && B == 168) || A == 127;
+	}
+
+	FString ExtractHostFromBaseUrl(FString Url)
+	{
+		Url = NormalizeBaseUrl(Url);
+		Url.RemoveFromStart(TEXT("http://"));
+		Url.RemoveFromStart(TEXT("https://"));
+		FString Host;
+		if (Url.Split(TEXT(":"), &Host, nullptr))
+		{
+			return Host;
+		}
+		return Url;
+	}
+
 	void CompleteEncryptionFailure(
 		const FOnEncryptionKeyResponse& Delegate,
 		const EEncryptionResponse ResponseCode,
@@ -420,11 +477,20 @@ void UProjectProject01GameInstance::Init()
 	AllowedInsecureVpnSecurityApiBaseUrl =
 		ProjectProject01NetworkSecurity::NormalizeBaseUrl(AllowedInsecureVpnSecurityApiBaseUrl);
 	SecurityRequestTimeoutSeconds = FMath::Clamp(SecurityRequestTimeoutSeconds, 2.0f, 30.0f);
+	AutomaticMultiplayerServerAddress = ProjectProject01NetworkSecurity::ExtractHostFromBaseUrl(SecurityApiBaseUrl);
+	RuntimeMultiplayerServerAddress = AutomaticMultiplayerServerAddress;
 	Super::Init();
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 	{
 		Settings->LoadSettings(false);
 		Settings->ApplyProjectSettings(true);
+		FString EndpointError;
+		if (!ConfigureMultiplayerServerAddress(
+			Settings->GetDirectServerAddress(), Settings->IsAutomaticServerConnectionEnabled(), EndpointError))
+		{
+			UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+				TEXT("Saved multiplayer server selection was not applied: %s"), *EndpointError);
+		}
 	}
 	if (!IsRunningDedicatedServer() && FSlateApplication::IsInitialized())
 	{
@@ -1069,6 +1135,51 @@ bool UProjectProject01GameInstance::IsBackendUrlAllowed() const
 		SecurityApiBaseUrl.StartsWith(TEXT("http://localhost")) ||
 		(!AllowedInsecureVpnSecurityApiBaseUrl.IsEmpty() &&
 			SecurityApiBaseUrl.Equals(AllowedInsecureVpnSecurityApiBaseUrl, ESearchCase::IgnoreCase));
+}
+
+bool UProjectProject01GameInstance::ConfigureMultiplayerServerAddress(
+	const FString& ServerAddress,
+	const bool bUseAutomaticConnection,
+	FString& OutError)
+{
+	OutError.Reset();
+	FString Address = bUseAutomaticConnection ? AutomaticMultiplayerServerAddress : ServerAddress;
+	if (!ProjectProject01NetworkSecurity::ParseIpv4Address(Address, Address) ||
+		!ProjectProject01NetworkSecurity::IsSupportedTestAddress(Address))
+	{
+		OutError = TEXT("서버 IP는 25.x.x.x 또는 사설 IPv4(10.x, 172.16~31.x, 192.168.x) 주소여야 합니다.");
+		return false;
+	}
+
+	const FString ApiUrl = FString::Printf(TEXT("http://%s:5080"), *Address);
+	UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	UProjectProject01LobbySubsystem* Lobby = GetSubsystem<UProjectProject01LobbySubsystem>();
+	if (!IsValid(Auth) || !IsValid(Lobby))
+	{
+		OutError = TEXT("멀티플레이 연결 시스템을 찾지 못했습니다.");
+		return false;
+	}
+	if (Auth->GetAuthState() != EProjectProject01AuthState::SignedOut ||
+		Lobby->IsRequestInFlight() || Lobby->HasCurrentRoom())
+	{
+		OutError = TEXT("로그인 또는 경기 진행 중에는 서버 연결 방식을 바꿀 수 없습니다.");
+		return false;
+	}
+	if (!Auth->ConfigureLocalTestApiEndpoint(ApiUrl) || !Lobby->ConfigureLocalTestApiEndpoint(ApiUrl))
+	{
+		OutError = TEXT("로그인 또는 경기 진행 중에는 서버 연결 방식을 바꿀 수 없습니다.");
+		return false;
+	}
+
+	SecurityApiBaseUrl = ApiUrl;
+	AllowedInsecureVpnSecurityApiBaseUrl = ApiUrl;
+	RuntimeMultiplayerServerAddress = Address;
+	return true;
+}
+
+FString UProjectProject01GameInstance::GetConfiguredMultiplayerServerAddress() const
+{
+	return RuntimeMultiplayerServerAddress;
 }
 
 void UProjectProject01GameInstance::RemovePendingRequest(

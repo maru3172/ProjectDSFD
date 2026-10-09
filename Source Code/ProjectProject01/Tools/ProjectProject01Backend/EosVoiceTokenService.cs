@@ -25,6 +25,9 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
     public static bool IsProductUserIdText(string? value) =>
         !string.IsNullOrWhiteSpace(value) && Regex.IsMatch(value, "^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
 
+    private static bool IsPortalIdentifier(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && Regex.IsMatch(value, "^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         var productId = ReadSecret("PROJECTPROJECT01_EOS_PRODUCT_ID", "EosVoice:ProductId");
@@ -36,6 +39,14 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         {
             _logger.LogWarning(
                 "EOS voice token service is disabled. Set Product/Sandbox/Deployment IDs and the voice-server client credentials through environment variables or user-secrets.");
+            return Task.CompletedTask;
+        }
+        if (!IsPortalIdentifier(productId) || !IsPortalIdentifier(sandboxId) ||
+            !IsPortalIdentifier(deploymentId) || clientId!.Length is < 16 or > 64 ||
+            clientSecret!.Length is < 32 or > 64)
+        {
+            _logger.LogError(
+                "EOS voice token service credentials have an invalid format. Copy the complete IDs and Client Secret from Epic Developer Portal.");
             return Task.CompletedTask;
         }
 
@@ -63,14 +74,23 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
             using var deployment = new Utf8String(deploymentId!);
             using var id = new Utf8String(clientId!);
             using var secret = new Utf8String(clientSecret!);
+            using var xAudioPath = new Utf8String(ResolveXAudioPath(libraryPath));
+            var windowsRtcOptions = new EosNative.WindowsRtcOptions
+            {
+                ApiVersion = 1,
+                XAudio29DllPath = xAudioPath.Pointer
+            };
+            var windowsRtcPointer = Marshal.AllocHGlobal(Marshal.SizeOf<EosNative.WindowsRtcOptions>());
             var rtcOptions = new EosNative.PlatformRtcOptions
             {
                 ApiVersion = 3,
+                PlatformSpecificOptions = windowsRtcPointer,
                 BackgroundMode = 1
             };
             var rtcPointer = Marshal.AllocHGlobal(Marshal.SizeOf<EosNative.PlatformRtcOptions>());
             try
             {
+                Marshal.StructureToPtr(windowsRtcOptions, windowsRtcPointer, false);
                 Marshal.StructureToPtr(rtcOptions, rtcPointer, false);
                 var platformOptions = new EosNative.PlatformOptions
                 {
@@ -93,6 +113,7 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
             finally
             {
                 Marshal.FreeHGlobal(rtcPointer);
+                Marshal.FreeHGlobal(windowsRtcPointer);
             }
             if (_platform == IntPtr.Zero)
             {
@@ -205,6 +226,27 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         var found = candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path));
         return found ?? throw new FileNotFoundException(
             "EOSSDK-Win64-Shipping.dll was not found. Set PROJECTPROJECT01_EOS_SDK_PATH.");
+    }
+
+    private string ResolveXAudioPath(string eosLibraryPath)
+    {
+        var configured = ReadSecret("PROJECTPROJECT01_EOS_XAUDIO_PATH", "EosVoice:XAudioPath");
+        var eosBinaryDirectory = Path.GetDirectoryName(eosLibraryPath);
+        var engineBinariesDirectory = eosBinaryDirectory is null
+            ? null
+            : Directory.GetParent(eosBinaryDirectory)?.FullName;
+        var candidates = new[]
+        {
+            configured,
+            engineBinariesDirectory is null
+                ? null
+                : Path.Combine(engineBinariesDirectory, "ThirdParty", "Windows", "XAudio2_9", "x64", "xaudio2_9redist.dll"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Epic Games", "UE_5.8", "Engine", "Binaries", "ThirdParty", "Windows", "XAudio2_9", "x64", "xaudio2_9redist.dll")
+        };
+        var found = candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path));
+        return found ?? throw new FileNotFoundException(
+            "xaudio2_9redist.dll was not found. Set PROJECTPROJECT01_EOS_XAUDIO_PATH.");
     }
 
     private void ReleaseNativeResources()
@@ -356,6 +398,13 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
             internal IntPtr PlatformSpecificOptions;
             internal int BackgroundMode;
             internal IntPtr Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        internal struct WindowsRtcOptions
+        {
+            internal int ApiVersion;
+            internal IntPtr XAudio29DllPath;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 8)]

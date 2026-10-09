@@ -120,7 +120,6 @@ private:
 	void SetRequestControlsEnabled(bool bEnabled);
 	void SetStatus(const FString& Message, bool bIsError);
 	void EnterLobby();
-
 	UPROPERTY(Transient)
 	TObjectPtr<class UEditableTextBox> AccountIdInput;
 
@@ -393,6 +392,7 @@ private:
 	UFUNCTION() void HandlePostProcessQualityChanged(FString Item, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleVFXIntensityChanged(FString Item, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleColorVisionModeChanged(FString Item, ESelectInfo::Type SelectionType);
+	UFUNCTION() void HandleServerConnectionModeChanged(FString Item, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleForwardBindingClicked();
 	UFUNCTION() void HandleBackwardBindingClicked();
 	UFUNCTION() void HandleLeftBindingClicked();
@@ -475,6 +475,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> PostProcessQualityComboBox;
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> VFXIntensityComboBox;
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> ColorVisionModeComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> ServerConnectionModeComboBox;
+	UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> DirectServerAddressInput;
 	UPROPERTY(Transient) TObjectPtr<class UButton> ForwardKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> BackwardKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> LeftKeyButton;
@@ -510,6 +512,8 @@ private:
 	bool bPendingMotionBlur = true;
 	bool bPendingSubtitles = true;
 	bool bPendingEnhancedVisualCues = true;
+	bool bPendingAutomaticServerConnection = true;
+	FString PendingDirectServerAddress;
 	EWindowMode::Type PendingWindowMode = EWindowMode::WindowedFullscreen;
 	FIntPoint PendingResolution = FIntPoint(1920, 1080);
 	int32 PendingOverallQuality = 3;

@@ -76,6 +76,8 @@ public:
 	float GetUIReadableScale() const { return UIReadableScale; }
 	float GetLocalFlashScale() const { return GetLocalVFXScale() * ScreenFlashScale; }
 	float GetLocalDistortionScale() const { return GetLocalVFXScale() * ScreenDistortionScale; }
+	bool IsAutomaticServerConnectionEnabled() const { return bAutomaticServerConnection; }
+	const FString& GetDirectServerAddress() const { return DirectServerAddress; }
 	FKey GetMoveForwardKey() const;
 	FKey GetMoveBackwardKey() const;
 	FKey GetMoveLeftKey() const;
@@ -105,6 +107,8 @@ public:
 	void SetScreenDistortionScale(float Value) { ScreenDistortionScale = Value; }
 	void SetScreenShakeScale(float Value) { ScreenShakeScale = Value; }
 	void SetUIReadableScale(float Value) { UIReadableScale = Value; }
+	void SetAutomaticServerConnectionEnabled(bool bValue) { bAutomaticServerConnection = bValue; }
+	void SetDirectServerAddress(const FString& Value) { DirectServerAddress = Value; }
 	void SetMoveForwardKey(FKey Key) { MoveForwardKeyName = Key.GetFName(); }
 	void SetMoveBackwardKey(FKey Key) { MoveBackwardKeyName = Key.GetFName(); }
 	void SetMoveLeftKey(FKey Key) { MoveLeftKeyName = Key.GetFName(); }
@@ -184,6 +188,12 @@ private:
 	float UIReadableScale = 1.0f;
 
 	UPROPERTY(Config)
+	bool bAutomaticServerConnection = true;
+
+	UPROPERTY(Config)
+	FString DirectServerAddress;
+
+	UPROPERTY(Config)
 	FName MoveForwardKeyName = TEXT("W");
 
 	UPROPERTY(Config)
@@ -257,6 +267,13 @@ public:
 		const FOnEncryptionKeyResponse& Delegate) override;
 	virtual void ReceivedNetworkEncryptionAck(const FOnEncryptionKeyResponse& Delegate) override;
 
+	/** 자동 연결 또는 IP 직접 입력 주소를 인증·로비·보안 API 전체에 한 번에 적용합니다. */
+	bool ConfigureMultiplayerServerAddress(
+		const FString& ServerAddress,
+		bool bUseAutomaticConnection,
+		FString& OutError);
+	FString GetConfiguredMultiplayerServerAddress() const;
+
 	/** 로비 API가 발급한 티켓과 키를 네트워크 이동 직전에 메모리에만 보관합니다. */
 	bool ConfigurePendingGameConnection(
 		const FString& Ticket,
@@ -322,6 +339,12 @@ private:
 	/** Hamachi 등 암호화된 개발 VPN에서만 허용할 정확한 HTTP API 주소입니다. 운영 배포에서는 비워 둡니다. */
 	UPROPERTY(Config)
 	FString AllowedInsecureVpnSecurityApiBaseUrl;
+
+	UPROPERTY(Transient)
+	FString RuntimeMultiplayerServerAddress;
+
+	UPROPERTY(Transient)
+	FString AutomaticMultiplayerServerAddress;
 
 	UPROPERTY(Config)
 	float SecurityRequestTimeoutSeconds = 8.0f;

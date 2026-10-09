@@ -2,6 +2,7 @@
 // Target: .NET 9 / MySQL Server 8.0
 
 using System.Security.Cryptography;
+using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
@@ -603,6 +604,7 @@ internal static class LobbyEndpoints
                 }
 
                 var mannequinIndex = RandomNumberGenerator.GetInt32(members.Count);
+				var requestTravelUrl = ResolveTravelUrlForRequest(request, travelUrl);
                 await ExecuteAsync(connection, transaction,
                     "UPDATE room_members SET assigned_role = 'Survivor', returned_to_room = FALSE WHERE room_id = @roomId;",
                     ("@roomId", membership.RoomId), ct);
@@ -612,7 +614,7 @@ internal static class LobbyEndpoints
                 var matchId = Guid.NewGuid().ToString("D");
                 await ExecuteAsync(connection, transaction,
                     "UPDATE game_rooms SET status = 'Started', travel_url = @travelUrl, match_id = @matchId, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId;",
-                    ("@travelUrl", travelUrl), ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
+                    ("@travelUrl", requestTravelUrl), ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
                 await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
                 return Results.Ok(new { message = "게임을 시작합니다.", room });
@@ -1146,6 +1148,24 @@ internal static class LobbyEndpoints
                 return DatabaseUnavailable();
             }
         }).RequireRateLimiting("lobby");
+    }
+
+    private static string ResolveTravelUrlForRequest(HttpRequest request, string configuredTravelUrl)
+    {
+        var requestHost = request.Host.Host;
+        if (IPAddress.TryParse(requestHost, out var parsedAddress) &&
+            parsedAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = parsedAddress.GetAddressBytes();
+            var isTestNetwork = bytes[0] == 25 || bytes[0] == 10 ||
+                (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+                (bytes[0] == 192 && bytes[1] == 168) || bytes[0] == 127;
+            if (isTestNetwork)
+            {
+                return $"{requestHost}:7777";
+            }
+        }
+        return configuredTravelUrl;
     }
 
     private static string? NormalizeLeaderboardRole(string role) => role.Trim().ToLowerInvariant() switch

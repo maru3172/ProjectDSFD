@@ -56,6 +56,10 @@ $voiceServerSecret = Read-SecretText 'ProjectProject01VoiceServer Client Secret'
 if ([string]::IsNullOrWhiteSpace($gameClientSecret) -or [string]::IsNullOrWhiteSpace($voiceServerSecret)) {
     throw 'Both EOS client secrets are required.'
 }
+if ($gameClientSecret.Length -lt 32 -or $gameClientSecret.Length -gt 64 -or
+    $voiceServerSecret.Length -lt 32 -or $voiceServerSecret.Length -gt 64) {
+    throw 'EOS Client Secret must be the complete 32-64 character value issued by Epic Developer Portal.'
+}
 
 Set-UserAndProcessEnvironment 'PROJECTPROJECT01_EOS_PRODUCT_ID' '972ccc2fb54a4121ad7f33b595144f3f'
 Set-UserAndProcessEnvironment 'PROJECTPROJECT01_EOS_SANDBOX_ID' '04077b4c35d24156a22bf62a8401554e'

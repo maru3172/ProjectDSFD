@@ -96,6 +96,17 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+bool UProjectProject01LobbySubsystem::ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl)
+{
+	if (ActiveRequest.IsValid() || CurrentRoom.IsValid())
+	{
+		return false;
+	}
+	ApiBaseUrl = ProjectProject01Lobby::NormalizeBaseUrl(InApiBaseUrl);
+	AllowedInsecureVpnApiBaseUrl = ApiBaseUrl;
+	return ProjectProject01Lobby::IsApiBaseUrlAllowed(ApiBaseUrl, AllowedInsecureVpnApiBaseUrl);
+}
+
 void UProjectProject01LobbySubsystem::RefreshRooms()
 {
 	SendRequest(EProjectProject01LobbyOperation::RefreshRooms, TEXT("GET"), TEXT("/api/rooms"), FString());

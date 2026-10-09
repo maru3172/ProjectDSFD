@@ -446,3 +446,14 @@ bool UProjectProject01AuthSubsystem::IsApiBaseUrlAllowed() const
 		(!AllowedInsecureVpnApiBaseUrl.IsEmpty() &&
 			ApiBaseUrl.Equals(AllowedInsecureVpnApiBaseUrl, ESearchCase::IgnoreCase));
 }
+
+bool UProjectProject01AuthSubsystem::ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl)
+{
+	if (AuthState != EProjectProject01AuthState::SignedOut || ActiveRequest.IsValid())
+	{
+		return false;
+	}
+	ApiBaseUrl = ProjectProject01Auth::NormalizeBaseUrl(InApiBaseUrl);
+	AllowedInsecureVpnApiBaseUrl = ApiBaseUrl;
+	return IsApiBaseUrlAllowed();
+}

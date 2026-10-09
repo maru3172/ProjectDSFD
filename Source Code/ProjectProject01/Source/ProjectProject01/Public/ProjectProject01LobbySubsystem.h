@@ -286,6 +286,8 @@ public:
 	EProjectProject01LeaderboardRole GetLeaderboardRole() const { return LeaderboardRole; }
 	EProjectProject01LeaderboardSort GetLeaderboardSort() const { return LeaderboardSort; }
 	bool HasPendingGameJoinTicket() const { return !GameJoinTicket.IsEmpty() && !GameEncryptionKeyBase64.IsEmpty(); }
+	/** 로그인 화면에서 선택한 백엔드 주소를 로비·리더보드 요청에도 동일하게 적용합니다. */
+	bool ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl);
 	const FString& GetGameJoinTicket() const { return GameJoinTicket; }
 	const FString& GetGameEncryptionKeyBase64() const { return GameEncryptionKeyBase64; }
 	const FString& GetGameTicketTravelUrl() const { return GameTicketTravelUrl; }

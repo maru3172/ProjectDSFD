@@ -3,6 +3,8 @@
 
 using System.Security.Cryptography;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
@@ -30,6 +32,20 @@ if (File.Exists(localConfigurationPath))
 {
     builder.Configuration.AddJsonFile(localConfigurationPath, optional: false, reloadOnChange: false);
 }
+// 개발용 직접 IP 접속에서도 ASP.NET Host 필터가 이 PC의 활성 IPv4 주소를 허용하도록 한다.
+// 실제 HTTP 허용 여부는 아래 RequestSecurity에서 VPN/사설망과 동일 서브넷까지 다시 검사한다.
+var configuredAllowedHosts = (builder.Configuration["AllowedHosts"] ?? string.Empty)
+    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var localIpv4Hosts = NetworkInterface.GetAllNetworkInterfaces()
+    .Where(network => network.OperationalStatus == OperationalStatus.Up)
+    .SelectMany(network => network.GetIPProperties().UnicastAddresses)
+    .Where(unicast => unicast.Address.AddressFamily == AddressFamily.InterNetwork)
+    .Select(unicast => unicast.Address.ToString());
+builder.Configuration["AllowedHosts"] = string.Join(';', configuredAllowedHosts
+    .Concat(localIpv4Hosts)
+    .Append("localhost")
+    .Append("127.0.0.1")
+    .Distinct(StringComparer.OrdinalIgnoreCase));
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
@@ -154,8 +170,8 @@ app.Use(async (context, next) =>
     var forwardedByLocalProxy = isLoopback && context.Request.Headers.ContainsKey("X-Forwarded-For");
     var forwardedHttps = string.Equals(
         context.Request.Headers["X-Forwarded-Proto"].ToString(), "https", StringComparison.OrdinalIgnoreCase);
-    var isAllowedVpnHttp = RequestSecurity.IsAllowedInsecureVpnHttp(context, allowedInsecureVpnHost);
-    if (!context.Request.IsHttps && !isAllowedVpnHttp && (!isLoopback || (forwardedByLocalProxy && !forwardedHttps)))
+    var isAllowedTestHttp = RequestSecurity.IsAllowedInsecureTestHttp(context, allowedInsecureVpnHost);
+    if (!context.Request.IsHttps && !isAllowedTestHttp && (!isLoopback || (forwardedByLocalProxy && !forwardedHttps)))
     {
         app.Logger.LogWarning(
             "Rejected insecure public HTTP request {Method} {Path} from {RemoteAddress}.",
@@ -1010,19 +1026,50 @@ internal static class SecurityAudit
 
 internal static class RequestSecurity
 {
-    public static bool IsAllowedInsecureVpnHttp(HttpContext context, string? allowedHost)
+    public static bool IsAllowedInsecureTestHttp(HttpContext context, string? allowedVpnHost)
     {
-        if (string.IsNullOrWhiteSpace(allowedHost) ||
-            !string.Equals(context.Request.Host.Host, allowedHost, StringComparison.OrdinalIgnoreCase))
+        var remoteAddress = context.Connection.RemoteIpAddress?.MapToIPv4();
+        var localAddress = context.Connection.LocalIpAddress?.MapToIPv4();
+        if (remoteAddress is null || localAddress is null ||
+            !string.Equals(context.Request.Host.Host, localAddress.ToString(), StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        var remoteAddress = context.Connection.RemoteIpAddress?.MapToIPv4();
-        var localAddress = context.Connection.LocalIpAddress?.MapToIPv4();
-        return remoteAddress is not null && localAddress is not null &&
-            remoteAddress.GetAddressBytes()[0] == 25 &&
-            string.Equals(localAddress.ToString(), allowedHost, StringComparison.OrdinalIgnoreCase);
+        var localBytes = localAddress.GetAddressBytes();
+        var remoteBytes = remoteAddress.GetAddressBytes();
+        if (localBytes[0] == 25)
+        {
+            return !string.IsNullOrWhiteSpace(allowedVpnHost) && remoteBytes[0] == 25 &&
+                string.Equals(localAddress.ToString(), allowedVpnHost, StringComparison.OrdinalIgnoreCase);
+        }
+        return IsPrivateIpv4(localBytes) && IsPrivateIpv4(remoteBytes) && IsOnSameLocalSubnet(localAddress, remoteAddress);
+    }
+
+    private static bool IsPrivateIpv4(byte[] bytes) =>
+        bytes[0] == 10 || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+        (bytes[0] == 192 && bytes[1] == 168);
+
+    private static bool IsOnSameLocalSubnet(IPAddress localAddress, IPAddress remoteAddress)
+    {
+        var localBytes = localAddress.GetAddressBytes();
+        var remoteBytes = remoteAddress.GetAddressBytes();
+        var prefixLength = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(network => network.OperationalStatus == OperationalStatus.Up)
+            .SelectMany(network => network.GetIPProperties().UnicastAddresses)
+            .Where(unicast => unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+                unicast.Address.Equals(localAddress))
+            .Select(unicast => unicast.PrefixLength)
+            .FirstOrDefault(24);
+        var wholeBytes = prefixLength / 8;
+        var remainingBits = prefixLength % 8;
+        for (var index = 0; index < wholeBytes; index++)
+        {
+            if (localBytes[index] != remoteBytes[index]) return false;
+        }
+        if (remainingBits == 0) return true;
+        var mask = (byte)(0xff << (8 - remainingBits));
+        return (localBytes[wholeBytes] & mask) == (remoteBytes[wholeBytes] & mask);
     }
 
     public static string GetClientAddress(HttpContext context)

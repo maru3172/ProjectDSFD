@@ -44,6 +44,24 @@
 
 namespace ProjectProject01LoginUI
 {
+	bool IsSupportedServerIpv4(FString Address)
+	{
+		Address.TrimStartAndEndInline();
+		TArray<FString> Parts;
+		Address.ParseIntoArray(Parts, TEXT("."), false);
+		if (Parts.Num() != 4) return false;
+		for (const FString& Part : Parts)
+		{
+			if (Part.IsEmpty() || !Part.IsNumeric()) return false;
+			const int32 Octet = FCString::Atoi(*Part);
+			if (Octet < 0 || Octet > 255) return false;
+		}
+		const int32 A = FCString::Atoi(*Parts[0]);
+		const int32 B = FCString::Atoi(*Parts[1]);
+		return A == 25 || A == 10 || (A == 172 && B >= 16 && B <= 31) ||
+			(A == 192 && B == 168) || A == 127;
+	}
+
 	UTextBlock* AddLabel(UWidgetTree* WidgetTree, UVerticalBox* Root, const FString& Text, const float FontSize)
 	{
 		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
@@ -1856,6 +1874,7 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	PostProcessQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
 	VFXIntensityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
 	ColorVisionModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionModeChanged);
+	ServerConnectionModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleServerConnectionModeChanged);
 	ForwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
 	BackwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
 	LeftKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
@@ -1905,6 +1924,7 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(PostProcessQualityComboBox)) PostProcessQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
 	if (IsValid(VFXIntensityComboBox)) VFXIntensityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
 	if (IsValid(ColorVisionModeComboBox)) ColorVisionModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionModeChanged);
+	if (IsValid(ServerConnectionModeComboBox)) ServerConnectionModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleServerConnectionModeChanged);
 	if (IsValid(ForwardKeyButton)) ForwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
 	if (IsValid(BackwardKeyButton)) BackwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
 	if (IsValid(LeftKeyButton)) LeftKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
@@ -2042,6 +2062,18 @@ void UProjectProject01SettingsWidget::HandleColorVisionModeChanged(const FString
 	else PendingColorVisionMode = EProjectProject01ColorVisionMode::Normal;
 }
 
+void UProjectProject01SettingsWidget::HandleServerConnectionModeChanged(const FString Item, ESelectInfo::Type)
+{
+	if (bRefreshingControls) return;
+	bPendingAutomaticServerConnection = Item == TEXT("자동 연결");
+	if (IsValid(DirectServerAddressInput))
+	{
+		DirectServerAddressInput->SetIsEnabled(!bPendingAutomaticServerConnection);
+		DirectServerAddressInput->SetVisibility(bPendingAutomaticServerConnection
+			? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
+}
+
 void UProjectProject01SettingsWidget::HandleForwardBindingClicked() { BeginBindingCapture(EBindingTarget::Forward); }
 void UProjectProject01SettingsWidget::HandleBackwardBindingClicked() { BeginBindingCapture(EBindingTarget::Backward); }
 void UProjectProject01SettingsWidget::HandleLeftBindingClicked() { BeginBindingCapture(EBindingTarget::Left); }
@@ -2120,6 +2152,8 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 	PendingHelpPingKey = Settings->GetHelpPingKey();
 	PendingDangerPingKey = Settings->GetDangerPingKey();
 	PendingLocationPingKey = Settings->GetLocationPingKey();
+	bPendingAutomaticServerConnection = Settings->IsAutomaticServerConnectionEnabled();
+	PendingDirectServerAddress = Settings->GetDirectServerAddress();
 }
 
 void UProjectProject01SettingsWidget::SetPendingDefaults()
@@ -2159,6 +2193,8 @@ void UProjectProject01SettingsWidget::SetPendingDefaults()
 	PendingHelpPingKey = EKeys::Z;
 	PendingDangerPingKey = EKeys::X;
 	PendingLocationPingKey = EKeys::C;
+	bPendingAutomaticServerConnection = true;
+	PendingDirectServerAddress.Reset();
 }
 
 void UProjectProject01SettingsWidget::RefreshAllControls()
@@ -2183,6 +2219,12 @@ void UProjectProject01SettingsWidget::RefreshAllControls()
 	MotionBlurCheckBox->SetIsChecked(bPendingMotionBlur);
 	SubtitlesCheckBox->SetIsChecked(bPendingSubtitles);
 	EnhancedVisualCuesCheckBox->SetIsChecked(bPendingEnhancedVisualCues);
+	ServerConnectionModeComboBox->SetSelectedOption(
+		bPendingAutomaticServerConnection ? TEXT("자동 연결") : TEXT("IP 직접 입력"));
+	DirectServerAddressInput->SetText(FText::FromString(PendingDirectServerAddress));
+	DirectServerAddressInput->SetIsEnabled(!bPendingAutomaticServerConnection);
+	DirectServerAddressInput->SetVisibility(bPendingAutomaticServerConnection
+		? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	WindowModeComboBox->SetSelectedOption(PendingWindowMode == EWindowMode::Fullscreen
 		? TEXT("전체화면") : PendingWindowMode == EWindowMode::WindowedFullscreen
 		? TEXT("테두리 없는 창") : TEXT("창모드"));
@@ -2298,6 +2340,15 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 		SetStatus(TEXT("사용자 설정 객체를 찾지 못했습니다."), true);
 		return;
 	}
+	PendingDirectServerAddress = IsValid(DirectServerAddressInput)
+		? DirectServerAddressInput->GetText().ToString().TrimStartAndEnd()
+		: PendingDirectServerAddress;
+	if (!bPendingAutomaticServerConnection &&
+		!ProjectProject01LoginUI::IsSupportedServerIpv4(PendingDirectServerAddress))
+	{
+		SetStatus(TEXT("IP 직접 입력에는 서버 PC의 올바른 25.x 또는 사설 IPv4 주소를 입력하세요."), true);
+		return;
+	}
 	const bool bVideoModeChanged = Settings->GetScreenResolution() != PendingResolution ||
 		Settings->GetFullscreenMode() != PendingWindowMode;
 	Settings->SetMasterVolume(PendingMasterVolume);
@@ -2340,9 +2391,27 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetHelpPingKey(PendingHelpPingKey);
 	Settings->SetDangerPingKey(PendingDangerPingKey);
 	Settings->SetLocationPingKey(PendingLocationPingKey);
+	Settings->SetAutomaticServerConnectionEnabled(bPendingAutomaticServerConnection);
+	Settings->SetDirectServerAddress(PendingDirectServerAddress);
 	Settings->SetScreenResolution(PendingResolution);
 	Settings->SetFullscreenMode(PendingWindowMode);
 	Settings->ApplyNonResolutionSettings();
+	if (UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+		IsValid(ProjectGameInstance))
+	{
+		FString ConnectionError;
+		if (!ProjectGameInstance->ConfigureMultiplayerServerAddress(
+			PendingDirectServerAddress, bPendingAutomaticServerConnection, ConnectionError))
+		{
+			if (const UProjectProject01AuthSubsystem* Auth =
+				ProjectGameInstance->GetSubsystem<UProjectProject01AuthSubsystem>();
+				!IsValid(Auth) || !Auth->IsSignedIn())
+			{
+				SetStatus(ConnectionError, true);
+				return;
+			}
+		}
+	}
 	RefreshLocalPlayerInput();
 	if (bVideoModeChanged)
 	{
@@ -2506,6 +2575,19 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	Scroll->AddChild(Root);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("환경설정"), 30.0f);
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("변경 후 적용을 눌러 저장하세요."), 14.0f);
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("멀티플레이 서버 연결"), 20.0f);
+	ServerConnectionModeComboBox = ProjectProject01LoginUI::AddComboRow(
+		WidgetTree, Root, TEXT("서버 연결 방식"));
+	ServerConnectionModeComboBox->AddOption(TEXT("자동 연결"));
+	ServerConnectionModeComboBox->AddOption(TEXT("IP 직접 입력"));
+	DirectServerAddressInput = WidgetTree->ConstructWidget<UEditableTextBox>();
+	DirectServerAddressInput->SetHintText(FProjectProject01Localization::Text(
+		TEXT("서버 PC IPv4 주소 (예: 192.168.0.10)")));
+	DirectServerAddressInput->SetForegroundColor(FLinearColor::Black);
+	Root->AddChildToVerticalBox(DirectServerAddressInput)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
+		TEXT("자동 연결은 기본 서버 설정을 사용합니다. IP 직접 입력은 서버 PC의 IPv4 주소만 입력하세요."), 12.0f);
 
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("사운드"), 20.0f);
 	MasterVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("전체 음량"), 0.0f, 1.0f, 0.01f, MasterVolumeValueText);
