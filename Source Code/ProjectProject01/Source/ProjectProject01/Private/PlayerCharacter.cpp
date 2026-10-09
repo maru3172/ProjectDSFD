@@ -30,6 +30,7 @@
 #include "SceneView.h"
 #include "SceneViewExtension.h"
 #include "PlayerHeartbeatComponent.h"
+#include "FootstepSynthComponent.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -210,6 +211,9 @@ APlayerCharacter::APlayerCharacter()
 	HeartbeatComponent = CreateDefaultSubobject<UPlayerHeartbeatComponent>(TEXT("Heartbeat Component"));
 	HeartbeatSFXComponent = CreateDefaultSubobject<UHeartbeatSynthComponent>(TEXT("Heartbeat SFX Component"));
 	HeartbeatSFXComponent->SetupAttachment(RootComponent);
+	FootstepSFXComponent = CreateDefaultSubobject<UFootstepSynthComponent>(TEXT("Footstep SFX Component"));
+	FootstepSFXComponent->SetupAttachment(RootComponent);
+	FootstepSFXComponent->Configure(EProjectProject01FootstepStyle::MarbleSneaker, 0.85f, true);
 
 	// 카메라 B 키 디버깅 관련
 	static ConstructorHelpers::FObjectFinder<UInputAction> DebugCameraAction(
@@ -325,6 +329,10 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (IsValid(FootstepSFXComponent))
+	{
+		FootstepSFXComponent->UpdateFootsteps(DeltaTime);
+	}
 	
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	if (!IsValid(MovementComponent))

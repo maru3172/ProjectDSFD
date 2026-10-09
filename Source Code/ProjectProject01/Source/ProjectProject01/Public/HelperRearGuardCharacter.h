@@ -8,6 +8,7 @@
 #include "HelperRearGuardCharacter.generated.h"
 
 class APawn;
+class UFootstepSynthComponent;
 struct FHelperTuningRow;
 
 /**
@@ -111,6 +112,10 @@ protected:
 	bool bDrawGuardDebug = true;
 
 private:
+	/** 플레이어 운동화 계열 음색을 공유하되 음량은 정확히 50%로 재생합니다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard|Footstep|SFX", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UFootstepSynthComponent> FootstepSFXComponent;
+
 	bool RefreshGuardedPlayer();
 	bool GetPlayerMovementDirection(FVector& OutMovementDirection) const;
 	bool CalculateGuardViewDirection(FVector& OutViewDirection) const;

@@ -21,6 +21,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 #include "Sound/SoundAttenuation.h"
+#include "FootstepSynthComponent.h"
 
 
 // Sets default values
@@ -28,6 +29,9 @@ AMannequinAICharacter::AMannequinAICharacter()
 {
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+	FootstepSFXComponent = CreateDefaultSubobject<UFootstepSynthComponent>(TEXT("Footstep SFX Component"));
+	FootstepSFXComponent->SetupAttachment(RootComponent);
+	FootstepSFXComponent->Configure(EProjectProject01FootstepStyle::MarblePlastic, 0.9f, false);
 
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> MannequinInputContext(
 		TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
@@ -74,6 +78,10 @@ void AMannequinAICharacter::BeginPlay()
 void AMannequinAICharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (IsValid(FootstepSFXComponent))
+	{
+		FootstepSFXComponent->UpdateFootsteps(DeltaTime);
+	}
 	if (HasAuthority())
 	{
 		RemoveSeparatedCatchContacts();
@@ -407,7 +415,7 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	USkeletalMeshComponent* MannequinMesh = GetMesh();
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	
-	if (!IsValid(World) || !IsValid(MannequinMesh) || !IsValid(Movement) || !IsValid(DefaultFootstepSound))
+	if (!IsValid(World) || !IsValid(MannequinMesh) || !IsValid(Movement))
 	{
 		return;
 	}
@@ -454,12 +462,21 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	
 	LastFootstepTimeSeconds = CurrentTime;
 	
-	UGameplayStatics::PlaySoundAtLocation(
-		this,
-		DefaultFootstepSound,
-		Hit.ImpactPoint,
-		1.0f,									// Volume
-		FMath::FRandRange(0.95f, 1.05),		// Pitch
-		0.0f,									// Start Time
-		FootstepAttenuation);
+	if (IsValid(FootstepSFXComponent))
+	{
+		FootstepSFXComponent->SetWorldLocation(Hit.ImpactPoint);
+		FootstepSFXComponent->TriggerFootstep(HorizontalSpeed >= 700.0f);
+	}
+	else if (IsValid(DefaultFootstepSound))
+	{
+		// 기존 Blueprint가 별도 음원을 지정한 경우를 위한 안전한 하위 호환 경로입니다.
+		UGameplayStatics::PlaySoundAtLocation(
+			this,
+			DefaultFootstepSound,
+			Hit.ImpactPoint,
+			1.0f,
+			FMath::FRandRange(0.95f, 1.05f),
+			0.0f,
+			FootstepAttenuation);
+	}
 }

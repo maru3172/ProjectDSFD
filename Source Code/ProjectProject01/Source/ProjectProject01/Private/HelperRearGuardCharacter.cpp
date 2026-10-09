@@ -8,6 +8,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "HelperRearGuardAIController.h"
+#include "FootstepSynthComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
 #include "NavigationPath.h"
@@ -78,6 +79,9 @@ bool FProjectProject01HelperVisionBoundsTest::RunTest(const FString& Parameters)
 AHelperRearGuardCharacter::AHelperRearGuardCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	FootstepSFXComponent = CreateDefaultSubobject<UFootstepSynthComponent>(TEXT("Footstep SFX Component"));
+	FootstepSFXComponent->SetupAttachment(RootComponent);
+	FootstepSFXComponent->Configure(EProjectProject01FootstepStyle::MarbleSneaker, 0.425f, true);
 
 	AIControllerClass = AHelperRearGuardAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -174,6 +178,10 @@ void AHelperRearGuardCharacter::GetDiagnosticAppliedTuning(FHelperTuningRow& Out
 void AHelperRearGuardCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (IsValid(FootstepSFXComponent))
+	{
+		FootstepSFXComponent->UpdateFootsteps(DeltaTime);
+	}
 
 	if (!GuardedPlayer.IsValid())
 	{

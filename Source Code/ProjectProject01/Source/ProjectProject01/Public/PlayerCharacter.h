@@ -15,6 +15,7 @@ class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
 class UPlayerHeartbeatComponent;
 class UHeartbeatSynthComponent;
+class UFootstepSynthComponent;
 class UProjectProject01SessionMenuWidget;
 
 UCLASS()
@@ -254,6 +255,10 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|SFX", meta=(AllowPrivateAccess = "true"))
 	TObjectPtr<UHeartbeatSynthComponent> HeartbeatSFXComponent;
+
+	/** 대리석 위 운동화 걷기·달리기 효과음을 로컬에서 생성합니다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Footstep|SFX", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UFootstepSynthComponent> FootstepSFXComponent;
 	bool bStaminaInitialized = false;
 	TWeakObjectPtr<AHelperRearGuardCharacter> StaminaHelper;
 

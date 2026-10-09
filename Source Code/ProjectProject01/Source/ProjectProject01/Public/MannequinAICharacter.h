@@ -12,6 +12,7 @@ class UInputAction;
 class UInputMappingContext;
 class APlayerCharacter;
 class UPrimitiveComponent;
+class UFootstepSynthComponent;
 struct FMannequinAITuningRow;
 
 UCLASS()
@@ -141,6 +142,10 @@ private:
 
 	/** 같은 접촉 동안 포획이 반복 차감되지 않도록 서버에서만 보관합니다. */
 	TArray<TWeakObjectPtr<APlayerCharacter>> CaughtSurvivorsInCurrentContact;
+
+	/** 단단한 플라스틱 물체가 대리석을 밟는 합성 공간 효과음입니다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio|Footstep", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UFootstepSynthComponent> FootstepSFXComponent;
 	
 	// 사운드 트레이스 설정 변수들
 	// 기본 발소리 사운드
