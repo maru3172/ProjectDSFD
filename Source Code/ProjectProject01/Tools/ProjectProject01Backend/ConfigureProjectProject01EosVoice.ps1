@@ -49,8 +49,8 @@ if ($Action -eq 'Status') {
     exit 0
 }
 
-Write-Host 'Epic Developer Portal > Product Settings > Clients에서 각 클라이언트의 Secret을 복사해 입력하세요.' -ForegroundColor Cyan
-Write-Host '입력 문자는 화면에 표시되지 않으며, 소스 파일과 Git에는 기록되지 않습니다.' -ForegroundColor Cyan
+Write-Host 'Copy each Client Secret from Epic Developer Portal > Product Settings > Clients.' -ForegroundColor Cyan
+Write-Host 'Secret input is hidden and is not written to source files or Git.' -ForegroundColor Cyan
 $gameClientSecret = Read-SecretText 'ProjectProject01GameClient Client Secret'
 $voiceServerSecret = Read-SecretText 'ProjectProject01VoiceServer Client Secret'
 if ([string]::IsNullOrWhiteSpace($gameClientSecret) -or [string]::IsNullOrWhiteSpace($voiceServerSecret)) {
