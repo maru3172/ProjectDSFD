@@ -737,6 +737,10 @@ void UProjectProject01DiagnosticsSubsystem::ValidateAppliedTuning()
 			FString::Printf(TEXT("Layer=DataTableToRuntimeCache; Tuning=%s; Matches=%s; MismatchedFields=%s"), Label,
 				bMatches ? TEXT("true") : TEXT("false"), *ProjectProject01Diagnostics::GetMismatchedPropertyNames(RowStruct, DataTableRow, CachedRow)));
 
+		// CSV files are authoring inputs and must never be distributed in a packaged client.
+		// Keep CSV -> DataTable validation in the editor while packaged builds validate the cooked
+		// DataTable -> runtime cache -> Actor chain above and below.
+#if WITH_EDITOR
 		FString CsvError;
 		const FString CsvPath = FPaths::Combine(FPaths::ProjectContentDir(), TEXT("MyProject"), TEXT("Data"), CsvFileName);
 		if (!ProjectProject01Diagnostics::LoadVerticalCsvIntoStruct(CsvPath, RowStruct, CsvRow, CsvError))
@@ -750,6 +754,7 @@ void UProjectProject01DiagnosticsSubsystem::ValidateAppliedTuning()
 			bCsvMatches ? TEXT("TuningCsvMatchesDataTable") : TEXT("TuningCsvDataTableMismatch"),
 			FString::Printf(TEXT("Layer=CsvToDataTable; Tuning=%s; Matches=%s; MismatchedFields=%s"), Label,
 				bCsvMatches ? TEXT("true") : TEXT("false"), *ProjectProject01Diagnostics::GetMismatchedPropertyNames(RowStruct, DataTableRow, CsvRow)));
+#endif
 	};
 
 	FPlayerTuningRow PlayerRow;

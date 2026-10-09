@@ -34,6 +34,40 @@ dotnet run --urls http://127.0.0.1:5080
 
 `http://127.0.0.1:5080/health`가 HTTP 200과 `healthy`를 반환하면 로컬 로그인·로비 테스트 준비가 끝난 것입니다. HTTP는 루프백 개발 접속에만 허용됩니다.
 
+## 점검·공지·강제 로그아웃 관리
+
+관리자 기능은 일반 게임 클라이언트 API와 분리되어 있으며 `X-ProjectProject01-Admin-Key`를 요구합니다.
+기존 개발 PC는 다음 명령을 한 번 실행해 Git에 포함되지 않는 로컬 관리자 키를 준비한 뒤 백엔드를 재시작합니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql.ps1" -Action SyncLocalConfiguration
+```
+
+운영자는 일반 클라이언트가 아니라 전용 스크립트로만 관리 기능을 호출합니다.
+
+```powershell
+# 현재 상태
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01Admin.ps1" -Action Status
+
+# 신규 로그인·회원가입·방 생성을 막고 점검 문구 표시
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01Admin.ps1" -Action MaintenanceOn -Message "멀티플레이 서버 점검 중입니다."
+
+# 점검 해제
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01Admin.ps1" -Action MaintenanceOff
+
+# 전체 공지 또는 종료 예정 시각(UTC) 전달
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01Admin.ps1" -Action Announce -Message "10분 뒤 서버를 종료합니다." -ShutdownAtUtc "2026-10-08T13:00:00Z"
+
+# 모든 멀티플레이 로그인 세션 또는 특정 계정 세션 강제 종료
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01Admin.ps1" -Action ForceLogoutAll
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01Admin.ps1" -Action ForceLogoutAccount -AccountId "player01"
+```
+
+강제 로그아웃은 다음 인증 요청에서 감지되어 로그인 화면으로 이동합니다. 멀티 경기 중에도 5초 간격의
+경량 상태 확인으로 공지·종료 예고를 상단 배너에 표시하고 폐기된 세션을 감지합니다. 같은 계정으로 다시
+로그인하면 기존 세션은 폐기되고 가장 최근 로그인 하나만 유지됩니다. 이 기능과 버전 불일치 차단은
+로그인·로비·멀티 경기에만 적용되며 싱글플레이는 백엔드가 꺼져 있어도 실행됩니다.
+
 ## 전체 흐름 스모크 테스트와 버전 계약
 
 MySQL과 백엔드를 실행한 뒤 Build + Server Helper의 `전체 흐름 스모크 테스트`를 누르면 로그인,
@@ -101,6 +135,7 @@ UE 설정은 `AESGCMHandlerComponent`, `[PacketHandlerComponents] EncryptionComp
 GameServer__SharedSecret=<32자 이상 무작위 값>
 GameServer__TicketKey=<32바이트 무작위 값의 Base64>
 ConnectionStrings__ProjectProject01=<운영 DB 최소 권한 연결 문자열>
+Administrator__ApiKey=<32자 이상 무작위 관리자 키>
 ```
 
 데디케이티드 서버 프로세스에는 같은 공유 비밀을 환경변수로 제공합니다.

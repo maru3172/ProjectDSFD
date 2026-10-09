@@ -37,6 +37,9 @@ var securityOptions = ProjectSecurityOptions.FromConfiguration(builder.Configura
 builder.Services.AddSingleton(securityOptions);
 var versionCompatibility = VersionCompatibilityOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(versionCompatibility);
+var administratorOptions = AdministratorOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(administratorOptions);
+builder.Services.AddSingleton<ServiceControlState>();
 
 builder.Services.AddSingleton<IPasswordHasher<AuthUser>, PasswordHasher<AuthUser>>();
 builder.Services.AddSingleton<IPasswordHasher<RoomPasswordRecord>, PasswordHasher<RoomPasswordRecord>>();
@@ -118,6 +121,16 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    options.AddPolicy("admin", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
 var app = builder.Build();
@@ -141,6 +154,7 @@ app.Use(async (context, next) =>
     await next();
 });
 app.UseProjectProject01VersionCompatibility();
+app.UseProjectProject01ServiceControl();
 app.UseRateLimiter();
 
 var startupDatabase = app.Services.GetRequiredService<AuthDatabase>();
@@ -149,6 +163,9 @@ if (startupDatabase.IsConfigured)
     try
     {
         await startupDatabase.InitializeSchemaAsync(app.Environment.ContentRootPath, app.Lifetime.ApplicationStopping);
+        var startupServiceState = app.Services.GetRequiredService<ServiceControlState>();
+        startupServiceState.Set(await ServiceControlStore.LoadAsync(
+            startupDatabase, app.Lifetime.ApplicationStopping));
         app.Logger.LogInformation("ProjectProject01 authentication schema is ready.");
     }
     catch (Exception exception)
@@ -183,6 +200,7 @@ app.MapGet("/health", async (AuthDatabase database, CancellationToken cancellati
 
 app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
     Results.Ok(contract.ToResponse()));
+app.MapProjectProject01ServiceAdministration();
 
 app.MapPost("/api/auth/register", async (
     HttpRequest httpRequest,
@@ -306,6 +324,15 @@ app.MapPost("/api/auth/login", async (
             updateHash.Parameters.AddWithValue("@passwordHash", passwordHasher.HashPassword(user, request.Password));
             updateHash.Parameters.AddWithValue("@userId", user.Id);
             await updateHash.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // 한 계정은 최신 로그인 세션 하나만 유지한다. 이전 PC/중복 로그인 토큰은 즉시 폐기된다.
+        await using (var revokePreviousSessions = new MySqlCommand(
+            "UPDATE auth_sessions SET revoked_at_utc = UTC_TIMESTAMP(6) WHERE user_id = @userId AND revoked_at_utc IS NULL;",
+            connection, transaction) { CommandTimeout = 5 })
+        {
+            revokePreviousSessions.Parameters.AddWithValue("@userId", user.Id);
+            await revokePreviousSessions.ExecuteNonQueryAsync(cancellationToken);
         }
 
         var tokens = await CreateSessionAsync(connection, transaction, user.Id, cancellationToken);

@@ -1,4 +1,4 @@
-Field,Value,Note
+﻿Field,Value,Note
 ,,
 HelperWalkSpeed,600,파트너의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 600은 UE 5.8.2 `UCharacterMovementComponent`의 기본 걷기 속도다.
 FollowDistance,500,조력자가 플레이어 뒤에서 목표로 삼는 거리

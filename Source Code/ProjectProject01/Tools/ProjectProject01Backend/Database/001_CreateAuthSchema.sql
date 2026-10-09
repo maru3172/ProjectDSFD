@@ -48,6 +48,21 @@ CREATE TABLE IF NOT EXISTS lobby_state
 
 INSERT IGNORE INTO lobby_state (id, max_rooms) VALUES (1, 30);
 
+CREATE TABLE IF NOT EXISTS service_control
+(
+  id TINYINT UNSIGNED NOT NULL,
+  maintenance_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  announcement VARCHAR(512) NOT NULL DEFAULT '',
+  shutdown_at_utc DATETIME(6) NULL,
+  revision BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  updated_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id)
+) ENGINE=InnoDB;
+
+INSERT IGNORE INTO service_control
+  (id, maintenance_enabled, announcement, shutdown_at_utc, revision)
+VALUES (1, FALSE, '', NULL, 1);
+
 CREATE TABLE IF NOT EXISTS game_rooms
 (
   id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

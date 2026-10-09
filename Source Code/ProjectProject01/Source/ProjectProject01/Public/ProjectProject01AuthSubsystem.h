@@ -24,6 +24,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 	const FString&, Message,
 	const FString&, DisplayName);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
+	FProjectProject01ServiceStatusChanged,
+	bool, bMaintenanceEnabled,
+	const FString&, Announcement,
+	const FString&, ShutdownAtUtc,
+	const FString&, Message);
+
 UCLASS(Config=Game)
 class PROJECTPROJECT01_API UProjectProject01AuthSubsystem final : public UGameInstanceSubsystem
 {
@@ -42,6 +49,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="ProjectProject01|Authentication")
 	FProjectProject01AuthResult OnLogoutCompleted;
 
+	UPROPERTY(BlueprintAssignable, Category="ProjectProject01|Service")
+	FProjectProject01ServiceStatusChanged OnServiceStatusChanged;
+
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Authentication")
 	void RegisterAccount(const FString& AccountId, const FString& Password, const FString& DisplayName);
 
@@ -50,6 +60,16 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Authentication")
 	void Logout();
+
+	/** 멀티플레이 서비스 상태만 확인합니다. 싱글플레이에서는 자동 호출하지 않습니다. */
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Service")
+	void CheckMultiplayerServiceStatus();
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Service")
+	bool IsMultiplayerMaintenanceActive() const { return bMaintenanceEnabled; }
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Service")
+	FString GetServiceAnnouncement() const { return ServiceAnnouncement; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Authentication")
 	bool IsSignedIn() const { return AuthState == EProjectProject01AuthState::SignedIn && !AccessToken.IsEmpty(); }
@@ -83,6 +103,10 @@ private:
 		FString JsonBody,
 		int32 RetryIndex);
 	void CompleteOperation(EAuthOperation Operation, bool bSuccess, const FString& Message, const FString& DisplayName);
+	void HandleServiceStatusRequestComplete(
+		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,
+		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,
+		bool bConnectedSuccessfully);
 	bool ValidateCommonInput(const FString& AccountId, const FString& Password, FString& OutError) const;
 	bool CanStartOperation(EAuthOperation Operation);
 	void ClearSession();
@@ -109,6 +133,16 @@ private:
 	UPROPERTY(Transient)
 	FString SignedInDisplayName;
 
+	UPROPERTY(Transient)
+	bool bMaintenanceEnabled = false;
+
+	UPROPERTY(Transient)
+	FString ServiceAnnouncement;
+
+	UPROPERTY(Transient)
+	FString ServiceShutdownAtUtc;
+
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
+	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ServiceStatusRequest;
 	TFunction<void(bool)> ActiveRefreshCompletion;
 };

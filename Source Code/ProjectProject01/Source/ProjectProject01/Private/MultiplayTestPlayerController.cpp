@@ -7,12 +7,15 @@
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01PingMarker.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
 #include "InputKeyEventArgs.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
@@ -28,14 +31,48 @@ void AMultiplayTestPlayerController::BeginPlay()
 	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+
+	ServiceNoticeWidget = CreateWidget<UProjectProject01ServiceNoticeWidget>(
+		this, UProjectProject01ServiceNoticeWidget::StaticClass());
+	if (IsValid(ServiceNoticeWidget))
+	{
+		ServiceNoticeWidget->AddToViewport(950);
+	}
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01AuthSubsystem* Auth =
+			GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			bHadAuthenticatedSession = Auth->IsSignedIn();
+			Auth->OnServiceStatusChanged.AddUniqueDynamic(
+				this, &AMultiplayTestPlayerController::HandleServiceStatusChanged);
+		}
+	}
+	PollMultiplayerService();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			ServiceStatusTimer, this, &AMultiplayTestPlayerController::PollMultiplayerService,
+			5.0f, true, 5.0f);
+	}
 }
 
 void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (IsLocalController())
 	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(ServiceStatusTimer);
+		}
 		if (UGameInstance* GameInstance = GetGameInstance())
 		{
+			if (UProjectProject01AuthSubsystem* Auth =
+				GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+			{
+				Auth->OnServiceStatusChanged.RemoveDynamic(
+					this, &AMultiplayTestPlayerController::HandleServiceStatusChanged);
+			}
 			if (UProjectProject01VoiceChatSubsystem* Voice = GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
 			{
 				Voice->LeaveMatch();
@@ -43,6 +80,59 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 		}
 	}
 	Super::EndPlay(EndPlayReason);
+}
+
+void AMultiplayTestPlayerController::PollMultiplayerService()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	if (!IsValid(Auth))
+	{
+		return;
+	}
+	if (!Auth->IsSignedIn())
+	{
+		// 티켓 없이 맵만 직접 여는 로컬 PIE는 그대로 허용한다. 실제 로그인 후 세션이
+		// 만료·폐기된 클라이언트만 로그인 화면으로 돌려보낸다.
+		if (bHadAuthenticatedSession)
+		{
+			UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LoginLevel")));
+		}
+		return;
+	}
+	bHadAuthenticatedSession = true;
+	Auth->CheckMultiplayerServiceStatus();
+	if (UProjectProject01LobbySubsystem* Lobby =
+		GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>();
+		IsValid(Lobby) && !Lobby->IsRequestInFlight())
+	{
+		// 인증된 경량 요청이 401이면 AuthSubsystem이 토큰 갱신을 시도하고,
+		// 만료·폐기된 리프레시 토큰이면 세션을 지운다.
+		Lobby->RefreshCurrentRoom();
+	}
+}
+
+void AMultiplayTestPlayerController::HandleServiceStatusChanged(
+	const bool bMaintenanceEnabled,
+	const FString& Announcement,
+	const FString& ShutdownAtUtc,
+	const FString& Message)
+{
+	if (!IsValid(ServiceNoticeWidget))
+	{
+		return;
+	}
+	FString Notice = !Announcement.IsEmpty() ? Announcement : (bMaintenanceEnabled ? Message : FString());
+	if (!Notice.IsEmpty() && !ShutdownAtUtc.IsEmpty())
+	{
+		Notice += FString::Printf(TEXT(" (서버 종료 예정: %s)"), *ShutdownAtUtc);
+	}
+	ServiceNoticeWidget->SetNotice(Notice, bMaintenanceEnabled);
 }
 
 bool AMultiplayTestPlayerController::InputKey(const FInputKeyEventArgs& Params)

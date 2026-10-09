@@ -123,6 +123,11 @@ private:
 	void SelectPreviousSpectatorTarget();
 	void SelectNextSpectatorTarget();
 	void RequestTeamPing(EProjectProject01PingType Type);
+	void PollMultiplayerService();
+
+	UFUNCTION()
+	void HandleServiceStatusChanged(bool bMaintenanceEnabled, const FString& Announcement,
+		const FString& ShutdownAtUtc, const FString& Message);
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinSlot(int32 Slot);
@@ -173,6 +178,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01MatchResultWidget> MatchResultWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01ServiceNoticeWidget> ServiceNoticeWidget;
+
 	UPROPERTY(Replicated)
 	EMultiplayTestMatchPhase MatchPhase = EMultiplayTestMatchPhase::Waiting;
 
@@ -185,6 +193,8 @@ private:
 	float RpcWindowStartSeconds[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 	int32 RpcWindowCallCount[6] = { 0, 0, 0, 0, 0, 0 };
 	bool bVoluntaryExitDeclared = false;
+	bool bHadAuthenticatedSession = false;
+	FTimerHandle ServiceStatusTimer;
 
 	friend class AMultiplayTestGameMode;
 };

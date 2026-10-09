@@ -61,6 +61,15 @@ internal sealed class SmokeRunner(SmokeOptions options)
             {
                 await SendAsync(HttpMethod.Get, "health", null, null, false, ct);
             });
+            await StepAsync("LoadMultiplayerServiceStatus", async ct =>
+            {
+                var json = await SendAsync(HttpMethod.Get, "api/service/status", null, null, false, ct);
+                if (!json.TryGetProperty("maintenanceEnabled", out var maintenance) ||
+                    maintenance.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    throw new InvalidOperationException("멀티플레이 서비스 상태 응답에 maintenanceEnabled가 없습니다.");
+                if (maintenance.GetBoolean())
+                    throw new InvalidOperationException("멀티플레이 서버가 점검 상태입니다. 점검을 해제한 뒤 스모크 테스트하세요.");
+            });
             await StepAsync("LoadVersionContract", async ct =>
             {
                 var json = await SendAsync(HttpMethod.Get, "api/compatibility", null, null, false, ct);

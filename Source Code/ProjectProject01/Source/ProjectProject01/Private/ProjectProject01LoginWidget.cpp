@@ -28,6 +28,7 @@
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
+#include "ProjectProject01Localization.h"
 #include "ProjectProject01SaveSubsystem.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -46,7 +47,7 @@ namespace ProjectProject01LoginUI
 	UTextBlock* AddLabel(UWidgetTree* WidgetTree, UVerticalBox* Root, const FString& Text, const float FontSize)
 	{
 		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
-		Label->SetText(FText::FromString(Text));
+		Label->SetText(FProjectProject01Localization::Text(Text));
 		Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
 		FSlateFontInfo Font = Label->GetFont();
 		Font.Size = FontSize;
@@ -67,7 +68,7 @@ namespace ProjectProject01LoginUI
 	{
 		UButton* Button = WidgetTree->ConstructWidget<UButton>();
 		UTextBlock* ButtonText = WidgetTree->ConstructWidget<UTextBlock>();
-		ButtonText->SetText(FText::FromString(Text));
+		ButtonText->SetText(FProjectProject01Localization::Text(Text));
 		ButtonText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
 		ButtonText->SetJustification(ETextJustify::Center);
 		Button->AddChild(ButtonText);
@@ -101,7 +102,7 @@ namespace ProjectProject01LoginUI
 	UTextBlock* AddPlainText(UWidgetTree* WidgetTree, UPanelWidget* Parent, const FString& Text, const float FontSize = 14.0f)
 	{
 		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
-		Label->SetText(FText::FromString(Text));
+		Label->SetText(FProjectProject01Localization::Text(Text));
 		Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
 		FSlateFontInfo Font = Label->GetFont();
 		Font.Size = FontSize;
@@ -214,10 +215,66 @@ namespace ProjectProject01LoginUI
 		{
 			if (UTextBlock* TextBlock = Cast<UTextBlock>(Button->GetContent()))
 			{
-				TextBlock->SetText(FText::FromString(Text));
+				TextBlock->SetText(FProjectProject01Localization::Text(Text));
 			}
 		}
 	}
+}
+
+bool UProjectProject01ServiceNoticeWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	BuildWidgetTree();
+	SetVisibility(ESlateVisibility::Collapsed);
+	SetIsFocusable(false);
+	SetDesiredSizeInViewport(FVector2D(900.0f, 64.0f));
+	SetAlignmentInViewport(FVector2D(0.5f, 0.0f));
+	SetPositionInViewport(FVector2D(0.0f, 24.0f), false);
+	return true;
+}
+
+void UProjectProject01ServiceNoticeWidget::SetNotice(
+	const FString& Message,
+	const bool bIsMaintenance)
+{
+	if (Message.IsEmpty())
+	{
+		SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	if (IsValid(NoticeText))
+	{
+		NoticeText->SetText(FProjectProject01Localization::Text(Message));
+	}
+	if (IsValid(NoticeBackground))
+	{
+		NoticeBackground->SetBrushColor(bIsMaintenance
+			? FLinearColor(0.55f, 0.03f, 0.03f, 0.94f)
+			: FLinearColor(0.06f, 0.06f, 0.06f, 0.90f));
+	}
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UProjectProject01ServiceNoticeWidget::BuildWidgetTree()
+{
+	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
+	{
+		return;
+	}
+	NoticeBackground = WidgetTree->ConstructWidget<UBorder>();
+	NoticeBackground->SetPadding(FMargin(16.0f, 10.0f));
+	WidgetTree->RootWidget = NoticeBackground;
+	NoticeText = WidgetTree->ConstructWidget<UTextBlock>();
+	NoticeText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	NoticeText->SetJustification(ETextJustify::Center);
+	NoticeText->SetAutoWrapText(true);
+	FSlateFontInfo Font = NoticeText->GetFont();
+	Font.Size = 18;
+	NoticeText->SetFont(Font);
+	NoticeBackground->AddChild(NoticeText);
 }
 
 bool UProjectProject01TitleWidget::Initialize()
@@ -509,6 +566,8 @@ void UProjectProject01LoginWidget::NativeConstruct()
 		{
 			Auth->OnLoginCompleted.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleLoginResult);
 			Auth->OnRegistrationCompleted.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleRegistrationResult);
+			Auth->OnServiceStatusChanged.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleServiceStatusChanged);
+			Auth->CheckMultiplayerServiceStatus();
 		}
 	}
 }
@@ -534,6 +593,7 @@ void UProjectProject01LoginWidget::NativeDestruct()
 		{
 			Auth->OnLoginCompleted.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleLoginResult);
 			Auth->OnRegistrationCompleted.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleRegistrationResult);
+			Auth->OnServiceStatusChanged.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleServiceStatusChanged);
 		}
 	}
 	Super::NativeDestruct();
@@ -624,6 +684,27 @@ void UProjectProject01LoginWidget::HandleRegistrationResult(
 	}
 }
 
+void UProjectProject01LoginWidget::HandleServiceStatusChanged(
+	const bool bMaintenanceEnabled,
+	const FString& Announcement,
+	const FString& ShutdownAtUtc,
+	const FString& Message)
+{
+	SetRequestControlsEnabled(!bMaintenanceEnabled);
+	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(true);
+	if (bMaintenanceEnabled)
+	{
+		SetStatus(Message.IsEmpty()
+			? TEXT("현재 멀티플레이 서버를 점검 중입니다. 싱글플레이는 타이틀에서 이용할 수 있습니다.")
+			: Message, true);
+	}
+	else if (!Announcement.IsEmpty())
+	{
+		SetStatus(ShutdownAtUtc.IsEmpty() ? Announcement :
+			FString::Printf(TEXT("%s (서버 종료 예정: %s)"), *Announcement, *ShutdownAtUtc), false);
+	}
+}
+
 void UProjectProject01LoginWidget::BuildWidgetTree()
 {
 	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
@@ -637,18 +718,18 @@ void UProjectProject01LoginWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("로그인 / 회원가입"), 20.0f);
 
 	AccountIdInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	AccountIdInput->SetHintText(FText::FromString(TEXT("계정 ID (영문/숫자/밑줄 3~32자)")));
+	AccountIdInput->SetHintText(FProjectProject01Localization::Text(TEXT("계정 ID (영문/숫자/밑줄 3~32자)")));
 	AccountIdInput->SetForegroundColor(FLinearColor::Black);
 	Root->AddChildToVerticalBox(AccountIdInput)->SetPadding(FMargin(6.0f));
 
 	PasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	PasswordInput->SetHintText(FText::FromString(TEXT("비밀번호 (10~128자)")));
+	PasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("비밀번호 (10~128자)")));
 	PasswordInput->SetForegroundColor(FLinearColor::Black);
 	PasswordInput->SetIsPassword(true);
 	Root->AddChildToVerticalBox(PasswordInput)->SetPadding(FMargin(6.0f));
 
 	DisplayNameInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	DisplayNameInput->SetHintText(FText::FromString(TEXT("표시 이름 (회원가입 시 2~32자)")));
+	DisplayNameInput->SetHintText(FProjectProject01Localization::Text(TEXT("표시 이름 (회원가입 시 2~32자)")));
 	DisplayNameInput->SetForegroundColor(FLinearColor::Black);
 	Root->AddChildToVerticalBox(DisplayNameInput)->SetPadding(FMargin(6.0f));
 
@@ -660,13 +741,22 @@ void UProjectProject01LoginWidget::BuildWidgetTree()
 
 void UProjectProject01LoginWidget::SetRequestControlsEnabled(const bool bEnabled)
 {
+	bool bAuthenticationEnabled = bEnabled;
+	if (const UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (const UProjectProject01AuthSubsystem* Auth =
+			GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			bAuthenticationEnabled = bAuthenticationEnabled && !Auth->IsMultiplayerMaintenanceActive();
+		}
+	}
 	if (IsValid(LoginButton))
 	{
-		LoginButton->SetIsEnabled(bEnabled);
+		LoginButton->SetIsEnabled(bAuthenticationEnabled);
 	}
 	if (IsValid(RegisterButton))
 	{
-		RegisterButton->SetIsEnabled(bEnabled);
+		RegisterButton->SetIsEnabled(bAuthenticationEnabled);
 	}
 	if (IsValid(ReturnToTitleButton))
 	{
@@ -680,7 +770,7 @@ void UProjectProject01LoginWidget::SetStatus(const FString& Message, const bool 
 	{
 		return;
 	}
-	StatusText->SetText(FText::FromString(Message));
+	StatusText->SetText(FProjectProject01Localization::Text(Message));
 	StatusText->SetColorAndOpacity(bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
 }
 
@@ -728,7 +818,7 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 	}
 	if (IsValid(StatusText))
 	{
-		StatusText->SetText(FText::FromString(bMultiplayer
+		StatusText->SetText(FProjectProject01Localization::Text(bMultiplayer
 			? TEXT("멀티플레이는 메뉴를 열어도 서버 경기가 계속 진행됩니다.")
 			: TEXT("싱글플레이가 일시정지되었습니다.")));
 	}
@@ -1131,7 +1221,7 @@ void UProjectProject01SessionMenuWidget::SetBusy(
 	if (IsValid(QuitGameButton)) QuitGameButton->SetIsEnabled(!bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
 	{
-		StatusText->SetText(FText::FromString(Message));
+		StatusText->SetText(FProjectProject01Localization::Text(Message));
 		StatusText->SetColorAndOpacity(bIsError
 			? FSlateColor(FLinearColor::Red)
 			: FSlateColor(FLinearColor::Black));
@@ -1617,7 +1707,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 				Result.RescueCount, Result.EscapeSeconds);
 		}
 	}
-	ResultText->SetText(FText::FromString(Details));
+	ResultText->SetText(FProjectProject01Localization::Text(Details));
 
 	const bool bCanRegister = !bSinglePlayer && Result.bSuccess && Result.bLeaderboardVerificationReady;
 	if (IsValid(RegisterButton))
@@ -1638,7 +1728,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 			: Result.bLeaderboardVerificationReady
 				? TEXT("기록을 등록하거나 등록하지 않고 기존 방으로 돌아갈 수 있습니다.")
 				: TEXT("서버의 리더보드 검증 기록에 실패했습니다. 방 복귀만 가능합니다.");
-		StatusText->SetText(FText::FromString(Status));
+		StatusText->SetText(FProjectProject01Localization::Text(Status));
 		StatusText->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 		StatusText->SetColorAndOpacity(Result.bSuccess && !Result.bLeaderboardVerificationReady
 			? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::White));
@@ -1663,7 +1753,7 @@ void UProjectProject01MatchResultWidget::SetBusy(
 	if (IsValid(LogoutButton)) LogoutButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
 	{
-		StatusText->SetText(FText::FromString(Message));
+		StatusText->SetText(FProjectProject01Localization::Text(Message));
 		StatusText->SetColorAndOpacity(bIsError
 			? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::White));
 	}
@@ -1694,7 +1784,7 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 		MenuSlot->SetVerticalAlignment(VAlign_Center);
 	}
 	ResultText = WidgetTree->ConstructWidget<UTextBlock>();
-	ResultText->SetText(FText::FromString(TEXT("결과를 불러오는 중...")));
+	ResultText->SetText(FProjectProject01Localization::Text(TEXT("결과를 불러오는 중...")));
 	ResultText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	ResultText->SetJustification(ETextJustify::Center);
 	FSlateFontInfo ResultFont = ResultText->GetFont();
@@ -1703,7 +1793,7 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	ResultMenu->AddChildToVerticalBox(ResultText)->SetPadding(FMargin(12.0f));
 
 	StatusText = WidgetTree->ConstructWidget<UTextBlock>();
-	StatusText->SetText(FText::FromString(TEXT("결과를 처리하는 중...")));
+	StatusText->SetText(FProjectProject01Localization::Text(TEXT("결과를 처리하는 중...")));
 	StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	StatusText->SetJustification(ETextJustify::Center);
 	ResultMenu->AddChildToVerticalBox(StatusText)->SetPadding(FMargin(8.0f));
@@ -2325,7 +2415,7 @@ void UProjectProject01SettingsWidget::SetStatus(const FString& Message, const bo
 {
 	if (IsValid(StatusText))
 	{
-		StatusText->SetText(FText::FromString(Message));
+		StatusText->SetText(FProjectProject01Localization::Text(Message));
 		StatusText->SetColorAndOpacity(bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
 	}
 }
@@ -2588,12 +2678,14 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
 		{
 			Auth->OnLogoutCompleted.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLogoutResult);
+			Auth->OnServiceStatusChanged.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleServiceStatusChanged);
 			if (!Auth->IsSignedIn())
 			{
 				SetStatus(TEXT("로그인 세션이 없습니다. 로그인 화면으로 돌아가세요."), true);
 				return;
 			}
 			SetStatus(FString::Printf(TEXT("%s 님이 로그인했습니다."), *Auth->GetSignedInDisplayName()), false);
+			Auth->CheckMultiplayerServiceStatus();
 		}
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
@@ -2625,6 +2717,7 @@ void UProjectProject01LobbyWidget::NativeDestruct()
 		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
 		{
 			Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleLogoutResult);
+			Auth->OnServiceStatusChanged.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleServiceStatusChanged);
 		}
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
@@ -2845,6 +2938,23 @@ void UProjectProject01LobbyWidget::HandleLogoutResult(
 	}
 }
 
+void UProjectProject01LobbyWidget::HandleServiceStatusChanged(
+	const bool bMaintenanceEnabled,
+	const FString& Announcement,
+	const FString& ShutdownAtUtc,
+	const FString& Message)
+{
+	if (bMaintenanceEnabled)
+	{
+		SetStatus(Message.IsEmpty() ? TEXT("멀티플레이 서버 점검 중입니다.") : Message, true);
+	}
+	else if (!Announcement.IsEmpty())
+	{
+		SetStatus(ShutdownAtUtc.IsEmpty() ? Announcement :
+			FString::Printf(TEXT("%s (서버 종료 예정: %s)"), *Announcement, *ShutdownAtUtc), false);
+	}
+}
+
 void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	const EProjectProject01LobbyOperation Operation,
 	const bool bSuccess,
@@ -2913,6 +3023,14 @@ void UProjectProject01LobbyWidget::HandleCurrentRoomChanged()
 void UProjectProject01LobbyWidget::RefreshLobbyState()
 {
 	UGameInstance* GameInstance = GetGameInstance();
+	if (IsValid(GameInstance) && ++ServiceStatusPollCounter >= 5)
+	{
+		ServiceStatusPollCounter = 0;
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->CheckMultiplayerServiceStatus();
+		}
+	}
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
 	if (!IsValid(Lobby) || Lobby->IsRequestInFlight() || bTravelRequested)
@@ -2983,7 +3101,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(SendChatButton)) SendChatButton->SetIsEnabled(bInRoom);
 	if (!bInRoom)
 	{
-		if (IsValid(CurrentRoomText)) CurrentRoomText->SetText(FText::FromString(TEXT("참가 중인 방 없음")));
+		if (IsValid(CurrentRoomText)) CurrentRoomText->SetText(FProjectProject01Localization::Text(TEXT("참가 중인 방 없음")));
 		if (IsValid(MemberListText)) MemberListText->SetText(FText::GetEmpty());
 		if (IsValid(ChatLogText)) ChatLogText->SetText(FText::GetEmpty());
 		if (IsValid(HostTransferComboBox)) HostTransferComboBox->ClearOptions();
@@ -3045,7 +3163,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	{
 		if (UTextBlock* ButtonText = Cast<UTextBlock>(ReadyButton->GetChildAt(0)))
 		{
-			ButtonText->SetText(FText::FromString(Room.bIsReady ? TEXT("준비 취소") : TEXT("준비")));
+			ButtonText->SetText(FProjectProject01Localization::Text(Room.bIsReady ? TEXT("준비 취소") : TEXT("준비")));
 		}
 	}
 	if (IsValid(StartRoomButton)) StartRoomButton->SetIsEnabled(Room.bCanStart);
@@ -3147,7 +3265,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, BrowserPanel, TEXT("방 목록 / 참가"), 20.0f);
 	OpenCreateRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("새 방 만들기"));
 	RoomSearchInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	RoomSearchInput->SetHintText(FText::FromString(TEXT("방 이름 / 참가 코드 / 방장 이름 검색")));
+	RoomSearchInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 이름 / 참가 코드 / 방장 이름 검색")));
 	RoomSearchInput->SetForegroundColor(FLinearColor::Black);
 	BrowserPanel->AddChildToVerticalBox(RoomSearchInput)->SetPadding(FMargin(6.0f));
 	RefreshRoomsButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("공개방 목록 새로고침"));
@@ -3155,11 +3273,11 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::SetComboBoxTextBlack(RoomListComboBox);
 	BrowserPanel->AddChildToVerticalBox(RoomListComboBox)->SetPadding(FMargin(6.0f));
 	DirectRoomCodeInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	DirectRoomCodeInput->SetHintText(FText::FromString(TEXT("6~8자리 참가 코드 (비공개방 또는 직접 참가)")));
+	DirectRoomCodeInput->SetHintText(FProjectProject01Localization::Text(TEXT("6~8자리 참가 코드 (비공개방 또는 직접 참가)")));
 	DirectRoomCodeInput->SetForegroundColor(FLinearColor::Black);
 	BrowserPanel->AddChildToVerticalBox(DirectRoomCodeInput)->SetPadding(FMargin(6.0f));
 	JoinPasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	JoinPasswordInput->SetHintText(FText::FromString(TEXT("참가 비밀번호 (비밀번호방만)")));
+	JoinPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("참가 비밀번호 (비밀번호방만)")));
 	JoinPasswordInput->SetForegroundColor(FLinearColor::Black);
 	JoinPasswordInput->SetIsPassword(true);
 	BrowserPanel->AddChildToVerticalBox(JoinPasswordInput)->SetPadding(FMargin(6.0f));
@@ -3171,7 +3289,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	UVerticalBox* CreatePanel = MakeScrollablePanel();
 	ProjectProject01LoginUI::AddLabel(WidgetTree, CreatePanel, TEXT("새 방 만들기"), 20.0f);
 	RoomNameInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	RoomNameInput->SetHintText(FText::FromString(TEXT("방 이름 (1~48자)")));
+	RoomNameInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 이름 (1~48자)")));
 	RoomNameInput->SetForegroundColor(FLinearColor::Black);
 	CreatePanel->AddChildToVerticalBox(RoomNameInput)->SetPadding(FMargin(6.0f));
 	PublicRoomCheckBox = WidgetTree->ConstructWidget<UCheckBox>();
@@ -3182,13 +3300,13 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	UHorizontalBox* PublicModeRow = WidgetTree->ConstructWidget<UHorizontalBox>();
 	PublicModeRow->AddChild(PublicRoomCheckBox);
 	UTextBlock* PublicLabel = WidgetTree->ConstructWidget<UTextBlock>();
-	PublicLabel->SetText(FText::FromString(TEXT("공개방: 체크 / 비공개방: 체크 해제 (참가 코드를 공유해 입장)")));
+	PublicLabel->SetText(FProjectProject01Localization::Text(TEXT("공개방: 체크 / 비공개방: 체크 해제 (참가 코드를 공유해 입장)")));
 	PublicLabel->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
 	PublicModeRow->AddChild(PublicLabel);
 	PublicModeBackground->AddChild(PublicModeRow);
 	CreatePanel->AddChildToVerticalBox(PublicModeBackground)->SetPadding(FMargin(6.0f));
 	CreatePasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	CreatePasswordInput->SetHintText(FText::FromString(TEXT("방 비밀번호 (선택, 사용 시 4~64자)")));
+	CreatePasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 비밀번호 (선택, 사용 시 4~64자)")));
 	CreatePasswordInput->SetForegroundColor(FLinearColor::Black);
 	CreatePasswordInput->SetIsPassword(true);
 	CreatePanel->AddChildToVerticalBox(CreatePasswordInput)->SetPadding(FMargin(6.0f));
@@ -3219,11 +3337,11 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 
 	ChatLogText = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
 	ChatLogText->SetIsReadOnly(true);
-	ChatLogText->SetHintText(FText::FromString(TEXT("방 채팅")));
+	ChatLogText->SetHintText(FProjectProject01Localization::Text(TEXT("방 채팅")));
 	ChatLogText->SetForegroundColor(FLinearColor::Black);
 	RoomPanel->AddChildToVerticalBox(ChatLogText)->SetPadding(FMargin(6.0f));
 	ChatInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	ChatInput->SetHintText(FText::FromString(TEXT("채팅 입력 (최대 300자)")));
+	ChatInput->SetHintText(FProjectProject01Localization::Text(TEXT("채팅 입력 (최대 300자)")));
 	ChatInput->SetForegroundColor(FLinearColor::Black);
 	RoomPanel->AddChildToVerticalBox(ChatInput)->SetPadding(FMargin(6.0f));
 	SendChatButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("채팅 보내기"));
@@ -3237,7 +3355,7 @@ void UProjectProject01LobbyWidget::SetStatus(const FString& Message, const bool 
 	{
 		return;
 	}
-	LobbyStatusText->SetText(FText::FromString(Message));
+	LobbyStatusText->SetText(FProjectProject01Localization::Text(Message));
 	LobbyStatusText->SetColorAndOpacity(bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
 }
 
@@ -3498,7 +3616,7 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	auto AddInput = [this, Root](const FString& Hint, const FString& DefaultValue)
 	{
 		UEditableTextBox* Input = WidgetTree->ConstructWidget<UEditableTextBox>();
-		Input->SetHintText(FText::FromString(Hint));
+		Input->SetHintText(FProjectProject01Localization::Text(Hint));
 		Input->SetText(FText::FromString(DefaultValue));
 		Input->SetForegroundColor(FLinearColor::Black);
 		Root->AddChildToVerticalBox(Input)->SetPadding(FMargin(6.0f));
@@ -3519,7 +3637,7 @@ void UProjectProject01LeaderboardWidget::SetStatus(const FString& Message, const
 	{
 		return;
 	}
-	LeaderboardStatusText->SetText(FText::FromString(Message));
+	LeaderboardStatusText->SetText(FProjectProject01Localization::Text(Message));
 	LeaderboardStatusText->SetColorAndOpacity(
 		bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
 }

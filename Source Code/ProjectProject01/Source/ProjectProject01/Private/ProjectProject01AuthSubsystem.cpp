@@ -54,6 +54,12 @@ void UProjectProject01AuthSubsystem::Initialize(FSubsystemCollectionBase& Collec
 
 void UProjectProject01AuthSubsystem::Deinitialize()
 {
+	if (ServiceStatusRequest.IsValid())
+	{
+		ServiceStatusRequest->OnProcessRequestComplete().Unbind();
+		ServiceStatusRequest->CancelRequest();
+		ServiceStatusRequest.Reset();
+	}
 	if (ActiveRequest.IsValid())
 	{
 		ActiveRequest->OnProcessRequestComplete().Unbind();
@@ -138,6 +144,60 @@ void UProjectProject01AuthSubsystem::Logout()
 		return;
 	}
 	SendRequest(EAuthOperation::Logout, TEXT("/api/auth/logout"), TEXT("{}"), 0);
+}
+
+void UProjectProject01AuthSubsystem::CheckMultiplayerServiceStatus()
+{
+	if (ServiceStatusRequest.IsValid() || ApiBaseUrl.IsEmpty() || !IsApiBaseUrlAllowed())
+	{
+		return;
+	}
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(ApiBaseUrl + TEXT("/api/service/status"));
+	Request->SetVerb(TEXT("GET"));
+	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetTimeout(RequestTimeoutSeconds);
+	Request->OnProcessRequestComplete().BindUObject(
+		this, &UProjectProject01AuthSubsystem::HandleServiceStatusRequestComplete);
+	ServiceStatusRequest = Request;
+	if (!Request->ProcessRequest())
+	{
+		ServiceStatusRequest.Reset();
+		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
+			TEXT("멀티플레이 서버 상태 확인을 시작하지 못했습니다."));
+	}
+}
+
+void UProjectProject01AuthSubsystem::HandleServiceStatusRequestComplete(
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request,
+	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> Response,
+	const bool bConnectedSuccessfully)
+{
+	if (ServiceStatusRequest == Request) ServiceStatusRequest.Reset();
+	if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() < 200 ||
+		Response->GetResponseCode() >= 300)
+	{
+		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
+			TEXT("멀티플레이 서버 상태를 확인하지 못했습니다."));
+		return;
+	}
+	TSharedPtr<FJsonObject> Json;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Json) ||
+		!Json.IsValid() || !Json->TryGetBoolField(TEXT("maintenanceEnabled"), bMaintenanceEnabled))
+	{
+		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
+			TEXT("멀티플레이 서버 상태 응답이 올바르지 않습니다."));
+		return;
+	}
+	ServiceAnnouncement.Reset();
+	ServiceShutdownAtUtc.Reset();
+	Json->TryGetStringField(TEXT("announcement"), ServiceAnnouncement);
+	Json->TryGetStringField(TEXT("shutdownAtUtc"), ServiceShutdownAtUtc);
+	FString Message;
+	Json->TryGetStringField(TEXT("message"), Message);
+	OnServiceStatusChanged.Broadcast(
+		bMaintenanceEnabled, ServiceAnnouncement, ServiceShutdownAtUtc, Message);
 }
 
 void UProjectProject01AuthSubsystem::RefreshSession(TFunction<void(bool)> Completion)
@@ -285,6 +345,7 @@ void UProjectProject01AuthSubsystem::CompleteOperation(
 		if (!bSuccess)
 		{
 			ClearSession();
+			OnLogoutCompleted.Broadcast(true, TEXT("로그인 세션이 만료되었거나 관리자에 의해 종료되었습니다."), FString());
 		}
 		else
 		{

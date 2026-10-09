@@ -66,6 +66,7 @@ internal sealed class MainForm : Form
         AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
         AddButton(buttons, "백엔드 시작", StartBackend);
         AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
+        AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 시작", StartServer);
         AddButton(buttons, "게임 서버 중지", () => { StopProcess(serverProcess, "게임 서버"); return Task.CompletedTask; });
         AddButton(buttons, "전체 흐름 스모크 테스트", RunSmokeTestAsync);
@@ -76,6 +77,13 @@ internal sealed class MainForm : Form
         root.Controls.Add(output);
         root.Controls.Add(status);
         Controls.Add(root);
+    }
+
+    private Task OpenServerAdministrationAsync()
+    {
+        using var dialog = new ServerAdministrationForm(ProjectRoot(), Append);
+        dialog.ShowDialog(this);
+        return Task.CompletedTask;
     }
 
     private static void AddField(TableLayoutPanel panel, string label, Control control)

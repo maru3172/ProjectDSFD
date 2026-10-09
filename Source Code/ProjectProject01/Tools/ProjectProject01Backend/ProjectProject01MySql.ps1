@@ -219,7 +219,8 @@ function Save-LocalSecrets {
         [Parameter(Mandatory = $true)]
         [string]$AdminPassword,
         [string]$GameServerSharedSecret = (New-RandomSecret),
-        [string]$TicketKey = (New-RandomBase64Secret)
+        [string]$TicketKey = (New-RandomBase64Secret),
+        [string]$AdministratorApiKey = (New-RandomSecret)
     )
 
     $connectionString = "Server=$bindAddress;Port=$port;User ID=projectproject01_api;Password=$ApiPassword;SslMode=Disabled;Connection Timeout=5;Default Command Timeout=5"
@@ -234,6 +235,9 @@ function Save-LocalSecrets {
         GameServer = [ordered]@{
             SharedSecret = $GameServerSharedSecret
             TicketKey = $TicketKey
+        }
+        Administrator = [ordered]@{
+            ApiKey = $AdministratorApiKey
         }
         Security = [ordered]@{
             AllowUnverifiedLeaderboardSubmissions = $true
@@ -252,6 +256,7 @@ function Save-LocalSecrets {
         'LocalMySql:AdminPassword' = $AdminPassword
         'GameServer:SharedSecret' = $GameServerSharedSecret
         'GameServer:TicketKey' = $TicketKey
+        'Administrator:ApiKey' = $AdministratorApiKey
         'Security:AllowUnverifiedLeaderboardSubmissions' = 'true'
     }
     $json = $secretObject | ConvertTo-Json -Compress
@@ -297,11 +302,32 @@ function Sync-LocalConfiguration {
 
     $gameServerSharedSecret = $secrets.'GameServer:SharedSecret'
     $ticketKey = $secrets.'GameServer:TicketKey'
+    $administratorApiKey = $secrets.'Administrator:ApiKey'
+    if (Test-Path -LiteralPath $localConfigurationFile) {
+        try {
+            $existingLocalConfiguration = Get-Content -LiteralPath $localConfigurationFile -Raw | ConvertFrom-Json
+            if ([string]::IsNullOrWhiteSpace($gameServerSharedSecret)) {
+                $gameServerSharedSecret = $existingLocalConfiguration.GameServer.SharedSecret
+            }
+            if ([string]::IsNullOrWhiteSpace($ticketKey)) {
+                $ticketKey = $existingLocalConfiguration.GameServer.TicketKey
+            }
+            if ([string]::IsNullOrWhiteSpace($administratorApiKey)) {
+                $administratorApiKey = $existingLocalConfiguration.Administrator.ApiKey
+            }
+        }
+        catch {
+            Write-Warning 'The existing local backend configuration could not be read. Missing secrets will be regenerated.'
+        }
+    }
     if ([string]::IsNullOrWhiteSpace($gameServerSharedSecret)) {
         $gameServerSharedSecret = New-RandomSecret
     }
     if ([string]::IsNullOrWhiteSpace($ticketKey)) {
         $ticketKey = New-RandomBase64Secret
+    }
+    if ([string]::IsNullOrWhiteSpace($administratorApiKey)) {
+        $administratorApiKey = New-RandomSecret
     }
 
     $localConfiguration = [ordered]@{
@@ -315,6 +341,9 @@ function Sync-LocalConfiguration {
         GameServer = [ordered]@{
             SharedSecret = $gameServerSharedSecret
             TicketKey = $ticketKey
+        }
+        Administrator = [ordered]@{
+            ApiKey = $administratorApiKey
         }
         Security = [ordered]@{
             AllowUnverifiedLeaderboardSubmissions = $true

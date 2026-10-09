@@ -1,4 +1,5 @@
 #include "ProjectProject01PingMarker.h"
+#include "ProjectProject01Localization.h"
 #include "ProjectProject01GameInstance.h"
 
 #include "Components/SceneComponent.h"
@@ -17,7 +18,7 @@ AProjectProject01PingMarker::AProjectProject01PingMarker()
 	Text->SetVerticalAlignment(EVRTA_TextCenter);
 	Text->SetWorldSize(42.0f);
 	Text->SetTextRenderColor(FColor::White);
-	Text->SetText(FText::FromString(TEXT("PING")));
+	Text->SetText(FProjectProject01Localization::Text(TEXT("PING")));
 }
 
 void AProjectProject01PingMarker::Configure(const EProjectProject01PingType Type, const FString& SenderName)
@@ -35,6 +36,7 @@ void AProjectProject01PingMarker::Configure(const EProjectProject01PingType Type
 	default:
 		Label = bUseShapeAndText ? TEXT("[O] 위치 표시") : TEXT("위치 표시"); Color = FColor(255, 220, 40); break;
 	}
-	Text->SetText(FText::FromString(SenderName.IsEmpty() ? Label : FString::Printf(TEXT("%s\n%s"), *Label, *SenderName)));
+	Text->SetText(FProjectProject01Localization::Text(
+		SenderName.IsEmpty() ? Label : FString::Printf(TEXT("%s\n%s"), *Label, *SenderName)));
 	Text->SetTextRenderColor(Color);
 }

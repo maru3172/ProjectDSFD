@@ -14,6 +14,28 @@
 
 class UProjectProject01SettingsWidget;
 
+/** 멀티플레이 경기 중에도 서버 공지와 종료 예고를 보여주는 가벼운 상단 배너입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01ServiceNoticeWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void SetNotice(const FString& Message, bool bIsMaintenance);
+
+protected:
+	virtual bool Initialize() override;
+
+private:
+	void BuildWidgetTree();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> NoticeBackground;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> NoticeText;
+};
+
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01TitleWidget final : public UUserWidget
 {
@@ -89,6 +111,10 @@ private:
 
 	UFUNCTION()
 	void HandleRegistrationResult(bool bSuccess, const FString& Message, const FString& DisplayName);
+
+	UFUNCTION()
+	void HandleServiceStatusChanged(bool bMaintenanceEnabled, const FString& Announcement,
+		const FString& ShutdownAtUtc, const FString& Message);
 
 	void BuildWidgetTree();
 	void SetRequestControlsEnabled(bool bEnabled);
@@ -570,6 +596,10 @@ private:
 	void HandleLogoutResult(bool bSuccess, const FString& Message, const FString& DisplayName);
 
 	UFUNCTION()
+	void HandleServiceStatusChanged(bool bMaintenanceEnabled, const FString& Announcement,
+		const FString& ShutdownAtUtc, const FString& Message);
+
+	UFUNCTION()
 	void HandleLobbyRequestResult(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
 
 	UFUNCTION()
@@ -674,6 +704,7 @@ private:
 	TMap<FString, FString> JoinCodeByDisplayOption;
 	TMap<FString, FString> UserIdByTransferOption;
 	FTimerHandle LobbyRefreshTimer;
+	int32 ServiceStatusPollCounter = 0;
 	bool bLogoutAfterLeave = false;
 	bool bTravelRequested = false;
 	bool bShowingCreateRoom = false;
