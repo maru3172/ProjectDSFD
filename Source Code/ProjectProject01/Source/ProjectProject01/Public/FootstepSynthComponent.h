@@ -13,6 +13,10 @@ enum class EProjectProject01FootstepStyle : uint8
 	MarbleSneaker UMETA(DisplayName = "Marble / Sneaker")
 };
 
+// 사운드 관련 클래스 전방 선언
+class USoundBase;
+class USoundAttenuation;
+
 /**
  * 외부 음원 없이 대리석 위 플라스틱·운동화 발소리를 만드는 경량 공간 음향 컴포넌트입니다.
  * 애니메이션 Notify가 있는 캐릭터는 TriggerFootstep을 직접 호출하고, 그렇지 않은 캐릭터는
@@ -94,4 +98,21 @@ private:
 	bool bSkidPulse = false;
 	bool bPulseActive = false;
 	EProjectProject01FootstepStyle ActiveStyle = EProjectProject01FootstepStyle::MarbleSneaker;
+	
+	// 관련 변수
+	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
+	TArray<TObjectPtr<USoundBase>> WalkSounds;
+	
+	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
+	TArray<TObjectPtr<USoundBase>> RunSounds;
+
+	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
+	TArray<TObjectPtr<USoundBase>> SkidSounds;
+
+	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
+	TObjectPtr<USoundAttenuation> SoundAttenuation;
+	
+	// 관련 함수
+	bool PlaySoundAsset(bool bRunning);
+	USoundBase* SelectRandomSound(const TArray<TObjectPtr<USoundBase>>& Sounds) const;
 };

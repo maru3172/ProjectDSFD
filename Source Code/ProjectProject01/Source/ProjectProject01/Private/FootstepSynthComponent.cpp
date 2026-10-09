@@ -7,6 +7,10 @@
 #include "ProjectProject01GameInstance.h"
 #include "Sound/SoundAttenuation.h"
 
+#include "Components/AudioComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #endif
@@ -219,7 +223,14 @@ void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 		return;
 	}
 	LastTriggerTimeSeconds = CurrentTime;
+	
+	// WAV 가 지정되어 있으면 WAV 를 재생한다.
+	if (PlaySoundAsset(bRunning))
+	{
+		return;
+	}
 
+	// WAV 가 없을 때만 기존 합성물을 사용한다.
 	if (!IsPlaying())
 	{
 		Start();
@@ -384,6 +395,73 @@ int32 UFootstepSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 		OutAudio[SampleIndex] = Sample;
 	}
 	return NumSamples;
+}
+
+// 사운드 재생 함수
+bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning)
+{
+	const TArray<TObjectPtr<USoundBase>>& SelectedSounds =
+		bRunning && !RunSounds.IsEmpty()
+			? RunSounds
+			: WalkSounds;
+
+	USoundBase* SelectedSound =
+		SelectRandomSound(SelectedSounds);
+
+	if (!IsValid(SelectedSound))
+	{
+		return false;
+	}
+
+	UAudioComponent* SpawnedAudioComponent =
+		UGameplayStatics::SpawnSoundAtLocation(
+			this,
+			SelectedSound,
+			GetComponentLocation(),
+			GetComponentRotation(),
+			FootstepVolumeScale *
+				(bRunning ? 1.18f : 1.0f) *
+				FMath::FRandRange(0.92f, 1.0f),
+			FMath::FRandRange(0.97f, 1.03f),
+			0.0f,
+			SoundAttenuation);
+
+	if (!IsValid(SpawnedAudioComponent))
+	{
+		return false;
+	}
+
+	if (UProjectProject01GameUserSettings* UserSettings =
+		UProjectProject01GameUserSettings::Get();
+		IsValid(UserSettings))
+	{
+		SpawnedAudioComponent->SoundClassOverride =
+			UserSettings->GetSFXSoundClass();
+	}
+
+	return true;
+}
+
+// 무작위 선택 함수
+USoundBase* UFootstepSynthComponent::SelectRandomSound(const TArray<TObjectPtr<USoundBase>>& Sounds) const
+{
+	TArray<USoundBase*> ValidSounds;
+	ValidSounds.Reserve(Sounds.Num());
+
+	for (USoundBase* Sound : Sounds)
+	{
+		if (IsValid(Sound))
+		{
+			ValidSounds.Add(Sound);
+		}
+	}
+
+	if (ValidSounds.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	return ValidSounds[FMath::RandRange(0, ValidSounds.Num() - 1)];
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
