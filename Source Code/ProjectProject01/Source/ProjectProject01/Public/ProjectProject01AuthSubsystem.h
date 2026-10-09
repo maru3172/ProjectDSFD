@@ -82,6 +82,8 @@ public:
 
 	/** 인증된 로비 API 요청에만 사용하는 현재 액세스 토큰입니다. 로그나 UI에는 노출하지 않습니다. */
 	const FString& GetAccessTokenForAuthenticatedRequest() const { return AccessToken; }
+	const FString& GetApiBaseUrlForAuthenticatedRequest() const { return ApiBaseUrl; }
+	const FString& GetAllowedInsecureVpnApiBaseUrl() const { return AllowedInsecureVpnApiBaseUrl; }
 	void RefreshSession(TFunction<void(bool)> Completion);
 
 private:

@@ -262,7 +262,7 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot9);
 	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
 	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AMultiplayTestPlayerController::RequestPostPossessionChaseCommand);
-	InputComponent->BindKey(EKeys::F1, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
+	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
 	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
 	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
 }

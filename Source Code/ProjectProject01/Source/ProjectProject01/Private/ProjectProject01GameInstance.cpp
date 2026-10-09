@@ -46,7 +46,7 @@ namespace ProjectProject01UserSettings
 {
 	bool IsAllowedBinding(const FKey Key)
 	{
-		return Key.IsValid() && !Key.IsGamepadKey() && Key != EKeys::F1 && Key != EKeys::Escape;
+		return Key.IsValid() && !Key.IsGamepadKey() && Key != EKeys::Escape;
 	}
 }
 

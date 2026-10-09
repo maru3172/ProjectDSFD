@@ -46,6 +46,10 @@
 		{
 			"Name": "EOSVoiceChat",
 			"Enabled": true
+		},
+		{
+			"Name": "EOSShared",
+			"Enabled": true
 		}
 	]
 }

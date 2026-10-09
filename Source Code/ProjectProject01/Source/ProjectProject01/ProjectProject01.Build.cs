@@ -10,7 +10,7 @@ public class ProjectProject01 : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "NavigationSystem", "UMG", "AudioMixer", "VoiceChat" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore", "EOSVoiceChat", "EOSShared", "EOSSDK" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

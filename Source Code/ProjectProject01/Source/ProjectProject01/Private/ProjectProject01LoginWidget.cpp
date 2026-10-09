@@ -906,7 +906,7 @@ FReply UProjectProject01SessionMenuWidget::NativeOnKeyDown(
 	const FGeometry& InGeometry,
 	const FKeyEvent& InKeyEvent)
 {
-	if (InKeyEvent.GetKey() == EKeys::F1 && !bBusy)
+	if (InKeyEvent.GetKey() == EKeys::Escape && !bBusy)
 	{
 		CloseMenu();
 		return FReply::Handled();
@@ -935,7 +935,7 @@ void UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked()
 		return;
 	}
 	SetBusy(true, TEXT("체크포인트를 저장하는 중..."));
-	Saves->SaveCheckpoint(Player, TEXT("ManualF1"));
+	Saves->SaveCheckpoint(Player, TEXT("ManualPauseMenu"));
 }
 
 void UProjectProject01SessionMenuWidget::HandleLoadCheckpointClicked()
@@ -1258,7 +1258,7 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 		MenuSlot->SetPadding(FMargin(40.0f));
 	}
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("게임 메뉴"), 30.0f);
-	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("F1을 다시 누르면 게임으로 돌아갑니다."), 14.0f);
+	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("ESC를 다시 누르면 게임으로 돌아갑니다."), 14.0f);
 	ContinueButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 계속"));
 	SaveCheckpointButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("현재 체크포인트 저장"));
 	LoadCheckpointButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("마지막 체크포인트 불러오기"));
@@ -1961,7 +1961,7 @@ FReply UProjectProject01SettingsWidget::NativeOnKeyDown(
 		TryAssignBinding(Key);
 		return FReply::Handled();
 	}
-	if (Key == EKeys::F1 || Key == EKeys::Escape)
+	if (Key == EKeys::Escape)
 	{
 		HandleCancelClicked();
 		return FReply::Handled();
@@ -2248,15 +2248,15 @@ void UProjectProject01SettingsWidget::BeginBindingCapture(const EBindingTarget T
 {
 	BindingTarget = Target;
 	RefreshBindingLabels();
-	SetStatus(TEXT("새 키를 누르세요. F1은 안전 메뉴 키로 고정되어 있습니다."));
+	SetStatus(TEXT("새 키를 누르세요. ESC는 안전 메뉴 키로 고정되어 있습니다."));
 	SetKeyboardFocus();
 }
 
 bool UProjectProject01SettingsWidget::TryAssignBinding(const FKey Key)
 {
-	if (!Key.IsValid() || Key.IsGamepadKey() || Key == EKeys::F1 || Key == EKeys::Escape)
+	if (!Key.IsValid() || Key.IsGamepadKey() || Key == EKeys::Escape)
 	{
-		SetStatus(TEXT("사용할 수 없는 키입니다. F1과 Esc는 안전을 위해 예약되어 있습니다."), true);
+		SetStatus(TEXT("사용할 수 없는 키입니다. ESC는 게임 메뉴를 위해 예약되어 있습니다."), true);
 		return false;
 	}
 	const TArray<FKey> Existing = { PendingForwardKey, PendingBackwardKey, PendingLeftKey, PendingRightKey, PendingSprintKey,
@@ -2582,7 +2582,7 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	HelpPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("도움 요청 핑"));
 	DangerPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("위험 알림 핑"));
 	LocationPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("위치 표시 핑"));
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("상호작용: 현재 공용 Input Action이 없어 아직 재설정할 수 없습니다. F1 게임 메뉴는 고정입니다."), 12.0f);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("상호작용: 현재 공용 Input Action이 없어 아직 재설정할 수 없습니다. ESC 게임 메뉴는 고정입니다."), 12.0f);
 
 	DefaultsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("설정 초기화"));
 	ApplyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("적용"));
@@ -2616,7 +2616,7 @@ bool FProjectProject01UserSettingsValidationTest::RunTest(const FString& Paramet
 	Settings->SetScreenDistortionScale(2.0f);
 	Settings->SetScreenShakeScale(-5.0f);
 	Settings->SetUIReadableScale(4.0f);
-	Settings->SetSprintKey(EKeys::F1);
+	Settings->SetSprintKey(EKeys::Escape);
 	Settings->ValidateProjectSettings();
 	TestEqual(TEXT("Master volume is clamped"), Settings->GetMasterVolume(), 1.0f);
 	TestEqual(TEXT("SFX volume is clamped"), Settings->GetSFXVolume(), 0.0f);
@@ -2627,7 +2627,7 @@ bool FProjectProject01UserSettingsValidationTest::RunTest(const FString& Paramet
 	TestEqual(TEXT("Screen distortion scale is clamped"), Settings->GetScreenDistortionScale(), 1.0f);
 	TestEqual(TEXT("Screen shake scale is clamped"), Settings->GetScreenShakeScale(), 0.0f);
 	TestEqual(TEXT("Readable UI scale is clamped"), Settings->GetUIReadableScale(), 1.3f);
-	TestTrue(TEXT("Reserved F1 restores safe sprint key"), Settings->GetSprintKey() == EKeys::LeftShift);
+	TestTrue(TEXT("Reserved Escape restores safe sprint key"), Settings->GetSprintKey() == EKeys::LeftShift);
 
 	Settings->SetMoveForwardKey(EKeys::Up);
 	Settings->SetMoveBackwardKey(EKeys::Down);

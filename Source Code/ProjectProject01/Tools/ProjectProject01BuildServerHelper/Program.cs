@@ -67,6 +67,7 @@ internal sealed class MainForm : Form
         AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
         AddButton(buttons, "백엔드 시작", StartBackend);
         AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
+        AddButton(buttons, "EOS 보이스 자격 증명", OpenEosVoiceSetupAsync);
         AddButton(buttons, "Hamachi 방화벽 설정", ConfigureHamachiFirewallAsync);
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 시작", StartServer);
@@ -127,6 +128,12 @@ internal sealed class MainForm : Form
         Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_GAME_SERVER_SECRET") is { Length: > 0 }
             ? "[OK] 게임 서버 서명 비밀키가 환경변수에 존재합니다."
             : "[주의] PROJECTPROJECT01_GAME_SERVER_SECRET 환경변수가 없습니다.");
+        Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_GAME_CLIENT_SECRET") is { Length: > 0 }
+            ? "[OK] EOS 게임 클라이언트 자격 증명이 구성되었습니다."
+            : "[주의] EOS 게임 클라이언트 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 실행하세요.");
+        Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_VOICE_SERVER_CLIENT_SECRET") is { Length: > 0 }
+            ? "[OK] EOS 보이스 서버 자격 증명이 구성되었습니다."
+            : "[주의] EOS 보이스 서버 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 실행하세요.");
         foreach (string issue in issues) Append("[실패] " + issue);
         SetStatus(issues.Count == 0 ? "환경 검사 완료" : $"환경 검사: {issues.Count}개 필수 문제");
     }
@@ -146,8 +153,48 @@ internal sealed class MainForm : Form
             (server ? "-server -serverconfig=Development -noclient " : "-clientconfig=Shipping ") +
             $"-build -cook -stage -pak -archive -archivedirectory=\"{Path.Combine(archiveRoot.Text.Trim(), role)}\" -utf8output";
         SetStatus($"{role} 패키징 중...");
-        int code = await RunCapturedAsync(uat, args, ProjectRoot());
+        int code;
+        if (server)
+        {
+            code = await RunCapturedAsync(uat, args, ProjectRoot());
+        }
+        else
+        {
+            code = await PackageClientWithLocalEosCredentialAsync(uat, args);
+        }
         SetStatus(code == 0 ? $"{role} 패키징 성공" : $"{role} 패키징 실패 (코드 {code})");
+    }
+
+    private async Task<int> PackageClientWithLocalEosCredentialAsync(string uat, string args)
+    {
+        string? clientSecret = Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_GAME_CLIENT_SECRET");
+        if (string.IsNullOrWhiteSpace(clientSecret))
+        {
+            Append("[차단] EOS 게임 클라이언트 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 먼저 실행하고 도우미를 다시 시작하세요.");
+            return 2;
+        }
+        if (clientSecret.Contains('\r') || clientSecret.Contains('\n'))
+        {
+            Append("[차단] EOS 게임 클라이언트 비밀키 형식이 올바르지 않습니다.");
+            return 2;
+        }
+
+        string engineConfig = Path.Combine(ProjectRoot(), "Config", "DefaultEngine.ini");
+        string originalConfig = await File.ReadAllTextAsync(engineConfig, lifetime.Token);
+        string temporaryConfig = originalConfig.TrimEnd() + Environment.NewLine + Environment.NewLine +
+            "[EOSVoiceChat]" + Environment.NewLine +
+            "ClientSecret=" + clientSecret + Environment.NewLine;
+        try
+        {
+            await File.WriteAllTextAsync(engineConfig, temporaryConfig, new UTF8Encoding(false), lifetime.Token);
+            Append("[정보] 로컬 EOS GameClient 자격 증명을 패키징 설정에 임시 주입했습니다(로그·Git에는 표시하지 않음). ");
+            return await RunCapturedAsync(uat, args, ProjectRoot());
+        }
+        finally
+        {
+            await File.WriteAllTextAsync(engineConfig, originalConfig, new UTF8Encoding(false), CancellationToken.None);
+            Append("[OK] 소스 설정에서 임시 EOS GameClient 비밀키를 제거했습니다.");
+        }
     }
 
     private Task RunMySqlAsync(string action)
@@ -166,6 +213,24 @@ internal sealed class MainForm : Form
         backendProcess = StartStreamingProcess("dotnet", $"run --urls \"{urls}\"", backend, "BACKEND");
         await Task.Delay(1200);
         Append(backendProcess is { HasExited: false } ? "[OK] 백엔드 프로세스 시작" : "[실패] 백엔드가 즉시 종료되었습니다. 위 로그를 확인하세요.");
+    }
+
+    private Task OpenEosVoiceSetupAsync()
+    {
+        string script = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend", "ConfigureProjectProject01EosVoice.ps1");
+        if (!File.Exists(script))
+        {
+            Append("[실패] EOS 보이스 설정 스크립트를 찾지 못했습니다.");
+            return Task.CompletedTask;
+        }
+        Process.Start(new ProcessStartInfo("powershell.exe")
+        {
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -NoExit -File \"{script}\" -Action Configure",
+            WorkingDirectory = Path.GetDirectoryName(script)!,
+            UseShellExecute = true
+        });
+        Append("[정보] 별도 창에서 포털의 두 Client Secret을 입력하세요. 값은 화면이나 로그에 출력되지 않습니다.");
+        return Task.CompletedTask;
     }
 
     private static string GetBackendListenUrls(string backendDirectory)

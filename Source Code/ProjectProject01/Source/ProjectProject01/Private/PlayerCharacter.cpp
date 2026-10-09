@@ -383,7 +383,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Canceled, this, &APlayerCharacter::StopSprint);
 		if (GetNetMode() == NM_Standalone)
 		{
-			PlayerInputComponent->BindKey(EKeys::F1, IE_Pressed, this, &APlayerCharacter::ToggleSessionMenu);
+			PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &APlayerCharacter::ToggleSessionMenu);
 		}
 
 		if (IsValid(GetWorld()) && GetWorld()->WorldType == EWorldType::PIE)

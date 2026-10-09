@@ -40,6 +40,8 @@ builder.Services.AddSingleton(versionCompatibility);
 var administratorOptions = AdministratorOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(administratorOptions);
 builder.Services.AddSingleton<ServiceControlState>();
+builder.Services.AddSingleton<EosVoiceTokenService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<EosVoiceTokenService>());
 
 builder.Services.AddSingleton<IPasswordHasher<AuthUser>, PasswordHasher<AuthUser>>();
 builder.Services.AddSingleton<IPasswordHasher<RoomPasswordRecord>, PasswordHasher<RoomPasswordRecord>>();
@@ -131,6 +133,16 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    options.AddPolicy("voice-token", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
 var app = builder.Build();
@@ -180,7 +192,7 @@ else
     app.Logger.LogWarning("ConnectionStrings:ProjectProject01 is not configured. Set it with dotnet user-secrets.");
 }
 
-app.MapGet("/health", async (AuthDatabase database, CancellationToken cancellationToken) =>
+app.MapGet("/health", async (AuthDatabase database, EosVoiceTokenService eosVoice, CancellationToken cancellationToken) =>
 {
     if (!database.IsConfigured)
     {
@@ -192,7 +204,7 @@ app.MapGet("/health", async (AuthDatabase database, CancellationToken cancellati
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var command = new MySqlCommand("SELECT 1;", connection) { CommandTimeout = 5 };
         await command.ExecuteScalarAsync(cancellationToken);
-        return Results.Ok(new { status = "healthy" });
+        return Results.Ok(new { status = "healthy", eosVoiceReady = eosVoice.IsReady });
     }
     catch
     {
@@ -203,6 +215,7 @@ app.MapGet("/health", async (AuthDatabase database, CancellationToken cancellati
 app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
     Results.Ok(contract.ToResponse()));
 app.MapProjectProject01ServiceAdministration();
+app.MapProjectProject01Voice();
 
 app.MapPost("/api/auth/register", async (
     HttpRequest httpRequest,

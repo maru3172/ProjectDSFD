@@ -143,7 +143,7 @@ private:
 	TObjectPtr<class UTextBlock> StatusText;
 };
 
-/** 싱글 및 멀티플레이 중 F1로 여는 세션 메뉴입니다. */
+/** 싱글 및 멀티플레이 중 ESC로 여는 세션 메뉴입니다. */
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01SessionMenuWidget final : public UUserWidget
 {
@@ -332,7 +332,7 @@ private:
 	float FadeDurationSeconds = 1.5f;
 };
 
-/** 타이틀과 F1 메뉴에서 공통으로 사용하는 로컬 환경설정 화면입니다. */
+/** 타이틀과 ESC 메뉴에서 공통으로 사용하는 로컬 환경설정 화면입니다. */
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01SettingsWidget final : public UUserWidget
 {

@@ -1276,7 +1276,7 @@ internal static class LobbyEndpoints
         return entries;
     }
 
-    private static async Task<LobbyUser?> AuthenticateAsync(HttpRequest request, AuthDatabase database, CancellationToken ct)
+    internal static async Task<LobbyUser?> AuthenticateAsync(HttpRequest request, AuthDatabase database, CancellationToken ct)
     {
         if (!database.IsConfigured)
         {
