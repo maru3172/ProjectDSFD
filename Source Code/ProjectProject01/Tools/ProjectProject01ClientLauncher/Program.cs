@@ -63,7 +63,17 @@ internal sealed class LauncherForm : Form
         checkButton.Click += async (_, _) => await RunBusyAsync(CheckForUpdatesAsync);
         updateButton.Click += async (_, _) => await RunBusyAsync(() => UpdateAsync(true));
         launchButton.Click += (_, _) => LaunchGame();
-        Shown += async (_, _) => await RunBusyAsync(CheckForUpdatesAsync);
+        Shown += async (_, _) =>
+        {
+            if (HasValidSavedServerAddress())
+            {
+                await RunBusyAsync(CheckForUpdatesAsync);
+            }
+            else
+            {
+                SetStatus("서버 PC의 IPv4 주소를 입력한 뒤 업데이트 확인을 누르세요.");
+            }
+        };
     }
 
     private void BuildUi()
@@ -135,9 +145,22 @@ internal sealed class LauncherForm : Form
         {
             SetStatus("작업을 취소했습니다.");
         }
+        catch (TimeoutException exception)
+        {
+            Append("[실패] " + exception.Message);
+            progress.Value = 0;
+            SetStatus("서버가 응답하지 않습니다. 연결 대기 상태를 해제했습니다.");
+        }
+        catch (HttpRequestException exception)
+        {
+            Append("[실패] " + exception.Message);
+            progress.Value = 0;
+            SetStatus("서버에 연결할 수 없습니다. 연결 대기 상태를 해제했습니다.");
+        }
         catch (Exception exception)
         {
             Append("[실패] " + exception.Message);
+            progress.Value = 0;
             SetStatus("업데이트 작업에 실패했습니다.");
         }
         finally
@@ -317,9 +340,19 @@ internal sealed class LauncherForm : Form
 
     private async Task<ClientUpdateManifest> FetchManifestAsync(string baseUrl)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        using HttpResponseMessage response = await http.GetAsync(
-            $"{baseUrl}/api/client-updates/manifest", lifetime.Token);
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.GetAsync(
+                $"{baseUrl}/api/client-updates/manifest", lifetime.Token);
+        }
+        catch (TaskCanceledException) when (!lifetime.IsCancellationRequested)
+        {
+            throw new TimeoutException("업데이트 서버가 5초 안에 응답하지 않아 연결 시도를 중단했습니다.");
+        }
+        using (response)
+        {
         string json = await response.Content.ReadAsStringAsync(lifetime.Token);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"업데이트 서버 HTTP {(int)response.StatusCode}: {json}");
@@ -327,6 +360,14 @@ internal sealed class LauncherForm : Form
         if (manifest is null) throw new InvalidDataException("업데이트 목록을 읽지 못했습니다.");
         ValidateManifest(manifest);
         return manifest;
+        }
+    }
+
+    private bool HasValidSavedServerAddress()
+    {
+        string address = serverAddress.Text.Trim();
+        return IPAddress.TryParse(address, out IPAddress? parsed) &&
+            parsed.AddressFamily == AddressFamily.InterNetwork && IsSupportedAddress(parsed);
     }
 
     private async Task<ClientUpdateManifest?> LoadLocalManifestAsync()
