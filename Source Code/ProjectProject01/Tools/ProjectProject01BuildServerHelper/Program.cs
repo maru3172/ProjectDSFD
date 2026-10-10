@@ -194,6 +194,12 @@ internal sealed class MainForm : Form
         }
         Directory.CreateDirectory(archiveRoot.Text.Trim());
         string role = server ? "Server" : "Client";
+        if (!server)
+        {
+            // 패키징이 기존 파일을 바꾸는 동안 이전 매니페스트를 노출하면 클라이언트가
+            // 이전 해시와 새 파일을 함께 받아 검증에 실패할 수 있다.
+            InvalidateClientUpdateManifests(Path.Combine(archiveRoot.Text.Trim(), role));
+        }
         string args = $"BuildCookRun -project=\"{projectFile.Text.Trim()}\" -noP4 -platform=Win64 " +
             (server ? "-server -serverconfig=Development -noclient " : "-clientconfig=Shipping ") +
             $"-build -cook -stage -pak -archive -archivedirectory=\"{Path.Combine(archiveRoot.Text.Trim(), role)}\" -utf8output";
@@ -232,6 +238,7 @@ internal sealed class MainForm : Form
         }
 
         string publishedRoot = Path.GetDirectoryName(gameExecutable)!;
+        InvalidateClientUpdateManifests(publishedRoot);
         string launcherProject = Path.Combine(
             ProjectRoot(), "Tools", "ProjectProject01ClientLauncher", "ProjectProject01ClientLauncher.csproj");
         if (!File.Exists(launcherProject))
@@ -263,7 +270,7 @@ internal sealed class MainForm : Form
             return;
         }
         string launcherTarget = Path.Combine(publishedRoot, "ProjectProject01ClientLauncher.exe");
-        File.Copy(launcherSource, launcherTarget, true);
+        bool launcherUpdated = await TryUpdatePublishedLauncherAsync(launcherSource, launcherTarget);
         await File.WriteAllTextAsync(
             Path.Combine(publishedRoot, "업데이트_실행방법.txt"),
             "ProjectProject01ClientLauncher.exe를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
@@ -306,14 +313,23 @@ internal sealed class MainForm : Form
             DateTime.UtcNow,
             Path.GetRelativePath(publishedRoot, gameExecutable).Replace('\\', '/'),
             files);
-        await File.WriteAllTextAsync(
-            manifestPath,
-            JsonSerializer.Serialize(manifest, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true
-            }),
-            new UTF8Encoding(false), lifetime.Token);
+        string pendingManifestPath = manifestPath + ".publishing";
+        try
+        {
+            await File.WriteAllTextAsync(
+                pendingManifestPath,
+                JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    WriteIndented = true
+                }),
+                new UTF8Encoding(false), lifetime.Token);
+            File.Move(pendingManifestPath, manifestPath, true);
+        }
+        finally
+        {
+            if (File.Exists(pendingManifestPath)) File.Delete(pendingManifestPath);
+        }
 
         long totalBytes = files.Sum(file => file.Size);
         Append($"[OK] 클라이언트 업데이트 게시 완료: {releaseId}");
@@ -324,7 +340,73 @@ internal sealed class MainForm : Form
             Append($"[안내] 런처 업데이트 주소: http://{address}:5080/api/client-updates/manifest");
         }
         Append("[안내] 최초 배포 때는 이 폴더 전체를 한 번 전달하고, 이후 사용자는 런처만 실행하면 됩니다.");
-        SetStatus("클라이언트 업데이트 게시 완료");
+        if (!launcherUpdated)
+        {
+            Append("[주의] 실행 중인 런처는 Windows가 덮어쓰기를 막았습니다. 게임 업데이트 게시에는 성공했지만, 런처 자체 변경을 반영하려면 모든 런처 창을 닫고 '클라이언트 업데이트 게시'를 한 번 더 실행하세요.");
+        }
+        SetStatus(launcherUpdated ? "클라이언트 업데이트 게시 완료" : "게임 업데이트 게시 완료 (런처 교체 보류)");
+    }
+
+    private async Task<bool> TryUpdatePublishedLauncherAsync(string source, string target)
+    {
+        if (File.Exists(target) && await FilesHaveSameHashAsync(source, target))
+        {
+            Append("[OK] 배포 폴더의 업데이트 런처가 이미 최신 상태입니다.");
+            return true;
+        }
+
+        try
+        {
+            File.Copy(source, target, true);
+            return true;
+        }
+        catch (IOException) when (File.Exists(target))
+        {
+            // 실행 중인 EXE는 Windows에서 교체할 수 없다. 런처는 업데이트 매니페스트의
+            // 대상이 아니므로 기존 런처를 유지하고 게임 파일 게시만 계속할 수 있다.
+            return false;
+        }
+    }
+
+    private static async Task<bool> FilesHaveSameHashAsync(string left, string right)
+    {
+        try
+        {
+            var leftInfo = new FileInfo(left);
+            var rightInfo = new FileInfo(right);
+            if (leftInfo.Length != rightInfo.Length) return false;
+
+            await using var leftStream = new FileStream(
+                left, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 128, true);
+            await using var rightStream = new FileStream(
+                right, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 128, true);
+            byte[] leftHash = await SHA256.HashDataAsync(leftStream);
+            byte[] rightHash = await SHA256.HashDataAsync(rightStream);
+            return leftHash.AsSpan().SequenceEqual(rightHash);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    private void InvalidateClientUpdateManifests(string searchRoot)
+    {
+        if (!Directory.Exists(searchRoot)) return;
+
+        foreach (string manifestPath in Directory.EnumerateFiles(
+            searchRoot, "client-update-manifest.json", SearchOption.AllDirectories))
+        {
+            try
+            {
+                File.Delete(manifestPath);
+                Append($"[정보] 새 게시가 완료될 때까지 이전 업데이트 목록을 비활성화했습니다: {manifestPath}");
+            }
+            catch (IOException exception)
+            {
+                Append($"[주의] 이전 업데이트 목록을 비활성화하지 못했습니다: {exception.Message}");
+            }
+        }
     }
 
     private static bool ShouldExcludeFromClientUpdate(string publishedRoot, string path)
@@ -516,17 +598,10 @@ internal sealed class MainForm : Form
             Append("[실패] 클라이언트가 직접 입력할 수 있는 활성 IPv4 주소를 찾지 못했습니다.");
             return;
         }
-        string dotnetPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
         string? serverExecutable = Directory.Exists(archiveRoot.Text.Trim())
             ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories)
                 .FirstOrDefault()
             : null;
-        if (!File.Exists(dotnetPath))
-        {
-            Append("[실패] dotnet.exe 경로를 찾지 못했습니다.");
-            return;
-        }
         var script = new StringBuilder("$ErrorActionPreference='Stop';");
         foreach (var (address, interfaceName, isVpn) in addresses)
         {
@@ -535,7 +610,10 @@ internal sealed class MainForm : Form
             string serverName = $"ProjectProject01 Direct IP Game Server {suffix}";
             string remoteAddress = isVpn ? "25.0.0.0/8" : "LocalSubnet";
             script.Append($"Get-NetFirewallRule -DisplayName '{backendName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
-            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{dotnetPath.Replace("'", "''")}' -Profile Any | Out-Null;");
+            // dotnet run은 실제 수신 소켓을 dotnet.exe가 아니라 생성된 Backend apphost EXE에서
+            // 열 수 있다. 프로그램 경로로 제한하면 같은 PC 검사만 성공하고 외부 요청은
+            // 방화벽에서 거부될 수 있으므로 주소·인터페이스·원격 대역·포트로 제한한다.
+            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Profile Any | Out-Null;");
             if (serverExecutable is not null)
             {
                 script.Append($"Get-NetFirewallRule -DisplayName '{serverName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
@@ -562,7 +640,7 @@ internal sealed class MainForm : Form
             Append($"[OK] IP 직접 연결용 백엔드 TCP 5080을 허용했습니다: {string.Join(", ", addresses.Select(item => item.Address))}");
             Append(serverExecutable is null
                 ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 다시 실행하세요."
-                : "[OK] IP 직접 연결용 게임 서버 UDP 7777을 로컬 서브넷에만 허용했습니다.");
+                : "[OK] IP 직접 연결용 게임 서버 UDP 7777을 해당 연결 대역에 허용했습니다.");
         }
         catch (System.ComponentModel.Win32Exception)
         {
