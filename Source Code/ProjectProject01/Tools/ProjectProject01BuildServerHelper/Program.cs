@@ -28,6 +28,9 @@ internal sealed class MainForm : Form
     private readonly RichTextBox output = new() { Dock = DockStyle.Fill, ReadOnly = true, BackColor = Color.FromArgb(24, 24, 24), ForeColor = Color.Gainsboro };
     private readonly Label status = new() { AutoSize = true, Text = "준비" };
     private readonly CancellationTokenSource lifetime = new();
+    private readonly string helperSettingsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ProjectProject01", "BuildServerHelper.json");
     private Process? backendProcess;
     private Process? serverProcess;
 
@@ -37,11 +40,18 @@ internal sealed class MainForm : Form
         Width = 1160;
         Height = 760;
         MinimumSize = new Size(900, 620);
-        engineRoot.Text = Environment.GetEnvironmentVariable("UE_ENGINE_ROOT") ?? @"C:\Program Files\Epic Games\UE_5.8\Engine";
+        engineRoot.Text = FindPreferredEngineRoot();
         projectFile.Text = FindProjectFile() ?? @"C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\ProjectProject01.uproject";
         archiveRoot.Text = Path.Combine(Path.GetDirectoryName(projectFile.Text) ?? Environment.CurrentDirectory, "Builds");
+        LoadHelperSettings();
         BuildUi();
-        FormClosing += (_, _) => { lifetime.Cancel(); StopProcess(backendProcess, "백엔드"); StopProcess(serverProcess, "게임 서버"); };
+        FormClosing += (_, _) =>
+        {
+            SaveHelperSettings();
+            lifetime.Cancel();
+            StopProcess(backendProcess, "백엔드");
+            StopProcess(serverProcess, "게임 서버");
+        };
     }
 
     private void BuildUi()
@@ -75,7 +85,7 @@ internal sealed class MainForm : Form
         AddButton(buttons, "IP 직접 연결 검사", () => ValidateDirectIpConnectivityAsync(false));
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 시작", StartServer);
-        AddButton(buttons, "게임 서버 중지", () => { StopProcess(serverProcess, "게임 서버"); return Task.CompletedTask; });
+        AddButton(buttons, "게임 서버 중지", StopAllGameServersAsync);
         AddButton(buttons, "전체 흐름 스모크 테스트", RunSmokeTestAsync);
         AddButton(buttons, "로그 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Logs"); return Task.CompletedTask; });
         AddButton(buttons, "진단 결과 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Diagnostics"); return Task.CompletedTask; });
@@ -185,6 +195,7 @@ internal sealed class MainForm : Form
 
     private async Task PackageAsync(bool server)
     {
+        SaveHelperSettings();
         string uat = Path.Combine(engineRoot.Text.Trim(), "Build", "BatchFiles", "RunUAT.bat");
         if (!File.Exists(uat) || !File.Exists(projectFile.Text.Trim())) { Append("[실패] 먼저 환경 경로를 확인하세요."); return; }
         if (server && File.Exists(Path.Combine(engineRoot.Text.Trim(), "Build", "InstalledBuild.txt")))
@@ -698,10 +709,23 @@ internal sealed class MainForm : Form
 
     private async Task StartServer()
     {
-        if (serverProcess is { HasExited: false }) { Append("[정보] 게임 서버가 이미 실행 중입니다."); return; }
+        IReadOnlyList<Process> existingServers = FindPackagedGameServerProcesses();
+        if (existingServers.Count > 0)
+        {
+            Append($"[차단] 패키징된 게임 서버가 이미 {existingServers.Count}개 실행 중입니다. PID: {string.Join(", ", existingServers.Select(process => process.Id))}");
+            Append("[안내] '게임 서버 중지'를 눌러 예전 서버를 모두 종료한 뒤 하나만 다시 시작하세요.");
+            foreach (Process process in existingServers) process.Dispose();
+            return;
+        }
+        if (IsUdpPortBound(7777))
+        {
+            Append("[차단] 다른 프로세스가 UDP 7777 포트를 사용 중입니다. 해당 프로세스를 종료한 뒤 다시 시작하세요.");
+            return;
+        }
         string[] candidates = Directory.Exists(archiveRoot.Text.Trim())
             ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories) : [];
         if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectProject01Server.exe가 없습니다."); return; }
+        if (!ValidatePackagedNetworkCompatibility()) return;
         string arguments = serverArgs.Text.Trim();
         if (arguments.Contains("-MULTIHOME=", StringComparison.OrdinalIgnoreCase))
         {
@@ -717,6 +741,94 @@ internal sealed class MainForm : Form
         {
             Append("[실패] 서버가 즉시 종료되었습니다. 위 로그를 확인하세요.");
         }
+    }
+
+    private Task StopAllGameServersAsync()
+    {
+        IReadOnlyList<Process> servers = FindPackagedGameServerProcesses();
+        if (servers.Count == 0)
+        {
+            Append("[정보] 실행 중인 패키징 게임 서버가 없습니다.");
+            serverProcess = null;
+            return Task.CompletedTask;
+        }
+
+        int stopped = 0;
+        foreach (Process process in servers.OrderByDescending(process => process.Id))
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                    process.WaitForExit(5000);
+                    stopped++;
+                }
+            }
+            catch (Exception exception)
+            {
+                Append($"[주의] 게임 서버 PID {process.Id} 종료 실패: {exception.Message}");
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+        serverProcess = null;
+        Append($"[OK] 패키징 게임 서버 프로세스 {stopped}개를 종료했습니다.");
+        return Task.CompletedTask;
+    }
+
+    private IReadOnlyList<Process> FindPackagedGameServerProcesses()
+    {
+        string serverRoot = Path.GetFullPath(Path.Combine(archiveRoot.Text.Trim(), "Server"));
+        string rootWithSeparator = Path.TrimEndingDirectorySeparator(serverRoot) + Path.DirectorySeparatorChar;
+        var result = new List<Process>();
+        foreach (Process process in Process.GetProcessesByName("ProjectProject01Server"))
+        {
+            try
+            {
+                string? executablePath = process.MainModule?.FileName;
+                if (!string.IsNullOrWhiteSpace(executablePath) &&
+                    Path.GetFullPath(executablePath).StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(process);
+                    continue;
+                }
+            }
+            catch
+            {
+                // 접근할 수 없는 다른 사용자의 프로세스는 이 도우미의 패키징 서버가 아니다.
+            }
+            process.Dispose();
+        }
+        return result;
+    }
+
+    private bool ValidatePackagedNetworkCompatibility()
+    {
+        string clientRoot = Path.Combine(archiveRoot.Text.Trim(), "Client");
+        string serverRoot = Path.Combine(archiveRoot.Text.Trim(), "Server");
+        string? clientBinary = Directory.Exists(clientRoot)
+            ? Directory.EnumerateFiles(clientRoot, "ProjectProject01-Win64-Shipping.exe", SearchOption.AllDirectories)
+                .FirstOrDefault()
+            : null;
+        string? serverBinary = Directory.Exists(serverRoot)
+            ? Directory.EnumerateFiles(serverRoot, "ProjectProject01Server.exe", SearchOption.AllDirectories)
+                .FirstOrDefault(path => path.Contains(
+                    $"{Path.DirectorySeparatorChar}Binaries{Path.DirectorySeparatorChar}Win64{Path.DirectorySeparatorChar}",
+                    StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (clientBinary is null || serverBinary is null) return true;
+
+        string clientVersion = FileVersionInfo.GetVersionInfo(clientBinary).ProductVersion ?? string.Empty;
+        string serverVersion = FileVersionInfo.GetVersionInfo(serverBinary).ProductVersion ?? string.Empty;
+        if (string.Equals(clientVersion, serverVersion, StringComparison.OrdinalIgnoreCase)) return true;
+
+        Append($"[차단] 클라이언트와 데디케이티드 서버의 Unreal 엔진 빌드가 다릅니다. 클라이언트={clientVersion}, 서버={serverVersion}");
+        Append($"[해결] UE Engine 경로를 '{engineRoot.Text.Trim()}' 하나로 고정한 뒤 클라이언트와 데디케이티드 서버를 모두 다시 패키징하세요.");
+        SetStatus("게임 서버 시작 차단: 클라이언트/서버 엔진 빌드 불일치");
+        return false;
     }
 
     private async Task RunSmokeTestAsync()
@@ -788,6 +900,60 @@ internal sealed class MainForm : Form
             string.Equals(unicast.Address.ToString(), address, StringComparison.OrdinalIgnoreCase));
 
     private string ProjectRoot() => Path.GetDirectoryName(projectFile.Text.Trim()) ?? Environment.CurrentDirectory;
+    private static string FindPreferredEngineRoot()
+    {
+        string? configured = Environment.GetEnvironmentVariable("UE_ENGINE_ROOT")?.Trim();
+        if (!string.IsNullOrWhiteSpace(configured)) return configured;
+
+        string[] candidates =
+        [
+            @"C:\UE\UnrealEngine\UnrealEngine\Engine",
+            @"C:\Program Files\Epic Games\UE_5.8\Engine"
+        ];
+        return candidates.FirstOrDefault(path =>
+            File.Exists(Path.Combine(path, "Build", "BatchFiles", "RunUAT.bat"))) ?? candidates[^1];
+    }
+
+    private void LoadHelperSettings()
+    {
+        try
+        {
+            if (!File.Exists(helperSettingsPath)) return;
+            BuildServerHelperSettings? settings = JsonSerializer.Deserialize<BuildServerHelperSettings>(
+                File.ReadAllText(helperSettingsPath));
+            if (!string.IsNullOrWhiteSpace(settings?.EngineRoot)) engineRoot.Text = settings.EngineRoot;
+            if (!string.IsNullOrWhiteSpace(settings?.ProjectFile)) projectFile.Text = settings.ProjectFile;
+            if (!string.IsNullOrWhiteSpace(settings?.ArchiveRoot)) archiveRoot.Text = settings.ArchiveRoot;
+            if (!string.IsNullOrWhiteSpace(settings?.ServerArguments)) serverArgs.Text = settings.ServerArguments;
+        }
+        catch
+        {
+            // 손상되었거나 구버전인 로컬 설정은 안전한 기본값으로 대체한다.
+        }
+    }
+
+    private void SaveHelperSettings()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(helperSettingsPath)!);
+            File.WriteAllText(helperSettingsPath, JsonSerializer.Serialize(
+                new BuildServerHelperSettings(
+                    engineRoot.Text.Trim(),
+                    projectFile.Text.Trim(),
+                    archiveRoot.Text.Trim(),
+                    serverArgs.Text.Trim()),
+                new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
+        }
+        catch (Exception exception)
+        {
+            if (!IsDisposed && !Disposing)
+            {
+                Append($"[주의] 도우미 경로 설정을 저장하지 못했습니다: {exception.Message}");
+            }
+        }
+    }
+
     private void OpenFolder(string root, string child)
     {
         string path = Path.GetFullPath(Path.Combine(root, child));
@@ -819,6 +985,11 @@ internal sealed class MainForm : Form
 }
 
 internal sealed record PublishedClientUpdateFile(string Path, long Size, string Sha256);
+internal sealed record BuildServerHelperSettings(
+    string EngineRoot,
+    string ProjectFile,
+    string ArchiveRoot,
+    string ServerArguments);
 internal sealed record PublishedClientUpdateManifest(
     string ReleaseId,
     string ClientVersion,
