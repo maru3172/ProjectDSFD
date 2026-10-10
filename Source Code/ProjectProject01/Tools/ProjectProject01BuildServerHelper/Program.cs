@@ -167,9 +167,9 @@ internal sealed class MainForm : Form
             Append(response.IsSuccessStatusCode ? "[OK] 백엔드 /health 정상" : $"[주의] 백엔드 HTTP {(int)response.StatusCode}");
         }
         catch { Append("[정보] 백엔드 5080은 현재 실행 중이 아닙니다."); }
-        Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_GAME_SERVER_SECRET") is { Length: > 0 }
-            ? "[OK] 게임 서버 서명 비밀키가 환경변수에 존재합니다."
-            : "[주의] PROJECTPROJECT01_GAME_SERVER_SECRET 환경변수가 없습니다.");
+        Append(LoadGameServerSharedSecret() is { Length: >= 32 }
+            ? "[OK] 게임 서버 서명 비밀키가 로컬 보안 설정에 존재합니다."
+            : "[주의] 게임 서버 서명 비밀키가 없습니다. MySQL 초기화/시작을 먼저 실행하세요.");
         Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_GAME_CLIENT_SECRET") is { Length: > 0 }
             ? "[OK] EOS 게임 클라이언트 자격 증명이 구성되었습니다."
             : "[주의] EOS 게임 클라이언트 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 실행하세요.");
@@ -490,9 +490,19 @@ internal sealed class MainForm : Form
     {
         if (backendProcess is { HasExited: false }) { Append("[정보] 백엔드가 이미 실행 중입니다."); return; }
         string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string? serverSecret = LoadGameServerSharedSecret();
+        if (serverSecret is not { Length: >= 32 })
+        {
+            Append("[차단] 게임 서버 서명 비밀키가 없습니다. 'MySQL 초기화/시작'을 먼저 실행하세요.");
+            return;
+        }
         string urls = GetBackendListenUrls(backend);
         Append($"[정보] 백엔드 수신 주소: {urls}");
-        backendProcess = StartStreamingProcess("dotnet", $"run --urls \"{urls}\"", backend, "BACKEND");
+        backendProcess = StartStreamingProcess("dotnet", $"run --urls \"{urls}\"", backend, "BACKEND",
+            new Dictionary<string, string>
+            {
+                ["PROJECTPROJECT01_GAME_SERVER_SECRET"] = serverSecret
+            });
         await Task.Delay(1800);
         if (backendProcess is not { HasExited: false })
         {
@@ -726,12 +736,22 @@ internal sealed class MainForm : Form
             ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories) : [];
         if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectProject01Server.exe가 없습니다."); return; }
         if (!ValidatePackagedNetworkCompatibility()) return;
+        string? serverSecret = LoadGameServerSharedSecret();
+        if (serverSecret is not { Length: >= 32 })
+        {
+            Append("[차단] 게임 서버 서명 비밀키가 없습니다. 'MySQL 초기화/시작'을 먼저 실행하세요.");
+            return;
+        }
         string arguments = serverArgs.Text.Trim();
         if (arguments.Contains("-MULTIHOME=", StringComparison.OrdinalIgnoreCase))
         {
             Append("[주의] -MULTIHOME이 지정되어 있으면 그 주소만 수신합니다. 여러 IP 경로를 함께 쓰려면 해당 인자를 지우세요.");
         }
-        serverProcess = StartStreamingProcess(candidates[0], arguments, Path.GetDirectoryName(candidates[0])!, "SERVER");
+        serverProcess = StartStreamingProcess(candidates[0], arguments, Path.GetDirectoryName(candidates[0])!, "SERVER",
+            new Dictionary<string, string>
+            {
+                ["PROJECTPROJECT01_GAME_SERVER_SECRET"] = serverSecret
+            });
         await Task.Delay(1200);
         if (serverProcess is { HasExited: false })
         {
@@ -864,7 +884,12 @@ internal sealed class MainForm : Form
         return process.ExitCode;
     }
 
-    private Process StartStreamingProcess(string file, string args, string workingDirectory, string prefix)
+    private Process StartStreamingProcess(
+        string file,
+        string args,
+        string workingDirectory,
+        string prefix,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var process = new Process
         {
@@ -878,10 +903,40 @@ internal sealed class MainForm : Form
             },
             EnableRaisingEvents = true
         };
+        if (environment is not null)
+        {
+            foreach ((string name, string value) in environment)
+            {
+                process.StartInfo.Environment[name] = value;
+            }
+        }
         process.OutputDataReceived += (_, e) => { if (e.Data != null) Append($"[{prefix}] {e.Data}"); };
         process.ErrorDataReceived += (_, e) => { if (e.Data != null) Append($"[{prefix}:ERR] {e.Data}"); };
         process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
         return process;
+    }
+
+    private string? LoadGameServerSharedSecret()
+    {
+        string? environment = Environment.GetEnvironmentVariable("PROJECTPROJECT01_GAME_SERVER_SECRET")?.Trim();
+        if (!string.IsNullOrWhiteSpace(environment)) return environment;
+
+        string localConfigurationPath = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend",
+            "LocalMySql", "ProjectProject01Backend.local.json");
+        if (!File.Exists(localConfigurationPath)) return null;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(localConfigurationPath));
+            return document.RootElement.TryGetProperty("GameServer", out JsonElement gameServer) &&
+                gameServer.TryGetProperty("SharedSecret", out JsonElement secret)
+                ? secret.GetString()?.Trim()
+                : null;
+        }
+        catch (Exception exception)
+        {
+            Append($"[주의] 로컬 게임 서버 보안 설정을 읽지 못했습니다: {exception.Message}");
+            return null;
+        }
     }
 
     private void StopProcess(Process? process, string label)
