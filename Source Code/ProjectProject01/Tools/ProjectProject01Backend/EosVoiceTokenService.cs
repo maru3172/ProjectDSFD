@@ -8,8 +8,12 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
     private readonly ILogger<EosVoiceTokenService> _logger;
     private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _queryGate = new(1, 1);
+    private readonly ConcurrentQueue<Action> _eosCommands = new();
+    private readonly AutoResetEvent _eosCommandAvailable = new(false);
     private CancellationTokenSource? _tickCancellation;
-    private Task? _tickTask;
+    private Thread? _eosThread;
+    private TaskCompletionSource<bool>? _eosThreadStarted;
+    private TaskCompletionSource<bool>? _eosThreadStopped;
     private IntPtr _platform;
     private IntPtr _rtcAdmin;
     private bool _initializedSdk;
@@ -28,7 +32,7 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
     private static bool IsPortalIdentifier(string? value) =>
         !string.IsNullOrWhiteSpace(value) && Regex.IsMatch(value, "^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         var productId = ReadSecret("PROJECTPROJECT01_EOS_PRODUCT_ID", "EosVoice:ProductId");
         var sandboxId = ReadSecret("PROJECTPROJECT01_EOS_SANDBOX_ID", "EosVoice:SandboxId");
@@ -39,7 +43,7 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         {
             _logger.LogWarning(
                 "EOS voice token service is disabled. Set Product/Sandbox/Deployment IDs and the voice-server client credentials through environment variables or user-secrets.");
-            return Task.CompletedTask;
+            return;
         }
         if (!IsPortalIdentifier(productId) || !IsPortalIdentifier(sandboxId) ||
             !IsPortalIdentifier(deploymentId) || clientId!.Length is < 16 or > 64 ||
@@ -47,9 +51,30 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         {
             _logger.LogError(
                 "EOS voice token service credentials have an invalid format. Copy the complete IDs and Client Secret from Epic Developer Portal.");
-            return Task.CompletedTask;
+            return;
         }
 
+        _tickCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _eosThreadStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _eosThreadStopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _eosThread = new Thread(() => RunEosThread(
+            productId!, sandboxId!, deploymentId!, clientId!, clientSecret!, _tickCancellation.Token))
+        {
+            IsBackground = true,
+            Name = "ProjectProject01 EOS Voice"
+        };
+        _eosThread.Start();
+        await _eosThreadStarted.Task.WaitAsync(cancellationToken);
+    }
+
+    private void RunEosThread(
+        string productId,
+        string sandboxId,
+        string deploymentId,
+        string clientId,
+        string clientSecret,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var libraryPath = ResolveLibraryPath();
@@ -68,6 +93,16 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
                 throw new InvalidOperationException($"EOS_Initialize failed: {EosNative.ResultText(initializeResult)}");
             }
             _initializedSdk = initializeResult == 0;
+            EosNative.ConfigureLogging((level, category, message) =>
+            {
+                // EOS SDK diagnostics are useful for credential/platform setup, but credentials must never enter logs.
+                var safeMessage = message
+                    .Replace(clientSecret!, "***", StringComparison.Ordinal)
+                    .Replace(clientId!, "[client-id]", StringComparison.Ordinal);
+                if (level <= 200) _logger.LogError("EOS SDK [{Category}] {Message}", category, safeMessage);
+                else if (level <= 300) _logger.LogWarning("EOS SDK [{Category}] {Message}", category, safeMessage);
+                else _logger.LogInformation("EOS SDK [{Category}] {Message}", category, safeMessage);
+            });
 
             using var product = new Utf8String(productId!);
             using var sandbox = new Utf8String(sandboxId!);
@@ -125,27 +160,40 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
                 throw new InvalidOperationException("EOS RTC Admin interface is unavailable.");
             }
 
-            _tickCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _tickTask = Task.Run(() => TickLoopAsync(_tickCancellation.Token), CancellationToken.None);
             _logger.LogInformation("EOS trusted voice token service is ready.");
+            _eosThreadStarted?.TrySetResult(true);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                while (_eosCommands.TryDequeue(out var command))
+                {
+                    try { command(); }
+                    catch (Exception exception) { _logger.LogError(exception, "EOS voice command failed."); }
+                }
+                EosNative.EOS_Platform_Tick(_platform);
+                _eosCommandAvailable.WaitOne(10);
+            }
         }
         catch (Exception exception)
         {
             _logger.LogError(exception, "EOS trusted voice token service failed to initialize.");
-            ReleaseNativeResources();
+            _eosThreadStarted?.TrySetResult(false);
         }
-        return Task.CompletedTask;
+        finally
+        {
+            ReleaseNativeResources();
+            _eosThreadStopped?.TrySetResult(true);
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _tickCancellation?.Cancel();
-        if (_tickTask is not null)
+        _eosCommandAvailable.Set();
+        if (_eosThreadStopped is not null)
         {
-            try { await _tickTask.WaitAsync(cancellationToken); }
+            try { await _eosThreadStopped.Task.WaitAsync(cancellationToken); }
             catch (OperationCanceledException) { }
         }
-        ReleaseNativeResources();
     }
 
     public async Task<EosRoomToken> CreateRoomTokenAsync(
@@ -159,11 +207,30 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         await _queryGate.WaitAsync(cancellationToken);
         try
         {
+            var completion = new TaskCompletionSource<EosRoomToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _eosCommands.Enqueue(() => BeginRoomTokenQuery(roomName, productUserId, completion));
+            _eosCommandAvailable.Set();
+            return await completion.Task.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            _queryGate.Release();
+        }
+    }
+
+    private void BeginRoomTokenQuery(
+        string roomName,
+        string productUserId,
+        TaskCompletionSource<EosRoomToken> completion)
+    {
+        GCHandle operationHandle = default;
+        try
+        {
+            if (!IsReady) throw new InvalidOperationException("EOS voice token service is not ready.");
             var targetUser = EosNative.EOS_ProductUserId_FromString(productUserId);
             if (targetUser == IntPtr.Zero) throw new InvalidOperationException("EOS rejected the Product User ID.");
-            var completion = new TaskCompletionSource<EosRoomToken>(TaskCreationOptions.RunContinuationsAsynchronously);
             var operation = new QueryOperation(this, targetUser, completion);
-            var operationHandle = GCHandle.Alloc(operation);
+            operationHandle = GCHandle.Alloc(operation);
             using var room = new Utf8String(roomName);
             var targetUsers = Marshal.AllocHGlobal(IntPtr.Size);
             Marshal.WriteIntPtr(targetUsers, targetUser);
@@ -184,29 +251,15 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
                     GCHandle.ToIntPtr(operationHandle),
                     EosNative.QueryCallback);
             }
-            catch
-            {
-                operationHandle.Free();
-                throw;
-            }
             finally
             {
                 Marshal.FreeHGlobal(targetUsers);
             }
-            return await completion.Task.WaitAsync(cancellationToken);
         }
-        finally
+        catch (Exception exception)
         {
-            _queryGate.Release();
-        }
-    }
-
-    private async Task TickLoopAsync(CancellationToken cancellationToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
-        while (await timer.WaitForNextTickAsync(cancellationToken))
-        {
-            if (_platform != IntPtr.Zero) EosNative.EOS_Platform_Tick(_platform);
+            if (operationHandle.IsAllocated) operationHandle.Free();
+            completion.TrySetException(exception);
         }
     }
 
@@ -267,7 +320,9 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
     public void Dispose()
     {
         _tickCancellation?.Cancel();
+        _eosCommandAvailable.Set();
         _tickCancellation?.Dispose();
+        _eosCommandAvailable.Dispose();
         _queryGate.Dispose();
     }
 
@@ -289,6 +344,8 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
     {
         private const string LibraryName = "EOSSDK-Win64-Shipping.dll";
         private static IntPtr _library;
+        private static Action<int, string, string>? _logSink;
+        private static readonly LogMessageCallback LogCallback = HandleLogMessage;
         internal static readonly QueryJoinRoomTokenCallback QueryCallback = HandleQueryCompleted;
 
         internal static void Load(string path)
@@ -312,6 +369,25 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         {
             var pointer = EOS_EResult_ToString(result);
             return pointer == IntPtr.Zero ? $"EOS result {result}" : Marshal.PtrToStringUTF8(pointer) ?? $"EOS result {result}";
+        }
+
+        internal static void ConfigureLogging(Action<int, string, string> sink)
+        {
+            _logSink = sink;
+            var callbackResult = EOS_Logging_SetCallback(LogCallback);
+            if (callbackResult == 0)
+            {
+                EOS_Logging_SetLogLevel(0x7fffffff, 300);
+            }
+        }
+
+        private static void HandleLogMessage(IntPtr messagePointer)
+        {
+            if (messagePointer == IntPtr.Zero || _logSink is null) return;
+            var message = Marshal.PtrToStructure<LogMessage>(messagePointer);
+            _logSink(message.Level,
+                Marshal.PtrToStringUTF8(message.Category) ?? "Unknown",
+                Marshal.PtrToStringUTF8(message.Message) ?? string.Empty);
         }
 
         private static void HandleQueryCompleted(IntPtr callbackInfoPointer)
@@ -369,6 +445,17 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void QueryJoinRoomTokenCallback(IntPtr data);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate void LogMessageCallback(IntPtr message);
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        internal struct LogMessage
+        {
+            internal IntPtr Category;
+            internal IntPtr Message;
+            internal int Level;
+        }
 
         [StructLayout(LayoutKind.Sequential, Pack = 8)]
         internal struct InitializeOptions
@@ -472,6 +559,12 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int EOS_Shutdown();
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int EOS_Logging_SetCallback(LogMessageCallback callback);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int EOS_Logging_SetLogLevel(int category, int level);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr EOS_EResult_ToString(int result);

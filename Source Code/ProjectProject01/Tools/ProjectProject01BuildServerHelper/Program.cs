@@ -165,6 +165,15 @@ internal sealed class MainForm : Form
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
             using var response = await http.GetAsync("http://127.0.0.1:5080/health", lifetime.Token);
             Append(response.IsSuccessStatusCode ? "[OK] 백엔드 /health 정상" : $"[주의] 백엔드 HTTP {(int)response.StatusCode}");
+            if (response.IsSuccessStatusCode)
+            {
+                using JsonDocument health = JsonDocument.Parse(await response.Content.ReadAsStringAsync(lifetime.Token));
+                bool eosVoiceReady = health.RootElement.TryGetProperty("eosVoiceReady", out JsonElement voiceReady) &&
+                    voiceReady.ValueKind == JsonValueKind.True;
+                Append(eosVoiceReady
+                    ? "[OK] EOS 음성 토큰 서비스 준비 완료"
+                    : "[실패] EOS 음성 토큰 서비스가 준비되지 않았습니다. 백엔드의 EOS 로그를 확인하세요.");
+            }
         }
         catch { Append("[정보] 백엔드 5080은 현재 실행 중이 아닙니다."); }
         Append(LoadGameServerSharedSecret() is { Length: >= 32 }
