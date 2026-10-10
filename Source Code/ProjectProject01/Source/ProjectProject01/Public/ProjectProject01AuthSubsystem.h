@@ -61,6 +61,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Authentication")
 	void Logout();
 
+	/** 로그인 화면을 떠날 때 아직 끝나지 않은 로그인/회원가입 요청을 취소하고 잠금 상태를 해제합니다. */
+	void CancelPendingAuthentication();
+
 	/** 멀티플레이 서비스 상태만 확인합니다. 싱글플레이에서는 자동 호출하지 않습니다. */
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Service")
 	void CheckMultiplayerServiceStatus();
@@ -124,10 +127,10 @@ private:
 	FString AllowedInsecureVpnApiBaseUrl;
 
 	UPROPERTY(Config)
-	float RequestTimeoutSeconds = 10.0f;
+	float RequestTimeoutSeconds = 5.0f;
 
 	UPROPERTY(Config)
-	int32 MaxRetryCount = 1;
+	int32 MaxRetryCount = 0;
 
 	UPROPERTY(Transient)
 	EProjectProject01AuthState AuthState = EProjectProject01AuthState::SignedOut;

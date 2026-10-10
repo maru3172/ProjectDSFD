@@ -481,6 +481,28 @@ void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 	{
 		return;
 	}
+	UProjectProject01AuthSubsystem* Auth = nullptr;
+	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>();
+	}
+	if (IsValid(Auth) && Auth->IsSignedIn())
+	{
+		bNavigationRequested = true;
+		SetMenuEnabled(false);
+		UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")), true);
+		return;
+	}
+	if (IsValid(Auth) && Auth->GetAuthState() != EProjectProject01AuthState::SignedOut)
+	{
+		if (IsValid(StatusText))
+		{
+			StatusText->SetText(FProjectProject01Localization::Text(
+				TEXT("이전 로그인 요청을 처리 중입니다. 서버가 응답하지 않으면 5초 안에 해제됩니다.")));
+			StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+		}
+		return;
+	}
 	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
 	const FString ServerAddress = IsValid(Settings) ? Settings->GetDirectServerAddress() : FString();
 	if (!ProjectProject01LoginUI::IsSupportedServerIpv4(ServerAddress))
@@ -702,6 +724,7 @@ void UProjectProject01LoginWidget::NativeDestruct()
 			Auth->OnLoginCompleted.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleLoginResult);
 			Auth->OnRegistrationCompleted.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleRegistrationResult);
 			Auth->OnServiceStatusChanged.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleServiceStatusChanged);
+			Auth->CancelPendingAuthentication();
 		}
 	}
 	Super::NativeDestruct();
@@ -713,6 +736,13 @@ void UProjectProject01LoginWidget::HandleReturnToTitleClicked()
 	{
 		SetStatus(TEXT("타이틀 화면을 열 수 없습니다."), true);
 		return;
+	}
+	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->CancelPendingAuthentication();
+		}
 	}
 
 	SetRequestControlsEnabled(false);
