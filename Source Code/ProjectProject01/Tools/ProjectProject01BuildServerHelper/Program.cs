@@ -810,17 +810,21 @@ internal sealed class MainForm : Form
         string clientRoot = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string serverRoot = Path.Combine(archiveRoot.Text.Trim(), "Server");
         string? clientBinary = Directory.Exists(clientRoot)
-            ? Directory.EnumerateFiles(clientRoot, "ProjectProject01-Win64-Shipping.exe", SearchOption.AllDirectories)
+            ? Directory.EnumerateFiles(clientRoot, "ProjectProject01.exe", SearchOption.AllDirectories)
+                .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar))
                 .FirstOrDefault()
             : null;
         string? serverBinary = Directory.Exists(serverRoot)
             ? Directory.EnumerateFiles(serverRoot, "ProjectProject01Server.exe", SearchOption.AllDirectories)
-                .FirstOrDefault(path => path.Contains(
-                    $"{Path.DirectorySeparatorChar}Binaries{Path.DirectorySeparatorChar}Win64{Path.DirectorySeparatorChar}",
-                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar))
+                .FirstOrDefault()
             : null;
         if (clientBinary is null || serverBinary is null) return true;
 
+        // 부트스트랩 실행 파일은 같은 Unreal 빌드에서 클라이언트/서버 모두 동일한
+        // UE5-CL 식별자를 사용한다. 내부 모놀리식 실행 파일의 ProductVersion은 같은
+        // 소스 엔진에서도 클라이언트는 UE5-CL-0, 서버는 5.8.3처럼 형식이 다를 수 있어
+        // 호환성 판정에 사용하면 정상 패키지를 오차단한다.
         string clientVersion = FileVersionInfo.GetVersionInfo(clientBinary).ProductVersion ?? string.Empty;
         string serverVersion = FileVersionInfo.GetVersionInfo(serverBinary).ProductVersion ?? string.Empty;
         if (string.Equals(clientVersion, serverVersion, StringComparison.OrdinalIgnoreCase)) return true;
