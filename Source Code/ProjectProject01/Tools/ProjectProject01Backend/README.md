@@ -168,6 +168,26 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ProjectProject01MySql
 
 백업 파일은 Git에서 제외된 `LocalMySql/Backups`에 저장됩니다. 실제 운영에서는 별도 암호화 저장소로 복제하고 복구 시험을 수행해야 합니다.
 
+## 클라이언트 업데이트 배포
+
+빌드·서버 도우미의 **클라이언트 패키징**이 성공하면 패키지 루트에 런처와
+`client-update-manifest.json`이 자동 생성됩니다. 이미 패키징된 결과에는
+**클라이언트 업데이트 게시** 버튼으로 매니페스트만 다시 생성할 수 있습니다.
+
+백엔드는 다음 읽기 전용 경로를 제공합니다.
+
+```text
+GET /api/client-updates/manifest
+GET /api/client-updates/files/{매니페스트의 상대 경로}
+```
+
+기본 게시 루트는 프로젝트의 `Builds/Client`입니다. 다른 디렉터리를 사용할 때에는
+백엔드 환경변수 `ClientUpdates__RootPath`에 절대 경로를 지정합니다. 매니페스트와 파일은
+서버 관리자가 새 빌드를 게시한 경우에만 바뀌며 MySQL은 이 전달 과정에 노출되지 않습니다.
+
+현재 개발/LAN 시험은 HTTP 5080을 사용합니다. 공개 인터넷 배포 시에는 이 엔드포인트도
+HTTPS 뒤에 두고, 신뢰할 수 있는 배포 저장소·코드 서명·롤백 정책을 추가해야 합니다.
+
 ## 배포 전 확인
 
 1. 공개 API가 유효한 HTTPS 인증서로만 응답하는지 확인합니다.

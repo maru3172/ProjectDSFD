@@ -84,7 +84,7 @@ public:
 	const FString& GetAccessTokenForAuthenticatedRequest() const { return AccessToken; }
 	const FString& GetApiBaseUrlForAuthenticatedRequest() const { return ApiBaseUrl; }
 	const FString& GetAllowedInsecureVpnApiBaseUrl() const { return AllowedInsecureVpnApiBaseUrl; }
-	/** 로그인 전에 선택한 자동 연결/IP 직접 입력 테스트 API 주소를 적용합니다. */
+	/** 로그인 전에 사용자가 직접 입력한 서버 IP의 테스트 API 주소를 적용합니다. */
 	bool ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl);
 	void RefreshSession(TFunction<void(bool)> Completion);
 

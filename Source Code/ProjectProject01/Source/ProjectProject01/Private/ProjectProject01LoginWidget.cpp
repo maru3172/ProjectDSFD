@@ -117,6 +117,69 @@ namespace ProjectProject01LoginUI
 		ComboBox->SetItemStyle(ItemStyle);
 	}
 
+	void SetEditableTextBoxTextBlack(UEditableTextBox* TextBox)
+	{
+		if (!IsValid(TextBox))
+		{
+			return;
+		}
+		const FSlateColor Black(FLinearColor::Black);
+		FEditableTextBoxStyle Style = TextBox->GetWidgetStyle();
+		FTextBlockStyle TextStyle = Style.TextStyle;
+		TextStyle.SetColorAndOpacity(Black);
+		Style.SetTextStyle(TextStyle)
+			.SetForegroundColor(Black)
+			.SetFocusedForegroundColor(Black)
+			.SetReadOnlyForegroundColor(Black);
+		TextBox->SetWidgetStyle(Style);
+		TextBox->SetForegroundColor(FLinearColor::Black);
+	}
+
+	void SetEditableTextBoxTextBlack(UMultiLineEditableTextBox* TextBox)
+	{
+		if (!IsValid(TextBox))
+		{
+			return;
+		}
+		const FSlateColor Black(FLinearColor::Black);
+		FEditableTextBoxStyle Style = TextBox->WidgetStyle;
+		FTextBlockStyle TextStyle = Style.TextStyle;
+		TextStyle.SetColorAndOpacity(Black);
+		Style.SetTextStyle(TextStyle)
+			.SetForegroundColor(Black)
+			.SetFocusedForegroundColor(Black)
+			.SetReadOnlyForegroundColor(Black);
+		TextBox->WidgetStyle = Style;
+		TextBox->SetTextStyle(TextStyle);
+		TextBox->SetForegroundColor(FLinearColor::Black);
+	}
+
+	UButton* AddTabButton(UWidgetTree* WidgetTree, UHorizontalBox* Root, const FString& Text)
+	{
+		UButton* Button = WidgetTree->ConstructWidget<UButton>();
+		UTextBlock* ButtonText = WidgetTree->ConstructWidget<UTextBlock>();
+		ButtonText->SetText(FProjectProject01Localization::Text(Text));
+		ButtonText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+		ButtonText->SetJustification(ETextJustify::Center);
+		Button->AddChild(ButtonText);
+		Root->AddChild(Button);
+		if (UHorizontalBoxSlot* Slot = Cast<UHorizontalBoxSlot>(Button->Slot))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			Slot->SetPadding(FMargin(3.0f));
+		}
+		return Button;
+	}
+
+	UVerticalBox* AddSettingsPage(UWidgetTree* WidgetTree, UWidgetSwitcher* Switcher)
+	{
+		UScrollBox* PageScroll = WidgetTree->ConstructWidget<UScrollBox>();
+		Switcher->AddChild(PageScroll);
+		UVerticalBox* Page = WidgetTree->ConstructWidget<UVerticalBox>();
+		PageScroll->AddChild(Page);
+		return Page;
+	}
+
 	UTextBlock* AddPlainText(UWidgetTree* WidgetTree, UPanelWidget* Parent, const FString& Text, const float FontSize = 14.0f)
 	{
 		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
@@ -418,6 +481,32 @@ void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 	{
 		return;
 	}
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const FString ServerAddress = IsValid(Settings) ? Settings->GetDirectServerAddress() : FString();
+	if (!ProjectProject01LoginUI::IsSupportedServerIpv4(ServerAddress))
+	{
+		if (IsValid(StatusText))
+		{
+			StatusText->SetText(FProjectProject01Localization::Text(
+				TEXT("환경설정에서 접속할 서버 PC의 IPv4 주소를 먼저 입력하세요.")));
+			StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+		}
+		return;
+	}
+	if (UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+		IsValid(ProjectGameInstance))
+	{
+		FString ConnectionError;
+		if (!ProjectGameInstance->ConfigureMultiplayerServerAddress(ServerAddress, ConnectionError))
+		{
+			if (IsValid(StatusText))
+			{
+				StatusText->SetText(FProjectProject01Localization::Text(ConnectionError));
+				StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+			}
+			return;
+		}
+	}
 
 	bNavigationRequested = true;
 	SetMenuEnabled(false);
@@ -491,6 +580,7 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		Menu,
 		TEXT("싱글 플레이는 로컬 게임으로 시작하며, 멀티플레이는 로그인 화면으로 이동합니다."),
 		14.0f);
+	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT(""), 14.0f);
 	SinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("싱글 플레이"));
 	ContinueSinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("싱글 이어하기"));
 	MultiplayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("멀티플레이"));
@@ -737,18 +827,18 @@ void UProjectProject01LoginWidget::BuildWidgetTree()
 
 	AccountIdInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	AccountIdInput->SetHintText(FProjectProject01Localization::Text(TEXT("계정 ID (영문/숫자/밑줄 3~32자)")));
-	AccountIdInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(AccountIdInput);
 	Root->AddChildToVerticalBox(AccountIdInput)->SetPadding(FMargin(6.0f));
 
 	PasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	PasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("비밀번호 (10~128자)")));
-	PasswordInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(PasswordInput);
 	PasswordInput->SetIsPassword(true);
 	Root->AddChildToVerticalBox(PasswordInput)->SetPadding(FMargin(6.0f));
 
 	DisplayNameInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	DisplayNameInput->SetHintText(FProjectProject01Localization::Text(TEXT("표시 이름 (회원가입 시 2~32자)")));
-	DisplayNameInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DisplayNameInput);
 	Root->AddChildToVerticalBox(DisplayNameInput)->SetPadding(FMargin(6.0f));
 
 	LoginButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("로그인"));
@@ -1844,6 +1934,7 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	Super::NativeConstruct();
 	LoadPendingFromSettings();
 	RefreshAllControls();
+	SetActiveSettingsPage(0);
 
 	MasterVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
 	SFXVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSFXVolumeChanged);
@@ -1874,7 +1965,6 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	PostProcessQualityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
 	VFXIntensityComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
 	ColorVisionModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionModeChanged);
-	ServerConnectionModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleServerConnectionModeChanged);
 	ForwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
 	BackwardKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
 	LeftKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
@@ -1888,8 +1978,12 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	ApplyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleApplyClicked);
 	CancelButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleCancelClicked);
 	DefaultsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleDefaultsClicked);
-	ConfirmVideoButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleConfirmVideoClicked);
 	RevertVideoButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleRevertVideoClicked);
+	ServerSettingsTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleServerSettingsTabClicked);
+	AudioSettingsTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleAudioSettingsTabClicked);
+	VideoSettingsTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVideoSettingsTabClicked);
+	AccessibilitySettingsTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleAccessibilitySettingsTabClicked);
+	ControlsSettingsTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleControlsSettingsTabClicked);
 	RestoreSettingsInputFocus();
 }
 
@@ -1924,7 +2018,6 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(PostProcessQualityComboBox)) PostProcessQualityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandlePostProcessQualityChanged);
 	if (IsValid(VFXIntensityComboBox)) VFXIntensityComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVFXIntensityChanged);
 	if (IsValid(ColorVisionModeComboBox)) ColorVisionModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleColorVisionModeChanged);
-	if (IsValid(ServerConnectionModeComboBox)) ServerConnectionModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleServerConnectionModeChanged);
 	if (IsValid(ForwardKeyButton)) ForwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleForwardBindingClicked);
 	if (IsValid(BackwardKeyButton)) BackwardKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleBackwardBindingClicked);
 	if (IsValid(LeftKeyButton)) LeftKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleLeftBindingClicked);
@@ -1938,30 +2031,13 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(ApplyButton)) ApplyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleApplyClicked);
 	if (IsValid(CancelButton)) CancelButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleCancelClicked);
 	if (IsValid(DefaultsButton)) DefaultsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleDefaultsClicked);
-	if (IsValid(ConfirmVideoButton)) ConfirmVideoButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleConfirmVideoClicked);
 	if (IsValid(RevertVideoButton)) RevertVideoButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleRevertVideoClicked);
+	if (IsValid(ServerSettingsTabButton)) ServerSettingsTabButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleServerSettingsTabClicked);
+	if (IsValid(AudioSettingsTabButton)) AudioSettingsTabButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleAudioSettingsTabClicked);
+	if (IsValid(VideoSettingsTabButton)) VideoSettingsTabButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVideoSettingsTabClicked);
+	if (IsValid(AccessibilitySettingsTabButton)) AccessibilitySettingsTabButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleAccessibilitySettingsTabClicked);
+	if (IsValid(ControlsSettingsTabButton)) ControlsSettingsTabButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleControlsSettingsTabClicked);
 	Super::NativeDestruct();
-}
-
-void UProjectProject01SettingsWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-	if (!bAwaitingVideoConfirmation)
-	{
-		return;
-	}
-	VideoConfirmationSecondsRemaining -= InDeltaTime;
-	if (VideoConfirmationSecondsRemaining <= 0.0f)
-	{
-		RevertPendingVideoMode();
-		return;
-	}
-	if (IsValid(VideoConfirmText))
-	{
-		VideoConfirmText->SetText(FText::FromString(FString::Printf(
-			TEXT("이 화면 설정을 유지하시겠습니까? %.0f초 후 자동 복구됩니다."),
-			FMath::CeilToFloat(VideoConfirmationSecondsRemaining))));
-	}
 }
 
 FReply UProjectProject01SettingsWidget::NativeOnKeyDown(
@@ -2062,18 +2138,6 @@ void UProjectProject01SettingsWidget::HandleColorVisionModeChanged(const FString
 	else PendingColorVisionMode = EProjectProject01ColorVisionMode::Normal;
 }
 
-void UProjectProject01SettingsWidget::HandleServerConnectionModeChanged(const FString Item, ESelectInfo::Type)
-{
-	if (bRefreshingControls) return;
-	bPendingAutomaticServerConnection = Item == TEXT("자동 연결");
-	if (IsValid(DirectServerAddressInput))
-	{
-		DirectServerAddressInput->SetIsEnabled(!bPendingAutomaticServerConnection);
-		DirectServerAddressInput->SetVisibility(bPendingAutomaticServerConnection
-			? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
-	}
-}
-
 void UProjectProject01SettingsWidget::HandleForwardBindingClicked() { BeginBindingCapture(EBindingTarget::Forward); }
 void UProjectProject01SettingsWidget::HandleBackwardBindingClicked() { BeginBindingCapture(EBindingTarget::Backward); }
 void UProjectProject01SettingsWidget::HandleLeftBindingClicked() { BeginBindingCapture(EBindingTarget::Left); }
@@ -2088,7 +2152,7 @@ void UProjectProject01SettingsWidget::HandleApplyClicked() { ApplyPendingSetting
 
 void UProjectProject01SettingsWidget::HandleCancelClicked()
 {
-	if (bAwaitingVideoConfirmation) RevertPendingVideoMode();
+	if (bAwaitingVideoConfirmation) ConfirmPendingVideoMode();
 	CloseToReturnWidget();
 }
 
@@ -2096,11 +2160,15 @@ void UProjectProject01SettingsWidget::HandleDefaultsClicked()
 {
 	SetPendingDefaults();
 	RefreshAllControls();
-	SetStatus(TEXT("기본값을 불러왔습니다. 적용 버튼을 눌러 저장하세요."));
+	ApplyPendingSettings();
 }
 
-void UProjectProject01SettingsWidget::HandleConfirmVideoClicked() { ConfirmPendingVideoMode(); }
 void UProjectProject01SettingsWidget::HandleRevertVideoClicked() { RevertPendingVideoMode(); }
+void UProjectProject01SettingsWidget::HandleServerSettingsTabClicked() { SetActiveSettingsPage(0); }
+void UProjectProject01SettingsWidget::HandleAudioSettingsTabClicked() { SetActiveSettingsPage(1); }
+void UProjectProject01SettingsWidget::HandleVideoSettingsTabClicked() { SetActiveSettingsPage(2); }
+void UProjectProject01SettingsWidget::HandleAccessibilitySettingsTabClicked() { SetActiveSettingsPage(3); }
+void UProjectProject01SettingsWidget::HandleControlsSettingsTabClicked() { SetActiveSettingsPage(4); }
 
 void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 {
@@ -2152,7 +2220,6 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 	PendingHelpPingKey = Settings->GetHelpPingKey();
 	PendingDangerPingKey = Settings->GetDangerPingKey();
 	PendingLocationPingKey = Settings->GetLocationPingKey();
-	bPendingAutomaticServerConnection = Settings->IsAutomaticServerConnectionEnabled();
 	PendingDirectServerAddress = Settings->GetDirectServerAddress();
 }
 
@@ -2193,7 +2260,6 @@ void UProjectProject01SettingsWidget::SetPendingDefaults()
 	PendingHelpPingKey = EKeys::Z;
 	PendingDangerPingKey = EKeys::X;
 	PendingLocationPingKey = EKeys::C;
-	bPendingAutomaticServerConnection = true;
 	PendingDirectServerAddress.Reset();
 }
 
@@ -2219,12 +2285,9 @@ void UProjectProject01SettingsWidget::RefreshAllControls()
 	MotionBlurCheckBox->SetIsChecked(bPendingMotionBlur);
 	SubtitlesCheckBox->SetIsChecked(bPendingSubtitles);
 	EnhancedVisualCuesCheckBox->SetIsChecked(bPendingEnhancedVisualCues);
-	ServerConnectionModeComboBox->SetSelectedOption(
-		bPendingAutomaticServerConnection ? TEXT("자동 연결") : TEXT("IP 직접 입력"));
 	DirectServerAddressInput->SetText(FText::FromString(PendingDirectServerAddress));
-	DirectServerAddressInput->SetIsEnabled(!bPendingAutomaticServerConnection);
-	DirectServerAddressInput->SetVisibility(bPendingAutomaticServerConnection
-		? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	DirectServerAddressInput->SetIsEnabled(true);
+	DirectServerAddressInput->SetVisibility(ESlateVisibility::Visible);
 	WindowModeComboBox->SetSelectedOption(PendingWindowMode == EWindowMode::Fullscreen
 		? TEXT("전체화면") : PendingWindowMode == EWindowMode::WindowedFullscreen
 		? TEXT("테두리 없는 창") : TEXT("창모드"));
@@ -2340,10 +2403,15 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 		SetStatus(TEXT("사용자 설정 객체를 찾지 못했습니다."), true);
 		return;
 	}
+	// 이미 적용한 화면 설정을 다시 편집하는 경우 현재 화면을 다음 되돌리기의 기준으로 확정한다.
+	if (bAwaitingVideoConfirmation)
+	{
+		ConfirmPendingVideoMode();
+	}
 	PendingDirectServerAddress = IsValid(DirectServerAddressInput)
 		? DirectServerAddressInput->GetText().ToString().TrimStartAndEnd()
 		: PendingDirectServerAddress;
-	if (!bPendingAutomaticServerConnection &&
+	if (!PendingDirectServerAddress.IsEmpty() &&
 		!ProjectProject01LoginUI::IsSupportedServerIpv4(PendingDirectServerAddress))
 	{
 		SetStatus(TEXT("IP 직접 입력에는 서버 PC의 올바른 25.x 또는 사설 IPv4 주소를 입력하세요."), true);
@@ -2391,17 +2459,16 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetHelpPingKey(PendingHelpPingKey);
 	Settings->SetDangerPingKey(PendingDangerPingKey);
 	Settings->SetLocationPingKey(PendingLocationPingKey);
-	Settings->SetAutomaticServerConnectionEnabled(bPendingAutomaticServerConnection);
 	Settings->SetDirectServerAddress(PendingDirectServerAddress);
 	Settings->SetScreenResolution(PendingResolution);
 	Settings->SetFullscreenMode(PendingWindowMode);
 	Settings->ApplyNonResolutionSettings();
 	if (UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
-		IsValid(ProjectGameInstance))
+		IsValid(ProjectGameInstance) && !PendingDirectServerAddress.IsEmpty())
 	{
 		FString ConnectionError;
 		if (!ProjectGameInstance->ConfigureMultiplayerServerAddress(
-			PendingDirectServerAddress, bPendingAutomaticServerConnection, ConnectionError))
+			PendingDirectServerAddress, ConnectionError))
 		{
 			if (const UProjectProject01AuthSubsystem* Auth =
 				ProjectGameInstance->GetSubsystem<UProjectProject01AuthSubsystem>();
@@ -2416,10 +2483,15 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	if (bVideoModeChanged)
 	{
 		Settings->ApplyResolutionSettings(false);
+		Settings->SaveSettings();
 		bAwaitingVideoConfirmation = true;
-		VideoConfirmationSecondsRemaining = 15.0f;
 		VideoConfirmPanel->SetVisibility(ESlateVisibility::Visible);
-		SetStatus(TEXT("화면 설정을 확인해 주세요."));
+		if (IsValid(VideoConfirmText))
+		{
+			VideoConfirmText->SetText(FProjectProject01Localization::Text(
+				TEXT("화면 설정을 적용했습니다. 이전 설정으로 돌아가려면 되돌리기를 누르세요.")));
+		}
+		SetStatus(TEXT("환경설정을 적용하고 저장했습니다. 화면 설정은 되돌리기를 누르기 전까지 유지됩니다."));
 		RestoreSettingsInputFocus();
 		return;
 	}
@@ -2449,6 +2521,7 @@ void UProjectProject01SettingsWidget::RevertPendingVideoMode()
 	{
 		Settings->RevertVideoMode();
 		Settings->ApplyResolutionSettings(false);
+		Settings->ConfirmVideoMode();
 		Settings->SaveSettings();
 		PendingResolution = Settings->GetScreenResolution();
 		PendingWindowMode = Settings->GetFullscreenMode();
@@ -2456,7 +2529,7 @@ void UProjectProject01SettingsWidget::RevertPendingVideoMode()
 	bAwaitingVideoConfirmation = false;
 	VideoConfirmPanel->SetVisibility(ESlateVisibility::Collapsed);
 	RefreshAllControls();
-	SetStatus(TEXT("이전 화면 설정으로 자동 복구했습니다."));
+	SetStatus(TEXT("적용 전 화면 설정으로 되돌렸습니다."));
 	RestoreSettingsInputFocus();
 }
 
@@ -2557,6 +2630,38 @@ void UProjectProject01SettingsWidget::RestoreSettingsInputFocus()
 	SetKeyboardFocus();
 }
 
+void UProjectProject01SettingsWidget::SetActiveSettingsPage(const int32 PageIndex)
+{
+	if (!IsValid(SettingsPageSwitcher))
+	{
+		return;
+	}
+	const int32 SafePageIndex = FMath::Clamp(PageIndex, 0, SettingsPageSwitcher->GetNumWidgets() - 1);
+	SettingsPageSwitcher->SetActiveWidgetIndex(SafePageIndex);
+
+	const TArray<TPair<UButton*, FString>> Tabs = {
+		{ ServerSettingsTabButton, TEXT("서버 연결") },
+		{ AudioSettingsTabButton, TEXT("사운드") },
+		{ VideoSettingsTabButton, TEXT("화면·그래픽") },
+		{ AccessibilitySettingsTabButton, TEXT("접근성") },
+		{ ControlsSettingsTabButton, TEXT("조작") }
+	};
+	for (int32 Index = 0; Index < Tabs.Num(); ++Index)
+	{
+		UButton* Button = Tabs[Index].Key;
+		if (!IsValid(Button))
+		{
+			continue;
+		}
+		ProjectProject01LoginUI::SetButtonText(
+			Button,
+			(Index == SafePageIndex ? TEXT("● ") : TEXT("")) + Tabs[Index].Value);
+		Button->SetBackgroundColor(Index == SafePageIndex
+			? FLinearColor(0.55f, 0.72f, 0.95f, 1.0f)
+			: FLinearColor(0.82f, 0.82f, 0.82f, 1.0f));
+	}
+}
+
 void UProjectProject01SettingsWidget::BuildWidgetTree()
 {
 	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Settings widget has no WidgetTree."))) return;
@@ -2569,38 +2674,56 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
 		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
 	}
-	UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>();
-	Background->AddChild(Scroll);
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
-	Scroll->AddChild(Root);
+	Background->AddChild(Root);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("환경설정"), 30.0f);
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("변경 후 적용을 눌러 저장하세요."), 14.0f);
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("멀티플레이 서버 연결"), 20.0f);
-	ServerConnectionModeComboBox = ProjectProject01LoginUI::AddComboRow(
-		WidgetTree, Root, TEXT("서버 연결 방식"));
-	ServerConnectionModeComboBox->AddOption(TEXT("자동 연결"));
-	ServerConnectionModeComboBox->AddOption(TEXT("IP 직접 입력"));
+	UHorizontalBox* TabBar = WidgetTree->ConstructWidget<UHorizontalBox>();
+	if (UVerticalBoxSlot* TabBarSlot = Root->AddChildToVerticalBox(TabBar))
+	{
+		TabBarSlot->SetPadding(FMargin(4.0f, 2.0f));
+		TabBarSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	ServerSettingsTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, TabBar, TEXT("서버 연결"));
+	AudioSettingsTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, TabBar, TEXT("사운드"));
+	VideoSettingsTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, TabBar, TEXT("화면·그래픽"));
+	AccessibilitySettingsTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, TabBar, TEXT("접근성"));
+	ControlsSettingsTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, TabBar, TEXT("조작"));
+
+	SettingsPageSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
+	if (UVerticalBoxSlot* SwitcherSlot = Root->AddChildToVerticalBox(SettingsPageSwitcher))
+	{
+		SwitcherSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		SwitcherSlot->SetPadding(FMargin(4.0f));
+		SwitcherSlot->SetHorizontalAlignment(HAlign_Fill);
+		SwitcherSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	UVerticalBox* ServerPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SettingsPageSwitcher);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, ServerPage, TEXT("멀티플레이 서버 연결"), 20.0f);
 	DirectServerAddressInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	DirectServerAddressInput->SetHintText(FProjectProject01Localization::Text(
 		TEXT("서버 PC IPv4 주소 (예: 192.168.0.10)")));
-	DirectServerAddressInput->SetForegroundColor(FLinearColor::Black);
-	Root->AddChildToVerticalBox(DirectServerAddressInput)->SetPadding(FMargin(6.0f));
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
-		TEXT("자동 연결은 기본 서버 설정을 사용합니다. IP 직접 입력은 서버 PC의 IPv4 주소만 입력하세요."), 12.0f);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DirectServerAddressInput);
+	ServerPage->AddChildToVerticalBox(DirectServerAddressInput)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::AddLabel(WidgetTree, ServerPage,
+		TEXT("접속할 서버 PC의 IPv4 주소를 직접 입력하세요. 입력한 주소는 이 PC에 저장됩니다."), 12.0f);
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("사운드"), 20.0f);
-	MasterVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("전체 음량"), 0.0f, 1.0f, 0.01f, MasterVolumeValueText);
-	SFXVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("효과음 음량"), 0.0f, 1.0f, 0.01f, SFXVolumeValueText);
-	MusicVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("배경음악 음량"), 0.0f, 1.0f, 0.01f, MusicVolumeValueText);
-	UIVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("UI 음량"), 0.0f, 1.0f, 0.01f, UIVolumeValueText);
-	MuteAllCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("전체 음소거"));
-	MuteWhenUnfocusedCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("게임이 백그라운드일 때 음소거"));
+	UVerticalBox* AudioPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SettingsPageSwitcher);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, AudioPage, TEXT("사운드"), 20.0f);
+	MasterVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("전체 음량"), 0.0f, 1.0f, 0.01f, MasterVolumeValueText);
+	SFXVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("효과음 음량"), 0.0f, 1.0f, 0.01f, SFXVolumeValueText);
+	MusicVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("배경음악 음량"), 0.0f, 1.0f, 0.01f, MusicVolumeValueText);
+	UIVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("UI 음량"), 0.0f, 1.0f, 0.01f, UIVolumeValueText);
+	MuteAllCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, AudioPage, TEXT("전체 음소거"));
+	MuteWhenUnfocusedCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, AudioPage, TEXT("게임이 백그라운드일 때 음소거"));
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("화면 및 그래픽"), 20.0f);
-	WindowModeComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("화면 모드"));
+	UVerticalBox* VideoPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SettingsPageSwitcher);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, VideoPage, TEXT("화면 및 그래픽"), 20.0f);
+	WindowModeComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("화면 모드"));
 	WindowModeComboBox->AddOption(TEXT("전체화면")); WindowModeComboBox->AddOption(TEXT("테두리 없는 창")); WindowModeComboBox->AddOption(TEXT("창모드"));
-	ResolutionComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("해상도"));
+	ResolutionComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("해상도"));
 	TArray<FIntPoint> Resolutions;
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
 	Resolutions.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.X == B.X ? A.Y < B.Y : A.X < B.X; });
@@ -2609,10 +2732,10 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 		const FString Text = FString::Printf(TEXT("%d x %d"), Resolution.X, Resolution.Y);
 		if (ResolutionComboBox->FindOptionIndex(Text) == INDEX_NONE) ResolutionComboBox->AddOption(Text);
 	}
-	VSyncCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("수직동기화"));
-	FrameRateSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("최대 FPS"), 30.0f, 240.0f, 1.0f, FrameRateValueText);
-	ResolutionScaleSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("해상도 스케일"), 50.0f, 100.0f, 1.0f, ResolutionScaleValueText);
-	OverallQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("전체 그래픽 프리셋"));
+	VSyncCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, VideoPage, TEXT("수직동기화"));
+	FrameRateSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, VideoPage, TEXT("최대 FPS"), 30.0f, 240.0f, 1.0f, FrameRateValueText);
+	ResolutionScaleSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, VideoPage, TEXT("해상도 스케일"), 50.0f, 100.0f, 1.0f, ResolutionScaleValueText);
+	OverallQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("전체 그래픽 프리셋"));
 	const TArray<FString> OverallOptions = {
 		TEXT("낮음"), TEXT("중간"), TEXT("높음"), TEXT("매우 높음"), TEXT("사용자 지정") };
 	for (const FString& Option : OverallOptions) OverallQualityComboBox->AddOption(Option);
@@ -2620,60 +2743,63 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	{
 		Combo->AddOption(TEXT("낮음")); Combo->AddOption(TEXT("중간")); Combo->AddOption(TEXT("높음")); Combo->AddOption(TEXT("매우 높음"));
 	};
-	AAQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("안티앨리어싱 품질")); PopulateQuality(AAQualityComboBox);
-	ShadowQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("그림자 품질")); PopulateQuality(ShadowQualityComboBox);
-	TextureQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("텍스처 품질")); PopulateQuality(TextureQualityComboBox);
-	EffectsQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("이펙트 품질")); PopulateQuality(EffectsQualityComboBox);
-	PostProcessQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("후처리 품질")); PopulateQuality(PostProcessQualityComboBox);
-	MotionBlurCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("모션 블러"));
-	BrightnessSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("밝기 (안전 범위)"), 1.8f, 2.6f, 0.01f, BrightnessValueText);
-	VFXIntensityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("화면 번쩍임·일렁임"));
+	AAQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("안티앨리어싱 품질")); PopulateQuality(AAQualityComboBox);
+	ShadowQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("그림자 품질")); PopulateQuality(ShadowQualityComboBox);
+	TextureQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("텍스처 품질")); PopulateQuality(TextureQualityComboBox);
+	EffectsQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("이펙트 품질")); PopulateQuality(EffectsQualityComboBox);
+	PostProcessQualityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("후처리 품질")); PopulateQuality(PostProcessQualityComboBox);
+	MotionBlurCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, VideoPage, TEXT("모션 블러"));
+	BrightnessSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, VideoPage, TEXT("밝기 (안전 범위)"), 1.8f, 2.6f, 0.01f, BrightnessValueText);
+	VFXIntensityComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, VideoPage, TEXT("화면 번쩍임·일렁임"));
 	VFXIntensityComboBox->AddOption(TEXT("기본")); VFXIntensityComboBox->AddOption(TEXT("약하게"));
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("접근성"), 20.0f);
-	SubtitlesCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, Root, TEXT("자막 표시"));
+	UVerticalBox* AccessibilityPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SettingsPageSwitcher);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, AccessibilityPage, TEXT("접근성"), 20.0f);
+	SubtitlesCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, AccessibilityPage, TEXT("자막 표시"));
 	EnhancedVisualCuesCheckBox = ProjectProject01LoginUI::AddCheckRow(
-		WidgetTree, Root, TEXT("색상 외 형태·문구로 정보 표시"));
-	ColorVisionModeComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, Root, TEXT("색각 보정"));
+		WidgetTree, AccessibilityPage, TEXT("색상 외 형태·문구로 정보 표시"));
+	ColorVisionModeComboBox = ProjectProject01LoginUI::AddComboRow(WidgetTree, AccessibilityPage, TEXT("색각 보정"));
 	ColorVisionModeComboBox->AddOption(TEXT("보정 없음"));
 	ColorVisionModeComboBox->AddOption(TEXT("녹색약 보정"));
 	ColorVisionModeComboBox->AddOption(TEXT("적색약 보정"));
 	ColorVisionModeComboBox->AddOption(TEXT("청황색약 보정"));
 	ColorVisionSeveritySlider = ProjectProject01LoginUI::AddSliderRow(
-		WidgetTree, Root, TEXT("색각 보정 강도"), 0.0f, 10.0f, 1.0f, ColorVisionSeverityValueText);
+		WidgetTree, AccessibilityPage, TEXT("색각 보정 강도"), 0.0f, 10.0f, 1.0f, ColorVisionSeverityValueText);
 	ScreenFlashSlider = ProjectProject01LoginUI::AddSliderRow(
-		WidgetTree, Root, TEXT("화면 번쩍임 강도"), 0.0f, 1.0f, 0.05f, ScreenFlashValueText);
+		WidgetTree, AccessibilityPage, TEXT("화면 번쩍임 강도"), 0.0f, 1.0f, 0.05f, ScreenFlashValueText);
 	ScreenDistortionSlider = ProjectProject01LoginUI::AddSliderRow(
-		WidgetTree, Root, TEXT("화면 일렁임 강도"), 0.0f, 1.0f, 0.05f, ScreenDistortionValueText);
+		WidgetTree, AccessibilityPage, TEXT("화면 일렁임 강도"), 0.0f, 1.0f, 0.05f, ScreenDistortionValueText);
 	ScreenShakeSlider = ProjectProject01LoginUI::AddSliderRow(
-		WidgetTree, Root, TEXT("화면 흔들림 강도"), 0.0f, 1.0f, 0.05f, ScreenShakeValueText);
+		WidgetTree, AccessibilityPage, TEXT("화면 흔들림 강도"), 0.0f, 1.0f, 0.05f, ScreenShakeValueText);
 	UIReadableScaleSlider = ProjectProject01LoginUI::AddSliderRow(
-		WidgetTree, Root, TEXT("UI 크기·가독성"), 0.8f, 1.3f, 0.05f, UIReadableScaleValueText);
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
+		WidgetTree, AccessibilityPage, TEXT("UI 크기·가독성"), 0.8f, 1.3f, 0.05f, UIReadableScaleValueText);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, AccessibilityPage,
 		TEXT("자막은 자막 데이터가 있는 음성에 적용됩니다. 화면 흔들림 0%는 현재 흔들림을 즉시 중지하고 이후 효과의 기준값으로 저장합니다."), 12.0f);
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("조작"), 20.0f);
-	SensitivitySlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, Root, TEXT("마우스 감도"), 0.1f, 3.0f, 0.01f, SensitivityValueText);
-	ForwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("앞으로 이동"));
-	BackwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("뒤로 이동"));
-	LeftKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("왼쪽 이동"));
-	RightKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("오른쪽 이동"));
-	SprintKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("달리기"));
-	VoicePushToTalkKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("음성 채팅 누르고 말하기"));
-	VoiceToggleKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("음성 채팅 상시 송신 전환"));
-	HelpPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("도움 요청 핑"));
-	DangerPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("위험 알림 핑"));
-	LocationPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, Root, TEXT("위치 표시 핑"));
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("상호작용: 현재 공용 Input Action이 없어 아직 재설정할 수 없습니다. ESC 게임 메뉴는 고정입니다."), 12.0f);
+	UVerticalBox* ControlsPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SettingsPageSwitcher);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, ControlsPage, TEXT("조작"), 20.0f);
+	SensitivitySlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, ControlsPage, TEXT("마우스 감도"), 0.1f, 3.0f, 0.01f, SensitivityValueText);
+	ForwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("앞으로 이동"));
+	BackwardKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("뒤로 이동"));
+	LeftKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("왼쪽 이동"));
+	RightKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("오른쪽 이동"));
+	SprintKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("달리기"));
+	VoicePushToTalkKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("음성 채팅 누르고 말하기"));
+	VoiceToggleKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("음성 채팅 상시 송신 전환"));
+	HelpPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("도움 요청 핑"));
+	DangerPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("위험 알림 핑"));
+	LocationPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("위치 표시 핑"));
+	ProjectProject01LoginUI::AddLabel(WidgetTree, ControlsPage, TEXT("상호작용: 현재 공용 Input Action이 없어 아직 재설정할 수 없습니다. ESC 게임 메뉴는 고정입니다."), 12.0f);
 
 	DefaultsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("설정 초기화"));
 	ApplyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("적용"));
-	CancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("취소 / 돌아가기"));
+	CancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("돌아가기"));
 	VideoConfirmPanel = WidgetTree->ConstructWidget<UVerticalBox>();
 	Root->AddChildToVerticalBox(VideoConfirmPanel);
-	VideoConfirmText = ProjectProject01LoginUI::AddLabel(WidgetTree, VideoConfirmPanel, TEXT("이 화면 설정을 유지하시겠습니까?"), 14.0f);
-	ConfirmVideoButton = ProjectProject01LoginUI::AddButton(WidgetTree, VideoConfirmPanel, TEXT("유지"));
-	RevertVideoButton = ProjectProject01LoginUI::AddButton(WidgetTree, VideoConfirmPanel, TEXT("이전 설정으로 복구"));
+	VideoConfirmText = ProjectProject01LoginUI::AddLabel(
+		WidgetTree, VideoConfirmPanel,
+		TEXT("화면 설정을 적용했습니다. 이전 설정으로 돌아가려면 되돌리기를 누르세요."), 14.0f);
+	RevertVideoButton = ProjectProject01LoginUI::AddButton(WidgetTree, VideoConfirmPanel, TEXT("되돌리기"));
 	VideoConfirmPanel->SetVisibility(ESlateVisibility::Collapsed);
 }
 
@@ -2749,6 +2875,7 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 	if (IsValid(DeleteRoomButton)) DeleteRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleDeleteRoomClicked);
 	if (IsValid(CopyJoinCodeButton)) CopyJoinCodeButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleCopyJoinCodeClicked);
 	if (IsValid(SendChatButton)) SendChatButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleSendChatClicked);
+	if (IsValid(ChatInput)) ChatInput->OnTextCommitted.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleChatTextCommitted);
 	if (IsValid(OpenLeaderboardTestButton)) OpenLeaderboardTestButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleOpenLeaderboardTestClicked);
 	if (IsValid(LogoutButton))
 	{
@@ -2790,6 +2917,7 @@ void UProjectProject01LobbyWidget::NativeDestruct()
 	if (IsValid(OpenCreateRoomButton)) OpenCreateRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked);
 	if (IsValid(CancelCreateRoomButton)) CancelCreateRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleCancelCreateRoomClicked);
 	if (IsValid(RoomSearchInput)) RoomSearchInput->OnTextChanged.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleRoomSearchChanged);
+	if (IsValid(ChatInput)) ChatInput->OnTextCommitted.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleChatTextCommitted);
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(LobbyRefreshTimer);
@@ -2955,12 +3083,25 @@ void UProjectProject01LobbyWidget::HandleSendChatClicked()
 	{
 		return;
 	}
+	const FString Message = ChatInput->GetText().ToString().TrimStartAndEnd();
+	if (Message.IsEmpty())
+	{
+		return;
+	}
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
-			Lobby->SendChat(ChatInput->GetText().ToString());
+			Lobby->SendChat(Message);
 		}
+	}
+}
+
+void UProjectProject01LobbyWidget::HandleChatTextCommitted(const FText&, const ETextCommit::Type CommitMethod)
+{
+	if (CommitMethod == ETextCommit::OnEnter)
+	{
+		HandleSendChatClicked();
 	}
 }
 
@@ -3050,6 +3191,7 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	if (bSuccess && Operation == EProjectProject01LobbyOperation::SendChat && IsValid(ChatInput))
 	{
 		ChatInput->SetText(FText::GetEmpty());
+		ChatInput->SetKeyboardFocus();
 	}
 	if (bSuccess && Operation == EProjectProject01LobbyOperation::RequestGameTicket)
 	{
@@ -3348,7 +3490,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	OpenCreateRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("새 방 만들기"));
 	RoomSearchInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	RoomSearchInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 이름 / 참가 코드 / 방장 이름 검색")));
-	RoomSearchInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(RoomSearchInput);
 	BrowserPanel->AddChildToVerticalBox(RoomSearchInput)->SetPadding(FMargin(6.0f));
 	RefreshRoomsButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("공개방 목록 새로고침"));
 	RoomListComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
@@ -3356,11 +3498,11 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	BrowserPanel->AddChildToVerticalBox(RoomListComboBox)->SetPadding(FMargin(6.0f));
 	DirectRoomCodeInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	DirectRoomCodeInput->SetHintText(FProjectProject01Localization::Text(TEXT("6~8자리 참가 코드 (비공개방 또는 직접 참가)")));
-	DirectRoomCodeInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DirectRoomCodeInput);
 	BrowserPanel->AddChildToVerticalBox(DirectRoomCodeInput)->SetPadding(FMargin(6.0f));
 	JoinPasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	JoinPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("참가 비밀번호 (비밀번호방만)")));
-	JoinPasswordInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(JoinPasswordInput);
 	JoinPasswordInput->SetIsPassword(true);
 	BrowserPanel->AddChildToVerticalBox(JoinPasswordInput)->SetPadding(FMargin(6.0f));
 	JoinRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("선택/참가 코드로 방 참가"));
@@ -3372,7 +3514,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, CreatePanel, TEXT("새 방 만들기"), 20.0f);
 	RoomNameInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	RoomNameInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 이름 (1~48자)")));
-	RoomNameInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(RoomNameInput);
 	CreatePanel->AddChildToVerticalBox(RoomNameInput)->SetPadding(FMargin(6.0f));
 	PublicRoomCheckBox = WidgetTree->ConstructWidget<UCheckBox>();
 	PublicRoomCheckBox->SetIsChecked(true);
@@ -3389,7 +3531,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	CreatePanel->AddChildToVerticalBox(PublicModeBackground)->SetPadding(FMargin(6.0f));
 	CreatePasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	CreatePasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 비밀번호 (선택, 사용 시 4~64자)")));
-	CreatePasswordInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(CreatePasswordInput);
 	CreatePasswordInput->SetIsPassword(true);
 	CreatePanel->AddChildToVerticalBox(CreatePasswordInput)->SetPadding(FMargin(6.0f));
 	CreateRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, CreatePanel, TEXT("방 만들기"));
@@ -3420,11 +3562,11 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ChatLogText = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
 	ChatLogText->SetIsReadOnly(true);
 	ChatLogText->SetHintText(FProjectProject01Localization::Text(TEXT("방 채팅")));
-	ChatLogText->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(ChatLogText);
 	RoomPanel->AddChildToVerticalBox(ChatLogText)->SetPadding(FMargin(6.0f));
 	ChatInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	ChatInput->SetHintText(FProjectProject01Localization::Text(TEXT("채팅 입력 (최대 300자)")));
-	ChatInput->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(ChatInput);
 	RoomPanel->AddChildToVerticalBox(ChatInput)->SetPadding(FMargin(6.0f));
 	SendChatButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("채팅 보내기"));
 	SendChatButton->SetIsEnabled(false);
@@ -3690,7 +3832,7 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 
 	LeaderboardText = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
 	LeaderboardText->SetIsReadOnly(true);
-	LeaderboardText->SetForegroundColor(FLinearColor::Black);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(LeaderboardText);
 	Root->AddChildToVerticalBox(LeaderboardText)->SetPadding(FMargin(6.0f));
 
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
@@ -3700,7 +3842,7 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 		UEditableTextBox* Input = WidgetTree->ConstructWidget<UEditableTextBox>();
 		Input->SetHintText(FProjectProject01Localization::Text(Hint));
 		Input->SetText(FText::FromString(DefaultValue));
-		Input->SetForegroundColor(FLinearColor::Black);
+		ProjectProject01LoginUI::SetEditableTextBoxTextBlack(Input);
 		Root->AddChildToVerticalBox(Input)->SetPadding(FMargin(6.0f));
 		return Input;
 	};

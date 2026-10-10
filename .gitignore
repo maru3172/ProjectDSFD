@@ -80,6 +80,10 @@
 /Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/bin/
 /Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/obj/
 
+# ProjectProject01 client updater launcher (.NET generated output)
+/Source Code/ProjectProject01/Tools/ProjectProject01ClientLauncher/bin/
+/Source Code/ProjectProject01/Tools/ProjectProject01ClientLauncher/obj/
+
 # ProjectProject01 full-flow smoke test (.NET generated output)
 /Source Code/ProjectProject01/Tools/ProjectProject01SmokeTest/bin/
 /Source Code/ProjectProject01/Tools/ProjectProject01SmokeTest/obj/

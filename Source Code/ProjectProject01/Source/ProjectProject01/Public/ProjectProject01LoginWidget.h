@@ -81,6 +81,9 @@ private:
 	TObjectPtr<class UButton> QuitButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> StatusText;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
 	bool bNavigationRequested = false;
@@ -344,7 +347,6 @@ protected:
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
-	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
@@ -392,7 +394,6 @@ private:
 	UFUNCTION() void HandlePostProcessQualityChanged(FString Item, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleVFXIntensityChanged(FString Item, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleColorVisionModeChanged(FString Item, ESelectInfo::Type SelectionType);
-	UFUNCTION() void HandleServerConnectionModeChanged(FString Item, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleForwardBindingClicked();
 	UFUNCTION() void HandleBackwardBindingClicked();
 	UFUNCTION() void HandleLeftBindingClicked();
@@ -406,8 +407,12 @@ private:
 	UFUNCTION() void HandleApplyClicked();
 	UFUNCTION() void HandleCancelClicked();
 	UFUNCTION() void HandleDefaultsClicked();
-	UFUNCTION() void HandleConfirmVideoClicked();
 	UFUNCTION() void HandleRevertVideoClicked();
+	UFUNCTION() void HandleServerSettingsTabClicked();
+	UFUNCTION() void HandleAudioSettingsTabClicked();
+	UFUNCTION() void HandleVideoSettingsTabClicked();
+	UFUNCTION() void HandleAccessibilitySettingsTabClicked();
+	UFUNCTION() void HandleControlsSettingsTabClicked();
 
 	void BuildWidgetTree();
 	void LoadPendingFromSettings();
@@ -428,9 +433,16 @@ private:
 	bool ParseResolution(const FString& Item, FIntPoint& OutResolution) const;
 	void RefreshLocalPlayerInput() const;
 	void RestoreSettingsInputFocus();
+	void SetActiveSettingsPage(int32 PageIndex);
 
 	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> StatusText;
+	UPROPERTY(Transient) TObjectPtr<class UWidgetSwitcher> SettingsPageSwitcher;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ServerSettingsTabButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> AudioSettingsTabButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> VideoSettingsTabButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> AccessibilitySettingsTabButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ControlsSettingsTabButton;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> VideoConfirmText;
 	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> VideoConfirmPanel;
 	UPROPERTY(Transient) TObjectPtr<class USlider> MasterVolumeSlider;
@@ -475,7 +487,6 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> PostProcessQualityComboBox;
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> VFXIntensityComboBox;
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> ColorVisionModeComboBox;
-	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> ServerConnectionModeComboBox;
 	UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> DirectServerAddressInput;
 	UPROPERTY(Transient) TObjectPtr<class UButton> ForwardKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> BackwardKeyButton;
@@ -490,7 +501,6 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UButton> ApplyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> CancelButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> DefaultsButton;
-	UPROPERTY(Transient) TObjectPtr<class UButton> ConfirmVideoButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> RevertVideoButton;
 
 	float PendingMasterVolume = 1.0f;
@@ -512,7 +522,6 @@ private:
 	bool bPendingMotionBlur = true;
 	bool bPendingSubtitles = true;
 	bool bPendingEnhancedVisualCues = true;
-	bool bPendingAutomaticServerConnection = true;
 	FString PendingDirectServerAddress;
 	EWindowMode::Type PendingWindowMode = EWindowMode::WindowedFullscreen;
 	FIntPoint PendingResolution = FIntPoint(1920, 1080);
@@ -537,7 +546,6 @@ private:
 	EBindingTarget BindingTarget = EBindingTarget::None;
 	bool bRefreshingControls = false;
 	bool bAwaitingVideoConfirmation = false;
-	float VideoConfirmationSecondsRemaining = 0.0f;
 };
 
 UCLASS()
@@ -589,6 +597,9 @@ private:
 
 	UFUNCTION()
 	void HandleSendChatClicked();
+
+	UFUNCTION()
+	void HandleChatTextCommitted(const FText& Text, ETextCommit::Type CommitMethod);
 
 	UFUNCTION()
 	void HandleLogoutClicked();

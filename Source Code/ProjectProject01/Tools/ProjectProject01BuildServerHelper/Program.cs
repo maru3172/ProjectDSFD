@@ -2,8 +2,10 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ProjectProject01BuildServerHelper;
 
@@ -62,16 +64,15 @@ internal sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Padding = new Padding(0, 8, 0, 8) };
         AddButton(buttons, "환경 검사", async () => await ValidateAsync());
         AddButton(buttons, "클라이언트 패키징", async () => await PackageAsync(false));
+        AddButton(buttons, "클라이언트 업데이트 게시", PublishClientUpdateAsync);
         AddButton(buttons, "데디케이티드 서버 패키징", async () => await PackageAsync(true));
         AddButton(buttons, "MySQL 초기화/시작", async () => await RunMySqlAsync("Initialize"));
         AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
         AddButton(buttons, "백엔드 시작", StartBackend);
         AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
         AddButton(buttons, "EOS 보이스 자격 증명", OpenEosVoiceSetupAsync);
-        AddButton(buttons, "자동 연결 방화벽 설정", ConfigureHamachiFirewallAsync);
-        AddButton(buttons, "자동 연결 검사", () => ValidateHamachiConnectivityAsync(false));
         AddButton(buttons, "IP 직접 연결 방화벽 설정", ConfigureDirectIpFirewallAsync);
-        AddButton(buttons, "IP 직접 연결 검사", ValidateDirectIpConnectivityAsync);
+        AddButton(buttons, "IP 직접 연결 검사", () => ValidateDirectIpConnectivityAsync(false));
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 시작", StartServer);
         AddButton(buttons, "게임 서버 중지", () => { StopProcess(serverProcess, "게임 서버"); return Task.CompletedTask; });
@@ -166,26 +167,14 @@ internal sealed class MainForm : Form
             ? "[OK] EOS 보이스 서버 자격 증명이 구성되었습니다."
             : "[주의] EOS 보이스 서버 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 실행하세요.");
         string backendDirectory = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
-        string? vpnHost = GetConfiguredVpnHost(backendDirectory);
-        if (vpnHost is null)
-        {
-            Append("[주의] 외부 테스트용 자동 연결 주소가 구성되지 않았습니다.");
-        }
-        else
-        {
-            Append(IsLocalIpv4Address(vpnHost)
-                ? $"[OK] 자동 연결 주소 {vpnHost}가 이 PC에 활성화되어 있습니다."
-                : $"[실패] 설정된 자동 연결 주소 {vpnHost}가 현재 이 PC에 없습니다. 자동 연결 프로그램을 먼저 켜세요.");
-            Append($"[정보] 외부 클라이언트 백엔드: http://{vpnHost}:5080 / 게임 서버: {vpnHost}:7777");
-        }
-        var directAddresses = GetLocalLanAddresses();
+        var directAddresses = GetDirectConnectionAddresses(backendDirectory);
         if (directAddresses.Count == 0)
         {
-            Append("[정보] IP 직접 입력에 사용할 활성 사설 IPv4 주소가 없습니다.");
+            Append("[정보] 클라이언트가 직접 입력할 수 있는 활성 IPv4 주소가 없습니다.");
         }
         else
         {
-            foreach (var (address, interfaceName) in directAddresses)
+            foreach (var (address, interfaceName, _) in directAddresses)
             {
                 Append($"[OK] IP 직접 입력 주소: {address} ({interfaceName}) / 백엔드 {address}:5080 / 게임 서버 {address}:7777");
             }
@@ -218,8 +207,152 @@ internal sealed class MainForm : Form
         {
             code = await PackageClientWithLocalEosCredentialAsync(uat, args);
         }
+        if (code == 0 && !server)
+        {
+            Append("[OK] 클라이언트 패키징 성공. 업데이트 게시를 이어서 진행합니다.");
+            await PublishClientUpdateAsync();
+            return;
+        }
         SetStatus(code == 0 ? $"{role} 패키징 성공" : $"{role} 패키징 실패 (코드 {code})");
     }
+
+    private async Task PublishClientUpdateAsync()
+    {
+        string clientArchive = Path.Combine(archiveRoot.Text.Trim(), "Client");
+        string? gameExecutable = Directory.Exists(clientArchive)
+            ? Directory.EnumerateFiles(clientArchive, "ProjectProject01.exe", SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault()
+            : null;
+        if (gameExecutable is null)
+        {
+            Append("[차단] 패키징된 클라이언트를 찾지 못했습니다. 먼저 '클라이언트 패키징'을 실행하세요.");
+            SetStatus("업데이트 게시 실패: 패키징 클라이언트 없음");
+            return;
+        }
+
+        string publishedRoot = Path.GetDirectoryName(gameExecutable)!;
+        string launcherProject = Path.Combine(
+            ProjectRoot(), "Tools", "ProjectProject01ClientLauncher", "ProjectProject01ClientLauncher.csproj");
+        if (!File.Exists(launcherProject))
+        {
+            Append("[실패] 클라이언트 업데이트 런처 프로젝트가 없습니다.");
+            SetStatus("업데이트 게시 실패");
+            return;
+        }
+
+        SetStatus("업데이트 런처 준비 중...");
+        string launcherPublish = Path.Combine(ProjectRoot(), "Saved", "ClientLauncherPublish");
+        Directory.CreateDirectory(launcherPublish);
+        int publishCode = await RunCapturedAsync(
+            "dotnet",
+            $"publish \"{launcherProject}\" -c Release -r win-x64 --self-contained true " +
+            $"-p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o \"{launcherPublish}\"",
+            ProjectRoot());
+        if (publishCode != 0)
+        {
+            SetStatus($"업데이트 런처 빌드 실패 (코드 {publishCode})");
+            return;
+        }
+
+        string launcherSource = Path.Combine(launcherPublish, "ProjectProject01ClientLauncher.exe");
+        if (!File.Exists(launcherSource))
+        {
+            Append("[실패] 게시된 런처 실행 파일을 찾지 못했습니다.");
+            SetStatus("업데이트 런처 준비 실패");
+            return;
+        }
+        string launcherTarget = Path.Combine(publishedRoot, "ProjectProject01ClientLauncher.exe");
+        File.Copy(launcherSource, launcherTarget, true);
+        await File.WriteAllTextAsync(
+            Path.Combine(publishedRoot, "업데이트_실행방법.txt"),
+            "ProjectProject01ClientLauncher.exe를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
+            "'업데이트 및 실행'을 누르세요.\r\n게임 실행 파일을 직접 실행하면 자동 업데이트를 확인하지 않습니다.\r\n",
+            new UTF8Encoding(true), lifetime.Token);
+
+        SetStatus("클라이언트 파일 해시 계산 중...");
+        string manifestPath = Path.Combine(publishedRoot, "client-update-manifest.json");
+        var files = new List<PublishedClientUpdateFile>();
+        string[] packageFiles = Directory.EnumerateFiles(publishedRoot, "*", SearchOption.AllDirectories)
+            .Where(path => !ShouldExcludeFromClientUpdate(publishedRoot, path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        for (int index = 0; index < packageFiles.Length; index++)
+        {
+            lifetime.Token.ThrowIfCancellationRequested();
+            string path = packageFiles[index];
+            var info = new FileInfo(path);
+            await using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 128, true);
+            byte[] hash = await SHA256.HashDataAsync(stream, lifetime.Token);
+            files.Add(new PublishedClientUpdateFile(
+                Path.GetRelativePath(publishedRoot, path).Replace('\\', '/'),
+                info.Length,
+                Convert.ToHexString(hash).ToLowerInvariant()));
+            SetStatus($"클라이언트 파일 해시 계산 중... {index + 1}/{packageFiles.Length}");
+        }
+        if (files.Count == 0)
+        {
+            Append("[실패] 업데이트에 포함할 클라이언트 파일이 없습니다.");
+            SetStatus("업데이트 게시 실패");
+            return;
+        }
+
+        string clientVersion = ReadClientVersion();
+        string releaseId = $"{clientVersion}-{DateTime.UtcNow:yyyyMMddHHmmss}";
+        var manifest = new PublishedClientUpdateManifest(
+            releaseId,
+            clientVersion,
+            DateTime.UtcNow,
+            Path.GetRelativePath(publishedRoot, gameExecutable).Replace('\\', '/'),
+            files);
+        await File.WriteAllTextAsync(
+            manifestPath,
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            }),
+            new UTF8Encoding(false), lifetime.Token);
+
+        long totalBytes = files.Sum(file => file.Size);
+        Append($"[OK] 클라이언트 업데이트 게시 완료: {releaseId}");
+        Append($"[정보] 파일 {files.Count}개 / {FormatBytes(totalBytes)} / 위치: {publishedRoot}");
+        foreach (var (address, _, _) in GetDirectConnectionAddresses(
+            Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend")))
+        {
+            Append($"[안내] 런처 업데이트 주소: http://{address}:5080/api/client-updates/manifest");
+        }
+        Append("[안내] 최초 배포 때는 이 폴더 전체를 한 번 전달하고, 이후 사용자는 런처만 실행하면 됩니다.");
+        SetStatus("클라이언트 업데이트 게시 완료");
+    }
+
+    private static bool ShouldExcludeFromClientUpdate(string publishedRoot, string path)
+    {
+        string relative = Path.GetRelativePath(publishedRoot, path).Replace('\\', '/');
+        return relative.Equals("client-update-manifest.json", StringComparison.OrdinalIgnoreCase) ||
+            relative.Equals(".projectproject01-update.json", StringComparison.OrdinalIgnoreCase) ||
+            relative.StartsWith(".update-temp/", StringComparison.OrdinalIgnoreCase) ||
+            relative.StartsWith(".update-backup/", StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(relative).StartsWith("ProjectProject01ClientLauncher", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string ReadClientVersion()
+    {
+        string configPath = Path.Combine(ProjectRoot(), "Config", "DefaultGame.ini");
+        if (!File.Exists(configPath)) return "1.0.0";
+        string config = File.ReadAllText(configPath);
+        Match match = Regex.Match(config, @"(?im)^ProjectVersion\s*=\s*([^\r\n;]+)");
+        return match.Success ? match.Groups[1].Value.Trim() : "1.0.0";
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024L * 1024 * 1024 => $"{bytes / (1024d * 1024 * 1024):0.00} GB",
+        >= 1024L * 1024 => $"{bytes / (1024d * 1024):0.00} MB",
+        >= 1024L => $"{bytes / 1024d:0.00} KB",
+        _ => $"{bytes} B"
+    };
 
     private async Task<int> PackageClientWithLocalEosCredentialAsync(string uat, string args)
     {
@@ -274,7 +407,7 @@ internal sealed class MainForm : Form
             return;
         }
         Append("[OK] 백엔드 프로세스 시작");
-        await ValidateHamachiConnectivityAsync(true);
+        await ValidateDirectIpConnectivityAsync(true);
     }
 
     private Task OpenEosVoiceSetupAsync()
@@ -326,6 +459,29 @@ internal sealed class MainForm : Form
             (bytes[0] == 192 && bytes[1] == 168);
     }
 
+    private static IReadOnlyList<(string Address, string InterfaceName, bool IsVpn)> GetDirectConnectionAddresses(
+        string backendDirectory)
+    {
+        var result = GetLocalLanAddresses()
+            .Select(item => (item.Address, item.InterfaceName, IsVpn: false))
+            .ToList();
+        string? vpnHost = GetConfiguredVpnHost(backendDirectory);
+        if (vpnHost is not null && IsLocalIpv4Address(vpnHost))
+        {
+            string interfaceName = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(network => network.OperationalStatus == OperationalStatus.Up &&
+                    network.GetIPProperties().UnicastAddresses.Any(unicast =>
+                        unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+                        string.Equals(unicast.Address.ToString(), vpnHost, StringComparison.OrdinalIgnoreCase)))
+                ?.Name ?? "VPN";
+            result.Add((vpnHost, interfaceName, IsVpn: true));
+        }
+        return result
+            .GroupBy(item => item.Address, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
     private static string? GetConfiguredVpnHost(string backendDirectory)
     {
         string localConfigurationPath = Path.Combine(
@@ -351,142 +507,13 @@ internal sealed class MainForm : Form
         return null;
     }
 
-    private async Task ConfigureHamachiFirewallAsync()
-    {
-        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
-        string? host = GetConfiguredVpnHost(backend);
-        if (host is null)
-        {
-            Append("[실패] LocalMySql 설정에서 유효한 자동 연결 25.x 주소를 찾지 못했습니다.");
-            return;
-        }
-
-        string dotnetPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
-        if (!File.Exists(dotnetPath))
-        {
-            Append("[실패] dotnet.exe 경로를 찾지 못해 백엔드 방화벽 규칙을 만들 수 없습니다.");
-            return;
-        }
-        string? serverExecutable = Directory.Exists(archiveRoot.Text.Trim())
-            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories)
-                .FirstOrDefault()
-            : null;
-        string escapedDotnetPath = dotnetPath.Replace("'", "''");
-        string escapedServerPath = serverExecutable?.Replace("'", "''") ?? string.Empty;
-        string script =
-            "$ErrorActionPreference='Stop';" +
-            "$backendName='ProjectProject01 Hamachi Backend';" +
-            "$serverName='ProjectProject01 Hamachi Game Server';" +
-            "Get-NetFirewallRule -DisplayName $backendName -ErrorAction SilentlyContinue | Remove-NetFirewallRule;" +
-            "Get-NetFirewallRule -DisplayName $serverName -ErrorAction SilentlyContinue | Remove-NetFirewallRule;" +
-            $"New-NetFirewallRule -DisplayName $backendName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{host}' -RemoteAddress '25.0.0.0/8' -InterfaceAlias 'Hamachi' -Program '{escapedDotnetPath}' -Profile Any | Out-Null;";
-        if (serverExecutable is not null)
-        {
-            script +=
-                $"New-NetFirewallRule -DisplayName $serverName -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777 -LocalAddress '{host}' -RemoteAddress '25.0.0.0/8' -InterfaceAlias 'Hamachi' -Program '{escapedServerPath}' -Profile Any | Out-Null;";
-        }
-        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo("powershell.exe")
-            {
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}",
-                UseShellExecute = true,
-                Verb = "runas",
-                WindowStyle = ProcessWindowStyle.Hidden
-            });
-            if (process is null)
-            {
-                Append("[실패] 관리자 권한 방화벽 설정을 시작하지 못했습니다.");
-                return;
-            }
-            await process.WaitForExitAsync(lifetime.Token);
-            if (process.ExitCode != 0)
-            {
-                Append($"[실패] 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
-                return;
-            }
-            Append($"[OK] 자동 연결 {host}의 백엔드 TCP 5080을 같은 가상 네트워크 참가자에게 허용했습니다.");
-            Append(serverExecutable is null
-                ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 이 버튼을 다시 누르세요."
-                : $"[OK] 자동 연결 {host}의 게임 서버 UDP 7777을 같은 가상 네트워크 참가자에게 허용했습니다.");
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            Append("[취소] Windows 관리자 권한 요청이 취소되었습니다.");
-        }
-    }
-
-    private async Task ValidateHamachiConnectivityAsync(bool waitForBackendStartup)
-    {
-        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
-        string? host = GetConfiguredVpnHost(backend);
-        if (host is null)
-        {
-            Append("[실패] LocalMySql 설정에서 유효한 자동 연결 25.x 주소를 찾지 못했습니다.");
-            return;
-        }
-        if (!IsLocalIpv4Address(host))
-        {
-            Append($"[실패] 자동 연결 주소 {host}가 현재 이 PC에 할당되어 있지 않습니다.");
-            return;
-        }
-
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        bool backendReady = false;
-        string lastFailure = string.Empty;
-        int attempts = waitForBackendStartup ? 20 : 1;
-        for (int attempt = 1; attempt <= attempts; attempt++)
-        {
-            try
-            {
-                using var response = await http.GetAsync($"http://{host}:5080/health", lifetime.Token);
-                if (response.IsSuccessStatusCode)
-                {
-                    backendReady = true;
-                    break;
-                }
-                lastFailure = $"HTTP {(int)response.StatusCode}";
-            }
-            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (OperationCanceledException)
-            {
-                lastFailure = "서버 응답 대기 시간 초과";
-            }
-            catch (Exception exception)
-            {
-                lastFailure = exception.Message;
-            }
-            if (attempt < attempts)
-            {
-                await Task.Delay(750, lifetime.Token);
-            }
-        }
-        if (backendReady)
-        {
-            Append($"[OK] 이 PC에서 자동 연결 백엔드 http://{host}:5080/health 응답 확인");
-        }
-        else
-        {
-            Append($"[실패] 자동 연결 백엔드 {host}:5080 연결 실패: {lastFailure}");
-        }
-
-        Append(IsUdpPortBound(7777)
-            ? $"[OK] 게임 서버 UDP {host}:7777 수신 중"
-            : "[정보] 게임 서버 UDP 7777은 아직 수신 중이 아닙니다. 멀티 경기 전에 게임 서버를 시작하세요.");
-        Append("[안내] 클라이언트는 같은 가상 네트워크에 참가한 뒤 환경설정에서 '자동 연결'만 선택하면 됩니다. 상대방 IP를 서버에 입력할 필요는 없습니다.");
-    }
-
     private async Task ConfigureDirectIpFirewallAsync()
     {
-        var lanAddresses = GetLocalLanAddresses();
-        if (lanAddresses.Count == 0)
+        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        var addresses = GetDirectConnectionAddresses(backend);
+        if (addresses.Count == 0)
         {
-            Append("[실패] 활성화된 사설 IPv4 유선/Wi-Fi 어댑터를 찾지 못했습니다.");
+            Append("[실패] 클라이언트가 직접 입력할 수 있는 활성 IPv4 주소를 찾지 못했습니다.");
             return;
         }
         string dotnetPath = Path.Combine(
@@ -501,17 +528,18 @@ internal sealed class MainForm : Form
             return;
         }
         var script = new StringBuilder("$ErrorActionPreference='Stop';");
-        foreach (var (address, interfaceName) in lanAddresses)
+        foreach (var (address, interfaceName, isVpn) in addresses)
         {
             string suffix = address.Replace('.', '-');
             string backendName = $"ProjectProject01 Direct IP Backend {suffix}";
             string serverName = $"ProjectProject01 Direct IP Game Server {suffix}";
+            string remoteAddress = isVpn ? "25.0.0.0/8" : "LocalSubnet";
             script.Append($"Get-NetFirewallRule -DisplayName '{backendName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
-            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{address}' -RemoteAddress LocalSubnet -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{dotnetPath.Replace("'", "''")}' -Profile Any | Out-Null;");
+            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{dotnetPath.Replace("'", "''")}' -Profile Any | Out-Null;");
             if (serverExecutable is not null)
             {
                 script.Append($"Get-NetFirewallRule -DisplayName '{serverName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
-                script.Append($"New-NetFirewallRule -DisplayName '{serverName}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777 -LocalAddress '{address}' -RemoteAddress LocalSubnet -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{serverExecutable.Replace("'", "''")}' -Profile Any | Out-Null;");
+                script.Append($"New-NetFirewallRule -DisplayName '{serverName}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777 -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{serverExecutable.Replace("'", "''")}' -Profile Any | Out-Null;");
             }
         }
         string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script.ToString()));
@@ -531,7 +559,7 @@ internal sealed class MainForm : Form
                 Append($"[실패] IP 직접 연결 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
                 return;
             }
-            Append($"[OK] IP 직접 연결용 백엔드 TCP 5080을 로컬 서브넷에만 허용했습니다: {string.Join(", ", lanAddresses.Select(item => item.Address))}");
+            Append($"[OK] IP 직접 연결용 백엔드 TCP 5080을 허용했습니다: {string.Join(", ", addresses.Select(item => item.Address))}");
             Append(serverExecutable is null
                 ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 다시 실행하세요."
                 : "[OK] IP 직접 연결용 게임 서버 UDP 7777을 로컬 서브넷에만 허용했습니다.");
@@ -542,33 +570,52 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task ValidateDirectIpConnectivityAsync()
+    private async Task ValidateDirectIpConnectivityAsync(bool waitForBackendStartup = false)
     {
-        var lanAddresses = GetLocalLanAddresses();
-        if (lanAddresses.Count == 0)
+        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        var addresses = GetDirectConnectionAddresses(backend);
+        if (addresses.Count == 0)
         {
-            Append("[실패] IP 직접 연결에 사용할 활성 사설 IPv4 주소가 없습니다.");
+            Append("[실패] IP 직접 연결에 사용할 활성 IPv4 주소가 없습니다.");
             return;
         }
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        foreach (var (address, interfaceName) in lanAddresses)
+        foreach (var (address, interfaceName, _) in addresses)
         {
-            try
+            string lastFailure = string.Empty;
+            bool succeeded = false;
+            int attempts = waitForBackendStartup ? 20 : 1;
+            for (int attempt = 1; attempt <= attempts; attempt++)
             {
-                using var response = await http.GetAsync($"http://{address}:5080/health", lifetime.Token);
-                Append(response.IsSuccessStatusCode
-                    ? $"[OK] IP 직접 연결 주소 http://{address}:5080 ({interfaceName}) 응답 확인"
-                    : $"[실패] {address}:5080이 HTTP {(int)response.StatusCode}를 반환했습니다.");
+                try
+                {
+                    using var response = await http.GetAsync($"http://{address}:5080/health", lifetime.Token);
+                    succeeded = response.IsSuccessStatusCode;
+                    lastFailure = succeeded ? string.Empty : $"HTTP {(int)response.StatusCode}";
+                    if (succeeded) break;
+                }
+                catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    lastFailure = "서버 응답 대기 시간 초과";
+                }
+                catch (Exception exception)
+                {
+                    lastFailure = exception.Message;
+                }
+                if (attempt < attempts) await Task.Delay(750, lifetime.Token);
             }
-            catch (Exception exception)
-            {
-                Append($"[실패] {address}:5080 연결 실패: {exception.Message}");
-            }
+            Append(succeeded
+                ? $"[OK] IP 직접 연결 주소 http://{address}:5080 ({interfaceName}) 응답 확인"
+                : $"[실패] {address}:5080 연결 실패: {lastFailure}");
         }
         Append(IsUdpPortBound(7777)
             ? "[OK] 게임 서버 UDP 7777 수신 중"
             : "[정보] 게임 서버 UDP 7777은 아직 수신 중이 아닙니다.");
-        Append("[안내] 외부 PC의 환경설정에서 'IP 직접 입력'을 선택하고 위 IPv4 주소를 입력하세요.");
+        Append("[안내] 외부 PC의 환경설정에 위 IPv4 주소 중 실제로 공유할 주소를 직접 입력하세요.");
     }
 
     private async Task StartServer()
@@ -580,7 +627,7 @@ internal sealed class MainForm : Form
         string arguments = serverArgs.Text.Trim();
         if (arguments.Contains("-MULTIHOME=", StringComparison.OrdinalIgnoreCase))
         {
-            Append("[주의] -MULTIHOME이 지정되어 있으면 그 주소만 수신합니다. 자동 연결과 IP 직접 입력을 함께 쓰려면 해당 인자를 지우세요.");
+            Append("[주의] -MULTIHOME이 지정되어 있으면 그 주소만 수신합니다. 여러 IP 경로를 함께 쓰려면 해당 인자를 지우세요.");
         }
         serverProcess = StartStreamingProcess(candidates[0], arguments, Path.GetDirectoryName(candidates[0])!, "SERVER");
         await Task.Delay(1200);
@@ -692,3 +739,11 @@ internal sealed class MainForm : Form
         return null;
     }
 }
+
+internal sealed record PublishedClientUpdateFile(string Path, long Size, string Sha256);
+internal sealed record PublishedClientUpdateManifest(
+    string ReleaseId,
+    string ClientVersion,
+    DateTime PublishedAtUtc,
+    string ExecutablePath,
+    List<PublishedClientUpdateFile> Files);

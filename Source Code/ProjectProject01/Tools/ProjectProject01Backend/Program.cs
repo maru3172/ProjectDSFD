@@ -230,6 +230,7 @@ app.MapGet("/health", async (AuthDatabase database, EosVoiceTokenService eosVoic
 
 app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
     Results.Ok(contract.ToResponse()));
+app.MapProjectProject01ClientUpdates();
 app.MapProjectProject01ServiceAdministration();
 app.MapProjectProject01Voice();
 

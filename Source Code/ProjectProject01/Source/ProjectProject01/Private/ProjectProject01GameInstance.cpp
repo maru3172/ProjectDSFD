@@ -24,9 +24,11 @@
 #include "Interfaces/IHttpResponse.h"
 #include "Misc/Base64.h"
 #include "Misc/App.h"
+#include "Misc/CommandLine.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Misc/NetworkVersion.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
@@ -83,7 +85,6 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	ScreenDistortionScale = 1.0f;
 	ScreenShakeScale = 1.0f;
 	UIReadableScale = 1.0f;
-	bAutomaticServerConnection = true;
 	DirectServerAddress.Reset();
 	MoveForwardKeyName = EKeys::W.GetFName();
 	MoveBackwardKeyName = EKeys::S.GetFName();
@@ -477,16 +478,25 @@ void UProjectProject01GameInstance::Init()
 	AllowedInsecureVpnSecurityApiBaseUrl =
 		ProjectProject01NetworkSecurity::NormalizeBaseUrl(AllowedInsecureVpnSecurityApiBaseUrl);
 	SecurityRequestTimeoutSeconds = FMath::Clamp(SecurityRequestTimeoutSeconds, 2.0f, 30.0f);
-	AutomaticMultiplayerServerAddress = ProjectProject01NetworkSecurity::ExtractHostFromBaseUrl(SecurityApiBaseUrl);
-	RuntimeMultiplayerServerAddress = AutomaticMultiplayerServerAddress;
+	RuntimeMultiplayerServerAddress.Reset();
 	Super::Init();
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 	{
 		Settings->LoadSettings(false);
+		FString LauncherServerAddress;
+		if (FParse::Value(FCommandLine::Get(), TEXT("ProjectProject01Server="), LauncherServerAddress))
+		{
+			LauncherServerAddress.TrimStartAndEndInline();
+			if (!LauncherServerAddress.IsEmpty())
+			{
+				Settings->SetDirectServerAddress(LauncherServerAddress);
+				Settings->SaveSettings();
+			}
+		}
 		Settings->ApplyProjectSettings(true);
 		FString EndpointError;
-		if (!ConfigureMultiplayerServerAddress(
-			Settings->GetDirectServerAddress(), Settings->IsAutomaticServerConnectionEnabled(), EndpointError))
+		if (!Settings->GetDirectServerAddress().IsEmpty() &&
+			!ConfigureMultiplayerServerAddress(Settings->GetDirectServerAddress(), EndpointError))
 		{
 			UE_LOG(LogProjectProject01NetworkSecurity, Warning,
 				TEXT("Saved multiplayer server selection was not applied: %s"), *EndpointError);
@@ -1139,11 +1149,10 @@ bool UProjectProject01GameInstance::IsBackendUrlAllowed() const
 
 bool UProjectProject01GameInstance::ConfigureMultiplayerServerAddress(
 	const FString& ServerAddress,
-	const bool bUseAutomaticConnection,
 	FString& OutError)
 {
 	OutError.Reset();
-	FString Address = bUseAutomaticConnection ? AutomaticMultiplayerServerAddress : ServerAddress;
+	FString Address = ServerAddress;
 	if (!ProjectProject01NetworkSecurity::ParseIpv4Address(Address, Address) ||
 		!ProjectProject01NetworkSecurity::IsSupportedTestAddress(Address))
 	{

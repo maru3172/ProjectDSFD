@@ -76,7 +76,6 @@ public:
 	float GetUIReadableScale() const { return UIReadableScale; }
 	float GetLocalFlashScale() const { return GetLocalVFXScale() * ScreenFlashScale; }
 	float GetLocalDistortionScale() const { return GetLocalVFXScale() * ScreenDistortionScale; }
-	bool IsAutomaticServerConnectionEnabled() const { return bAutomaticServerConnection; }
 	const FString& GetDirectServerAddress() const { return DirectServerAddress; }
 	FKey GetMoveForwardKey() const;
 	FKey GetMoveBackwardKey() const;
@@ -107,7 +106,6 @@ public:
 	void SetScreenDistortionScale(float Value) { ScreenDistortionScale = Value; }
 	void SetScreenShakeScale(float Value) { ScreenShakeScale = Value; }
 	void SetUIReadableScale(float Value) { UIReadableScale = Value; }
-	void SetAutomaticServerConnectionEnabled(bool bValue) { bAutomaticServerConnection = bValue; }
 	void SetDirectServerAddress(const FString& Value) { DirectServerAddress = Value; }
 	void SetMoveForwardKey(FKey Key) { MoveForwardKeyName = Key.GetFName(); }
 	void SetMoveBackwardKey(FKey Key) { MoveBackwardKeyName = Key.GetFName(); }
@@ -188,9 +186,6 @@ private:
 	float UIReadableScale = 1.0f;
 
 	UPROPERTY(Config)
-	bool bAutomaticServerConnection = true;
-
-	UPROPERTY(Config)
 	FString DirectServerAddress;
 
 	UPROPERTY(Config)
@@ -267,10 +262,9 @@ public:
 		const FOnEncryptionKeyResponse& Delegate) override;
 	virtual void ReceivedNetworkEncryptionAck(const FOnEncryptionKeyResponse& Delegate) override;
 
-	/** 자동 연결 또는 IP 직접 입력 주소를 인증·로비·보안 API 전체에 한 번에 적용합니다. */
+	/** 사용자가 직접 입력한 서버 IPv4 주소를 인증·로비·보안 API 전체에 한 번에 적용합니다. */
 	bool ConfigureMultiplayerServerAddress(
 		const FString& ServerAddress,
-		bool bUseAutomaticConnection,
 		FString& OutError);
 	FString GetConfiguredMultiplayerServerAddress() const;
 
@@ -342,9 +336,6 @@ private:
 
 	UPROPERTY(Transient)
 	FString RuntimeMultiplayerServerAddress;
-
-	UPROPERTY(Transient)
-	FString AutomaticMultiplayerServerAddress;
 
 	UPROPERTY(Config)
 	float SecurityRequestTimeoutSeconds = 8.0f;
