@@ -14,7 +14,7 @@ internal static class LobbyEndpoints
     private const int MaximumPlayers = 3;
     private const int StaleMemberSeconds = 60;
     private const int GameTicketLifetimeSeconds = 60;
-    private static readonly TimeSpan GameServerHeartbeatMaximumAge = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan GameServerHeartbeatMaximumAge = TimeSpan.FromSeconds(10);
 
     public static void MapProjectProject01Lobby(
         this WebApplication app,
@@ -37,6 +37,18 @@ internal static class LobbyEndpoints
 
             gameServerPresence.MarkAlive();
             return Results.Ok(new { message = "게임 서버 heartbeat를 확인했습니다." });
+        }).RequireRateLimiting("game-server");
+
+        app.MapPost("/api/server/offline", (HttpRequest request) =>
+        {
+            if (!securityOptions.IsAuthorizedGameServer(
+                    request.Headers["X-ProjectProject01-Server-Secret"].ToString()))
+            {
+                return Results.Unauthorized();
+            }
+
+            gameServerPresence.MarkOffline();
+            return Results.Ok(new { message = "게임 서버 비활성 상태를 반영했습니다." });
         }).RequireRateLimiting("game-server");
 
         app.MapGet("/api/rooms", async (HttpRequest request, AuthDatabase database, CancellationToken ct) =>
@@ -92,7 +104,9 @@ internal static class LobbyEndpoints
                 await using var connection = await database.OpenConnectionAsync(ct);
                 await TouchMemberAsync(connection, null, user.Id, ct);
                 await CleanupStaleRoomsAsync(connection, null, ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return room is null
                     ? Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."))
                     : Results.Ok(new { message = "방 상태를 갱신했습니다.", room });
@@ -174,7 +188,9 @@ internal static class LobbyEndpoints
                     await insertMember.ExecuteNonQueryAsync(ct);
                 }
                 await transaction.CommitAsync(ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return Results.Ok(new { message = "방을 생성했습니다.", room });
             }
             catch (MySqlException exception) when (exception.Number == 1062)
@@ -274,7 +290,9 @@ internal static class LobbyEndpoints
                     await insert.ExecuteNonQueryAsync(ct);
                 }
                 await transaction.CommitAsync(ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return Results.Ok(new { message = "방에 참가했습니다.", room });
             }
             catch (MySqlException exception) when (exception.Number == 1062)
@@ -351,7 +369,9 @@ internal static class LobbyEndpoints
                     connection, transaction, membership.RoomId, ct);
                 await transaction.CommitAsync(ct);
 
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return room is null
                     ? Results.NotFound(new LobbyFailure("복귀할 방이 더 이상 존재하지 않습니다."))
                     : Results.Ok(new
@@ -415,7 +435,9 @@ internal static class LobbyEndpoints
                     "UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id IN (@oldHostUserId, @targetUserId);",
                     ("@roomId", membership.RoomId), ("@oldHostUserId", user.Id), ("@targetUserId", targetUserId), ct);
                 await transaction.CommitAsync(ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return Results.Ok(new { message = "방장 권한을 넘겼습니다.", room });
             }
             catch (MySqlException)
@@ -485,7 +507,9 @@ internal static class LobbyEndpoints
                 await ExecuteAsync(connection, null,
                     "UPDATE room_members SET is_ready = @ready, last_seen_at_utc = UTC_TIMESTAMP(6) WHERE room_id = @roomId AND user_id = @userId;",
                     ("@ready", body.Ready), ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return Results.Ok(new { message = body.Ready ? "준비했습니다." : "준비를 취소했습니다.", room });
             }
             catch (MySqlException)
@@ -522,7 +546,9 @@ internal static class LobbyEndpoints
                 await ExecuteAsync(connection, null,
                     "INSERT INTO room_chat_messages (room_id, user_id, message) VALUES (@roomId, @userId, @message);",
                     ("@roomId", membership.RoomId), ("@userId", user.Id), ("@message", message), ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return Results.Ok(new { message = "채팅을 보냈습니다.", room });
             }
             catch (MySqlException)
@@ -614,7 +640,9 @@ internal static class LobbyEndpoints
                     "UPDATE game_rooms SET status = 'Started', travel_url = @travelUrl, match_id = @matchId, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId;",
                     ("@travelUrl", requestTravelUrl), ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
                 await transaction.CommitAsync(ct);
-                var room = await LoadCurrentRoomAsync(connection, null, user.Id, ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
                 return Results.Ok(new { message = "게임을 시작합니다.", room });
             }
             catch (MySqlException)
@@ -1620,7 +1648,11 @@ internal static class LobbyEndpoints
     }
 
     private static async Task<RoomState?> LoadCurrentRoomAsync(
-        MySqlConnection connection, MySqlTransaction? transaction, ulong userId, CancellationToken ct)
+        MySqlConnection connection,
+        MySqlTransaction? transaction,
+        ulong userId,
+        bool gameServerOnline,
+        CancellationToken ct)
     {
         string roomId;
         string joinCode;
@@ -1709,9 +1741,11 @@ internal static class LobbyEndpoints
 
         var canStart = isHost && members.Count == MaximumPlayers &&
             members.Where(member => !member.IsHost).All(member => member.Ready) &&
-            string.Equals(status, "Waiting", StringComparison.Ordinal);
+            string.Equals(status, "Waiting", StringComparison.Ordinal) &&
+            gameServerOnline;
         return new RoomState(
-            roomId, joinCode, name, isHost, isReady, canStart, string.Equals(status, "Started", StringComparison.Ordinal),
+            roomId, joinCode, name, isHost, isReady, canStart, gameServerOnline,
+            string.Equals(status, "Started", StringComparison.Ordinal),
             returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages);
     }
 
@@ -1818,6 +1852,7 @@ internal sealed record RoomState(
     bool IsHost,
     bool IsReady,
     bool CanStart,
+    bool GameServerOnline,
     bool Started,
     bool ReturnedToRoom,
     string TravelUrl,

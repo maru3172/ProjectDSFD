@@ -186,6 +186,10 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 	UPROPERTY(BlueprintReadOnly)
 	bool bCanStart = false;
 
+	/** 백엔드가 최근 전용 게임 서버 heartbeat를 확인했는지 표시합니다. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bGameServerOnline = false;
+
 	UPROPERTY(BlueprintReadOnly)
 	bool bStarted = false;
 

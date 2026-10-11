@@ -772,14 +772,15 @@ internal sealed class MainForm : Form
         }
     }
 
-    private Task StopAllGameServersAsync()
+    private async Task StopAllGameServersAsync()
     {
         IReadOnlyList<Process> servers = FindPackagedGameServerProcesses();
         if (servers.Count == 0)
         {
             Append("[정보] 실행 중인 패키징 게임 서버가 없습니다.");
             serverProcess = null;
-            return Task.CompletedTask;
+            await NotifyGameServerOfflineAsync();
+            return;
         }
 
         int stopped = 0;
@@ -805,7 +806,36 @@ internal sealed class MainForm : Form
         }
         serverProcess = null;
         Append($"[OK] 패키징 게임 서버 프로세스 {stopped}개를 종료했습니다.");
-        return Task.CompletedTask;
+        await NotifyGameServerOfflineAsync();
+    }
+
+    private async Task NotifyGameServerOfflineAsync()
+    {
+        string? serverSecret = LoadGameServerSharedSecret();
+        if (serverSecret is not { Length: >= 32 })
+        {
+            Append("[주의] 게임 서버 비활성 상태를 백엔드에 알릴 비밀키가 없습니다.");
+            return;
+        }
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:5080/api/server/offline");
+            request.Headers.Add("X-ProjectProject01-Server-Secret", serverSecret);
+            request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            using HttpResponseMessage response = await http.SendAsync(request, lifetime.Token);
+            Append(response.IsSuccessStatusCode
+                ? "[OK] 백엔드에 게임 서버 비활성 상태를 즉시 반영했습니다."
+                : $"[주의] 게임 서버 비활성 상태 반영 실패: HTTP {(int)response.StatusCode}");
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            Append($"[정보] 백엔드가 실행 중이 아니어서 게임 서버 비활성 상태를 즉시 전달하지 못했습니다: {exception.Message}");
+        }
     }
 
     private IReadOnlyList<Process> FindPackagedGameServerProcesses()

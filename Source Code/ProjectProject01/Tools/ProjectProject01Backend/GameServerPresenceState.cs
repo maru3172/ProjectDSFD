@@ -7,6 +7,8 @@ internal sealed class GameServerPresenceState
 
     public void MarkAlive() => Interlocked.Exchange(ref _lastHeartbeatUtcTicks, DateTime.UtcNow.Ticks);
 
+    public void MarkOffline() => Interlocked.Exchange(ref _lastHeartbeatUtcTicks, 0);
+
     public bool IsAlive(TimeSpan maximumAge)
     {
         var ticks = Interlocked.Read(ref _lastHeartbeatUtcTicks);

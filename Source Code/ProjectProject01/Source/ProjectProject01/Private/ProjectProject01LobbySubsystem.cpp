@@ -565,6 +565,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		!StateJson->TryGetBoolField(TEXT("isHost"), Parsed.bIsHost) ||
 		!StateJson->TryGetBoolField(TEXT("isReady"), Parsed.bIsReady) ||
 		!StateJson->TryGetBoolField(TEXT("canStart"), Parsed.bCanStart) ||
+		!StateJson->TryGetBoolField(TEXT("gameServerOnline"), Parsed.bGameServerOnline) ||
 		!StateJson->TryGetBoolField(TEXT("started"), Parsed.bStarted))
 	{
 		OutError = TEXT("방 상태의 필수 값이 올바르지 않습니다.");

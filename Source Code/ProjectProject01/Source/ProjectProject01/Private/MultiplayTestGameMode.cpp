@@ -184,7 +184,7 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		GameServerHeartbeatAccumulatorSeconds += DeltaSeconds;
-		if (GameServerHeartbeatAccumulatorSeconds >= 5.0f)
+		if (GameServerHeartbeatAccumulatorSeconds >= 3.0f)
 		{
 			GameServerHeartbeatAccumulatorSeconds = 0.0f;
 			if (UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance()))

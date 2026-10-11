@@ -3142,6 +3142,11 @@ void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
+			if (!Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().bGameServerOnline)
+			{
+				SetStatus(TEXT("게임 서버가 비활성 상태입니다. 서버가 켜지면 게임 시작 버튼이 자동으로 활성화됩니다."), true);
+				return;
+			}
 			Lobby->StartRoom();
 		}
 	}
@@ -3473,7 +3478,9 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(CurrentRoomText))
 	{
 		CurrentRoomText->SetText(FText::FromString(FString::Printf(
-			TEXT("방: %s\n참가 코드: %s\n인원: %d/3"), *Room.Name, *Room.JoinCode, Room.Members.Num())));
+			TEXT("방: %s\n참가 코드: %s\n인원: %d/3\n게임 서버: %s"),
+			*Room.Name, *Room.JoinCode, Room.Members.Num(),
+			Room.bGameServerOnline ? TEXT("활성") : TEXT("비활성"))));
 	}
 	FString MembersText;
 	for (const FProjectProject01RoomMember& Member : Room.Members)
@@ -3526,7 +3533,15 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 			ButtonText->SetText(FProjectProject01Localization::Text(Room.bIsReady ? TEXT("준비 취소") : TEXT("준비")));
 		}
 	}
-	if (IsValid(StartRoomButton)) StartRoomButton->SetIsEnabled(Room.bCanStart);
+	if (IsValid(StartRoomButton))
+	{
+		StartRoomButton->SetIsEnabled(Room.bCanStart && Room.bGameServerOnline);
+		if (UTextBlock* ButtonText = Cast<UTextBlock>(StartRoomButton->GetChildAt(0)))
+		{
+			ButtonText->SetText(FProjectProject01Localization::Text(
+				Room.bGameServerOnline ? TEXT("게임 시작") : TEXT("게임 서버 대기 중")));
+		}
+	}
 
 	FString ChatText;
 	for (const FProjectProject01RoomChatMessage& Chat : Room.ChatMessages)
