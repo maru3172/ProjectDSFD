@@ -35,6 +35,7 @@
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01VersionContract.h"
+#include "ProjectProject01VoiceChatSubsystem.h"
 #include "Rendering/RenderingCommon.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -480,6 +481,14 @@ void UProjectProject01GameInstance::Init()
 	SecurityRequestTimeoutSeconds = FMath::Clamp(SecurityRequestTimeoutSeconds, 2.0f, 30.0f);
 	RuntimeMultiplayerServerAddress.Reset();
 	Super::Init();
+	if (!IsRunningDedicatedServer())
+	{
+		if (UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
+		{
+			Auth->OnSessionInvalidated.AddUniqueDynamic(
+				this, &UProjectProject01GameInstance::HandleAuthenticationSessionInvalidated);
+		}
+	}
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 	{
 		Settings->LoadSettings(false);
@@ -523,6 +532,12 @@ void UProjectProject01GameInstance::Init()
 
 void UProjectProject01GameInstance::Shutdown()
 {
+	if (UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
+	{
+		Auth->OnSessionInvalidated.RemoveDynamic(
+			this, &UProjectProject01GameInstance::HandleAuthenticationSessionInvalidated);
+		Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01GameInstance::HandleSafeLogoutCompleted);
+	}
 	if (PostWorldInitializationHandle.IsValid())
 	{
 		FWorldDelegates::OnPostWorldInitialization.Remove(PostWorldInitializationHandle);
@@ -726,6 +741,14 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 	{
 		return;
 	}
+	if (const UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
+		IsValid(Auth) && !Auth->IsSignedIn())
+	{
+		// 강제 로그아웃 경로가 이미 로그인 레벨 이동을 시작한 뒤 발생한 늦은 네트워크 오류는
+		// 두 번째 로그아웃/레벨 이동으로 이어지지 않게 무시한다.
+		ClearPendingGameConnection();
+		return;
+	}
 	const bool bWasMultiplayerTravel = World->GetMapName().Contains(TEXT("MultiplayTest")) ||
 		!ProjectProject01NetworkSecurity::PendingClientTicket.IsEmpty();
 	if (!bWasMultiplayerTravel)
@@ -765,8 +788,7 @@ void UProjectProject01GameInstance::BeginSafeLogoutAfterGameServerFailure()
 	UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
 	if (!IsValid(Auth))
 	{
-		bHandlingFailedGameConnection = false;
-		UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LoginLevel")));
+		ReturnToLoginAndClearMultiplayerState();
 		return;
 	}
 
@@ -790,6 +812,41 @@ void UProjectProject01GameInstance::HandleSafeLogoutCompleted(
 		{
 			Auth->ForceClearLocalSession();
 		}
+	}
+	bHandlingFailedGameConnection = false;
+	ReturnToLoginAndClearMultiplayerState();
+}
+
+void UProjectProject01GameInstance::HandleAuthenticationSessionInvalidated(const FString& Message)
+{
+	if (IsRunningDedicatedServer() || bHandlingSessionInvalidation)
+	{
+		return;
+	}
+	bHandlingSessionInvalidation = true;
+	UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+		TEXT("Authentication session invalidated: %s. Clearing room/game state and returning to login."),
+		*Message);
+	ReturnToLoginAndClearMultiplayerState();
+	bHandlingSessionInvalidation = false;
+}
+
+void UProjectProject01GameInstance::ReturnToLoginAndClearMultiplayerState()
+{
+	ClearPendingGameConnection();
+	if (UProjectProject01VoiceChatSubsystem* Voice = GetSubsystem<UProjectProject01VoiceChatSubsystem>();
+		IsValid(Voice))
+	{
+		Voice->LeaveMatch();
+	}
+	if (UProjectProject01LobbySubsystem* Lobby = GetSubsystem<UProjectProject01LobbySubsystem>();
+		IsValid(Lobby))
+	{
+		Lobby->ForceClearLocalSession();
+	}
+	if (UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
+	{
+		Auth->ForceClearLocalSession();
 	}
 	bHandlingFailedGameConnection = false;
 	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LoginLevel")));

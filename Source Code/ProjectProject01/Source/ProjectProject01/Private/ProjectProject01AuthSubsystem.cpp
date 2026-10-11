@@ -5,6 +5,7 @@
 #include "ProjectProject01VersionContract.h"
 
 #include "Dom/JsonObject.h"
+#include "Containers/Ticker.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -57,10 +58,23 @@ void UProjectProject01AuthSubsystem::Initialize(FSubsystemCollectionBase& Collec
 		UE_LOG(LogProjectProject01Auth, Warning,
 			TEXT("Authentication API is using the explicitly configured Hamachi/VPN HTTP test endpoint. Do not use this mode for public release."));
 	}
+	SessionMonitorTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateUObject(this, &UProjectProject01AuthSubsystem::TickSessionMonitor), 5.0f);
 }
 
 void UProjectProject01AuthSubsystem::Deinitialize()
 {
+	if (SessionMonitorTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(SessionMonitorTickerHandle);
+		SessionMonitorTickerHandle.Reset();
+	}
+	if (SessionValidationRequest.IsValid())
+	{
+		SessionValidationRequest->OnProcessRequestComplete().Unbind();
+		SessionValidationRequest->CancelRequest();
+		SessionValidationRequest.Reset();
+	}
 	if (ServiceStatusRequest.IsValid())
 	{
 		ServiceStatusRequest->OnProcessRequestComplete().Unbind();
@@ -161,7 +175,19 @@ void UProjectProject01AuthSubsystem::ForceClearLocalSession()
 		ActiveRequest->CancelRequest();
 		ActiveRequest.Reset();
 	}
+	if (SessionValidationRequest.IsValid())
+	{
+		SessionValidationRequest->OnProcessRequestComplete().Unbind();
+		SessionValidationRequest->CancelRequest();
+		SessionValidationRequest.Reset();
+	}
+	ActiveRefreshCompletion = nullptr;
 	ClearSession();
+}
+
+void UProjectProject01AuthSubsystem::InvalidateSessionFromServerFailure(const FString& Message)
+{
+	InvalidateSession(Message);
 }
 
 void UProjectProject01AuthSubsystem::CancelPendingAuthentication()
@@ -177,6 +203,7 @@ void UProjectProject01AuthSubsystem::CancelPendingAuthentication()
 		ActiveRequest->CancelRequest();
 		ActiveRequest.Reset();
 	}
+	ActiveRefreshCompletion = nullptr;
 	ClearSession();
 }
 
@@ -290,7 +317,16 @@ void UProjectProject01AuthSubsystem::SendRequest(
 	if (!Request->ProcessRequest())
 	{
 		ActiveRequest.Reset();
-		CompleteOperation(Operation, false, TEXT("인증 요청을 시작하지 못했습니다."), FString());
+		if (Operation == EAuthOperation::Logout)
+		{
+			ClearSession();
+			CompleteOperation(Operation, true,
+				TEXT("서버에 연결할 수 없어 이 기기의 로그인 상태를 정리했습니다."), FString());
+		}
+		else
+		{
+			CompleteOperation(Operation, false, TEXT("인증 요청을 시작하지 못했습니다."), FString());
+		}
 	}
 }
 
@@ -319,7 +355,16 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 
 	if (!bConnectedSuccessfully || !Response.IsValid())
 	{
-		CompleteOperation(Operation, false, TEXT("인증 서버에 연결하지 못했습니다."), FString());
+		if (Operation == EAuthOperation::Logout)
+		{
+			ClearSession();
+			CompleteOperation(Operation, true,
+				TEXT("인증 서버가 꺼져 있어 이 기기의 로그인 상태를 정리했습니다."), FString());
+		}
+		else
+		{
+			CompleteOperation(Operation, false, TEXT("인증 서버에 연결하지 못했습니다."), FString());
+		}
 		return;
 	}
 
@@ -334,6 +379,12 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 
 	if (StatusCode < 200 || StatusCode >= 300 || !bJsonValid)
 	{
+		if (Operation == EAuthOperation::Logout && StatusCode == 401)
+		{
+			ClearSession();
+			CompleteOperation(Operation, true, TEXT("이미 종료된 로그인 상태를 정리했습니다."), FString());
+			return;
+		}
 		CompleteOperation(Operation, false, Message, FString());
 		return;
 	}
@@ -382,8 +433,7 @@ void UProjectProject01AuthSubsystem::CompleteOperation(
 	{
 		if (!bSuccess)
 		{
-			ClearSession();
-			OnLogoutCompleted.Broadcast(true, TEXT("로그인 세션이 만료되었거나 관리자에 의해 종료되었습니다."), FString());
+			InvalidateSession(TEXT("로그인 세션이 만료되었거나 관리자에 의해 종료되었습니다."));
 		}
 		else
 		{
@@ -468,6 +518,106 @@ void UProjectProject01AuthSubsystem::ClearSession()
 	RefreshToken.Reset();
 	SignedInDisplayName.Reset();
 	AuthState = EProjectProject01AuthState::SignedOut;
+}
+
+bool UProjectProject01AuthSubsystem::TickSessionMonitor(const float DeltaSeconds)
+{
+	(void)DeltaSeconds;
+	CheckAuthenticatedSession();
+	return true;
+}
+
+void UProjectProject01AuthSubsystem::CheckAuthenticatedSession()
+{
+	if (!IsSignedIn() || ActiveRequest.IsValid() || SessionValidationRequest.IsValid() ||
+		ApiBaseUrl.IsEmpty() || !IsApiBaseUrlAllowed())
+	{
+		return;
+	}
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(ApiBaseUrl + TEXT("/api/auth/session"));
+	Request->SetVerb(TEXT("GET"));
+	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
+	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + AccessToken);
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetTimeout(RequestTimeoutSeconds);
+	Request->OnProcessRequestComplete().BindUObject(
+		this, &UProjectProject01AuthSubsystem::HandleSessionValidationComplete);
+	SessionValidationRequest = Request;
+	if (!Request->ProcessRequest())
+	{
+		SessionValidationRequest.Reset();
+		InvalidateSession(TEXT("인증 서버가 꺼져 있습니다. 다시 로그인하세요."));
+	}
+}
+
+void UProjectProject01AuthSubsystem::HandleSessionValidationComplete(
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request,
+	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> Response,
+	const bool bConnectedSuccessfully)
+{
+	if (SessionValidationRequest != Request)
+	{
+		return;
+	}
+	SessionValidationRequest.Reset();
+	if (!IsSignedIn())
+	{
+		return;
+	}
+	if (!bConnectedSuccessfully || !Response.IsValid())
+	{
+		InvalidateSession(TEXT("인증 서버 연결이 종료되었습니다. 다시 로그인하세요."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	if (StatusCode >= 200 && StatusCode < 300)
+	{
+		return;
+	}
+	if (StatusCode == 401 && !RefreshToken.IsEmpty())
+	{
+		RefreshSession([](const bool) {});
+		return;
+	}
+
+	FString Message = TEXT("인증 세션을 확인할 수 없습니다. 다시 로그인하세요.");
+	TSharedPtr<FJsonObject> Json;
+	if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Json) &&
+		Json.IsValid())
+	{
+		Json->TryGetStringField(TEXT("message"), Message);
+	}
+	InvalidateSession(Message);
+}
+
+void UProjectProject01AuthSubsystem::InvalidateSession(const FString& Message)
+{
+	const bool bHadSession = AuthState != EProjectProject01AuthState::SignedOut ||
+		!AccessToken.IsEmpty() || !RefreshToken.IsEmpty();
+	if (!bHadSession)
+	{
+		return;
+	}
+	if (SessionValidationRequest.IsValid())
+	{
+		SessionValidationRequest->OnProcessRequestComplete().Unbind();
+		SessionValidationRequest->CancelRequest();
+		SessionValidationRequest.Reset();
+	}
+	if (ActiveRequest.IsValid())
+	{
+		ActiveRequest->OnProcessRequestComplete().Unbind();
+		ActiveRequest->CancelRequest();
+		ActiveRequest.Reset();
+	}
+	ActiveRefreshCompletion = nullptr;
+	ClearSession();
+	OnSessionInvalidated.Broadcast(Message.IsEmpty()
+		? TEXT("로그인 세션이 종료되었습니다. 다시 로그인하세요.")
+		: Message);
 }
 
 bool UProjectProject01AuthSubsystem::IsApiBaseUrlAllowed() const

@@ -21,6 +21,8 @@ internal static class Program
 
 internal sealed class MainForm : Form
 {
+    private const int ClientDeltaBlockSize = 4 * 1024 * 1024;
+    private const long ClientDeltaMinimumFileSize = 8L * 1024 * 1024;
     private readonly TextBox engineRoot = new() { Dock = DockStyle.Fill };
     private readonly TextBox projectFile = new() { Dock = DockStyle.Fill };
     private readonly TextBox archiveRoot = new() { Dock = DockStyle.Fill };
@@ -309,13 +311,14 @@ internal sealed class MainForm : Form
             lifetime.Token.ThrowIfCancellationRequested();
             string path = packageFiles[index];
             var info = new FileInfo(path);
-            await using var stream = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 128, true);
-            byte[] hash = await SHA256.HashDataAsync(stream, lifetime.Token);
+            (string hash, List<PublishedClientUpdateBlock>? blocks) =
+                await ComputePublishedFileHashesAsync(path, info.Length);
             files.Add(new PublishedClientUpdateFile(
                 Path.GetRelativePath(publishedRoot, path).Replace('\\', '/'),
                 info.Length,
-                Convert.ToHexString(hash).ToLowerInvariant()));
+                hash,
+                blocks is null ? null : ClientDeltaBlockSize,
+                blocks));
             SetStatus($"클라이언트 파일 해시 계산 중... {index + 1}/{packageFiles.Length}");
         }
         if (files.Count == 0)
@@ -365,6 +368,40 @@ internal sealed class MainForm : Form
             Append("[주의] 실행 중인 런처는 Windows가 덮어쓰기를 막았습니다. 게임 업데이트 게시에는 성공했지만, 런처 자체 변경을 반영하려면 모든 런처 창을 닫고 '클라이언트 업데이트 게시'를 한 번 더 실행하세요.");
         }
         SetStatus(launcherUpdated ? "클라이언트 업데이트 게시 완료" : "게임 업데이트 게시 완료 (런처 교체 보류)");
+    }
+
+    private async Task<(string FileHash, List<PublishedClientUpdateBlock>? Blocks)>
+        ComputePublishedFileHashesAsync(string path, long fileSize)
+    {
+        await using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.Read, ClientDeltaBlockSize, true);
+        using var fileHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        List<PublishedClientUpdateBlock>? blocks = fileSize >= ClientDeltaMinimumFileSize ? [] : null;
+        byte[] buffer = new byte[ClientDeltaBlockSize];
+        long offset = 0;
+        while (true)
+        {
+            int blockLength = 0;
+            while (blockLength < buffer.Length)
+            {
+                int read = await stream.ReadAsync(
+                    buffer.AsMemory(blockLength, buffer.Length - blockLength), lifetime.Token);
+                if (read == 0) break;
+                blockLength += read;
+            }
+            if (blockLength == 0) break;
+
+            fileHash.AppendData(buffer, 0, blockLength);
+            if (blocks is not null)
+            {
+                byte[] blockHash = SHA256.HashData(buffer.AsSpan(0, blockLength));
+                blocks.Add(new PublishedClientUpdateBlock(
+                    offset, blockLength, Convert.ToHexString(blockHash).ToLowerInvariant()));
+            }
+            offset += blockLength;
+            if (blockLength < buffer.Length) break;
+        }
+        return (Convert.ToHexString(fileHash.GetHashAndReset()).ToLowerInvariant(), blocks);
     }
 
     private async Task<bool> TryUpdatePublishedLauncherAsync(string source, string target)
@@ -432,11 +469,16 @@ internal sealed class MainForm : Form
     private static bool ShouldExcludeFromClientUpdate(string publishedRoot, string path)
     {
         string relative = Path.GetRelativePath(publishedRoot, path).Replace('\\', '/');
+        string fileName = Path.GetFileName(relative);
+        string extension = Path.GetExtension(relative);
         return relative.Equals("client-update-manifest.json", StringComparison.OrdinalIgnoreCase) ||
             relative.Equals(".projectproject01-update.json", StringComparison.OrdinalIgnoreCase) ||
             relative.StartsWith(".update-temp/", StringComparison.OrdinalIgnoreCase) ||
             relative.StartsWith(".update-backup/", StringComparison.OrdinalIgnoreCase) ||
-            Path.GetFileName(relative).StartsWith("ProjectProject01ClientLauncher", StringComparison.OrdinalIgnoreCase);
+            fileName.StartsWith("ProjectProject01ClientLauncher", StringComparison.OrdinalIgnoreCase) ||
+            fileName.StartsWith("Manifest_DebugFiles_", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".pdb", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".map", StringComparison.OrdinalIgnoreCase);
     }
 
     private string ReadClientVersion()
@@ -1082,7 +1124,13 @@ internal sealed class MainForm : Form
     }
 }
 
-internal sealed record PublishedClientUpdateFile(string Path, long Size, string Sha256);
+internal sealed record PublishedClientUpdateBlock(long Offset, int Size, string Sha256);
+internal sealed record PublishedClientUpdateFile(
+    string Path,
+    long Size,
+    string Sha256,
+    int? BlockSize,
+    List<PublishedClientUpdateBlock>? Blocks);
 internal sealed record BuildServerHelperSettings(
     string EngineRoot,
     string ProjectFile,

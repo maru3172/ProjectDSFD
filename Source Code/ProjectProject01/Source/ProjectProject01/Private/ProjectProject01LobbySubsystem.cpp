@@ -88,6 +88,12 @@ void UProjectProject01LobbySubsystem::Initialize(FSubsystemCollectionBase& Colle
 
 void UProjectProject01LobbySubsystem::Deinitialize()
 {
+	ForceClearLocalSession();
+	Super::Deinitialize();
+}
+
+void UProjectProject01LobbySubsystem::ForceClearLocalSession()
+{
 	if (ActiveRequest.IsValid())
 	{
 		ActiveRequest->OnProcessRequestComplete().Unbind();
@@ -96,10 +102,12 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 	}
 	Rooms.Reset();
 	CurrentRoom = FProjectProject01RoomState();
-	ClearGameJoinTicket();
 	LeaderboardEntries.Reset();
+	ClearGameJoinTicket();
 	ClearPendingLeaderboardRecord();
-	Super::Deinitialize();
+	OnRoomListChanged.Broadcast();
+	OnCurrentRoomChanged.Broadcast();
+	OnLeaderboardChanged.Broadcast();
 }
 
 bool UProjectProject01LobbySubsystem::ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl)
@@ -395,6 +403,15 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	{
 		ActiveRequest.Reset();
 		Complete(Operation, false, TEXT("로비 요청을 시작하지 못했습니다."));
+		if (UGameInstance* MutableGameInstance = GetGameInstance(); IsValid(MutableGameInstance))
+		{
+			if (UProjectProject01AuthSubsystem* MutableAuth =
+				MutableGameInstance->GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(MutableAuth))
+			{
+				MutableAuth->InvalidateSessionFromServerFailure(
+					TEXT("백엔드 서버가 꺼져 있습니다. 다시 로그인하세요."));
+			}
+		}
 	}
 }
 
@@ -449,6 +466,15 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	if (!bConnectedSuccessfully || !Response.IsValid())
 	{
 		Complete(Operation, false, TEXT("로비 서버에 연결하지 못했습니다."));
+		if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+		{
+			if (UProjectProject01AuthSubsystem* Auth =
+				GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
+			{
+				Auth->InvalidateSessionFromServerFailure(
+					TEXT("백엔드 서버 연결이 종료되었습니다. 다시 로그인하세요."));
+			}
+		}
 		return;
 	}
 
@@ -488,6 +514,19 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 			return;
 		}
 		Complete(Operation, false, Message);
+		if (StatusCode == 401 || StatusCode == 408 || StatusCode >= 500)
+		{
+			if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+			{
+				if (UProjectProject01AuthSubsystem* Auth =
+					GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
+				{
+					Auth->InvalidateSessionFromServerFailure(StatusCode == 401
+						? TEXT("로그인 세션이 종료되었습니다. 다시 로그인하세요.")
+						: TEXT("백엔드 서버를 사용할 수 없습니다. 다시 로그인하세요."));
+				}
+			}
+		}
 		return;
 	}
 

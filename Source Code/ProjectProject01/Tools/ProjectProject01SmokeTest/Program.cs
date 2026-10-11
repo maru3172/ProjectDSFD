@@ -99,6 +99,25 @@ internal sealed class SmokeRunner(SmokeOptions options)
                 });
             }
 
+            await StepAsync("ValidateAuthenticatedSession", async ct =>
+            {
+                var json = await SendAsync(HttpMethod.Get, "api/auth/session", clients[0].AccessToken,
+                    null, true, ct);
+                if (RequiredString(json, "displayName") != clients[0].DisplayName)
+                    throw new InvalidOperationException("세션 확인 응답의 사용자 정보가 일치하지 않습니다.");
+            });
+            await StepAsync("RejectInvalidatedSession", async ct =>
+            {
+                using var request = NewRequest(HttpMethod.Get, "api/auth/session", "invalidated-smoke-token", null);
+                ApplyVersionHeaders(request, contract);
+                using var response = await http.SendAsync(request, ct);
+                var body = await response.Content.ReadAsStringAsync(ct);
+                LogResponse(request, response, body);
+                if (response.StatusCode != HttpStatusCode.Unauthorized)
+                    throw new InvalidOperationException(
+                        $"폐기된 세션과 같은 무효 토큰이 차단되지 않았습니다. HTTP {(int)response.StatusCode}");
+            });
+
             string roomId = string.Empty;
             string joinCode = string.Empty;
             await StepAsync("CreateRoom", async ct =>

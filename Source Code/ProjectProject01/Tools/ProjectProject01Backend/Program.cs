@@ -445,6 +445,26 @@ app.MapPost("/api/auth/refresh", async (
     }
 }).RequireRateLimiting("auth");
 
+// 로그인 이후 어느 화면에 있든 관리자 강제 로그아웃과 백엔드 단절을 빠르게 감지하기 위한
+// 가벼운 세션 확인 경로입니다. 유효한 액세스 토큰만 성공하며 상태를 변경하지 않습니다.
+app.MapGet("/api/auth/session", async (
+    HttpRequest request,
+    AuthDatabase database,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var user = await LobbyEndpoints.AuthenticateAsync(request, database, cancellationToken);
+        return user is null
+            ? Results.Unauthorized()
+            : Results.Ok(new { message = "로그인 세션이 유효합니다.", displayName = user.DisplayName });
+    }
+    catch (MySqlException)
+    {
+        return DatabaseUnavailable();
+    }
+}).RequireRateLimiting("lobby");
+
 app.MapPost("/api/auth/logout", async (
     HttpRequest request,
     AuthDatabase database,

@@ -324,6 +324,10 @@ private:
 
 	UFUNCTION()
 	void HandleSafeLogoutCompleted(bool bSuccess, const FString& Message, const FString& DisplayName);
+
+	UFUNCTION()
+	void HandleAuthenticationSessionInvalidated(const FString& Message);
+	void ReturnToLoginAndClearMultiplayerState();
 	void InitializeCrashReportCollection();
 	void RefreshCrashReportContext(UWorld* World);
 	void RecoverPendingCrashReports();
@@ -357,4 +361,5 @@ private:
 	FString PendingCrashMatchId;
 	FString PendingCrashPlayerRole;
 	bool bHandlingFailedGameConnection = false;
+	bool bHandlingSessionInvalidation = false;
 };

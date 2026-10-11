@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "ProjectProject01AuthSubsystem.generated.h"
 
@@ -31,6 +32,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
 	const FString&, ShutdownAtUtc,
 	const FString&, Message);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FProjectProject01SessionInvalidated,
+	const FString&, Message);
+
 UCLASS(Config=Game)
 class PROJECTPROJECT01_API UProjectProject01AuthSubsystem final : public UGameInstanceSubsystem
 {
@@ -52,6 +57,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="ProjectProject01|Service")
 	FProjectProject01ServiceStatusChanged OnServiceStatusChanged;
 
+	/** 관리자 강제 로그아웃, 세션 폐기 또는 인증 서버 종료를 모든 화면에 동일하게 전달합니다. */
+	UPROPERTY(BlueprintAssignable, Category="ProjectProject01|Authentication")
+	FProjectProject01SessionInvalidated OnSessionInvalidated;
+
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Authentication")
 	void RegisterAccount(const FString& AccountId, const FString& Password, const FString& DisplayName);
 
@@ -63,6 +72,9 @@ public:
 
 	/** 서버 연결이 끊겨 원격 로그아웃까지 실패했을 때 재접속 반복을 막기 위해 로컬 토큰을 즉시 폐기합니다. */
 	void ForceClearLocalSession();
+
+	/** 인증된 기능 요청이 서버 단절을 확인했을 때 모든 화면을 로그인 전 상태로 되돌립니다. */
+	void InvalidateSessionFromServerFailure(const FString& Message);
 
 	/** 로그인 화면을 떠날 때 아직 끝나지 않은 로그인/회원가입 요청을 취소하고 잠금 상태를 해제합니다. */
 	void CancelPendingAuthentication();
@@ -121,6 +133,13 @@ private:
 		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,
 		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,
 		bool bConnectedSuccessfully);
+	bool TickSessionMonitor(float DeltaSeconds);
+	void CheckAuthenticatedSession();
+	void HandleSessionValidationComplete(
+		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,
+		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,
+		bool bConnectedSuccessfully);
+	void InvalidateSession(const FString& Message);
 	bool ValidateCommonInput(const FString& AccountId, const FString& Password, FString& OutError) const;
 	bool CanStartOperation(EAuthOperation Operation);
 	void ClearSession();
@@ -165,5 +184,7 @@ private:
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ServiceStatusRequest;
+	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> SessionValidationRequest;
 	TFunction<void(bool)> ActiveRefreshCompletion;
+	FTSTicker::FDelegateHandle SessionMonitorTickerHandle;
 };

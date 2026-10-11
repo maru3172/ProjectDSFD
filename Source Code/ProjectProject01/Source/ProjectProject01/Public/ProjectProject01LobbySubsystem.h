@@ -334,6 +334,9 @@ public:
 	void SubmitPendingLeaderboardRecord();
 	void ClearPendingLeaderboardRecord();
 
+	/** 로그아웃/서버 단절 시 방, 준비 상태, 티켓 및 결과 캐시를 모두 로컬에서 폐기합니다. */
+	void ForceClearLocalSession();
+
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool HasCurrentRoom() const { return CurrentRoom.IsValid(); }
 
