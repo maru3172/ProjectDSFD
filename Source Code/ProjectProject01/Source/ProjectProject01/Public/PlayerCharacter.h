@@ -65,6 +65,9 @@ public:
 	/** 서버 GameMode가 게임 규칙별 시작 데스카운트를 설정한다. */
 	void SetRemainingDeathCountForGameMode(int32 NewDeathCount);
 
+	/** 싱글 자동 체크포인트 진입 시 이번 판의 시작 데스카운트로 회복합니다. */
+	void ResetDeathCountAtCheckpoint();
+
 	/** 싱글플레이의 서버 권위 승패 판정이 암전 결과 화면을 한 번만 표시한다. */
 	void PresentSinglePlayerResult(bool bEscaped);
 
@@ -79,7 +82,9 @@ public:
 	float GetMaxStamina() const { return MaxStamina; }
 
 	/** 검증된 싱글플레이 저장 파일의 상태를 현재 Pawn에 복원합니다. */
-	void RestoreSinglePlayerState(const FTransform& SavedTransform, int32 SavedDeathCount, float SavedStamina);
+	void RestoreSinglePlayerState(const FTransform& SavedTransform, int32 SavedDeathCount, float SavedStamina,
+		const FVector& SavedVelocity = FVector::ZeroVector,
+		const FRotator& RestoredControlRotation = FRotator::ZeroRotator);
 
 	/** 저장된 로컬 키 설정을 현재 Enhanced Input 컨텍스트에 다시 적용합니다. */
 	void ApplyUserInputSettings();
@@ -242,6 +247,9 @@ private:
 	/** 세 번의 포획까지 차감되는 생존자별 카운트입니다. 서버가 변경하고 모든 클라이언트에 복제합니다. */
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Player|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	int32 RemainingDeathCount = 3;
+
+	/** 게임 모드가 정한 이번 판의 시작값이며 자동 체크포인트 회복에 사용합니다. */
+	int32 StartingDeathCount = 3;
 
 	/** 카운트 0 이후 다음 포획에서 서버가 확정하는 게임 오버 상태입니다. */
 	UPROPERTY(ReplicatedUsing = OnRep_GameOver, VisibleInstanceOnly, Category = "Player|Death", meta = (AllowPrivateAccess = "true"))

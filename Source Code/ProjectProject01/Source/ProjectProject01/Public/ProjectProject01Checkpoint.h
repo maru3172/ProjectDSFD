@@ -2,15 +2,19 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "ProjectProject01CheckpointSaveable.h"
 #include "ProjectProject01Checkpoint.generated.h"
 
 UCLASS(Blueprintable)
-class PROJECTPROJECT01_API AProjectProject01Checkpoint final : public AActor
+class PROJECTPROJECT01_API AProjectProject01Checkpoint final : public AActor,
+	public IProjectProject01CheckpointSaveable
 {
 	GENERATED_BODY()
 
 public:
 	AProjectProject01Checkpoint();
+	virtual FName GetCheckpointSaveId_Implementation() const override;
+	virtual void OnCheckpointStateRestored_Implementation() override;
 
 private:
 	UFUNCTION()
@@ -27,5 +31,6 @@ private:
 	UPROPERTY(EditAnywhere, Category="Checkpoint")
 	bool bSaveOnlyOncePerSession = true;
 
+	UPROPERTY(SaveGame)
 	bool bTriggered = false;
 };

@@ -139,6 +139,19 @@ void AMannequinReactiveLight::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void AMannequinReactiveLight::RefreshAfterCheckpointRestore()
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World) || World->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	World->GetTimerManager().ClearTimer(BlinkTimerHandle);
+	ApplyLightState(bLightOn);
+	RefreshDetectedMannequinsFromWorld();
+	UpdateBlinkingFromDetectedCount();
+}
+
 void AMannequinReactiveLight::HandleDetectionBeginOverlap(
 	UPrimitiveComponent* OverlappedComponent,
 	AActor* OtherActor,

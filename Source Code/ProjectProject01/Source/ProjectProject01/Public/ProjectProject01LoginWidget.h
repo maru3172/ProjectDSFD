@@ -68,11 +68,43 @@ protected:
 	virtual void NativeDestruct() override;
 
 private:
+	enum class ESaveSlotConfirmationAction : uint8
+	{
+		None,
+		StartNewGame,
+		Delete
+	};
+
 	UFUNCTION()
 	void HandleSinglePlayerClicked();
 
 	UFUNCTION()
 	void HandleContinueSinglePlayerClicked();
+
+	UFUNCTION()
+	void HandleSaveSlot1PlayClicked();
+	UFUNCTION()
+	void HandleSaveSlot2PlayClicked();
+	UFUNCTION()
+	void HandleSaveSlot3PlayClicked();
+	UFUNCTION()
+	void HandleSaveSlot1NewGameClicked();
+	UFUNCTION()
+	void HandleSaveSlot2NewGameClicked();
+	UFUNCTION()
+	void HandleSaveSlot3NewGameClicked();
+	UFUNCTION()
+	void HandleSaveSlot1DeleteClicked();
+	UFUNCTION()
+	void HandleSaveSlot2DeleteClicked();
+	UFUNCTION()
+	void HandleSaveSlot3DeleteClicked();
+	UFUNCTION()
+	void HandleSaveSlotsBackClicked();
+	UFUNCTION()
+	void HandleSaveSlotConfirmationYesClicked();
+	UFUNCTION()
+	void HandleSaveSlotConfirmationNoClicked();
 
 	UFUNCTION()
 	void HandleMultiplayerClicked();
@@ -90,12 +122,54 @@ private:
 	void BuildWidgetTree();
 	void SetMenuEnabled(bool bEnabled);
 	void PollMultiplayerService();
+	void RefreshSaveSlotPage();
+	void PlaySaveSlot(int32 SlotIndex);
+	void RequestStartNewGameInSaveSlot(int32 SlotIndex);
+	void RequestDeleteSaveSlot(int32 SlotIndex);
+	void StartNewGameInSaveSlot(int32 SlotIndex);
+	void DeleteSaveSlot(int32 SlotIndex);
+	void ShowSaveSlotConfirmation(ESaveSlotConfirmationAction Action, int32 SlotIndex);
+	void HideSaveSlotConfirmation();
+	void BeginSinglePlayerNavigation();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UWidgetSwitcher> TitlePageSwitcher;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> SinglePlayerButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ContinueSinglePlayerButton;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UTextBlock>> SaveSlotStatusTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UButton>> SaveSlotPlayButtons;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UButton>> SaveSlotNewGameButtons;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UButton>> SaveSlotDeleteButtons;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SaveSlotsBackButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> SaveSlotsMessageText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBackgroundBlur> SaveSlotConfirmationBlur;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> SaveSlotConfirmationText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SaveSlotConfirmationYesButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SaveSlotConfirmationNoButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> MultiplayerButton;
@@ -114,6 +188,8 @@ private:
 
 	bool bNavigationRequested = false;
 	bool bMultiplayerServiceAvailable = false;
+	ESaveSlotConfirmationAction PendingSaveSlotConfirmationAction = ESaveSlotConfirmationAction::None;
+	int32 PendingSaveSlotConfirmationSlot = INDEX_NONE;
 	FTimerHandle ServiceStatusTimer;
 };
 
@@ -210,7 +286,34 @@ private:
 	void HandleSaveCheckpointClicked();
 
 	UFUNCTION()
+	void HandleManualSaveSlot1Clicked();
+
+	UFUNCTION()
+	void HandleManualSaveSlot2Clicked();
+
+	UFUNCTION()
+	void HandleManualSaveSlot3Clicked();
+
+	UFUNCTION()
+	void HandleManualSaveCancelClicked();
+
+	UFUNCTION()
 	void HandleLoadCheckpointClicked();
+
+	UFUNCTION()
+	void HandleLoadOtherCheckpointClicked();
+
+	UFUNCTION()
+	void HandleLoadSaveSlot1Clicked();
+
+	UFUNCTION()
+	void HandleLoadSaveSlot2Clicked();
+
+	UFUNCTION()
+	void HandleLoadSaveSlot3Clicked();
+
+	UFUNCTION()
+	void HandleLoadSaveCancelClicked();
 
 	UFUNCTION()
 	void HandleSaveOperationCompleted(bool bSucceeded, const FString& Message);
@@ -241,6 +344,12 @@ private:
 	void CompleteExit();
 	void SetBusy(bool bInBusy, const FString& Message = FString(), bool bIsError = false);
 	void RestoreGameInput();
+	void ShowManualSaveSlots(bool bShow);
+	void RefreshManualSaveSlots();
+	void SaveCheckpointToSlot(int32 SlotIndex);
+	void ShowLoadSaveSlots(bool bShow);
+	void RefreshLoadSaveSlots();
+	void LoadCheckpointFromSlot(int32 SlotIndex);
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ContinueButton;
@@ -249,7 +358,37 @@ private:
 	TObjectPtr<class UButton> SaveCheckpointButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UWidgetSwitcher> SessionPageSwitcher;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UVerticalBox> ManualSaveSlotPanel;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UButton>> ManualSaveSlotButtons;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UTextBlock>> ManualSaveSlotStatusTexts;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ManualSaveCancelButton;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> LoadCheckpointButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LoadOtherCheckpointButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UVerticalBox> LoadSaveSlotPanel;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UButton>> LoadSaveSlotButtons;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UTextBlock>> LoadSaveSlotStatusTexts;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LoadSaveCancelButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToRoomButton;

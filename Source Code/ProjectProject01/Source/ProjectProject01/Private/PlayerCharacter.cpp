@@ -968,14 +968,28 @@ void APlayerCharacter::SetRemainingDeathCountForGameMode(int32 NewDeathCount)
 		return;
 	}
 
-	RemainingDeathCount = FMath::Max(0, NewDeathCount);
+	StartingDeathCount = FMath::Max(0, NewDeathCount);
+	RemainingDeathCount = StartingDeathCount;
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::ResetDeathCountAtCheckpoint()
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !IsValid(World) || World->GetNetMode() != NM_Standalone || bGameOver)
+	{
+		return;
+	}
+	RemainingDeathCount = FMath::Max(0, StartingDeathCount);
 	ForceNetUpdate();
 }
 
 void APlayerCharacter::RestoreSinglePlayerState(
 	const FTransform& SavedTransform,
 	const int32 SavedDeathCount,
-	const float SavedStamina)
+	const float SavedStamina,
+	const FVector& SavedVelocity,
+	const FRotator& RestoredControlRotation)
 {
 	UWorld* World = GetWorld();
 	if (!IsValid(World) || World->GetNetMode() != NM_Standalone || !HasAuthority())
@@ -994,10 +1008,11 @@ void APlayerCharacter::RestoreSinglePlayerState(
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
 	{
 		Movement->SetMovementMode(MOVE_Walking);
-		Movement->StopMovementImmediately();
+		Movement->Velocity = SavedVelocity;
 	}
 	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()); IsValid(PlayerController))
 	{
+		PlayerController->SetControlRotation(RestoredControlRotation);
 		PlayerController->SetIgnoreMoveInput(false);
 		PlayerController->SetIgnoreLookInput(false);
 	}

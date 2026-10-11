@@ -4,6 +4,7 @@
 #include "ProjectProject01LoginWidget.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "Components/BackgroundBlur.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
@@ -466,9 +467,35 @@ void UProjectProject01TitleWidget::NativeConstruct()
 		{
 			if (const UProjectProject01SaveSubsystem* Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
 			{
-				ContinueSinglePlayerButton->SetIsEnabled(Saves->HasRecoverableSave());
+				ContinueSinglePlayerButton->SetIsEnabled(Saves->HasAnyRecoverableSave());
 			}
 		}
+	}
+	if (SaveSlotPlayButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		SaveSlotPlayButtons[0]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot1PlayClicked);
+		SaveSlotPlayButtons[1]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot2PlayClicked);
+		SaveSlotPlayButtons[2]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot3PlayClicked);
+		SaveSlotNewGameButtons[0]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot1NewGameClicked);
+		SaveSlotNewGameButtons[1]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot2NewGameClicked);
+		SaveSlotNewGameButtons[2]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot3NewGameClicked);
+		SaveSlotDeleteButtons[0]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot1DeleteClicked);
+		SaveSlotDeleteButtons[1]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot2DeleteClicked);
+		SaveSlotDeleteButtons[2]->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot3DeleteClicked);
+	}
+	if (IsValid(SaveSlotsBackButton))
+	{
+		SaveSlotsBackButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlotsBackClicked);
+	}
+	if (IsValid(SaveSlotConfirmationYesButton))
+	{
+		SaveSlotConfirmationYesButton->OnClicked.AddUniqueDynamic(
+			this, &UProjectProject01TitleWidget::HandleSaveSlotConfirmationYesClicked);
+	}
+	if (IsValid(SaveSlotConfirmationNoButton))
+	{
+		SaveSlotConfirmationNoButton->OnClicked.AddUniqueDynamic(
+			this, &UProjectProject01TitleWidget::HandleSaveSlotConfirmationNoClicked);
 	}
 	if (IsValid(MultiplayerButton))
 	{
@@ -482,6 +509,8 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	{
 		QuitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
 	}
+	if (IsValid(TitlePageSwitcher)) TitlePageSwitcher->SetActiveWidgetIndex(0);
+	HideSaveSlotConfirmation();
 	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
 	{
 		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
@@ -533,6 +562,32 @@ void UProjectProject01TitleWidget::NativeDestruct()
 	if (IsValid(ContinueSinglePlayerButton))
 	{
 		ContinueSinglePlayerButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleContinueSinglePlayerClicked);
+	}
+	if (SaveSlotPlayButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		SaveSlotPlayButtons[0]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot1PlayClicked);
+		SaveSlotPlayButtons[1]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot2PlayClicked);
+		SaveSlotPlayButtons[2]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot3PlayClicked);
+		SaveSlotNewGameButtons[0]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot1NewGameClicked);
+		SaveSlotNewGameButtons[1]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot2NewGameClicked);
+		SaveSlotNewGameButtons[2]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot3NewGameClicked);
+		SaveSlotDeleteButtons[0]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot1DeleteClicked);
+		SaveSlotDeleteButtons[1]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot2DeleteClicked);
+		SaveSlotDeleteButtons[2]->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlot3DeleteClicked);
+	}
+	if (IsValid(SaveSlotsBackButton))
+	{
+		SaveSlotsBackButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSaveSlotsBackClicked);
+	}
+	if (IsValid(SaveSlotConfirmationYesButton))
+	{
+		SaveSlotConfirmationYesButton->OnClicked.RemoveDynamic(
+			this, &UProjectProject01TitleWidget::HandleSaveSlotConfirmationYesClicked);
+	}
+	if (IsValid(SaveSlotConfirmationNoButton))
+	{
+		SaveSlotConfirmationNoButton->OnClicked.RemoveDynamic(
+			this, &UProjectProject01TitleWidget::HandleSaveSlotConfirmationNoClicked);
 	}
 	if (IsValid(MultiplayerButton))
 	{
@@ -603,20 +658,12 @@ void UProjectProject01TitleWidget::HandleServiceStatusChanged(
 
 void UProjectProject01TitleWidget::HandleSinglePlayerClicked()
 {
-	if (bNavigationRequested || !IsValid(GetWorld()))
+	if (bNavigationRequested || !IsValid(TitlePageSwitcher))
 	{
 		return;
 	}
-
-	bNavigationRequested = true;
-	SetMenuEnabled(false);
-	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
-	{
-		PlayerController->bShowMouseCursor = false;
-		PlayerController->SetInputMode(FInputModeGameOnly());
-	}
-	// A local package name intentionally performs no backend, lobby, or dedicated-server connection.
-	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SinglePlayerLevel, true);
+	RefreshSaveSlotPage();
+	TitlePageSwitcher->SetActiveWidgetIndex(1);
 }
 
 void UProjectProject01TitleWidget::HandleContinueSinglePlayerClicked()
@@ -625,7 +672,79 @@ void UProjectProject01TitleWidget::HandleContinueSinglePlayerClicked()
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
-	if (!IsValid(Saves) || !Saves->HasRecoverableSave()) return;
+	if (!IsValid(Saves) || !Saves->HasAnyRecoverableSave()) return;
+	BeginSinglePlayerNavigation();
+	if (!Saves->LoadMostRecentlyPlayedCheckpoint())
+	{
+		bNavigationRequested = false;
+		SetMenuEnabled(true);
+	}
+}
+
+void UProjectProject01TitleWidget::HandleSaveSlot1PlayClicked() { PlaySaveSlot(1); }
+void UProjectProject01TitleWidget::HandleSaveSlot2PlayClicked() { PlaySaveSlot(2); }
+void UProjectProject01TitleWidget::HandleSaveSlot3PlayClicked() { PlaySaveSlot(3); }
+void UProjectProject01TitleWidget::HandleSaveSlot1NewGameClicked() { RequestStartNewGameInSaveSlot(1); }
+void UProjectProject01TitleWidget::HandleSaveSlot2NewGameClicked() { RequestStartNewGameInSaveSlot(2); }
+void UProjectProject01TitleWidget::HandleSaveSlot3NewGameClicked() { RequestStartNewGameInSaveSlot(3); }
+void UProjectProject01TitleWidget::HandleSaveSlot1DeleteClicked() { RequestDeleteSaveSlot(1); }
+void UProjectProject01TitleWidget::HandleSaveSlot2DeleteClicked() { RequestDeleteSaveSlot(2); }
+void UProjectProject01TitleWidget::HandleSaveSlot3DeleteClicked() { RequestDeleteSaveSlot(3); }
+
+void UProjectProject01TitleWidget::HandleSaveSlotsBackClicked()
+{
+	if (!bNavigationRequested && IsValid(TitlePageSwitcher))
+	{
+		TitlePageSwitcher->SetActiveWidgetIndex(0);
+	}
+}
+
+void UProjectProject01TitleWidget::RefreshSaveSlotPage()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves)) return;
+	for (int32 Index = 0; Index < UProjectProject01SaveSubsystem::SaveSlotCount; ++Index)
+	{
+		const int32 SlotIndex = Index + 1;
+		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex);
+		const FString CurrentMark = Saves->GetCurrentSlotIndex() == SlotIndex ? TEXT(" (현재)") : TEXT("");
+		if (SaveSlotStatusTexts.IsValidIndex(Index) && IsValid(SaveSlotStatusTexts[Index]))
+		{
+			const FString CheckpointText = Info.CheckpointId.IsNone()
+				? TEXT("저장된 시점") : Info.CheckpointId.ToString();
+			const FString SavedTimeText = (Info.SavedAtUtc + FTimespan::FromHours(9.0)).ToString(
+				TEXT("%Y-%m-%d %H:%M"));
+			const FString Description = Info.bHasSave
+				? FString::Printf(TEXT("저장소 %d%s | %s | 데스카운트 %d | %s"), SlotIndex,
+					*CurrentMark, *CheckpointText, Info.RemainingDeathCount, *SavedTimeText)
+				: FString::Printf(TEXT("저장소 %d%s | 빈 저장소"), SlotIndex, *CurrentMark);
+			SaveSlotStatusTexts[Index]->SetText(FProjectProject01Localization::Text(Description));
+		}
+		if (SaveSlotPlayButtons.IsValidIndex(Index) && IsValid(SaveSlotPlayButtons[Index]))
+		{
+			SaveSlotPlayButtons[Index]->SetIsEnabled(Info.bHasSave && !bNavigationRequested);
+		}
+		if (SaveSlotDeleteButtons.IsValidIndex(Index) && IsValid(SaveSlotDeleteButtons[Index]))
+		{
+			SaveSlotDeleteButtons[Index]->SetIsEnabled(Info.bHasSave && !bNavigationRequested);
+		}
+		if (SaveSlotNewGameButtons.IsValidIndex(Index) && IsValid(SaveSlotNewGameButtons[Index]))
+		{
+			SaveSlotNewGameButtons[Index]->SetIsEnabled(!bNavigationRequested);
+		}
+	}
+	if (IsValid(SaveSlotsMessageText))
+	{
+		SaveSlotsMessageText->SetText(FProjectProject01Localization::Text(
+			TEXT("플레이는 저장 시점을 이어하고, 새 게임은 해당 저장소를 초기화합니다.")));
+		SaveSlotsMessageText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	}
+}
+
+void UProjectProject01TitleWidget::BeginSinglePlayerNavigation()
+{
 	bNavigationRequested = true;
 	SetMenuEnabled(false);
 	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
@@ -633,10 +752,146 @@ void UProjectProject01TitleWidget::HandleContinueSinglePlayerClicked()
 		PlayerController->bShowMouseCursor = false;
 		PlayerController->SetInputMode(FInputModeGameOnly());
 	}
-	if (!Saves->LoadLatestCheckpoint())
+}
+
+void UProjectProject01TitleWidget::PlaySaveSlot(const int32 SlotIndex)
+{
+	if (bNavigationRequested) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves) || !Saves->HasRecoverableSaveInSlot(SlotIndex)) return;
+	BeginSinglePlayerNavigation();
+	if (!Saves->LoadCheckpointFromSlot(SlotIndex))
 	{
 		bNavigationRequested = false;
 		SetMenuEnabled(true);
+		RefreshSaveSlotPage();
+	}
+}
+
+void UProjectProject01TitleWidget::RequestStartNewGameInSaveSlot(const int32 SlotIndex)
+{
+	if (bNavigationRequested) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (IsValid(Saves) && Saves->HasRecoverableSaveInSlot(SlotIndex))
+	{
+		ShowSaveSlotConfirmation(ESaveSlotConfirmationAction::StartNewGame, SlotIndex);
+		return;
+	}
+	StartNewGameInSaveSlot(SlotIndex);
+}
+
+void UProjectProject01TitleWidget::RequestDeleteSaveSlot(const int32 SlotIndex)
+{
+	if (bNavigationRequested) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (IsValid(Saves) && Saves->HasRecoverableSaveInSlot(SlotIndex))
+	{
+		ShowSaveSlotConfirmation(ESaveSlotConfirmationAction::Delete, SlotIndex);
+	}
+}
+
+void UProjectProject01TitleWidget::ShowSaveSlotConfirmation(
+	const ESaveSlotConfirmationAction Action,
+	const int32 SlotIndex)
+{
+	if (Action == ESaveSlotConfirmationAction::None ||
+		SlotIndex < 1 || SlotIndex > UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		return;
+	}
+	PendingSaveSlotConfirmationAction = Action;
+	PendingSaveSlotConfirmationSlot = SlotIndex;
+	if (IsValid(SaveSlotConfirmationText))
+	{
+		SaveSlotConfirmationText->SetText(FProjectProject01Localization::Text(
+			Action == ESaveSlotConfirmationAction::Delete
+				? TEXT("정말로 이 저장소를 삭제하시겠습니까?")
+				: TEXT("정말로 새로 시작하시겠습니까?")));
+	}
+	if (IsValid(TitlePageSwitcher)) TitlePageSwitcher->SetIsEnabled(false);
+	if (IsValid(SaveSlotConfirmationBlur))
+	{
+		SaveSlotConfirmationBlur->SetVisibility(ESlateVisibility::Visible);
+	}
+	if (IsValid(SaveSlotConfirmationNoButton)) SaveSlotConfirmationNoButton->SetKeyboardFocus();
+}
+
+void UProjectProject01TitleWidget::HideSaveSlotConfirmation()
+{
+	PendingSaveSlotConfirmationAction = ESaveSlotConfirmationAction::None;
+	PendingSaveSlotConfirmationSlot = INDEX_NONE;
+	if (IsValid(SaveSlotConfirmationBlur))
+	{
+		SaveSlotConfirmationBlur->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (IsValid(TitlePageSwitcher)) TitlePageSwitcher->SetIsEnabled(true);
+}
+
+void UProjectProject01TitleWidget::HandleSaveSlotConfirmationYesClicked()
+{
+	const ESaveSlotConfirmationAction Action = PendingSaveSlotConfirmationAction;
+	const int32 SlotIndex = PendingSaveSlotConfirmationSlot;
+	HideSaveSlotConfirmation();
+	if (Action == ESaveSlotConfirmationAction::StartNewGame)
+	{
+		StartNewGameInSaveSlot(SlotIndex);
+	}
+	else if (Action == ESaveSlotConfirmationAction::Delete)
+	{
+		DeleteSaveSlot(SlotIndex);
+	}
+}
+
+void UProjectProject01TitleWidget::HandleSaveSlotConfirmationNoClicked()
+{
+	HideSaveSlotConfirmation();
+}
+
+void UProjectProject01TitleWidget::StartNewGameInSaveSlot(const int32 SlotIndex)
+{
+	if (bNavigationRequested || !IsValid(GetWorld())) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves) || !Saves->StartNewGameInSlot(SlotIndex))
+	{
+		if (IsValid(SaveSlotsMessageText))
+		{
+			SaveSlotsMessageText->SetText(FProjectProject01Localization::Text(TEXT("저장소를 초기화하지 못했습니다.")));
+			SaveSlotsMessageText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+		}
+		return;
+	}
+	BeginSinglePlayerNavigation();
+	// 싱글 새 게임은 백엔드·로비·데디케이티드 서버에 접속하지 않는다.
+	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SinglePlayerLevel, true);
+}
+
+void UProjectProject01TitleWidget::DeleteSaveSlot(const int32 SlotIndex)
+{
+	if (bNavigationRequested) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	const bool bDeleted = IsValid(Saves) && Saves->DeleteSaveSlot(SlotIndex);
+	RefreshSaveSlotPage();
+	if (IsValid(ContinueSinglePlayerButton))
+	{
+		ContinueSinglePlayerButton->SetIsEnabled(IsValid(Saves) && Saves->HasAnyRecoverableSave());
+	}
+	if (IsValid(SaveSlotsMessageText))
+	{
+		SaveSlotsMessageText->SetText(FProjectProject01Localization::Text(bDeleted
+			? FString::Printf(TEXT("저장소 %d을(를) 삭제했습니다."), SlotIndex)
+			: FString::Printf(TEXT("저장소 %d을(를) 삭제하지 못했습니다."), SlotIndex)));
+		SaveSlotsMessageText->SetColorAndOpacity(bDeleted
+			? FSlateColor(FLinearColor::Black) : FSlateColor(FLinearColor::Red));
 	}
 }
 
@@ -762,13 +1017,16 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
 	}
 
-	UVerticalBox* Menu = WidgetTree->ConstructWidget<UVerticalBox>();
-	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(Menu))
+	TitlePageSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
+	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(TitlePageSwitcher))
 	{
 		MenuSlot->SetHorizontalAlignment(HAlign_Center);
 		MenuSlot->SetVerticalAlignment(VAlign_Center);
 		MenuSlot->SetPadding(FMargin(40.0f));
 	}
+
+	UVerticalBox* Menu = WidgetTree->ConstructWidget<UVerticalBox>();
+	TitlePageSwitcher->AddChild(Menu);
 
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("ProjectProject01"), 32.0f);
 	ProjectProject01LoginUI::AddLabel(
@@ -778,29 +1036,82 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		14.0f);
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT(""), 14.0f);
 	SinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("싱글 플레이"));
-	ContinueSinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("싱글 이어하기"));
+	ContinueSinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("이어하기"));
 	MultiplayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("멀티플레이"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	QuitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
+
+	UVerticalBox* SaveSlotMenu = WidgetTree->ConstructWidget<UVerticalBox>();
+	TitlePageSwitcher->AddChild(SaveSlotMenu);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, SaveSlotMenu, TEXT("싱글플레이 저장소"), 30.0f);
+	SaveSlotsMessageText = ProjectProject01LoginUI::AddLabel(
+		WidgetTree, SaveSlotMenu,
+		TEXT("플레이는 저장 시점을 이어하고, 새 게임은 해당 저장소를 초기화합니다."), 14.0f);
+	SaveSlotStatusTexts.Reset();
+	SaveSlotPlayButtons.Reset();
+	SaveSlotNewGameButtons.Reset();
+	SaveSlotDeleteButtons.Reset();
+	for (int32 SlotIndex = 1; SlotIndex <= UProjectProject01SaveSubsystem::SaveSlotCount; ++SlotIndex)
+	{
+		SaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddLabel(
+			WidgetTree, SaveSlotMenu, FString::Printf(TEXT("저장소 %d | 빈 저장소"), SlotIndex), 16.0f));
+		UHorizontalBox* Actions = WidgetTree->ConstructWidget<UHorizontalBox>();
+		if (UVerticalBoxSlot* RowSlot = SaveSlotMenu->AddChildToVerticalBox(Actions))
+		{
+			RowSlot->SetPadding(FMargin(2.0f, 0.0f, 2.0f, 8.0f));
+			RowSlot->SetHorizontalAlignment(HAlign_Fill);
+		}
+		SaveSlotPlayButtons.Add(ProjectProject01LoginUI::AddTabButton(WidgetTree, Actions, TEXT("플레이")));
+		SaveSlotNewGameButtons.Add(ProjectProject01LoginUI::AddTabButton(WidgetTree, Actions, TEXT("새 게임")));
+		SaveSlotDeleteButtons.Add(ProjectProject01LoginUI::AddTabButton(WidgetTree, Actions, TEXT("삭제")));
+	}
+	SaveSlotsBackButton = ProjectProject01LoginUI::AddButton(WidgetTree, SaveSlotMenu, TEXT("돌아가기"));
+	TitlePageSwitcher->SetActiveWidgetIndex(0);
+
+	SaveSlotConfirmationBlur = WidgetTree->ConstructWidget<UBackgroundBlur>();
+	SaveSlotConfirmationBlur->SetBlurRadius(16);
+	SaveSlotConfirmationBlur->SetBlurStrength(12.0f);
+	SaveSlotConfirmationBlur->SetVisibility(ESlateVisibility::Collapsed);
+	if (UOverlaySlot* ConfirmationSlot = Overlay->AddChildToOverlay(SaveSlotConfirmationBlur))
+	{
+		ConfirmationSlot->SetHorizontalAlignment(HAlign_Fill);
+		ConfirmationSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+	UBorder* ConfirmationDim = WidgetTree->ConstructWidget<UBorder>();
+	ConfirmationDim->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.58f));
+	ConfirmationDim->SetHorizontalAlignment(HAlign_Center);
+	ConfirmationDim->SetVerticalAlignment(VAlign_Center);
+	SaveSlotConfirmationBlur->AddChild(ConfirmationDim);
+	UVerticalBox* ConfirmationPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+	ConfirmationDim->AddChild(ConfirmationPanel);
+	SaveSlotConfirmationText = ProjectProject01LoginUI::AddLabel(
+		WidgetTree, ConfirmationPanel, TEXT("정말로 진행하시겠습니까?"), 20.0f);
+	UHorizontalBox* ConfirmationActions = WidgetTree->ConstructWidget<UHorizontalBox>();
+	if (UVerticalBoxSlot* ActionsSlot = ConfirmationPanel->AddChildToVerticalBox(ConfirmationActions))
+	{
+		ActionsSlot->SetPadding(FMargin(2.0f, 8.0f, 2.0f, 2.0f));
+		ActionsSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	SaveSlotConfirmationYesButton = ProjectProject01LoginUI::AddTabButton(
+		WidgetTree, ConfirmationActions, TEXT("예"));
+	SaveSlotConfirmationNoButton = ProjectProject01LoginUI::AddTabButton(
+		WidgetTree, ConfirmationActions, TEXT("아니오"));
 }
 
 void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
 {
+	const UProjectProject01SaveSubsystem* Saves = nullptr;
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>();
+	}
 	if (IsValid(SinglePlayerButton))
 	{
 		SinglePlayerButton->SetIsEnabled(bEnabled);
 	}
 	if (IsValid(ContinueSinglePlayerButton))
 	{
-		bool bHasSave = false;
-		if (UGameInstance* GameInstance = GetGameInstance())
-		{
-			if (const UProjectProject01SaveSubsystem* Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
-			{
-				bHasSave = Saves->HasRecoverableSave();
-			}
-		}
-		ContinueSinglePlayerButton->SetIsEnabled(bEnabled && bHasSave);
+		ContinueSinglePlayerButton->SetIsEnabled(bEnabled && IsValid(Saves) && Saves->HasAnyRecoverableSave());
 	}
 	if (IsValid(MultiplayerButton))
 	{
@@ -814,6 +1125,25 @@ void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
 	{
 		QuitButton->SetIsEnabled(bEnabled);
 	}
+	for (int32 Index = 0; Index < SaveSlotPlayButtons.Num(); ++Index)
+	{
+		if (UButton* Button = SaveSlotPlayButtons[Index]; IsValid(Button))
+		{
+			Button->SetIsEnabled(bEnabled && IsValid(Saves) && Saves->HasRecoverableSaveInSlot(Index + 1));
+		}
+	}
+	for (UButton* Button : SaveSlotNewGameButtons)
+	{
+		if (IsValid(Button)) Button->SetIsEnabled(bEnabled);
+	}
+	for (int32 Index = 0; Index < SaveSlotDeleteButtons.Num(); ++Index)
+	{
+		if (UButton* Button = SaveSlotDeleteButtons[Index]; IsValid(Button))
+		{
+			Button->SetIsEnabled(bEnabled && IsValid(Saves) && Saves->HasRecoverableSaveInSlot(Index + 1));
+		}
+	}
+	if (IsValid(SaveSlotsBackButton)) SaveSlotsBackButton->SetIsEnabled(bEnabled);
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -1158,6 +1488,7 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 	{
 		SaveCheckpointButton->SetVisibility(bMultiplayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	}
+	ShowManualSaveSlots(false);
 	if (IsValid(LoadCheckpointButton))
 	{
 		LoadCheckpointButton->SetVisibility(bMultiplayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
@@ -1168,6 +1499,20 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 				if (const UProjectProject01SaveSubsystem* Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
 				{
 					LoadCheckpointButton->SetIsEnabled(Saves->HasRecoverableSave());
+				}
+			}
+		}
+	}
+	if (IsValid(LoadOtherCheckpointButton))
+	{
+		LoadOtherCheckpointButton->SetVisibility(bMultiplayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		if (!bMultiplayer)
+		{
+			if (UGameInstance* GameInstance = GetGameInstance())
+			{
+				if (const UProjectProject01SaveSubsystem* Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
+				{
+					LoadOtherCheckpointButton->SetIsEnabled(Saves->HasAnyRecoverableSave());
 				}
 			}
 		}
@@ -1185,7 +1530,28 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 	Super::NativeConstruct();
 	if (IsValid(ContinueButton)) ContinueButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
 	if (IsValid(SaveCheckpointButton)) SaveCheckpointButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked);
+	if (ManualSaveSlotButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		ManualSaveSlotButtons[0]->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveSlot1Clicked);
+		ManualSaveSlotButtons[1]->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveSlot2Clicked);
+		ManualSaveSlotButtons[2]->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveSlot3Clicked);
+	}
+	if (IsValid(ManualSaveCancelButton))
+	{
+		ManualSaveCancelButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveCancelClicked);
+	}
 	if (IsValid(LoadCheckpointButton)) LoadCheckpointButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadCheckpointClicked);
+	if (IsValid(LoadOtherCheckpointButton)) LoadOtherCheckpointButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadOtherCheckpointClicked);
+	if (LoadSaveSlotButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		LoadSaveSlotButtons[0]->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveSlot1Clicked);
+		LoadSaveSlotButtons[1]->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveSlot2Clicked);
+		LoadSaveSlotButtons[2]->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveSlot3Clicked);
+	}
+	if (IsValid(LoadSaveCancelButton))
+	{
+		LoadSaveCancelButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveCancelClicked);
+	}
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
 	if (IsValid(SettingsButton)) SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
@@ -1213,7 +1579,28 @@ void UProjectProject01SessionMenuWidget::NativeDestruct()
 {
 	if (IsValid(ContinueButton)) ContinueButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
 	if (IsValid(SaveCheckpointButton)) SaveCheckpointButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked);
+	if (ManualSaveSlotButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		ManualSaveSlotButtons[0]->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveSlot1Clicked);
+		ManualSaveSlotButtons[1]->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveSlot2Clicked);
+		ManualSaveSlotButtons[2]->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveSlot3Clicked);
+	}
+	if (IsValid(ManualSaveCancelButton))
+	{
+		ManualSaveCancelButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleManualSaveCancelClicked);
+	}
 	if (IsValid(LoadCheckpointButton)) LoadCheckpointButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadCheckpointClicked);
+	if (IsValid(LoadOtherCheckpointButton)) LoadOtherCheckpointButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadOtherCheckpointClicked);
+	if (LoadSaveSlotButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
+	{
+		LoadSaveSlotButtons[0]->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveSlot1Clicked);
+		LoadSaveSlotButtons[1]->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveSlot2Clicked);
+		LoadSaveSlotButtons[2]->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveSlot3Clicked);
+	}
+	if (IsValid(LoadSaveCancelButton))
+	{
+		LoadSaveCancelButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleLoadSaveCancelClicked);
+	}
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
 	if (IsValid(SettingsButton)) SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
@@ -1264,6 +1651,11 @@ FReply UProjectProject01SessionMenuWidget::NativeOnKeyDown(
 {
 	if (InKeyEvent.GetKey() == EKeys::Escape && !bBusy)
 	{
+		if (IsValid(SessionPageSwitcher) && SessionPageSwitcher->GetActiveWidgetIndex() != 0)
+		{
+			ShowManualSaveSlots(false);
+			return FReply::Handled();
+		}
 		CloseMenu();
 		return FReply::Handled();
 	}
@@ -1281,6 +1673,27 @@ void UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked()
 	{
 		return;
 	}
+	RefreshManualSaveSlots();
+	ShowManualSaveSlots(true);
+	if (IsValid(StatusText))
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(TEXT("저장할 저장소를 선택하세요.")));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	}
+}
+
+void UProjectProject01SessionMenuWidget::HandleManualSaveSlot1Clicked() { SaveCheckpointToSlot(1); }
+void UProjectProject01SessionMenuWidget::HandleManualSaveSlot2Clicked() { SaveCheckpointToSlot(2); }
+void UProjectProject01SessionMenuWidget::HandleManualSaveSlot3Clicked() { SaveCheckpointToSlot(3); }
+
+void UProjectProject01SessionMenuWidget::HandleManualSaveCancelClicked()
+{
+	if (!bBusy) ShowManualSaveSlots(false);
+}
+
+void UProjectProject01SessionMenuWidget::SaveCheckpointToSlot(const int32 SlotIndex)
+{
+	if (bMultiplayer || bBusy) return;
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
@@ -1290,8 +1703,43 @@ void UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked()
 		SetBusy(false, TEXT("저장할 싱글플레이 상태를 찾지 못했습니다."), true);
 		return;
 	}
+	ShowManualSaveSlots(false);
 	SetBusy(true, TEXT("체크포인트를 저장하는 중..."));
-	Saves->SaveCheckpoint(Player, TEXT("ManualPauseMenu"));
+	Saves->SaveCheckpointToSlot(Player, SlotIndex, TEXT("ManualPauseMenu"));
+}
+
+void UProjectProject01SessionMenuWidget::ShowManualSaveSlots(const bool bShow)
+{
+	if (IsValid(SessionPageSwitcher))
+	{
+		SessionPageSwitcher->SetActiveWidgetIndex(bShow && !bMultiplayer ? 1 : 0);
+	}
+}
+
+void UProjectProject01SessionMenuWidget::RefreshManualSaveSlots()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves)) return;
+	for (int32 Index = 0; Index < UProjectProject01SaveSubsystem::SaveSlotCount; ++Index)
+	{
+		const int32 SlotIndex = Index + 1;
+		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex);
+		const FString CurrentMark = Saves->GetCurrentSlotIndex() == SlotIndex ? TEXT(" (현재)") : TEXT("");
+		if (ManualSaveSlotStatusTexts.IsValidIndex(Index) && IsValid(ManualSaveSlotStatusTexts[Index]))
+		{
+			const FString CheckpointText = Info.CheckpointId.IsNone()
+				? TEXT("저장된 시점") : Info.CheckpointId.ToString();
+			const FString SavedTimeText = (Info.SavedAtUtc + FTimespan::FromHours(9.0)).ToString(
+				TEXT("%Y-%m-%d %H:%M"));
+			const FString Description = Info.bHasSave
+				? FString::Printf(TEXT("저장소 %d%s | %s | %s"), SlotIndex,
+					*CurrentMark, *CheckpointText, *SavedTimeText)
+				: FString::Printf(TEXT("저장소 %d%s | 빈 저장소"), SlotIndex, *CurrentMark);
+			ManualSaveSlotStatusTexts[Index]->SetText(FProjectProject01Localization::Text(Description));
+		}
+	}
 }
 
 void UProjectProject01SessionMenuWidget::HandleLoadCheckpointClicked()
@@ -1311,7 +1759,86 @@ void UProjectProject01SessionMenuWidget::HandleLoadCheckpointClicked()
 	SetBusy(true, TEXT("마지막 체크포인트를 불러오는 중..."));
 	if (Saves->LoadLatestCheckpoint())
 	{
+		SetBusy(false);
 		CloseMenu();
+	}
+}
+
+void UProjectProject01SessionMenuWidget::HandleLoadOtherCheckpointClicked()
+{
+	if (bMultiplayer || bBusy) return;
+	RefreshLoadSaveSlots();
+	ShowLoadSaveSlots(true);
+	if (IsValid(StatusText))
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(TEXT("불러올 저장소를 선택하세요.")));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	}
+}
+
+void UProjectProject01SessionMenuWidget::HandleLoadSaveSlot1Clicked() { LoadCheckpointFromSlot(1); }
+void UProjectProject01SessionMenuWidget::HandleLoadSaveSlot2Clicked() { LoadCheckpointFromSlot(2); }
+void UProjectProject01SessionMenuWidget::HandleLoadSaveSlot3Clicked() { LoadCheckpointFromSlot(3); }
+
+void UProjectProject01SessionMenuWidget::HandleLoadSaveCancelClicked()
+{
+	if (!bBusy) ShowLoadSaveSlots(false);
+}
+
+void UProjectProject01SessionMenuWidget::LoadCheckpointFromSlot(const int32 SlotIndex)
+{
+	if (bMultiplayer || bBusy) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves) || !Saves->HasRecoverableSaveInSlot(SlotIndex))
+	{
+		SetBusy(false, TEXT("불러올 저장 지점을 찾지 못했습니다."), true);
+		return;
+	}
+	SetBusy(true, FString::Printf(TEXT("저장소 %d을(를) 불러오는 중..."), SlotIndex));
+	if (Saves->LoadCheckpointFromSlot(SlotIndex))
+	{
+		SetBusy(false);
+		CloseMenu();
+	}
+}
+
+void UProjectProject01SessionMenuWidget::ShowLoadSaveSlots(const bool bShow)
+{
+	if (IsValid(SessionPageSwitcher))
+	{
+		SessionPageSwitcher->SetActiveWidgetIndex(bShow && !bMultiplayer ? 2 : 0);
+	}
+}
+
+void UProjectProject01SessionMenuWidget::RefreshLoadSaveSlots()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves)) return;
+	for (int32 Index = 0; Index < UProjectProject01SaveSubsystem::SaveSlotCount; ++Index)
+	{
+		const int32 SlotIndex = Index + 1;
+		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex);
+		const FString CurrentMark = Saves->GetCurrentSlotIndex() == SlotIndex ? TEXT(" (현재 플레이 중)") : TEXT("");
+		if (LoadSaveSlotStatusTexts.IsValidIndex(Index) && IsValid(LoadSaveSlotStatusTexts[Index]))
+		{
+			const FString CheckpointText = Info.CheckpointId.IsNone()
+				? TEXT("저장된 시점") : Info.CheckpointId.ToString();
+			const FString SavedTimeText = (Info.SavedAtUtc + FTimespan::FromHours(9.0)).ToString(
+				TEXT("%Y-%m-%d %H:%M"));
+			const FString Description = Info.bHasSave
+				? FString::Printf(TEXT("저장소 %d%s | %s | %s"), SlotIndex,
+					*CurrentMark, *CheckpointText, *SavedTimeText)
+				: FString::Printf(TEXT("저장소 %d%s | 빈 저장소"), SlotIndex, *CurrentMark);
+			LoadSaveSlotStatusTexts[Index]->SetText(FProjectProject01Localization::Text(Description));
+		}
+		if (LoadSaveSlotButtons.IsValidIndex(Index) && IsValid(LoadSaveSlotButtons[Index]))
+		{
+			LoadSaveSlotButtons[Index]->SetIsEnabled(Info.bHasSave && !bBusy);
+		}
 	}
 }
 
@@ -1320,9 +1847,18 @@ void UProjectProject01SessionMenuWidget::HandleSaveOperationCompleted(
 	const FString& Message)
 {
 	SetBusy(false, Message, !bSucceeded);
+	RefreshManualSaveSlots();
+	RefreshLoadSaveSlots();
 	if (bSucceeded && IsValid(LoadCheckpointButton))
 	{
 		LoadCheckpointButton->SetIsEnabled(true);
+	}
+	if (IsValid(LoadOtherCheckpointButton))
+	{
+		UGameInstance* GameInstance = GetGameInstance();
+		const UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+			? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+		LoadOtherCheckpointButton->SetIsEnabled(IsValid(Saves) && Saves->HasAnyRecoverableSave());
 	}
 }
 
@@ -1570,7 +2106,32 @@ void UProjectProject01SessionMenuWidget::SetBusy(
 	bBusy = bInBusy;
 	if (IsValid(ContinueButton)) ContinueButton->SetIsEnabled(!bBusy);
 	if (IsValid(SaveCheckpointButton)) SaveCheckpointButton->SetIsEnabled(!bBusy);
-	if (IsValid(LoadCheckpointButton) && bBusy) LoadCheckpointButton->SetIsEnabled(false);
+	for (UButton* Button : ManualSaveSlotButtons)
+	{
+		if (IsValid(Button)) Button->SetIsEnabled(!bBusy);
+	}
+	if (IsValid(ManualSaveCancelButton)) ManualSaveCancelButton->SetIsEnabled(!bBusy);
+	const UProjectProject01SaveSubsystem* Saves = nullptr;
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>();
+	}
+	if (IsValid(LoadCheckpointButton))
+	{
+		LoadCheckpointButton->SetIsEnabled(!bBusy && !bMultiplayer && IsValid(Saves) && Saves->HasRecoverableSave());
+	}
+	if (IsValid(LoadOtherCheckpointButton))
+	{
+		LoadOtherCheckpointButton->SetIsEnabled(!bBusy && !bMultiplayer && IsValid(Saves) && Saves->HasAnyRecoverableSave());
+	}
+	for (int32 Index = 0; Index < LoadSaveSlotButtons.Num(); ++Index)
+	{
+		if (UButton* Button = LoadSaveSlotButtons[Index]; IsValid(Button))
+		{
+			Button->SetIsEnabled(!bBusy && IsValid(Saves) && Saves->HasRecoverableSaveInSlot(Index + 1));
+		}
+	}
+	if (IsValid(LoadSaveCancelButton)) LoadSaveCancelButton->SetIsEnabled(!bBusy);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(!bBusy);
 	if (IsValid(SettingsButton)) SettingsButton->SetIsEnabled(!bBusy);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(!bBusy);
@@ -1606,22 +2167,60 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
 	}
 
-	UVerticalBox* Menu = WidgetTree->ConstructWidget<UVerticalBox>();
-	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(Menu))
+	SessionPageSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
+	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(SessionPageSwitcher))
 	{
 		MenuSlot->SetHorizontalAlignment(HAlign_Center);
 		MenuSlot->SetVerticalAlignment(VAlign_Center);
 		MenuSlot->SetPadding(FMargin(40.0f));
 	}
+	UVerticalBox* Menu = WidgetTree->ConstructWidget<UVerticalBox>();
+	SessionPageSwitcher->AddChild(Menu);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("게임 메뉴"), 30.0f);
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("ESC를 다시 누르면 게임으로 돌아갑니다."), 14.0f);
 	ContinueButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 계속"));
 	SaveCheckpointButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("현재 체크포인트 저장"));
-	LoadCheckpointButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("마지막 체크포인트 불러오기"));
+	LoadCheckpointButton = ProjectProject01LoginUI::AddButton(
+		WidgetTree, Menu, TEXT("현재 저장소의 마지막 저장지점 불러오기"));
+	LoadOtherCheckpointButton = ProjectProject01LoginUI::AddButton(
+		WidgetTree, Menu, TEXT("다른 저장소 불러오기"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("방으로 돌아가기"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
+
+	ManualSaveSlotPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+	SessionPageSwitcher->AddChild(ManualSaveSlotPanel);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, ManualSaveSlotPanel, TEXT("수동 저장소 선택"), 18.0f);
+	ManualSaveSlotButtons.Reset();
+	ManualSaveSlotStatusTexts.Reset();
+	for (int32 SlotIndex = 1; SlotIndex <= UProjectProject01SaveSubsystem::SaveSlotCount; ++SlotIndex)
+	{
+		ManualSaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddLabel(
+			WidgetTree, ManualSaveSlotPanel,
+			FString::Printf(TEXT("저장소 %d | 빈 저장소"), SlotIndex), 14.0f));
+		ManualSaveSlotButtons.Add(ProjectProject01LoginUI::AddButton(
+			WidgetTree, ManualSaveSlotPanel,
+			FString::Printf(TEXT("저장소 %d에 저장"), SlotIndex)));
+	}
+	ManualSaveCancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, ManualSaveSlotPanel, TEXT("돌아가기"));
+
+	LoadSaveSlotPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+	SessionPageSwitcher->AddChild(LoadSaveSlotPanel);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, LoadSaveSlotPanel, TEXT("다른 저장소 불러오기"), 18.0f);
+	LoadSaveSlotButtons.Reset();
+	LoadSaveSlotStatusTexts.Reset();
+	for (int32 SlotIndex = 1; SlotIndex <= UProjectProject01SaveSubsystem::SaveSlotCount; ++SlotIndex)
+	{
+		LoadSaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddLabel(
+			WidgetTree, LoadSaveSlotPanel,
+			FString::Printf(TEXT("저장소 %d | 빈 저장소"), SlotIndex), 14.0f));
+		LoadSaveSlotButtons.Add(ProjectProject01LoginUI::AddButton(
+			WidgetTree, LoadSaveSlotPanel,
+			FString::Printf(TEXT("저장소 %d 불러오기"), SlotIndex)));
+	}
+	LoadSaveCancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, LoadSaveSlotPanel, TEXT("돌아가기"));
+	SessionPageSwitcher->SetActiveWidgetIndex(0);
 
 	ExitFadeOverlay = WidgetTree->ConstructWidget<UBorder>();
 	ExitFadeOverlay->SetBrushColor(FLinearColor::Black);

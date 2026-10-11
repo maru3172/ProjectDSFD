@@ -86,7 +86,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Helper Rear Guard", meta = (ClampMin = "1.0", ClampMax = "180.0", UIMin = "1.0", UIMax = "180.0"))
 	float GuardSearchHalfAngleDegrees = 90.0f;
 
-	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg"))
+	UPROPERTY(VisibleInstanceOnly, SaveGame, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0", Units = "deg"))
 	float CurrentGuardHalfAngleDegrees = 60.0f;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Helper Rear Guard|Stamina", meta = (ClampMin = "0.0"))
@@ -135,16 +135,24 @@ private:
 	TWeakObjectPtr<APawn> GuardedPlayer;
 
 	/** 플레이어가 정지했을 때 사용할 마지막 유효 수평 이동 방향입니다. */
+	UPROPERTY(SaveGame)
 	FVector LastPlayerMovementDirection = FVector::ZeroVector;
 
 	/** 플레이어가 정지해도 매 틱 마네킹 위치로 갱신하는 실제 노란색 시야 중심입니다. */
+	UPROPERTY(SaveGame)
 	FVector CurrentGuardViewDirection = FVector::ZeroVector;
 
 	/** 다음 플레이어 이동 전까지 일반 추적 거리 갱신 대신 유지할 후방 이격 목표입니다. */
+	UPROPERTY(SaveGame)
 	FVector LockedRetreatTarget = FVector::ZeroVector;
 
+	UPROPERTY(SaveGame)
 	FVector LastRecordedGuardViewDirection = FVector::ZeroVector;
 	TArray<double> VisionDirectionChangeTimes;
+
+	UPROPERTY(SaveGame)
 	bool bFollowDistanceLocked = false;
+
+	UPROPERTY(SaveGame)
 	bool bGuardHalfAngleInitialized = false;
 };

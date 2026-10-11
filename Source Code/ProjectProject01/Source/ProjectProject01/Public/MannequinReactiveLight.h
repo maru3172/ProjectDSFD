@@ -34,6 +34,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Reactive Light|Debug")
 	float GetCurrentBlinkIntervalSeconds() const { return CurrentBlinkIntervalSeconds; }
 
+	/** 체크포인트 역직렬화 뒤 저장된 상태를 실제 조명 컴포넌트와 감지 타이머에 반영합니다. */
+	void RefreshAfterCheckpointRestore();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -123,7 +126,12 @@ private:
 	TSet<TWeakObjectPtr<AMannequinAICharacter>> DetectedMannequins;
 	FTimerHandle BlinkTimerHandle;
 	FTimerHandle DetectionRefreshTimerHandle;
+	UPROPERTY(SaveGame)
 	int32 CurrentDetectedMannequinCount = 0;
+
+	UPROPERTY(SaveGame)
 	float CurrentBlinkIntervalSeconds = 0.0f;
+
+	UPROPERTY(SaveGame)
 	bool bLightOn = true;
 };

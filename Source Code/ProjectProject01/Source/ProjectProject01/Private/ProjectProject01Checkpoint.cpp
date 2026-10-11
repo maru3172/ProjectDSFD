@@ -19,6 +19,16 @@ AProjectProject01Checkpoint::AProjectProject01Checkpoint()
 	Trigger->OnComponentBeginOverlap.AddDynamic(this, &AProjectProject01Checkpoint::HandleBeginOverlap);
 }
 
+FName AProjectProject01Checkpoint::GetCheckpointSaveId_Implementation() const
+{
+	return FName(*FString::Printf(TEXT("Checkpoint:%s:%s"),
+		*CheckpointId.ToString(), *GetFName().ToString()));
+}
+
+void AProjectProject01Checkpoint::OnCheckpointStateRestored_Implementation()
+{
+}
+
 void AProjectProject01Checkpoint::HandleBeginOverlap(
 	UPrimitiveComponent* OverlappedComponent,
 	AActor* OtherActor,
@@ -38,9 +48,14 @@ void AProjectProject01Checkpoint::HandleBeginOverlap(
 	{
 		if (UProjectProject01SaveSubsystem* Saves = GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
 		{
-			// 저장 요청 자체가 접수된 경우에만 1회용 체크포인트를 소모한다.
-			// 중복 저장 등으로 요청이 거부되면 다음 Overlap에서 다시 시도할 수 있다.
-			bTriggered = Saves->SaveCheckpoint(Player, CheckpointId);
+			// 스냅샷 안에도 이미 통과한 체크포인트로 기록되도록 저장 요청 전에 상태를 바꾼다.
+			const bool bWasTriggered = bTriggered;
+			bTriggered = true;
+			if (!Saves->SaveCheckpoint(Player, CheckpointId, true))
+			{
+				// 중복 저장 등으로 요청이 거부되면 다음 Overlap에서 다시 시도할 수 있다.
+				bTriggered = bWasTriggered;
+			}
 		}
 	}
 }
