@@ -4059,7 +4059,7 @@ void UProjectProject01LeaderboardWidget::RefreshLeaderboardView()
 	FString Text = GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin
 		? TEXT("순위 | 이름 | 방 이름 | 역할 | 개인 종합점수 | 포획 | 첫 포획(초) | 전원 포획(초)\n")
 		: bTeam
-			? TEXT("순위 | 방 이름 | 인원 | 팀 종합 평균점수 | 평균 구출 | 평균 탈출(초)\n")
+			? TEXT("순위 | 방 이름 | 인원 | 팀 종합점수 | 팀 전체 구출 | 마지막 탈출(초)\n")
 			: TEXT("순위 | 이름 | 방 이름 | 역할 | 개인 종합점수 | 구출 | 탈출(초)\n");
 	for (const FProjectProject01LeaderboardEntry& Entry : Lobby->GetLeaderboardEntries())
 	{
@@ -4073,7 +4073,7 @@ void UProjectProject01LeaderboardWidget::RefreshLeaderboardView()
 		{
 			Text += FString::Printf(TEXT("%d | %s | %d | %.1f | %.2f | %.2f\n"),
 				Entry.Rank, *Entry.RoomName, Entry.SurvivorCount, Entry.OverallScore,
-				Entry.AverageRescueCount, Entry.AverageEscapeSeconds);
+				Entry.TeamRescueCount, Entry.LastEscapeSeconds);
 		}
 		else
 		{
@@ -4108,8 +4108,8 @@ void UProjectProject01LeaderboardWidget::RefreshSortOptions()
 	}
 	else
 	{
-		SortComboBox->AddOption(bTeam ? TEXT("팀 평균 구출 점수") : TEXT("구출 횟수"));
-		SortComboBox->AddOption(bTeam ? TEXT("팀 평균 탈출 점수") : TEXT("탈출 시간"));
+		SortComboBox->AddOption(bTeam ? TEXT("팀 전체 구출 횟수") : TEXT("구출 횟수"));
+		SortComboBox->AddOption(bTeam ? TEXT("마지막 탈출 시간") : TEXT("탈출 시간"));
 	}
 	SortComboBox->SetSelectedOption(bTeam ? TEXT("팀 종합 평균 점수") : TEXT("개별 플레이어 점수"));
 	if (IsValid(CaptureCountInput)) CaptureCountInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -4200,8 +4200,8 @@ EProjectProject01LeaderboardSort UProjectProject01LeaderboardWidget::GetSelected
 	if (Option == TEXT("붙잡은 횟수")) return EProjectProject01LeaderboardSort::Captures;
 	if (Option == TEXT("첫 포획 시간")) return EProjectProject01LeaderboardSort::FirstCapture;
 	if (Option == TEXT("전원 포획 시간")) return EProjectProject01LeaderboardSort::AllCaptured;
-	if (Option == TEXT("구출 횟수") || Option == TEXT("팀 평균 구출 점수")) return EProjectProject01LeaderboardSort::Rescues;
-	if (Option == TEXT("탈출 시간") || Option == TEXT("팀 평균 탈출 점수")) return EProjectProject01LeaderboardSort::Escape;
+	if (Option == TEXT("구출 횟수") || Option == TEXT("팀 전체 구출 횟수")) return EProjectProject01LeaderboardSort::Rescues;
+	if (Option == TEXT("탈출 시간") || Option == TEXT("마지막 탈출 시간")) return EProjectProject01LeaderboardSort::Escape;
 	return EProjectProject01LeaderboardSort::Overall;
 }
 

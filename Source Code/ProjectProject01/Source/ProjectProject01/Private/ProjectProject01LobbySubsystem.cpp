@@ -669,8 +669,10 @@ bool UProjectProject01LobbySubsystem::ParseLeaderboard(const TSharedPtr<FJsonObj
 		if (EntryJson->TryGetNumberField(TEXT("rescueCount"), Number)) Entry.RescueCount = FMath::Max(0, FMath::RoundToInt(Number));
 		if (EntryJson->TryGetNumberField(TEXT("escapeSeconds"), Number)) Entry.EscapeSeconds = FMath::Max(0.0, Number);
 		if (EntryJson->TryGetNumberField(TEXT("survivorCount"), Number)) Entry.SurvivorCount = FMath::Max(0, FMath::RoundToInt(Number));
-		if (EntryJson->TryGetNumberField(TEXT("averageRescueCount"), Number)) Entry.AverageRescueCount = FMath::Max(0.0, Number);
-		if (EntryJson->TryGetNumberField(TEXT("averageEscapeSeconds"), Number)) Entry.AverageEscapeSeconds = FMath::Max(0.0, Number);
+		// API 필드명은 기존 패키지 호환을 위해 유지하지만 값은 팀 전체 구출 횟수입니다.
+		if (EntryJson->TryGetNumberField(TEXT("averageRescueCount"), Number)) Entry.TeamRescueCount = FMath::Max(0.0, Number);
+		// API 필드명은 기존 패키지 호환을 위해 유지하지만 값은 마지막 생존자의 탈출 시간입니다.
+		if (EntryJson->TryGetNumberField(TEXT("averageEscapeSeconds"), Number)) Entry.LastEscapeSeconds = FMath::Max(0.0, Number);
 		ParsedEntries.Add(MoveTemp(Entry));
 	}
 	LeaderboardEntries = MoveTemp(ParsedEntries);

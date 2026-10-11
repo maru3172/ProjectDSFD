@@ -93,10 +93,12 @@ struct PROJECTPROJECT01_API FProjectProject01LeaderboardEntry
 	int32 SurvivorCount = 0;
 
 	UPROPERTY(BlueprintReadOnly)
-	double AverageRescueCount = 0.0;
+	/** 팀 기록에서는 성공한 생존자들의 구출 횟수 합계입니다. */
+	double TeamRescueCount = 0.0;
 
 	UPROPERTY(BlueprintReadOnly)
-	double AverageEscapeSeconds = 0.0;
+	/** 팀 기록에서는 성공한 생존자들 중 마지막으로 탈출한 시간입니다. */
+	double LastEscapeSeconds = 0.0;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString CreatedAtUtc;

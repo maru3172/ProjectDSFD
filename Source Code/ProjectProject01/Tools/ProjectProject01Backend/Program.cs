@@ -969,6 +969,27 @@ internal sealed class AuthDatabase
             WHERE lr.room_name = '알 수 없는 방';
             """, connection) { CommandTimeout = 15 };
         await backfillRoomNames.ExecuteNonQueryAsync(cancellationToken);
+
+        // Keep the legacy column/API name for packaged-client compatibility, but store the
+        // team's total rescue count and the last (maximum) successful-survivor escape time.
+        await using var refreshTeamAggregates = new MySqlCommand(
+            """
+            UPDATE leaderboard_survivor_team_records team
+            INNER JOIN
+            (
+                SELECT vr.match_id, COUNT(*) AS survivor_count,
+                       SUM(vr.rescue_count) AS total_rescue_count,
+                       MAX(vr.escape_seconds) AS last_escape_seconds
+                FROM verified_match_results vr
+                WHERE vr.role = 'Survivor' AND vr.success = TRUE
+                GROUP BY vr.match_id
+            ) aggregate ON aggregate.match_id = team.match_id
+            SET team.survivor_count = aggregate.survivor_count,
+                team.average_rescue_count = aggregate.total_rescue_count,
+                team.average_escape_seconds = aggregate.last_escape_seconds,
+                team.updated_at_utc = UTC_TIMESTAMP(6);
+            """, connection) { CommandTimeout = 15 };
+        await refreshTeamAggregates.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

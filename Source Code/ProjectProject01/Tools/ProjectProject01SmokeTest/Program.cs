@@ -171,9 +171,11 @@ internal sealed class SmokeRunner(SmokeOptions options)
 
             await StepAsync("AuthoritativeEscapeAndWinLoss", async ct =>
             {
+                var survivorResultIndex = 0;
                 foreach (var client in clients)
                 {
                     var survivor = client.Role == "Survivor";
+                    var escapeSeconds = survivor ? 40.0 + (20.0 * survivorResultIndex++) : (double?)null;
                     await SendAsync(HttpMethod.Post, "api/server/matches/results", null, new
                     {
                         matchId,
@@ -184,7 +186,7 @@ internal sealed class SmokeRunner(SmokeOptions options)
                         firstCaptureSeconds = (double?)null,
                         allCapturedSeconds = (double?)null,
                         rescueCount = survivor ? 1 : (int?)null,
-                        escapeSeconds = survivor ? 42.0 : (double?)null
+                        escapeSeconds
                     }, true, ct, serverSecret);
                 }
             });
@@ -224,8 +226,11 @@ internal sealed class SmokeRunner(SmokeOptions options)
                 var teamEntry = teamEntries.FirstOrDefault(item =>
                     RequiredString(item, "roomName") == expectedRoomName);
                 if (teamEntry.ValueKind != JsonValueKind.Object || !teamEntry.GetProperty("isTeam").GetBoolean() ||
-                    teamEntry.GetProperty("survivorCount").GetInt32() != 2)
-                    throw new InvalidOperationException("생존자 한 명의 등록으로 생성된 2인 팀 기록을 찾지 못했습니다.");
+                    teamEntry.GetProperty("survivorCount").GetInt32() != 2 ||
+                    Math.Abs(teamEntry.GetProperty("averageRescueCount").GetDouble() - 2.0) > 0.001 ||
+                    Math.Abs(teamEntry.GetProperty("averageEscapeSeconds").GetDouble() - 60.0) > 0.001)
+                    throw new InvalidOperationException(
+                        "생존자 한 명의 등록으로 생성된 팀 기록, 전체 구출 횟수 또는 마지막 탈출 시간이 올바르지 않습니다.");
             });
 
             for (var index = 0; index < clients.Count; index++)

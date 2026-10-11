@@ -1211,7 +1211,7 @@ internal static class LobbyEndpoints
                 return Results.Ok(new
                 {
                     message = normalizedRole == "Survivor"
-                        ? "개인 성공 기록과 생존자 팀 평균 기록을 리더보드에 등록했습니다."
+                        ? "개인 성공 기록과 생존자 팀 기록을 리더보드에 등록했습니다."
                         : "개인 성공 기록을 리더보드에 등록했습니다."
                 });
             }
@@ -1314,7 +1314,7 @@ internal static class LobbyEndpoints
                 (match_id, room_name, survivor_count, average_rescue_count,
                  average_escape_seconds, submitted_by_user_id)
             SELECT @matchId, COALESCE(MAX(r.name), @fallbackRoomName), COUNT(*),
-                   AVG(vr.rescue_count), AVG(vr.escape_seconds), @submittedByUserId
+                   SUM(vr.rescue_count), MAX(vr.escape_seconds), @submittedByUserId
             FROM verified_match_results vr
             LEFT JOIN game_rooms r ON r.id = vr.room_id
             WHERE vr.match_id = @matchId AND vr.role = 'Survivor' AND vr.success = TRUE
@@ -1342,8 +1342,8 @@ internal static class LobbyEndpoints
             INNER JOIN
             (
                 SELECT vr.match_id, COALESCE(MAX(r.name), '알 수 없는 방') AS room_name,
-                       COUNT(*) AS survivor_count, AVG(vr.rescue_count) AS average_rescue_count,
-                       AVG(vr.escape_seconds) AS average_escape_seconds
+                       COUNT(*) AS survivor_count, SUM(vr.rescue_count) AS average_rescue_count,
+                       MAX(vr.escape_seconds) AS average_escape_seconds
                 FROM verified_match_results vr
                 LEFT JOIN game_rooms r ON r.id = vr.room_id
                 WHERE vr.match_id = @matchId AND vr.role = 'Survivor' AND vr.success = TRUE
