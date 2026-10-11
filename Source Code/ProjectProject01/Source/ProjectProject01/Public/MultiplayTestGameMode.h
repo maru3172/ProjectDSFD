@@ -131,6 +131,7 @@ private:
 	float SurvivorVisionHalfAngleDegrees = 55.0f;
 
 	float SurvivorVisionCheckAccumulatorSeconds = 0.0f;
+	float GameServerHeartbeatAccumulatorSeconds = 0.0f;
 
 	// 로비에서 무작위 배정된 한 명만 마네킹을 조종한다. 역할 옵션이 없는 기존 PIE는 첫 접속자를 사용한다.
 	TWeakObjectPtr<class AMultiplayTestPlayerController> MannequinController;

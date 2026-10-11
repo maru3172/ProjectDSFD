@@ -130,6 +130,14 @@ internal sealed class SmokeRunner(SmokeOptions options)
                 });
             }
 
+            var serverSecret = LoadServerSecret(options.ProjectRoot);
+            if (serverSecret.Length < 32)
+                throw new InvalidOperationException("PROJECTPROJECT01_GAME_SERVER_SECRET 또는 로컬 백엔드 설정의 서버 비밀키가 필요합니다.");
+            await StepAsync("RegisterGameServerHeartbeat", async ct =>
+            {
+                await SendAsync(HttpMethod.Post, "api/server/heartbeat", null, new { }, true, ct, serverSecret);
+            });
+
             string matchId = string.Empty;
             await StepAsync("StartMatchAndAssignRoles", async ct =>
             {
@@ -140,10 +148,6 @@ internal sealed class SmokeRunner(SmokeOptions options)
                     members.Count(item => RequiredString(item!, "assignedRole") == "Survivor") != 2)
                     throw new InvalidOperationException("역할 배정이 마네킹 1명/생존자 2명이 아닙니다.");
             });
-
-            var serverSecret = LoadServerSecret(options.ProjectRoot);
-            if (serverSecret.Length < 32)
-                throw new InvalidOperationException("PROJECTPROJECT01_GAME_SERVER_SECRET 또는 로컬 백엔드 설정의 서버 비밀키가 필요합니다.");
 
             for (var index = 0; index < clients.Count; index++)
             {

@@ -56,6 +56,7 @@ builder.Services.AddSingleton(versionCompatibility);
 var administratorOptions = AdministratorOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(administratorOptions);
 builder.Services.AddSingleton<ServiceControlState>();
+builder.Services.AddSingleton<GameServerPresenceState>();
 builder.Services.AddSingleton<EosVoiceTokenService>();
 builder.Services.AddHostedService(services => services.GetRequiredService<EosVoiceTokenService>());
 
@@ -461,16 +462,40 @@ app.MapPost("/api/auth/logout", async (
     try
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        await using var command = new MySqlCommand(
-            "UPDATE auth_sessions SET revoked_at_utc = UTC_TIMESTAMP(6) WHERE access_token_hash = @accessHash AND revoked_at_utc IS NULL;",
-            connection)
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        ulong? userId = null;
+        await using (var select = new MySqlCommand(
+            "SELECT user_id FROM auth_sessions WHERE access_token_hash = @accessHash AND revoked_at_utc IS NULL LIMIT 1 FOR UPDATE;",
+            connection, transaction)
         {
             CommandTimeout = 5
-        };
-        command.Parameters.Add("@accessHash", MySqlDbType.Binary, 32).Value = HashToken(accessToken);
-        var revokedCount = await command.ExecuteNonQueryAsync(cancellationToken);
+        })
+        {
+            select.Parameters.Add("@accessHash", MySqlDbType.Binary, 32).Value = HashToken(accessToken);
+            var value = await select.ExecuteScalarAsync(cancellationToken);
+            if (value is not null and not DBNull)
+            {
+                userId = Convert.ToUInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+
+        var revokedCount = 0;
+        if (userId is ulong authenticatedUserId)
+        {
+            await using var revoke = new MySqlCommand(
+                "UPDATE auth_sessions SET revoked_at_utc = UTC_TIMESTAMP(6) WHERE access_token_hash = @accessHash AND revoked_at_utc IS NULL;",
+                connection, transaction) { CommandTimeout = 5 };
+            revoke.Parameters.Add("@accessHash", MySqlDbType.Binary, 32).Value = HashToken(accessToken);
+            revokedCount = await revoke.ExecuteNonQueryAsync(cancellationToken);
+
+            // Logout is also a definitive lobby departure. This transfers host ownership when possible
+            // and deletes the room only when its final member logs out.
+            await LobbyEndpoints.RemoveUserFromCurrentRoomAsync(
+                connection, transaction, authenticatedUserId, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
         await SecurityAudit.WriteAsync(database, request, "AuthLogout", revokedCount > 0 ? "Success" : "UnknownSession",
-            null, null, cancellationToken);
+            userId, null, cancellationToken);
         return Results.Ok(new { message = "로그아웃되었습니다." });
     }
     catch (MySqlException)
@@ -482,7 +507,8 @@ app.MapPost("/api/auth/logout", async (
 app.MapProjectProject01Lobby(
     builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777",
     securityOptions,
-    versionCompatibility);
+    versionCompatibility,
+    app.Services.GetRequiredService<GameServerPresenceState>());
 
 app.MapPost("/api/crash-reports", async (
     CrashReportRequest report,

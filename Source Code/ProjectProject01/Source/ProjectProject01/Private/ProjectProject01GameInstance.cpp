@@ -722,14 +722,21 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 	const ENetworkFailure::Type FailureType,
 	const FString& ErrorString)
 {
-	if (IsRunningDedicatedServer() || !IsValid(World) ||
-		!World->GetMapName().Contains(TEXT("MultiplayTest")))
+	if (IsRunningDedicatedServer() || !IsValid(World) || bHandlingFailedGameConnection)
 	{
 		return;
 	}
+	const bool bWasMultiplayerTravel = World->GetMapName().Contains(TEXT("MultiplayTest")) ||
+		!ProjectProject01NetworkSecurity::PendingClientTicket.IsEmpty();
+	if (!bWasMultiplayerTravel)
+	{
+		return;
+	}
+	bHandlingFailedGameConnection = true;
 	UE_LOG(LogProjectProject01NetworkSecurity, Warning,
-		TEXT("Game server connection ended (%d): %s. Returning to the lobby for reconnect handling."),
+		TEXT("Game server connection failed (%d): %s. Clearing the multiplayer session and returning to login."),
 		static_cast<int32>(FailureType), *ErrorString);
+	ClearPendingGameConnection();
 	if (APlayerController* PlayerController = World->GetFirstPlayerController(); IsValid(PlayerController))
 	{
 		if (IsValid(PlayerController->PlayerCameraManager))
@@ -737,15 +744,98 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 			PlayerController->PlayerCameraManager->StartCameraFade(
 				0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
 		}
-		const TWeakObjectPtr<APlayerController> WeakController(PlayerController);
+		const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
 		FTimerHandle ReturnTimer;
-		World->GetTimerManager().SetTimer(ReturnTimer, [WeakController]()
+		World->GetTimerManager().SetTimer(ReturnTimer, [WeakThis]()
 		{
-			if (APlayerController* Controller = WeakController.Get(); IsValid(Controller))
+			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
 			{
-				Controller->ClientTravel(TEXT("/Game/MyProject/Level/LobbyLevel"), TRAVEL_Absolute);
+				Instance->BeginSafeLogoutAfterGameServerFailure();
 			}
 		}, 0.5f, false);
+	}
+	else
+	{
+		BeginSafeLogoutAfterGameServerFailure();
+	}
+}
+
+void UProjectProject01GameInstance::BeginSafeLogoutAfterGameServerFailure()
+{
+	UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	if (!IsValid(Auth))
+	{
+		bHandlingFailedGameConnection = false;
+		UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LoginLevel")));
+		return;
+	}
+
+	Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01GameInstance::HandleSafeLogoutCompleted);
+	Auth->OnLogoutCompleted.AddUniqueDynamic(this, &UProjectProject01GameInstance::HandleSafeLogoutCompleted);
+	Auth->Logout();
+}
+
+void UProjectProject01GameInstance::HandleSafeLogoutCompleted(
+	const bool bSuccess,
+	const FString& Message,
+	const FString& DisplayName)
+{
+	(void)Message;
+	(void)DisplayName;
+	UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	if (IsValid(Auth))
+	{
+		Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01GameInstance::HandleSafeLogoutCompleted);
+		if (!bSuccess)
+		{
+			Auth->ForceClearLocalSession();
+		}
+	}
+	bHandlingFailedGameConnection = false;
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LoginLevel")));
+}
+
+void UProjectProject01GameInstance::SendGameServerHeartbeat()
+{
+	const UWorld* World = GetWorld();
+	if (!IsRunningDedicatedServer() || !IsValid(World) || !IsBackendUrlAllowed())
+	{
+		return;
+	}
+	const FString ServerSecret = LoadGameServerSharedSecret();
+	if (ServerSecret.Len() < 32)
+	{
+		UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+			TEXT("Cannot send game server heartbeat because the server secret is unavailable."));
+		return;
+	}
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/server/heartbeat"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetContentAsString(TEXT("{}"));
+	Request->SetTimeout(SecurityRequestTimeoutSeconds);
+	Request->OnProcessRequestComplete().BindWeakLambda(this,
+		[this](const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& CompletedRequest,
+			const TSharedPtr<IHttpResponse, ESPMode::ThreadSafe>& Response,
+			const bool bConnectedSuccessfully)
+		{
+			RemovePendingRequest(CompletedRequest);
+			if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() < 200 ||
+				Response->GetResponseCode() >= 300)
+			{
+				UE_LOG(LogProjectProject01NetworkSecurity, Warning,
+					TEXT("Game server heartbeat failed with status %d."),
+					Response.IsValid() ? Response->GetResponseCode() : 0);
+			}
+		});
+	PendingSecurityRequests.Add(Request);
+	if (!Request->ProcessRequest())
+	{
+		RemovePendingRequest(Request);
 	}
 }
 

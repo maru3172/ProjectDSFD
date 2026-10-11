@@ -160,13 +160,23 @@ internal static class ServiceAdministration
         {
             if (!IsAuthorized(request, admin)) return Results.Unauthorized();
             await using var connection = await database.OpenConnectionAsync(ct);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
             await using var command = new MySqlCommand(
                 "UPDATE auth_sessions SET revoked_at_utc = UTC_TIMESTAMP(6) WHERE revoked_at_utc IS NULL;",
-                connection) { CommandTimeout = 5 };
+                connection, transaction) { CommandTimeout = 5 };
             var count = await command.ExecuteNonQueryAsync(ct);
+            await using var deleteRooms = new MySqlCommand(
+                "DELETE FROM game_rooms;", connection, transaction) { CommandTimeout = 5 };
+            var deletedRoomCount = await deleteRooms.ExecuteNonQueryAsync(ct);
+            await transaction.CommitAsync(ct);
             await SecurityAudit.WriteAsync(database, request, "AdminForceLogout", "AllSessions", null,
-                $"Revoked={count}", ct);
-            return Results.Ok(new { message = "모든 멀티플레이 로그인 세션을 폐기했습니다.", revokedSessionCount = count });
+                $"Revoked={count}; DeletedRooms={deletedRoomCount}", ct);
+            return Results.Ok(new
+            {
+                message = "모든 멀티플레이 로그인 세션을 폐기하고 남은 방을 안전하게 삭제했습니다.",
+                revokedSessionCount = count,
+                deletedRoomCount
+            });
         }).RequireRateLimiting("admin");
 
         app.MapPost("/api/admin/users/{accountId}/sessions/revoke", async (
@@ -174,14 +184,32 @@ internal static class ServiceAdministration
         {
             if (!IsAuthorized(request, admin)) return Results.Unauthorized();
             await using var connection = await database.OpenConnectionAsync(ct);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            ulong? userId = null;
+            await using (var selectUser = new MySqlCommand(
+                "SELECT id FROM users WHERE account_id = @accountId LIMIT 1 FOR UPDATE;",
+                connection, transaction) { CommandTimeout = 5 })
+            {
+                selectUser.Parameters.AddWithValue("@accountId", accountId.Trim());
+                var value = await selectUser.ExecuteScalarAsync(ct);
+                if (value is not null and not DBNull)
+                {
+                    userId = Convert.ToUInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
             await using var command = new MySqlCommand(
                 """
                 UPDATE auth_sessions s INNER JOIN users u ON u.id = s.user_id
                 SET s.revoked_at_utc = UTC_TIMESTAMP(6)
                 WHERE u.account_id = @accountId AND s.revoked_at_utc IS NULL;
-                """, connection) { CommandTimeout = 5 };
+                """, connection, transaction) { CommandTimeout = 5 };
             command.Parameters.AddWithValue("@accountId", accountId.Trim());
             var count = await command.ExecuteNonQueryAsync(ct);
+            if (userId is ulong selectedUserId)
+            {
+                await LobbyEndpoints.RemoveUserFromCurrentRoomAsync(connection, transaction, selectedUserId, ct);
+            }
+            await transaction.CommitAsync(ct);
             await SecurityAudit.WriteAsync(database, request, "AdminForceLogout", "AccountSessions", null,
                 $"AccountId={accountId.Trim()}; Revoked={count}", ct);
             return Results.Ok(new { message = "선택한 계정의 멀티플레이 세션을 폐기했습니다.", revokedSessionCount = count });

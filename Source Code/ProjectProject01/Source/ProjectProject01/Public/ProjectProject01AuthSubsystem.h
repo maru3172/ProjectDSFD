@@ -61,6 +61,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Authentication")
 	void Logout();
 
+	/** 서버 연결이 끊겨 원격 로그아웃까지 실패했을 때 재접속 반복을 막기 위해 로컬 토큰을 즉시 폐기합니다. */
+	void ForceClearLocalSession();
+
 	/** 로그인 화면을 떠날 때 아직 끝나지 않은 로그인/회원가입 요청을 취소하고 잠금 상태를 해제합니다. */
 	void CancelPendingAuthentication();
 

@@ -14,16 +14,30 @@ internal static class LobbyEndpoints
     private const int MaximumPlayers = 3;
     private const int StaleMemberSeconds = 60;
     private const int GameTicketLifetimeSeconds = 60;
+    private static readonly TimeSpan GameServerHeartbeatMaximumAge = TimeSpan.FromSeconds(15);
 
     public static void MapProjectProject01Lobby(
         this WebApplication app,
         string configuredTravelUrl,
         ProjectSecurityOptions securityOptions,
-        VersionCompatibilityOptions versionCompatibility)
+        VersionCompatibilityOptions versionCompatibility,
+        GameServerPresenceState gameServerPresence)
     {
         var travelUrl = string.IsNullOrWhiteSpace(configuredTravelUrl)
             ? "127.0.0.1:7777"
             : configuredTravelUrl.Trim();
+
+        app.MapPost("/api/server/heartbeat", (HttpRequest request) =>
+        {
+            if (!securityOptions.IsAuthorizedGameServer(
+                    request.Headers["X-ProjectProject01-Server-Secret"].ToString()))
+            {
+                return Results.Unauthorized();
+            }
+
+            gameServerPresence.MarkAlive();
+            return Results.Ok(new { message = "게임 서버 heartbeat를 확인했습니다." });
+        }).RequireRateLimiting("game-server");
 
         app.MapGet("/api/rooms", async (HttpRequest request, AuthDatabase database, CancellationToken ct) =>
         {
@@ -290,48 +304,13 @@ internal static class LobbyEndpoints
                     await transaction.RollbackAsync(ct);
                     return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
                 }
-                var hostTransferred = false;
-                var roomDeleted = false;
-                if (membership.IsHost)
-                {
-                    var successorUserId = await FindEarliestOtherMemberAsync(
-                        connection, transaction, membership.RoomId, user.Id, ct);
-                    if (successorUserId is ulong successor)
-                    {
-                        await ExecuteAsync(connection, transaction,
-                            "UPDATE game_rooms SET host_user_id = @successorUserId WHERE id = @roomId;",
-                            ("@successorUserId", successor), ("@roomId", membership.RoomId), ct);
-                        await ExecuteAsync(connection, transaction,
-                            "UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id = @successorUserId;",
-                            ("@roomId", membership.RoomId), ("@successorUserId", successor), ct);
-                        await ExecuteAsync(connection, transaction,
-                            "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
-                            ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
-                        hostTransferred = true;
-                    }
-                    else
-                    {
-                        await ExecuteAsync(connection, transaction,
-                            "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
-                        roomDeleted = true;
-                    }
-                }
-                else
-                {
-                    await ExecuteAsync(connection, transaction,
-                        "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
-                        ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
-                }
-                if (!roomDeleted)
-                {
-                    await ResetStartedRoomIfAllMembersReturnedAsync(connection, transaction, membership.RoomId, ct);
-                }
+                var exit = await RemoveUserFromCurrentRoomAsync(connection, transaction, user.Id, ct);
                 await transaction.CommitAsync(ct);
                 return Results.Ok(new
                 {
-                    message = hostTransferred
+                    message = exit.HostTransferred
                         ? "방에서 나왔으며 가장 먼저 참가한 플레이어에게 방장 권한을 넘겼습니다."
-                        : membership.IsHost
+                        : exit.RoomDeleted
                             ? "마지막 인원이 나가 방이 삭제되었습니다."
                             : "방에서 나왔습니다."
                 });
@@ -603,6 +582,25 @@ internal static class LobbyEndpoints
                     return Results.Conflict(new LobbyFailure("방장을 제외한 모든 플레이어가 준비해야 합니다."));
                 }
 
+                if (!gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge))
+                {
+                    // A failed start must not leave three clients in a Started room that continually
+                    // retries travel. Revoke every member session and delete the room atomically.
+                    await ExecuteAsync(connection, transaction,
+                        """
+                        UPDATE auth_sessions s
+                        INNER JOIN room_members m ON m.user_id = s.user_id
+                        SET s.revoked_at_utc = UTC_TIMESTAMP(6)
+                        WHERE m.room_id = @roomId AND s.revoked_at_utc IS NULL;
+                        """, ("@roomId", membership.RoomId), ct);
+                    await ExecuteAsync(connection, transaction,
+                        "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
+                    await transaction.CommitAsync(ct);
+                    return Results.Json(
+                        new LobbyFailure("게임 서버가 실행 중이 아닙니다. 방과 로그인 세션을 안전하게 정리했습니다. 다시 로그인하세요."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+
                 var mannequinIndex = RandomNumberGenerator.GetInt32(members.Count);
 				var requestTravelUrl = ResolveTravelUrlForRequest(request, travelUrl);
                 await ExecuteAsync(connection, transaction,
@@ -669,6 +667,23 @@ internal static class LobbyEndpoints
                     matchId = ReadRoomId(reader, 1);
                     role = reader.GetString(2);
                     gameServerTravelUrl = reader.GetString(3);
+                }
+
+                if (!gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge))
+                {
+                    await ExecuteAsync(connection, transaction,
+                        """
+                        UPDATE auth_sessions s
+                        INNER JOIN room_members m ON m.user_id = s.user_id
+                        SET s.revoked_at_utc = UTC_TIMESTAMP(6)
+                        WHERE m.room_id = @roomId AND s.revoked_at_utc IS NULL;
+                        """, ("@roomId", roomId), ct);
+                    await ExecuteAsync(connection, transaction,
+                        "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", roomId), ct);
+                    await transaction.CommitAsync(ct);
+                    return Results.Json(
+                        new LobbyFailure("게임 서버 연결이 끊겼습니다. 방과 로그인 세션을 안전하게 정리했습니다. 다시 로그인하세요."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
                 }
 
                 var ticket = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(48));
@@ -1331,6 +1346,58 @@ internal static class LobbyEndpoints
         return await reader.ReadAsync(ct) ? new LobbyUser(reader.GetUInt64(0), reader.GetString(1)) : null;
     }
 
+    internal static async Task<RoomExitResult> RemoveUserFromCurrentRoomAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        ulong userId,
+        CancellationToken ct)
+    {
+        var membership = await LoadMembershipAsync(connection, transaction, userId, true, ct);
+        if (membership is null)
+        {
+            return new RoomExitResult(false, false, false);
+        }
+
+        var hostTransferred = false;
+        var roomDeleted = false;
+        if (membership.IsHost)
+        {
+            var successorUserId = await FindEarliestOtherMemberAsync(
+                connection, transaction, membership.RoomId, userId, ct);
+            if (successorUserId is ulong successor)
+            {
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE game_rooms SET host_user_id = @successorUserId WHERE id = @roomId;",
+                    ("@successorUserId", successor), ("@roomId", membership.RoomId), ct);
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE room_members SET is_ready = FALSE WHERE room_id = @roomId AND user_id = @successorUserId;",
+                    ("@roomId", membership.RoomId), ("@successorUserId", successor), ct);
+                await ExecuteAsync(connection, transaction,
+                    "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
+                    ("@roomId", membership.RoomId), ("@userId", userId), ct);
+                hostTransferred = true;
+            }
+            else
+            {
+                await ExecuteAsync(connection, transaction,
+                    "DELETE FROM game_rooms WHERE id = @roomId;", ("@roomId", membership.RoomId), ct);
+                roomDeleted = true;
+            }
+        }
+        else
+        {
+            await ExecuteAsync(connection, transaction,
+                "DELETE FROM room_members WHERE room_id = @roomId AND user_id = @userId;",
+                ("@roomId", membership.RoomId), ("@userId", userId), ct);
+        }
+
+        if (!roomDeleted)
+        {
+            await ResetStartedRoomIfAllMembersReturnedAsync(connection, transaction, membership.RoomId, ct);
+        }
+        return new RoomExitResult(true, hostTransferred, roomDeleted);
+    }
+
     private static async Task CleanupStaleRoomsAsync(
         MySqlConnection connection, MySqlTransaction? transaction, CancellationToken ct)
     {
@@ -1738,6 +1805,7 @@ internal sealed record SubmitLeaderboardRecordRequest(
 internal sealed record LobbyFailure(string Message);
 internal sealed record LobbyUser(ulong Id, string DisplayName);
 internal sealed record Membership(string RoomId, bool IsHost, string Status);
+internal sealed record RoomExitResult(bool HadMembership, bool HostTransferred, bool RoomDeleted);
 internal sealed record RoomSummary(
     string RoomId, string JoinCode, string Name, string HostDisplayName, int MemberCount, int MaxPlayers, bool HasPassword);
 internal sealed record RoomMember(

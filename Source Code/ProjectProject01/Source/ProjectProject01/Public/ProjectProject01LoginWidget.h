@@ -32,10 +32,7 @@ private:
 	TObjectPtr<class UBorder> StatusBackground;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UTextBlock> ConnectionText;
-
-	UPROPERTY(Transient)
-	TObjectPtr<class UTextBlock> MicrophoneText;
+	TObjectPtr<class UTextBlock> VoiceStatusText;
 };
 
 /** 멀티플레이 경기 중에도 서버 공지와 종료 예고를 보여주는 가벼운 상단 배너입니다. */

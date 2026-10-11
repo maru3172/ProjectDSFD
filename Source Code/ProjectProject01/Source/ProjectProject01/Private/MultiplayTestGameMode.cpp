@@ -9,6 +9,7 @@
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "ProjectProject01GameInstance.h"
 #include "ProjectProject01VersionContract.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/TriggerBox.h"
@@ -145,6 +146,13 @@ void AMultiplayTestGameMode::BeginPlay()
 	Super::BeginPlay();
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
 	BindEscapeTriggers();
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		if (UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		{
+			GameInstance->SendGameServerHeartbeat();
+		}
+	}
 
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
@@ -172,6 +180,18 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 	if (!HasAuthority() || DeltaSeconds <= 0.0f)
 	{
 		return;
+	}
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		GameServerHeartbeatAccumulatorSeconds += DeltaSeconds;
+		if (GameServerHeartbeatAccumulatorSeconds >= 5.0f)
+		{
+			GameServerHeartbeatAccumulatorSeconds = 0.0f;
+			if (UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+			{
+				GameInstance->SendGameServerHeartbeat();
+			}
+		}
 	}
 
 	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&

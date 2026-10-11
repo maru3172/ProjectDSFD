@@ -348,24 +348,17 @@ void UProjectProject01VoiceStatusWidget::BuildWidgetTree()
 
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
 	StatusBackground->AddChild(Root);
-	ConnectionText = WidgetTree->ConstructWidget<UTextBlock>();
-	ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-	FSlateFontInfo ConnectionFont = ConnectionText->GetFont();
-	ConnectionFont.Size = 16;
-	ConnectionText->SetFont(ConnectionFont);
-	Root->AddChildToVerticalBox(ConnectionText);
-
-	MicrophoneText = WidgetTree->ConstructWidget<UTextBlock>();
-	MicrophoneText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.78f, 0.78f, 1.0f)));
-	FSlateFontInfo MicrophoneFont = MicrophoneText->GetFont();
-	MicrophoneFont.Size = 13;
-	MicrophoneText->SetFont(MicrophoneFont);
-	Root->AddChildToVerticalBox(MicrophoneText);
+	VoiceStatusText = WidgetTree->ConstructWidget<UTextBlock>();
+	VoiceStatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	FSlateFontInfo StatusFont = VoiceStatusText->GetFont();
+	StatusFont.Size = 16;
+	VoiceStatusText->SetFont(StatusFont);
+	Root->AddChildToVerticalBox(VoiceStatusText);
 }
 
 void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 {
-	if (!IsValid(ConnectionText) || !IsValid(MicrophoneText))
+	if (!IsValid(VoiceStatusText))
 	{
 		return;
 	}
@@ -373,43 +366,18 @@ void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 	const UGameInstance* GameInstance = GetGameInstance();
 	const UProjectProject01VoiceChatSubsystem* Voice = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>() : nullptr;
-	if (!IsValid(Voice) || !Voice->IsConfiguredForSurvivor())
+	const bool bVoiceActive = IsValid(Voice) && Voice->IsConfiguredForSurvivor() &&
+		Voice->IsVoiceReady() && Voice->IsTransmitting();
+	VoiceStatusText->SetText(FProjectProject01Localization::Text(
+		bVoiceActive ? TEXT("보이스: 활성") : TEXT("보이스: 비활성")));
+	VoiceStatusText->SetColorAndOpacity(FSlateColor(bVoiceActive
+		? FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)
+		: FLinearColor(0.70f, 0.70f, 0.70f, 1.0f)));
+	if (IsValid(StatusBackground))
 	{
-		ConnectionText->SetText(FProjectProject01Localization::Text(TEXT("음성 채팅: 꺼짐")));
-		ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.70f, 0.70f, 0.70f, 1.0f)));
-		MicrophoneText->SetText(FProjectProject01Localization::Text(TEXT("생존자 전용 기능입니다.")));
-		return;
-	}
-
-	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
-	const FString PushToTalkKey = IsValid(Settings)
-		? Settings->GetVoicePushToTalkKey().GetDisplayName().ToString() : TEXT("F2");
-	const FString ToggleKey = IsValid(Settings)
-		? Settings->GetVoiceToggleKey().GetDisplayName().ToString() : TEXT("U");
-
-	if (!Voice->IsVoiceReady())
-	{
-		ConnectionText->SetText(FProjectProject01Localization::Text(TEXT("음성 채팅: 연결 중")));
-		ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.68f, 0.20f, 1.0f)));
-		MicrophoneText->SetText(FProjectProject01Localization::Text(TEXT("마이크: 꺼짐 · 서버 연결을 확인하세요.")));
-		return;
-	}
-
-	ConnectionText->SetText(FProjectProject01Localization::Text(TEXT("음성 채팅: 연결됨")));
-	ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)));
-	if (Voice->IsTransmitting())
-	{
-		const FString Mode = Voice->IsOpenMicEnabled()
-			? FString::Printf(TEXT("마이크: 켜짐 · 상시 송신 중 (%s로 끄기)"), *ToggleKey)
-			: FString::Printf(TEXT("마이크: 켜짐 · 송신 중 (%s)"), *PushToTalkKey);
-		MicrophoneText->SetText(FProjectProject01Localization::Text(Mode));
-		MicrophoneText->SetColorAndOpacity(FSlateColor(FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)));
-	}
-	else
-	{
-		MicrophoneText->SetText(FProjectProject01Localization::Text(FString::Printf(
-			TEXT("마이크: 꺼짐 · %s 누르고 말하기 / %s 상시 송신"), *PushToTalkKey, *ToggleKey)));
-		MicrophoneText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.78f, 0.78f, 1.0f)));
+		StatusBackground->SetBrushColor(bVoiceActive
+			? FLinearColor(0.03f, 0.20f, 0.07f, 0.90f)
+			: FLinearColor(0.03f, 0.03f, 0.04f, 0.88f));
 	}
 }
 
@@ -3341,6 +3309,16 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	const bool bSuccess,
 	const FString& Message)
 {
+	if (!bSuccess &&
+		(Operation == EProjectProject01LobbyOperation::StartRoom ||
+			Operation == EProjectProject01LobbyOperation::RequestGameTicket) &&
+		(Message.Contains(TEXT("게임 서버가 실행 중이 아닙니다")) ||
+			Message.Contains(TEXT("게임 서버 연결이 끊겼습니다"))))
+	{
+		SetStatus(TEXT("게임 서버가 꺼져 있어 방과 로그인 세션을 정리했습니다. 로그인 화면으로 돌아갑니다..."), true);
+		BeginLogout();
+		return;
+	}
 	if (Operation != EProjectProject01LobbyOperation::RefreshRooms &&
 		Operation != EProjectProject01LobbyOperation::RefreshCurrentRoom)
 	{

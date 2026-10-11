@@ -313,10 +313,17 @@ public:
 	/** 재접속 유예시간이 만료된 플레이어를 백엔드 방에서도 서버 권위로 정리합니다. */
 	void NotifyAuthoritativePlayerForfeit(const FString& MatchId, const FString& UserId, const FString& Role);
 
+	/** 데디케이티드 서버가 실행 중임을 백엔드에 알립니다. 서버 월드에서만 전송됩니다. */
+	void SendGameServerHeartbeat();
+
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
 		ENetworkFailure::Type FailureType, const FString& ErrorString);
+	void BeginSafeLogoutAfterGameServerFailure();
+
+	UFUNCTION()
+	void HandleSafeLogoutCompleted(bool bSuccess, const FString& Message, const FString& DisplayName);
 	void InitializeCrashReportCollection();
 	void RefreshCrashReportContext(UWorld* World);
 	void RecoverPendingCrashReports();
@@ -349,4 +356,5 @@ private:
 	FString ActiveCrashMarkerPath;
 	FString PendingCrashMatchId;
 	FString PendingCrashPlayerRole;
+	bool bHandlingFailedGameConnection = false;
 };

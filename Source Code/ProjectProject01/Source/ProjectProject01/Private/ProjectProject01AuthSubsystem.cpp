@@ -153,6 +153,17 @@ void UProjectProject01AuthSubsystem::Logout()
 	SendRequest(EAuthOperation::Logout, TEXT("/api/auth/logout"), TEXT("{}"), 0);
 }
 
+void UProjectProject01AuthSubsystem::ForceClearLocalSession()
+{
+	if (ActiveRequest.IsValid())
+	{
+		ActiveRequest->OnProcessRequestComplete().Unbind();
+		ActiveRequest->CancelRequest();
+		ActiveRequest.Reset();
+	}
+	ClearSession();
+}
+
 void UProjectProject01AuthSubsystem::CancelPendingAuthentication()
 {
 	if (AuthState != EProjectProject01AuthState::Registering &&
