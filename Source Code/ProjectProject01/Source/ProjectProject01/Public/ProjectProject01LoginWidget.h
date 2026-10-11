@@ -83,8 +83,13 @@ private:
 	UFUNCTION()
 	void HandleQuitClicked();
 
+	UFUNCTION()
+	void HandleServiceStatusChanged(bool bMaintenanceEnabled, const FString& Announcement,
+		const FString& ShutdownAtUtc, const FString& Message);
+
 	void BuildWidgetTree();
 	void SetMenuEnabled(bool bEnabled);
+	void PollMultiplayerService();
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> SinglePlayerButton;
@@ -108,6 +113,8 @@ private:
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
 	bool bNavigationRequested = false;
+	bool bMultiplayerServiceAvailable = false;
+	FTimerHandle ServiceStatusTimer;
 };
 
 UCLASS()
@@ -141,6 +148,7 @@ private:
 		const FString& ShutdownAtUtc, const FString& Message);
 
 	void BuildWidgetTree();
+	void PollMultiplayerService();
 	void SetRequestControlsEnabled(bool bEnabled);
 	void SetStatus(const FString& Message, bool bIsError);
 	void EnterLobby();
@@ -164,6 +172,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> StatusText;
+
+	bool bMultiplayerServiceAvailable = false;
+	FTimerHandle ServiceStatusTimer;
 };
 
 /** 싱글 및 멀티플레이 중 ESC로 여는 세션 메뉴입니다. */
@@ -767,6 +778,12 @@ private:
 	void HandleSurvivorTabClicked();
 
 	UFUNCTION()
+	void HandleIndividualScopeClicked();
+
+	UFUNCTION()
+	void HandleTeamScopeClicked();
+
+	UFUNCTION()
 	void HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 
 	UFUNCTION()
@@ -788,15 +805,26 @@ private:
 	void RefreshLeaderboardView();
 	void RefreshSortOptions();
 	void SetSelectedRole(EProjectProject01LeaderboardRole NewRole, bool bRefreshLeaderboard);
+	void SetSelectedScope(EProjectProject01LeaderboardScope NewScope, bool bRefreshLeaderboard);
 	void SetStatus(const FString& Message, bool bIsError);
 	EProjectProject01LeaderboardRole GetSelectedRole() const;
 	EProjectProject01LeaderboardSort GetSelectedSort() const;
+	EProjectProject01LeaderboardScope GetSelectedScope() const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> MannequinTabButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> SurvivorTabButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UHorizontalBox> SurvivorScopeBar;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> IndividualScopeButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> TeamScopeButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UComboBoxString> SortComboBox;
@@ -832,5 +860,6 @@ private:
 	TObjectPtr<class UTextBlock> LeaderboardStatusText;
 
 	EProjectProject01LeaderboardRole SelectedRole = EProjectProject01LeaderboardRole::Mannequin;
+	EProjectProject01LeaderboardScope SelectedScope = EProjectProject01LeaderboardScope::Individual;
 	bool bUpdatingSortOptions = false;
 };

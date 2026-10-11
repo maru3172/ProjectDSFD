@@ -191,20 +191,41 @@ internal sealed class SmokeRunner(SmokeOptions options)
 
             await StepAsync("PublishSuccessfulResults", async ct =>
             {
-                foreach (var client in clients.Where(item => item.Role == "Survivor"))
+                var survivor = clients.First(item => item.Role == "Survivor");
+                await SendAsync(HttpMethod.Post, "api/leaderboards/records", survivor.AccessToken, new
                 {
-                    await SendAsync(HttpMethod.Post, "api/leaderboards/records", client.AccessToken, new
-                    {
-                        matchId,
-                        role = client.Role,
-                        success = true,
-                        captureCount = (int?)null,
-                        firstCaptureSeconds = (double?)null,
-                        allCapturedSeconds = (double?)null,
-                        rescueCount = 1,
-                        escapeSeconds = 42.0
-                    }, true, ct);
-                }
+                    matchId,
+                    role = survivor.Role,
+                    success = true,
+                    captureCount = (int?)null,
+                    firstCaptureSeconds = (double?)null,
+                    allCapturedSeconds = (double?)null,
+                    rescueCount = 1,
+                    escapeSeconds = 42.0
+                }, true, ct);
+            });
+            await StepAsync("VerifyIndividualAndTeamLeaderboards", async ct =>
+            {
+                var survivor = clients.First(item => item.Role == "Survivor");
+                var expectedRoomName = $"Smoke-{suffix}";
+                var individual = await SendAsync(HttpMethod.Get,
+                    "api/leaderboards/Survivor?sort=overall&scope=individual",
+                    survivor.AccessToken, null, true, ct);
+                var individualEntries = RequiredArray(individual, "entries");
+                if (!individualEntries.Any(item =>
+                    RequiredString(item!, "displayName") == survivor.DisplayName &&
+                    RequiredString(item!, "roomName") == expectedRoomName))
+                    throw new InvalidOperationException("등록한 생존자 개인 기록 또는 방 이름을 찾지 못했습니다.");
+
+                var team = await SendAsync(HttpMethod.Get,
+                    "api/leaderboards/Survivor?sort=overall&scope=team",
+                    survivor.AccessToken, null, true, ct);
+                var teamEntries = RequiredArray(team, "entries");
+                var teamEntry = teamEntries.FirstOrDefault(item =>
+                    RequiredString(item, "roomName") == expectedRoomName);
+                if (teamEntry.ValueKind != JsonValueKind.Object || !teamEntry.GetProperty("isTeam").GetBoolean() ||
+                    teamEntry.GetProperty("survivorCount").GetInt32() != 2)
+                    throw new InvalidOperationException("생존자 한 명의 등록으로 생성된 2인 팀 기록을 찾지 못했습니다.");
             });
 
             for (var index = 0; index < clients.Count; index++)

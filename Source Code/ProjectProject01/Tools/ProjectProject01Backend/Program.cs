@@ -776,6 +776,7 @@ internal sealed class AuthDatabase
         await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
         await EnsureSecuritySchemaAsync(connection, cancellationToken);
         await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
+        await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
     }
 
     private static async Task EnsureLobbyJoinCodeSchemaAsync(
@@ -940,6 +941,34 @@ internal sealed class AuthDatabase
               AND (maintenance_start_at_utc IS NOT NULL OR shutdown_at_utc IS NOT NULL);
             """, connection) { CommandTimeout = 15 };
         await migrateLegacySchedule.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task EnsureLeaderboardRoomAndTeamSchemaAsync(
+        MySqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await connection.ChangeDatabaseAsync("projectproject01", cancellationToken);
+        await using var roomNameColumn = new MySqlCommand(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'leaderboard_records' AND column_name = 'room_name';",
+            connection) { CommandTimeout = 5 };
+        if (Convert.ToInt32(await roomNameColumn.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addRoomName = new MySqlCommand(
+                "ALTER TABLE leaderboard_records ADD COLUMN room_name VARCHAR(48) NOT NULL DEFAULT '알 수 없는 방' AFTER user_id;",
+                connection) { CommandTimeout = 15 };
+            await addRoomName.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var backfillRoomNames = new MySqlCommand(
+            """
+            UPDATE leaderboard_records lr
+            INNER JOIN verified_match_results vr
+                ON vr.match_id = lr.match_id AND vr.user_id = lr.user_id
+            INNER JOIN game_rooms r ON r.id = vr.room_id
+            SET lr.room_name = r.name
+            WHERE lr.room_name = '알 수 없는 방';
+            """, connection) { CommandTimeout = 15 };
+        await backfillRoomNames.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

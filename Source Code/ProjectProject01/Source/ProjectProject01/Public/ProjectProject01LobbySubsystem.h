@@ -34,6 +34,13 @@ enum class EProjectProject01LeaderboardRole : uint8
 };
 
 UENUM(BlueprintType)
+enum class EProjectProject01LeaderboardScope : uint8
+{
+	Individual,
+	Team
+};
+
+UENUM(BlueprintType)
 enum class EProjectProject01LeaderboardSort : uint8
 {
 	Overall,
@@ -56,7 +63,13 @@ struct PROJECTPROJECT01_API FProjectProject01LeaderboardEntry
 	FString DisplayName;
 
 	UPROPERTY(BlueprintReadOnly)
+	FString RoomName;
+
+	UPROPERTY(BlueprintReadOnly)
 	FString Role;
+
+	UPROPERTY(BlueprintReadOnly)
+	bool bIsTeam = false;
 
 	UPROPERTY(BlueprintReadOnly)
 	double OverallScore = 0.0;
@@ -75,6 +88,15 @@ struct PROJECTPROJECT01_API FProjectProject01LeaderboardEntry
 
 	UPROPERTY(BlueprintReadOnly)
 	double EscapeSeconds = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 SurvivorCount = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double AverageRescueCount = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+	double AverageEscapeSeconds = 0.0;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString CreatedAtUtc;
@@ -279,7 +301,8 @@ public:
 	void RequestGameJoinTicket();
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
-	void RefreshLeaderboard(EProjectProject01LeaderboardRole Role, EProjectProject01LeaderboardSort Sort);
+	void RefreshLeaderboard(EProjectProject01LeaderboardRole Role, EProjectProject01LeaderboardSort Sort,
+		EProjectProject01LeaderboardScope Scope);
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
 	void SubmitLeaderboardRecord(
@@ -320,6 +343,7 @@ public:
 	const TArray<FProjectProject01LeaderboardEntry>& GetLeaderboardEntries() const { return LeaderboardEntries; }
 	EProjectProject01LeaderboardRole GetLeaderboardRole() const { return LeaderboardRole; }
 	EProjectProject01LeaderboardSort GetLeaderboardSort() const { return LeaderboardSort; }
+	EProjectProject01LeaderboardScope GetLeaderboardScope() const { return LeaderboardScope; }
 	bool HasPendingGameJoinTicket() const { return !GameJoinTicket.IsEmpty() && !GameEncryptionKeyBase64.IsEmpty(); }
 	/** 로그인 화면에서 선택한 백엔드 주소를 로비·리더보드 요청에도 동일하게 적용합니다. */
 	bool ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl);
@@ -370,6 +394,7 @@ private:
 
 	EProjectProject01LeaderboardRole LeaderboardRole = EProjectProject01LeaderboardRole::Mannequin;
 	EProjectProject01LeaderboardSort LeaderboardSort = EProjectProject01LeaderboardSort::Overall;
+	EProjectProject01LeaderboardScope LeaderboardScope = EProjectProject01LeaderboardScope::Individual;
 	FProjectProject01PendingLeaderboardRecord PendingLeaderboardRecord;
 
 	FString GameJoinTicket;

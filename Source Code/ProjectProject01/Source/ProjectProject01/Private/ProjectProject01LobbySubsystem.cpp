@@ -65,6 +65,11 @@ namespace ProjectProject01Lobby
 		default: return TEXT("overall");
 		}
 	}
+
+	const TCHAR* ScopeToString(const EProjectProject01LeaderboardScope Scope)
+	{
+		return Scope == EProjectProject01LeaderboardScope::Team ? TEXT("team") : TEXT("individual");
+	}
 }
 
 void UProjectProject01LobbySubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -234,7 +239,8 @@ void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
 
 void UProjectProject01LobbySubsystem::RefreshLeaderboard(
 	const EProjectProject01LeaderboardRole Role,
-	EProjectProject01LeaderboardSort Sort)
+	EProjectProject01LeaderboardSort Sort,
+	EProjectProject01LeaderboardScope Scope)
 {
 	const bool bMannequinSort = Sort == EProjectProject01LeaderboardSort::Overall ||
 		Sort == EProjectProject01LeaderboardSort::Captures ||
@@ -248,10 +254,16 @@ void UProjectProject01LobbySubsystem::RefreshLeaderboard(
 	{
 		Sort = EProjectProject01LeaderboardSort::Overall;
 	}
+	if (Role == EProjectProject01LeaderboardRole::Mannequin)
+	{
+		Scope = EProjectProject01LeaderboardScope::Individual;
+	}
 	LeaderboardRole = Role;
 	LeaderboardSort = Sort;
-	const FString Endpoint = FString::Printf(TEXT("/api/leaderboards/%s?sort=%s"),
-		ProjectProject01Lobby::RoleToString(Role), ProjectProject01Lobby::SortToString(Sort));
+	LeaderboardScope = Scope;
+	const FString Endpoint = FString::Printf(TEXT("/api/leaderboards/%s?sort=%s&scope=%s"),
+		ProjectProject01Lobby::RoleToString(Role), ProjectProject01Lobby::SortToString(Sort),
+		ProjectProject01Lobby::ScopeToString(Scope));
 	SendRequest(EProjectProject01LobbyOperation::RefreshLeaderboard, TEXT("GET"), Endpoint, FString());
 }
 
@@ -640,7 +652,9 @@ bool UProjectProject01LobbySubsystem::ParseLeaderboard(const TSharedPtr<FJsonObj
 		double Rank = 0.0;
 		if (!EntryJson.IsValid() || !EntryJson->TryGetNumberField(TEXT("rank"), Rank) ||
 			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("displayName"), Entry.DisplayName) ||
+			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("roomName"), Entry.RoomName) ||
 			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("role"), Entry.Role) ||
+			!EntryJson->TryGetBoolField(TEXT("isTeam"), Entry.bIsTeam) ||
 			!EntryJson->TryGetNumberField(TEXT("overallScore"), Entry.OverallScore) ||
 			!ProjectProject01Lobby::ReadRequiredString(EntryJson, TEXT("createdAtUtc"), Entry.CreatedAtUtc))
 		{
@@ -654,6 +668,9 @@ bool UProjectProject01LobbySubsystem::ParseLeaderboard(const TSharedPtr<FJsonObj
 		if (EntryJson->TryGetNumberField(TEXT("allCapturedSeconds"), Number)) Entry.AllCapturedSeconds = FMath::Max(0.0, Number);
 		if (EntryJson->TryGetNumberField(TEXT("rescueCount"), Number)) Entry.RescueCount = FMath::Max(0, FMath::RoundToInt(Number));
 		if (EntryJson->TryGetNumberField(TEXT("escapeSeconds"), Number)) Entry.EscapeSeconds = FMath::Max(0.0, Number);
+		if (EntryJson->TryGetNumberField(TEXT("survivorCount"), Number)) Entry.SurvivorCount = FMath::Max(0, FMath::RoundToInt(Number));
+		if (EntryJson->TryGetNumberField(TEXT("averageRescueCount"), Number)) Entry.AverageRescueCount = FMath::Max(0.0, Number);
+		if (EntryJson->TryGetNumberField(TEXT("averageEscapeSeconds"), Number)) Entry.AverageEscapeSeconds = FMath::Max(0.0, Number);
 		ParsedEntries.Add(MoveTemp(Entry));
 	}
 	LeaderboardEntries = MoveTemp(ParsedEntries);

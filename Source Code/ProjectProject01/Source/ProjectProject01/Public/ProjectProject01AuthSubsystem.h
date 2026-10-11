@@ -74,6 +74,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Service")
 	bool IsMultiplayerMaintenanceActive() const { return bMaintenanceEnabled; }
 
+	/** 마지막 상태 확인에서 백엔드가 정상 응답했는지 반환합니다. */
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Service")
+	bool IsMultiplayerServiceReachable() const { return bServiceReachable; }
+
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Service")
 	FString GetServiceAnnouncement() const { return ServiceAnnouncement; }
 
@@ -149,6 +153,9 @@ private:
 
 	UPROPERTY(Transient)
 	bool bMaintenanceEnabled = false;
+
+	UPROPERTY(Transient)
+	bool bServiceReachable = false;
 
 	UPROPERTY(Transient)
 	FString ServiceAnnouncement;

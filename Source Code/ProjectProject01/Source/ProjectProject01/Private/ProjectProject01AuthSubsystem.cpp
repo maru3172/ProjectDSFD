@@ -198,8 +198,9 @@ void UProjectProject01AuthSubsystem::CheckMultiplayerServiceStatus()
 	if (!Request->ProcessRequest())
 	{
 		ServiceStatusRequest.Reset();
+		bServiceReachable = false;
 		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
-			TEXT("멀티플레이 서버 상태 확인을 시작하지 못했습니다."));
+			TEXT("서버가 꺼져 있습니다."));
 	}
 }
 
@@ -212,18 +213,21 @@ void UProjectProject01AuthSubsystem::HandleServiceStatusRequestComplete(
 	if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() < 200 ||
 		Response->GetResponseCode() >= 300)
 	{
+		bServiceReachable = false;
 		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
-			TEXT("멀티플레이 서버 상태를 확인하지 못했습니다."));
+			TEXT("서버가 꺼져 있습니다."));
 		return;
 	}
 	TSharedPtr<FJsonObject> Json;
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Json) ||
 		!Json.IsValid() || !Json->TryGetBoolField(TEXT("maintenanceEnabled"), bMaintenanceEnabled))
 	{
+		bServiceReachable = false;
 		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
-			TEXT("멀티플레이 서버 상태 응답이 올바르지 않습니다."));
+			TEXT("서버가 꺼져 있습니다."));
 		return;
 	}
+	bServiceReachable = true;
 	ServiceAnnouncement.Reset();
 	ServiceShutdownAtUtc.Reset();
 	Json->TryGetStringField(TEXT("announcement"), ServiceAnnouncement);
@@ -480,7 +484,20 @@ bool UProjectProject01AuthSubsystem::ConfigureLocalTestApiEndpoint(const FString
 	{
 		return false;
 	}
+	if (ServiceStatusRequest.IsValid())
+	{
+		ServiceStatusRequest->OnProcessRequestComplete().Unbind();
+		ServiceStatusRequest->CancelRequest();
+		ServiceStatusRequest.Reset();
+	}
 	ApiBaseUrl = ProjectProject01Auth::NormalizeBaseUrl(InApiBaseUrl);
 	AllowedInsecureVpnApiBaseUrl = ApiBaseUrl;
-	return IsApiBaseUrlAllowed();
+	const bool bAllowed = IsApiBaseUrlAllowed();
+	bServiceReachable = false;
+	bMaintenanceEnabled = false;
+	ServiceAnnouncement.Reset();
+	ServiceShutdownAtUtc.Reset();
+	OnServiceStatusChanged.Broadcast(false, FString(), FString(),
+		bAllowed ? TEXT("서버 상태를 다시 확인하고 있습니다.") : TEXT("서버가 꺼져 있습니다."));
+	return bAllowed;
 }

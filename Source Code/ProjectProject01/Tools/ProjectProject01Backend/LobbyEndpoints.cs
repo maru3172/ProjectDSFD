@@ -938,6 +938,11 @@ internal static class LobbyEndpoints
                 command.Parameters.AddWithValue("@rescueCount", normalizedRole == "Survivor" && body.Success ? body.RescueCount : DBNull.Value);
                 command.Parameters.AddWithValue("@escapeSeconds", normalizedRole == "Survivor" && body.Success ? body.EscapeSeconds : DBNull.Value);
                 await command.ExecuteNonQueryAsync(ct);
+                if (normalizedRole == "Survivor" && body.Success)
+                {
+                    await RefreshExistingSurvivorTeamRecordAsync(
+                        connection, matchId.ToString("D"), ct);
+                }
                 await SecurityAudit.WriteAsync(database, request, "MatchResultVerify", "Success", userId,
                     $"MatchId={matchId:D}; Role={normalizedRole}; Success={body.Success}", ct);
                 return Results.Ok(new { message = "데디케이티드 서버 경기 결과를 검증 기록했습니다." });
@@ -1051,14 +1056,22 @@ internal static class LobbyEndpoints
             {
                 return Results.BadRequest(new LobbyFailure("선택한 역할에서 사용할 수 없는 정렬 항목입니다."));
             }
+            var normalizedScope = NormalizeLeaderboardScope(normalizedRole, request.Query["scope"].ToString());
+            if (normalizedScope is null)
+            {
+                return Results.BadRequest(new LobbyFailure("생존자 팀 점수는 생존자 리더보드에서만 조회할 수 있습니다."));
+            }
             try
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
-                var entries = await LoadLeaderboardAsync(connection, normalizedRole, normalizedSort, ct);
+                var entries = normalizedScope == "team"
+                    ? await LoadSurvivorTeamLeaderboardAsync(connection, normalizedSort, ct)
+                    : await LoadLeaderboardAsync(connection, normalizedRole, normalizedSort, ct);
                 return Results.Ok(new
                 {
                     message = "리더보드 상위 50개 기록을 불러왔습니다.",
                     role = normalizedRole,
+                    scope = normalizedScope,
                     sort = normalizedSort,
                     entries
                 });
@@ -1099,12 +1112,16 @@ internal static class LobbyEndpoints
                 double? verifiedAllCapturedSeconds = null;
                 int? verifiedRescueCount = null;
                 double? verifiedEscapeSeconds = null;
+                string verifiedRoomName = "알 수 없는 방";
                 var hasVerifiedResult = false;
                 await using (var verified = new MySqlCommand(
                     """
-                    SELECT capture_count, first_capture_seconds, all_captured_seconds, rescue_count, escape_seconds
-                    FROM verified_match_results
-                    WHERE match_id = @matchId AND user_id = @userId AND role = @role AND success = TRUE
+                    SELECT vr.capture_count, vr.first_capture_seconds, vr.all_captured_seconds,
+                           vr.rescue_count, vr.escape_seconds, COALESCE(r.name, '알 수 없는 방')
+                    FROM verified_match_results vr
+                    LEFT JOIN game_rooms r ON r.id = vr.room_id
+                    WHERE vr.match_id = @matchId AND vr.user_id = @userId
+                      AND vr.role = @role AND vr.success = TRUE
                     LIMIT 1;
                     """, connection) { CommandTimeout = 5 })
                 {
@@ -1120,6 +1137,7 @@ internal static class LobbyEndpoints
                         verifiedAllCapturedSeconds = reader.IsDBNull(2) ? null : Convert.ToDouble(reader.GetValue(2), System.Globalization.CultureInfo.InvariantCulture);
                         verifiedRescueCount = reader.IsDBNull(3) ? null : reader.GetInt32(3);
                         verifiedEscapeSeconds = reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), System.Globalization.CultureInfo.InvariantCulture);
+                        verifiedRoomName = reader.GetString(5);
                     }
                 }
 
@@ -1150,15 +1168,17 @@ internal static class LobbyEndpoints
                         $"MatchId={matchId:D}; Role={normalizedRole}", ct);
                     return Results.BadRequest(new LobbyFailure(validationError));
                 }
+                await using var transaction = await connection.BeginTransactionAsync(ct);
                 await using var command = new MySqlCommand(
                     """
                     INSERT INTO leaderboard_records
-                    (match_id, user_id, role, capture_count, first_capture_seconds, all_captured_seconds, rescue_count, escape_seconds)
+                    (match_id, user_id, room_name, role, capture_count, first_capture_seconds, all_captured_seconds, rescue_count, escape_seconds)
                     VALUES
-                    (@matchId, @userId, @role, @captureCount, @firstCaptureSeconds, @allCapturedSeconds, @rescueCount, @escapeSeconds);
-                    """, connection) { CommandTimeout = 5 };
+                    (@matchId, @userId, @roomName, @role, @captureCount, @firstCaptureSeconds, @allCapturedSeconds, @rescueCount, @escapeSeconds);
+                    """, connection, transaction) { CommandTimeout = 5 };
                 command.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
                 command.Parameters.AddWithValue("@userId", user.Id);
+                command.Parameters.AddWithValue("@roomName", verifiedRoomName);
                 command.Parameters.AddWithValue("@role", normalizedRole);
                 command.Parameters.AddWithValue("@captureCount",
                     normalizedRole == "Mannequin" ? captureCount!.Value : DBNull.Value);
@@ -1171,18 +1191,29 @@ internal static class LobbyEndpoints
                 command.Parameters.AddWithValue("@escapeSeconds",
                     normalizedRole == "Survivor" ? escapeSeconds!.Value : DBNull.Value);
                 await command.ExecuteNonQueryAsync(ct);
+                if (normalizedRole == "Survivor" && hasVerifiedResult)
+                {
+                    await PublishOrRefreshSurvivorTeamRecordAsync(
+                        connection, transaction, matchId.ToString("D"), user.Id, verifiedRoomName, ct);
+                }
                 if (hasVerifiedResult)
                 {
                     await using var markPublished = new MySqlCommand(
                         "UPDATE verified_match_results SET published_at_utc = UTC_TIMESTAMP(6) WHERE match_id = @matchId AND user_id = @userId;",
-                        connection) { CommandTimeout = 5 };
+                        connection, transaction) { CommandTimeout = 5 };
                     markPublished.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
                     markPublished.Parameters.AddWithValue("@userId", user.Id);
                     await markPublished.ExecuteNonQueryAsync(ct);
                 }
+                await transaction.CommitAsync(ct);
                 await SecurityAudit.WriteAsync(database, request, "LeaderboardPublish", "Success", user.Id,
                     $"MatchId={matchId:D}; Role={normalizedRole}; Verified={hasVerifiedResult}", ct);
-                return Results.Ok(new { message = "성공 기록을 리더보드에 등록했습니다." });
+                return Results.Ok(new
+                {
+                    message = normalizedRole == "Survivor"
+                        ? "개인 성공 기록과 생존자 팀 평균 기록을 리더보드에 등록했습니다."
+                        : "개인 성공 기록을 리더보드에 등록했습니다."
+                });
             }
             catch (MySqlException exception) when (exception.Number == 1062)
             {
@@ -1231,6 +1262,17 @@ internal static class LobbyEndpoints
         };
     }
 
+    private static string? NormalizeLeaderboardScope(string role, string scope)
+    {
+        var normalized = string.IsNullOrWhiteSpace(scope) ? "individual" : scope.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "individual" => "individual",
+            "team" when role == "Survivor" => "team",
+            _ => null
+        };
+    }
+
     private static string? ValidateLeaderboardRecord(string role, SubmitLeaderboardRecordRequest body)
     {
         const double maximumMatchSeconds = 86400.0;
@@ -1256,6 +1298,66 @@ internal static class LobbyEndpoints
             return "생존자 성공 기록의 구출 횟수와 탈출 시간이 유효하지 않습니다.";
         }
         return null;
+    }
+
+    private static async Task PublishOrRefreshSurvivorTeamRecordAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string matchId,
+        ulong submittedByUserId,
+        string fallbackRoomName,
+        CancellationToken ct)
+    {
+        await using var command = new MySqlCommand(
+            """
+            INSERT INTO leaderboard_survivor_team_records
+                (match_id, room_name, survivor_count, average_rescue_count,
+                 average_escape_seconds, submitted_by_user_id)
+            SELECT @matchId, COALESCE(MAX(r.name), @fallbackRoomName), COUNT(*),
+                   AVG(vr.rescue_count), AVG(vr.escape_seconds), @submittedByUserId
+            FROM verified_match_results vr
+            LEFT JOIN game_rooms r ON r.id = vr.room_id
+            WHERE vr.match_id = @matchId AND vr.role = 'Survivor' AND vr.success = TRUE
+            HAVING COUNT(*) > 0
+            ON DUPLICATE KEY UPDATE
+                room_name = VALUES(room_name), survivor_count = VALUES(survivor_count),
+                average_rescue_count = VALUES(average_rescue_count),
+                average_escape_seconds = VALUES(average_escape_seconds),
+                updated_at_utc = UTC_TIMESTAMP(6);
+            """, connection, transaction) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@matchId", matchId);
+        command.Parameters.AddWithValue("@fallbackRoomName", fallbackRoomName);
+        command.Parameters.AddWithValue("@submittedByUserId", submittedByUserId);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task RefreshExistingSurvivorTeamRecordAsync(
+        MySqlConnection connection,
+        string matchId,
+        CancellationToken ct)
+    {
+        await using var command = new MySqlCommand(
+            """
+            UPDATE leaderboard_survivor_team_records team
+            INNER JOIN
+            (
+                SELECT vr.match_id, COALESCE(MAX(r.name), '알 수 없는 방') AS room_name,
+                       COUNT(*) AS survivor_count, AVG(vr.rescue_count) AS average_rescue_count,
+                       AVG(vr.escape_seconds) AS average_escape_seconds
+                FROM verified_match_results vr
+                LEFT JOIN game_rooms r ON r.id = vr.room_id
+                WHERE vr.match_id = @matchId AND vr.role = 'Survivor' AND vr.success = TRUE
+                GROUP BY vr.match_id
+            ) aggregate ON aggregate.match_id = team.match_id
+            SET team.room_name = aggregate.room_name,
+                team.survivor_count = aggregate.survivor_count,
+                team.average_rescue_count = aggregate.average_rescue_count,
+                team.average_escape_seconds = aggregate.average_escape_seconds,
+                team.updated_at_utc = UTC_TIMESTAMP(6)
+            WHERE team.match_id = @matchId;
+            """, connection) { CommandTimeout = 5 };
+        command.Parameters.AddWithValue("@matchId", matchId);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task<IReadOnlyList<LeaderboardEntry>> LoadLeaderboardAsync(
@@ -1292,7 +1394,7 @@ internal static class LobbyEndpoints
         var sql = $"""
             WITH metric_ranks AS
             (
-                SELECT lr.id AS record_id, u.display_name, lr.role, lr.capture_count,
+                SELECT lr.id AS record_id, u.display_name, lr.room_name, lr.role, lr.capture_count,
                        lr.first_capture_seconds, lr.all_captured_seconds, lr.rescue_count,
                        lr.escape_seconds, lr.created_at_utc,
                        {rankedColumns},
@@ -1305,7 +1407,7 @@ internal static class LobbyEndpoints
                 SELECT *, {averageExpression} AS average_rank
                 FROM metric_ranks
             )
-            SELECT record_id, display_name, role, capture_count, first_capture_seconds,
+            SELECT record_id, display_name, room_name, role, capture_count, first_capture_seconds,
                    all_captured_seconds, rescue_count, escape_seconds, created_at_utc,
                    average_rank, total_count
             FROM scored
@@ -1321,8 +1423,8 @@ internal static class LobbyEndpoints
         while (await reader.ReadAsync(ct))
         {
             ++displayRank;
-            var averageRank = Convert.ToDouble(reader.GetValue(9), System.Globalization.CultureInfo.InvariantCulture);
-            var totalCount = reader.GetInt64(10);
+            var averageRank = Convert.ToDouble(reader.GetValue(10), System.Globalization.CultureInfo.InvariantCulture);
+            var totalCount = reader.GetInt64(11);
             var overallScore = totalCount <= 1
                 ? 100.0
                 : Math.Clamp(100.0 * (1.0 - ((averageRank - 1.0) / (totalCount - 1.0))), 0.0, 100.0);
@@ -1330,13 +1432,80 @@ internal static class LobbyEndpoints
                 displayRank,
                 reader.GetString(1),
                 reader.GetString(2),
+                reader.GetString(3),
+                false,
                 Math.Round(overallScore, 2),
-                reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), System.Globalization.CultureInfo.InvariantCulture),
+                reader.IsDBNull(4) ? null : reader.GetInt32(4),
                 reader.IsDBNull(5) ? null : Convert.ToDouble(reader.GetValue(5), System.Globalization.CultureInfo.InvariantCulture),
-                reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                reader.IsDBNull(7) ? null : Convert.ToDouble(reader.GetValue(7), System.Globalization.CultureInfo.InvariantCulture),
-                DateTime.SpecifyKind(reader.GetDateTime(8), DateTimeKind.Utc).ToString("O")));
+                reader.IsDBNull(6) ? null : Convert.ToDouble(reader.GetValue(6), System.Globalization.CultureInfo.InvariantCulture),
+                reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                reader.IsDBNull(8) ? null : Convert.ToDouble(reader.GetValue(8), System.Globalization.CultureInfo.InvariantCulture),
+                null,
+                null,
+                null,
+                DateTime.SpecifyKind(reader.GetDateTime(9), DateTimeKind.Utc).ToString("O")));
+        }
+        return entries;
+    }
+
+    private static async Task<IReadOnlyList<LeaderboardEntry>> LoadSurvivorTeamLeaderboardAsync(
+        MySqlConnection connection, string sort, CancellationToken ct)
+    {
+        var orderBy = sort switch
+        {
+            "rescues" => "average_rescue_count DESC, average_escape_seconds ASC, record_id ASC",
+            "escape" => "average_escape_seconds ASC, average_rescue_count DESC, record_id ASC",
+            _ => "average_rank ASC, created_at_utc ASC, record_id ASC"
+        };
+        var sql = $"""
+            WITH metric_ranks AS
+            (
+                SELECT tr.id AS record_id, tr.room_name, tr.survivor_count,
+                       tr.average_rescue_count, tr.average_escape_seconds, tr.created_at_utc,
+                       RANK() OVER (ORDER BY tr.average_rescue_count DESC, tr.average_escape_seconds ASC, tr.id ASC) AS rescue_rank,
+                       RANK() OVER (ORDER BY tr.average_escape_seconds ASC, tr.average_rescue_count DESC, tr.id ASC) AS escape_rank,
+                       COUNT(*) OVER () AS total_count
+                FROM leaderboard_survivor_team_records tr
+            ), scored AS
+            (
+                SELECT *, (rescue_rank + escape_rank) / 2.0 AS average_rank
+                FROM metric_ranks
+            )
+            SELECT record_id, room_name, survivor_count, average_rescue_count,
+                   average_escape_seconds, created_at_utc, average_rank, total_count
+            FROM scored
+            ORDER BY {orderBy}
+            LIMIT 50;
+            """;
+
+        var entries = new List<LeaderboardEntry>();
+        await using var command = new MySqlCommand(sql, connection) { CommandTimeout = 5 };
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var displayRank = 0;
+        while (await reader.ReadAsync(ct))
+        {
+            ++displayRank;
+            var averageRank = Convert.ToDouble(reader.GetValue(6), System.Globalization.CultureInfo.InvariantCulture);
+            var totalCount = reader.GetInt64(7);
+            var overallScore = totalCount <= 1
+                ? 100.0
+                : Math.Clamp(100.0 * (1.0 - ((averageRank - 1.0) / (totalCount - 1.0))), 0.0, 100.0);
+            entries.Add(new LeaderboardEntry(
+                displayRank,
+                "생존자 팀",
+                reader.GetString(1),
+                "Survivor",
+                true,
+                Math.Round(overallScore, 2),
+                null,
+                null,
+                null,
+                null,
+                null,
+                reader.GetInt32(2),
+                Convert.ToDouble(reader.GetValue(3), System.Globalization.CultureInfo.InvariantCulture),
+                Convert.ToDouble(reader.GetValue(4), System.Globalization.CultureInfo.InvariantCulture),
+                DateTime.SpecifyKind(reader.GetDateTime(5), DateTimeKind.Utc).ToString("O")));
         }
         return entries;
     }
@@ -1863,11 +2032,16 @@ internal sealed record RoomPasswordRecord(string RoomId);
 internal sealed record LeaderboardEntry(
     int Rank,
     string DisplayName,
+    string RoomName,
     string Role,
+    bool IsTeam,
     double OverallScore,
     int? CaptureCount,
     double? FirstCaptureSeconds,
     double? AllCapturedSeconds,
     int? RescueCount,
     double? EscapeSeconds,
+    int? SurvivorCount,
+    double? AverageRescueCount,
+    double? AverageEscapeSeconds,
     string CreatedAtUtc);

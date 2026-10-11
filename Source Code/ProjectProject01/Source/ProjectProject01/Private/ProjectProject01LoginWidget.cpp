@@ -453,6 +453,7 @@ void UProjectProject01TitleWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	bNavigationRequested = false;
+	bMultiplayerServiceAvailable = false;
 
 	if (IsValid(SinglePlayerButton))
 	{
@@ -481,6 +482,27 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	{
 		QuitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
 	}
+	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnServiceStatusChanged.AddUniqueDynamic(
+				this, &UProjectProject01TitleWidget::HandleServiceStatusChanged);
+		}
+	}
+	if (IsValid(MultiplayerButton)) MultiplayerButton->SetIsEnabled(false);
+	if (IsValid(StatusText))
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(TEXT("멀티플레이 서버 상태 확인 중...")));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	}
+	PollMultiplayerService();
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().SetTimer(
+			ServiceStatusTimer, this, &UProjectProject01TitleWidget::PollMultiplayerService,
+			5.0f, true, 5.0f);
+	}
 }
 
 namespace ProjectProject01TitleRoutes
@@ -492,6 +514,18 @@ namespace ProjectProject01TitleRoutes
 
 void UProjectProject01TitleWidget::NativeDestruct()
 {
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(ServiceStatusTimer);
+	}
+	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnServiceStatusChanged.RemoveDynamic(
+				this, &UProjectProject01TitleWidget::HandleServiceStatusChanged);
+		}
+	}
 	if (IsValid(SinglePlayerButton))
 	{
 		SinglePlayerButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSinglePlayerClicked);
@@ -513,6 +547,58 @@ void UProjectProject01TitleWidget::NativeDestruct()
 		QuitButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
 	}
 	Super::NativeDestruct();
+}
+
+void UProjectProject01TitleWidget::PollMultiplayerService()
+{
+	if (bNavigationRequested) return;
+	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->CheckMultiplayerServiceStatus();
+		}
+	}
+}
+
+void UProjectProject01TitleWidget::HandleServiceStatusChanged(
+	const bool bMaintenanceEnabled,
+	const FString& Announcement,
+	const FString& ShutdownAtUtc,
+	const FString& Message)
+{
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	const bool bReachable = IsValid(Auth) && Auth->IsMultiplayerServiceReachable();
+	bMultiplayerServiceAvailable = bReachable && !bMaintenanceEnabled;
+	if (IsValid(MultiplayerButton))
+	{
+		MultiplayerButton->SetIsEnabled(!bNavigationRequested && bMultiplayerServiceAvailable);
+	}
+	if (!IsValid(StatusText)) return;
+	if (!bReachable)
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(TEXT("서버가 꺼져 있습니다.")));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+	}
+	else if (bMaintenanceEnabled)
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(Message.IsEmpty()
+			? TEXT("현재 멀티플레이 서버를 점검 중입니다.") : Message));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+	}
+	else if (!Announcement.IsEmpty())
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(ShutdownAtUtc.IsEmpty() ? Announcement :
+			FString::Printf(TEXT("%s (점검 자동 해제 예정: %s)"), *Announcement, *ShutdownAtUtc)));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	}
+	else
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(TEXT("멀티플레이 서버에 연결할 수 있습니다.")));
+		StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	}
 }
 
 void UProjectProject01TitleWidget::HandleSinglePlayerClicked()
@@ -558,6 +644,15 @@ void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 {
 	if (bNavigationRequested || !IsValid(GetWorld()))
 	{
+		return;
+	}
+	if (!bMultiplayerServiceAvailable)
+	{
+		if (IsValid(StatusText))
+		{
+			StatusText->SetText(FProjectProject01Localization::Text(TEXT("서버가 꺼져 있습니다.")));
+			StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+		}
 		return;
 	}
 	UProjectProject01AuthSubsystem* Auth = nullptr;
@@ -709,7 +804,7 @@ void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
 	}
 	if (IsValid(MultiplayerButton))
 	{
-		MultiplayerButton->SetIsEnabled(bEnabled);
+		MultiplayerButton->SetIsEnabled(bEnabled && bMultiplayerServiceAvailable);
 	}
 	if (IsValid(SettingsButton))
 	{
@@ -755,6 +850,7 @@ bool UProjectProject01LoginWidget::Initialize()
 void UProjectProject01LoginWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	bMultiplayerServiceAvailable = false;
 
 	if (IsValid(LoginButton))
 	{
@@ -776,13 +872,25 @@ void UProjectProject01LoginWidget::NativeConstruct()
 			Auth->OnLoginCompleted.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleLoginResult);
 			Auth->OnRegistrationCompleted.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleRegistrationResult);
 			Auth->OnServiceStatusChanged.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleServiceStatusChanged);
-			Auth->CheckMultiplayerServiceStatus();
 		}
+	}
+	SetRequestControlsEnabled(false);
+	SetStatus(TEXT("멀티플레이 서버 상태 확인 중..."), false);
+	PollMultiplayerService();
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().SetTimer(
+			ServiceStatusTimer, this, &UProjectProject01LoginWidget::PollMultiplayerService,
+			5.0f, true, 5.0f);
 	}
 }
 
 void UProjectProject01LoginWidget::NativeDestruct()
 {
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(ServiceStatusTimer);
+	}
 	if (IsValid(LoginButton))
 	{
 		LoginButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleLoginClicked);
@@ -809,6 +917,17 @@ void UProjectProject01LoginWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void UProjectProject01LoginWidget::PollMultiplayerService()
+{
+	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (UProjectProject01AuthSubsystem* Auth = GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->CheckMultiplayerServiceStatus();
+		}
+	}
+}
+
 void UProjectProject01LoginWidget::HandleReturnToTitleClicked()
 {
 	if (!IsValid(GetWorld()))
@@ -830,6 +949,11 @@ void UProjectProject01LoginWidget::HandleReturnToTitleClicked()
 
 void UProjectProject01LoginWidget::HandleLoginClicked()
 {
+	if (!bMultiplayerServiceAvailable)
+	{
+		SetStatus(TEXT("서버가 꺼져 있습니다."), true);
+		return;
+	}
 	if (!IsValid(AccountIdInput) || !IsValid(PasswordInput))
 	{
 		SetStatus(TEXT("로그인 입력 UI를 찾지 못했습니다."), true);
@@ -852,6 +976,11 @@ void UProjectProject01LoginWidget::HandleLoginClicked()
 
 void UProjectProject01LoginWidget::HandleRegisterClicked()
 {
+	if (!bMultiplayerServiceAvailable)
+	{
+		SetStatus(TEXT("서버가 꺼져 있습니다."), true);
+		return;
+	}
 	if (!IsValid(AccountIdInput) || !IsValid(PasswordInput) || !IsValid(DisplayNameInput))
 	{
 		SetStatus(TEXT("회원가입 입력 UI를 찾지 못했습니다."), true);
@@ -907,9 +1036,17 @@ void UProjectProject01LoginWidget::HandleServiceStatusChanged(
 	const FString& ShutdownAtUtc,
 	const FString& Message)
 {
-	SetRequestControlsEnabled(!bMaintenanceEnabled);
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	bMultiplayerServiceAvailable = IsValid(Auth) && Auth->IsMultiplayerServiceReachable();
+	SetRequestControlsEnabled(bMultiplayerServiceAvailable && !bMaintenanceEnabled);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(true);
-	if (bMaintenanceEnabled)
+	if (!bMultiplayerServiceAvailable)
+	{
+		SetStatus(TEXT("서버가 꺼져 있습니다."), true);
+	}
+	else if (bMaintenanceEnabled)
 	{
 		SetStatus(Message.IsEmpty()
 			? TEXT("현재 멀티플레이 서버를 점검 중입니다. 싱글플레이는 타이틀에서 이용할 수 있습니다.")
@@ -964,7 +1101,9 @@ void UProjectProject01LoginWidget::SetRequestControlsEnabled(const bool bEnabled
 		if (const UProjectProject01AuthSubsystem* Auth =
 			GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>())
 		{
-			bAuthenticationEnabled = bAuthenticationEnabled && !Auth->IsMultiplayerMaintenanceActive();
+			bAuthenticationEnabled = bAuthenticationEnabled && bMultiplayerServiceAvailable &&
+				Auth->IsMultiplayerServiceReachable() && !Auth->IsMultiplayerMaintenanceActive() &&
+				Auth->GetAuthState() == EProjectProject01AuthState::SignedOut;
 		}
 	}
 	if (IsValid(LoginButton))
@@ -3750,6 +3889,8 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 	if (IsValid(RefreshButton)) RefreshButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleRefreshClicked);
 	if (IsValid(MannequinTabButton)) MannequinTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleMannequinTabClicked);
 	if (IsValid(SurvivorTabButton)) SurvivorTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSurvivorTabClicked);
+	if (IsValid(IndividualScopeButton)) IndividualScopeButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleIndividualScopeClicked);
+	if (IsValid(TeamScopeButton)) TeamScopeButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleTeamScopeClicked);
 	if (IsValid(SortComboBox)) SortComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSortSelectionChanged);
 	if (IsValid(SubmitRecordButton)) SubmitRecordButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked);
 	if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked);
@@ -3786,7 +3927,7 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 		if (IsValid(SubmitRecordButton)) SubmitRecordButton->SetIsEnabled(false);
 		SetStatus(TEXT("조회 전용입니다. 등록할 서버 검증 경기 기록이 없습니다."), false);
 	}
-	Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
+	Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope());
 }
 
 void UProjectProject01LeaderboardWidget::NativeDestruct()
@@ -3808,7 +3949,7 @@ void UProjectProject01LeaderboardWidget::HandleRefreshClicked()
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
-			Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
+			Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope());
 		}
 	}
 }
@@ -3821,6 +3962,16 @@ void UProjectProject01LeaderboardWidget::HandleMannequinTabClicked()
 void UProjectProject01LeaderboardWidget::HandleSurvivorTabClicked()
 {
 	SetSelectedRole(EProjectProject01LeaderboardRole::Survivor, true);
+}
+
+void UProjectProject01LeaderboardWidget::HandleIndividualScopeClicked()
+{
+	SetSelectedScope(EProjectProject01LeaderboardScope::Individual, true);
+}
+
+void UProjectProject01LeaderboardWidget::HandleTeamScopeClicked()
+{
+	SetSelectedScope(EProjectProject01LeaderboardScope::Team, true);
 }
 
 void UProjectProject01LeaderboardWidget::HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
@@ -3883,7 +4034,7 @@ void UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult(
 		{
 			if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 			{
-				Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
+				Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope());
 			}
 		}
 	}
@@ -3903,21 +4054,31 @@ void UProjectProject01LeaderboardWidget::RefreshLeaderboardView()
 		return;
 	}
 
+	const bool bTeam = GetSelectedRole() == EProjectProject01LeaderboardRole::Survivor &&
+		GetSelectedScope() == EProjectProject01LeaderboardScope::Team;
 	FString Text = GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin
-		? TEXT("순위 | 이름 | 역할 | 종합점수 | 포획 | 첫 포획(초) | 전원 포획(초)\n")
-		: TEXT("순위 | 이름 | 역할 | 종합점수 | 구출 | 탈출(초)\n");
+		? TEXT("순위 | 이름 | 방 이름 | 역할 | 개인 종합점수 | 포획 | 첫 포획(초) | 전원 포획(초)\n")
+		: bTeam
+			? TEXT("순위 | 방 이름 | 인원 | 팀 종합 평균점수 | 평균 구출 | 평균 탈출(초)\n")
+			: TEXT("순위 | 이름 | 방 이름 | 역할 | 개인 종합점수 | 구출 | 탈출(초)\n");
 	for (const FProjectProject01LeaderboardEntry& Entry : Lobby->GetLeaderboardEntries())
 	{
 		if (GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin)
 		{
-			Text += FString::Printf(TEXT("%d | %s | %s | %.1f | %d | %.2f | %.2f\n"),
-				Entry.Rank, *Entry.DisplayName, *Entry.Role, Entry.OverallScore, Entry.CaptureCount,
+			Text += FString::Printf(TEXT("%d | %s | %s | %s | %.1f | %d | %.2f | %.2f\n"),
+				Entry.Rank, *Entry.DisplayName, *Entry.RoomName, *Entry.Role, Entry.OverallScore, Entry.CaptureCount,
 				Entry.FirstCaptureSeconds, Entry.AllCapturedSeconds);
+		}
+		else if (bTeam)
+		{
+			Text += FString::Printf(TEXT("%d | %s | %d | %.1f | %.2f | %.2f\n"),
+				Entry.Rank, *Entry.RoomName, Entry.SurvivorCount, Entry.OverallScore,
+				Entry.AverageRescueCount, Entry.AverageEscapeSeconds);
 		}
 		else
 		{
-			Text += FString::Printf(TEXT("%d | %s | %s | %.1f | %d | %.2f\n"),
-				Entry.Rank, *Entry.DisplayName, *Entry.Role, Entry.OverallScore,
+			Text += FString::Printf(TEXT("%d | %s | %s | %s | %.1f | %d | %.2f\n"),
+				Entry.Rank, *Entry.DisplayName, *Entry.RoomName, *Entry.Role, Entry.OverallScore,
 				Entry.RescueCount, Entry.EscapeSeconds);
 		}
 	}
@@ -3936,8 +4097,9 @@ void UProjectProject01LeaderboardWidget::RefreshSortOptions()
 	}
 	bUpdatingSortOptions = true;
 	SortComboBox->ClearOptions();
-	SortComboBox->AddOption(TEXT("종합 점수"));
 	const bool bMannequin = GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin;
+	const bool bTeam = !bMannequin && GetSelectedScope() == EProjectProject01LeaderboardScope::Team;
+	SortComboBox->AddOption(bTeam ? TEXT("팀 종합 평균 점수") : TEXT("개별 플레이어 점수"));
 	if (bMannequin)
 	{
 		SortComboBox->AddOption(TEXT("붙잡은 횟수"));
@@ -3946,10 +4108,10 @@ void UProjectProject01LeaderboardWidget::RefreshSortOptions()
 	}
 	else
 	{
-		SortComboBox->AddOption(TEXT("구출 횟수"));
-		SortComboBox->AddOption(TEXT("탈출 시간"));
+		SortComboBox->AddOption(bTeam ? TEXT("팀 평균 구출 점수") : TEXT("구출 횟수"));
+		SortComboBox->AddOption(bTeam ? TEXT("팀 평균 탈출 점수") : TEXT("탈출 시간"));
 	}
-	SortComboBox->SetSelectedOption(TEXT("종합 점수"));
+	SortComboBox->SetSelectedOption(bTeam ? TEXT("팀 종합 평균 점수") : TEXT("개별 플레이어 점수"));
 	if (IsValid(CaptureCountInput)) CaptureCountInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(FirstCaptureSecondsInput)) FirstCaptureSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(AllCapturedSecondsInput)) AllCapturedSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -3964,6 +4126,10 @@ void UProjectProject01LeaderboardWidget::SetSelectedRole(
 {
 	SelectedRole = NewRole;
 	const bool bMannequin = SelectedRole == EProjectProject01LeaderboardRole::Mannequin;
+	if (bMannequin)
+	{
+		SelectedScope = EProjectProject01LeaderboardScope::Individual;
+	}
 	if (IsValid(MannequinTabButton))
 	{
 		ProjectProject01LoginUI::SetButtonText(
@@ -3977,6 +4143,42 @@ void UProjectProject01LeaderboardWidget::SetSelectedRole(
 		ProjectProject01LoginUI::SetButtonText(
 			SurvivorTabButton, bMannequin ? TEXT("생존자") : TEXT("● 생존자"));
 		SurvivorTabButton->SetBackgroundColor(!bMannequin
+			? FLinearColor(0.55f, 0.72f, 0.95f, 1.0f)
+			: FLinearColor(0.82f, 0.82f, 0.82f, 1.0f));
+	}
+	if (IsValid(SurvivorScopeBar))
+	{
+		SurvivorScopeBar->SetVisibility(bMannequin ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
+	SetSelectedScope(SelectedScope, false);
+	RefreshSortOptions();
+	if (bRefreshLeaderboard)
+	{
+		HandleRefreshClicked();
+	}
+}
+
+void UProjectProject01LeaderboardWidget::SetSelectedScope(
+	const EProjectProject01LeaderboardScope NewScope,
+	const bool bRefreshLeaderboard)
+{
+	SelectedScope = GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin
+		? EProjectProject01LeaderboardScope::Individual
+		: NewScope;
+	const bool bIndividual = SelectedScope == EProjectProject01LeaderboardScope::Individual;
+	if (IsValid(IndividualScopeButton))
+	{
+		ProjectProject01LoginUI::SetButtonText(
+			IndividualScopeButton, bIndividual ? TEXT("● 개별") : TEXT("개별"));
+		IndividualScopeButton->SetBackgroundColor(bIndividual
+			? FLinearColor(0.55f, 0.72f, 0.95f, 1.0f)
+			: FLinearColor(0.82f, 0.82f, 0.82f, 1.0f));
+	}
+	if (IsValid(TeamScopeButton))
+	{
+		ProjectProject01LoginUI::SetButtonText(
+			TeamScopeButton, bIndividual ? TEXT("팀 점수") : TEXT("● 팀 점수"));
+		TeamScopeButton->SetBackgroundColor(!bIndividual
 			? FLinearColor(0.55f, 0.72f, 0.95f, 1.0f)
 			: FLinearColor(0.82f, 0.82f, 0.82f, 1.0f));
 	}
@@ -3998,9 +4200,16 @@ EProjectProject01LeaderboardSort UProjectProject01LeaderboardWidget::GetSelected
 	if (Option == TEXT("붙잡은 횟수")) return EProjectProject01LeaderboardSort::Captures;
 	if (Option == TEXT("첫 포획 시간")) return EProjectProject01LeaderboardSort::FirstCapture;
 	if (Option == TEXT("전원 포획 시간")) return EProjectProject01LeaderboardSort::AllCaptured;
-	if (Option == TEXT("구출 횟수")) return EProjectProject01LeaderboardSort::Rescues;
-	if (Option == TEXT("탈출 시간")) return EProjectProject01LeaderboardSort::Escape;
+	if (Option == TEXT("구출 횟수") || Option == TEXT("팀 평균 구출 점수")) return EProjectProject01LeaderboardSort::Rescues;
+	if (Option == TEXT("탈출 시간") || Option == TEXT("팀 평균 탈출 점수")) return EProjectProject01LeaderboardSort::Escape;
 	return EProjectProject01LeaderboardSort::Overall;
+}
+
+EProjectProject01LeaderboardScope UProjectProject01LeaderboardWidget::GetSelectedScope() const
+{
+	return GetSelectedRole() == EProjectProject01LeaderboardRole::Mannequin
+		? EProjectProject01LeaderboardScope::Individual
+		: SelectedScope;
 }
 
 void UProjectProject01LeaderboardWidget::BuildWidgetTree()
@@ -4012,7 +4221,7 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 리더보드"), 24.0f);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
-		TEXT("서버가 검증한 성공 경기만 등록됩니다. 미지정 정렬은 역할별 평균 순위 기반 종합점수입니다."), 14.0f);
+		TEXT("서버가 검증한 성공 경기만 등록됩니다. 개인 점수와 생존자 팀 평균 점수에는 경기 당시 방 이름이 함께 표시됩니다."), 14.0f);
 	LeaderboardStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("리더보드를 불러오는 중..."), 14.0f);
 
 	UHorizontalBox* RoleTabBar = WidgetTree->ConstructWidget<UHorizontalBox>();
@@ -4023,6 +4232,15 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	}
 	MannequinTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, RoleTabBar, TEXT("마네킹"));
 	SurvivorTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, RoleTabBar, TEXT("생존자"));
+
+	SurvivorScopeBar = WidgetTree->ConstructWidget<UHorizontalBox>();
+	if (UVerticalBoxSlot* ScopeBarSlot = Root->AddChildToVerticalBox(SurvivorScopeBar))
+	{
+		ScopeBarSlot->SetPadding(FMargin(6.0f, 2.0f));
+		ScopeBarSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	IndividualScopeButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, SurvivorScopeBar, TEXT("개별"));
+	TeamScopeButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, SurvivorScopeBar, TEXT("팀 점수"));
 
 	SortComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
 	ProjectProject01LoginUI::SetComboBoxTextBlack(SortComboBox);

@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS leaderboard_records
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   user_id BIGINT UNSIGNED NOT NULL,
+  room_name VARCHAR(48) NOT NULL DEFAULT '알 수 없는 방',
   role VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   capture_count INT UNSIGNED NULL,
   first_capture_seconds DECIMAL(12,3) NULL,
@@ -208,6 +209,25 @@ CREATE TABLE IF NOT EXISTS leaderboard_records
   KEY ix_leaderboard_role_escape (role, escape_seconds),
   CONSTRAINT fk_leaderboard_user
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS leaderboard_survivor_team_records
+(
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  room_name VARCHAR(48) NOT NULL,
+  survivor_count INT UNSIGNED NOT NULL,
+  average_rescue_count DECIMAL(12,3) NOT NULL,
+  average_escape_seconds DECIMAL(12,3) NOT NULL,
+  submitted_by_user_id BIGINT UNSIGNED NOT NULL,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_survivor_team_match (match_id),
+  KEY ix_survivor_team_rescue (average_rescue_count, average_escape_seconds),
+  KEY ix_survivor_team_escape (average_escape_seconds, average_rescue_count),
+  CONSTRAINT fk_survivor_team_submitter
+    FOREIGN KEY (submitted_by_user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS crash_reports
