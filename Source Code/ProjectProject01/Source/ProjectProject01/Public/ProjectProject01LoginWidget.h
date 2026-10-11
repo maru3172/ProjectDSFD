@@ -14,6 +14,30 @@
 
 class UProjectProject01SettingsWidget;
 
+/** 경기 중 음성 채널 연결 및 마이크 송신 상태를 우측 상단에 표시합니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01VoiceStatusWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+private:
+	void BuildWidgetTree();
+	void RefreshVoiceStatus();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> StatusBackground;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> ConnectionText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> MicrophoneText;
+};
+
 /** 멀티플레이 경기 중에도 서버 공지와 종료 예고를 보여주는 가벼운 상단 배너입니다. */
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01ServiceNoticeWidget final : public UUserWidget
@@ -740,7 +764,10 @@ private:
 	void HandleRefreshClicked();
 
 	UFUNCTION()
-	void HandleRoleSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+	void HandleMannequinTabClicked();
+
+	UFUNCTION()
+	void HandleSurvivorTabClicked();
 
 	UFUNCTION()
 	void HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
@@ -763,12 +790,16 @@ private:
 	void BuildWidgetTree();
 	void RefreshLeaderboardView();
 	void RefreshSortOptions();
+	void SetSelectedRole(EProjectProject01LeaderboardRole NewRole, bool bRefreshLeaderboard);
 	void SetStatus(const FString& Message, bool bIsError);
 	EProjectProject01LeaderboardRole GetSelectedRole() const;
 	EProjectProject01LeaderboardSort GetSelectedSort() const;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UComboBoxString> RoleComboBox;
+	TObjectPtr<class UButton> MannequinTabButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SurvivorTabButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UComboBoxString> SortComboBox;
@@ -803,6 +834,6 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> LeaderboardStatusText;
 
-	FString PendingTestMatchId;
+	EProjectProject01LeaderboardRole SelectedRole = EProjectProject01LeaderboardRole::Mannequin;
 	bool bUpdatingSortOptions = false;
 };

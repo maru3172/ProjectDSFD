@@ -6,6 +6,8 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
 #include "Components/EditableTextBox.h"
@@ -30,6 +32,7 @@
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01Localization.h"
 #include "ProjectProject01SaveSubsystem.h"
+#include "ProjectProject01VoiceChatSubsystem.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -299,6 +302,114 @@ namespace ProjectProject01LoginUI
 				TextBlock->SetText(FProjectProject01Localization::Text(Text));
 			}
 		}
+	}
+}
+
+bool UProjectProject01VoiceStatusWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	BuildWidgetTree();
+	SetIsFocusable(false);
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	RefreshVoiceStatus();
+	return true;
+}
+
+void UProjectProject01VoiceStatusWidget::NativeTick(
+	const FGeometry& MyGeometry,
+	const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	RefreshVoiceStatus();
+}
+
+void UProjectProject01VoiceStatusWidget::BuildWidgetTree()
+{
+	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
+	{
+		return;
+	}
+
+	UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+	WidgetTree->RootWidget = Canvas;
+	StatusBackground = WidgetTree->ConstructWidget<UBorder>();
+	StatusBackground->SetBrushColor(FLinearColor(0.03f, 0.03f, 0.04f, 0.88f));
+	StatusBackground->SetPadding(FMargin(14.0f, 10.0f));
+	if (UCanvasPanelSlot* CanvasSlot = Canvas->AddChildToCanvas(StatusBackground))
+	{
+		CanvasSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+		CanvasSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+		CanvasSlot->SetPosition(FVector2D(-24.0f, 92.0f));
+		CanvasSlot->SetAutoSize(true);
+	}
+
+	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
+	StatusBackground->AddChild(Root);
+	ConnectionText = WidgetTree->ConstructWidget<UTextBlock>();
+	ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	FSlateFontInfo ConnectionFont = ConnectionText->GetFont();
+	ConnectionFont.Size = 16;
+	ConnectionText->SetFont(ConnectionFont);
+	Root->AddChildToVerticalBox(ConnectionText);
+
+	MicrophoneText = WidgetTree->ConstructWidget<UTextBlock>();
+	MicrophoneText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.78f, 0.78f, 1.0f)));
+	FSlateFontInfo MicrophoneFont = MicrophoneText->GetFont();
+	MicrophoneFont.Size = 13;
+	MicrophoneText->SetFont(MicrophoneFont);
+	Root->AddChildToVerticalBox(MicrophoneText);
+}
+
+void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
+{
+	if (!IsValid(ConnectionText) || !IsValid(MicrophoneText))
+	{
+		return;
+	}
+
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01VoiceChatSubsystem* Voice = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>() : nullptr;
+	if (!IsValid(Voice) || !Voice->IsConfiguredForSurvivor())
+	{
+		ConnectionText->SetText(FProjectProject01Localization::Text(TEXT("음성 채팅: 꺼짐")));
+		ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.70f, 0.70f, 0.70f, 1.0f)));
+		MicrophoneText->SetText(FProjectProject01Localization::Text(TEXT("생존자 전용 기능입니다.")));
+		return;
+	}
+
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const FString PushToTalkKey = IsValid(Settings)
+		? Settings->GetVoicePushToTalkKey().GetDisplayName().ToString() : TEXT("F2");
+	const FString ToggleKey = IsValid(Settings)
+		? Settings->GetVoiceToggleKey().GetDisplayName().ToString() : TEXT("U");
+
+	if (!Voice->IsVoiceReady())
+	{
+		ConnectionText->SetText(FProjectProject01Localization::Text(TEXT("음성 채팅: 연결 중")));
+		ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.68f, 0.20f, 1.0f)));
+		MicrophoneText->SetText(FProjectProject01Localization::Text(TEXT("마이크: 꺼짐 · 서버 연결을 확인하세요.")));
+		return;
+	}
+
+	ConnectionText->SetText(FProjectProject01Localization::Text(TEXT("음성 채팅: 연결됨")));
+	ConnectionText->SetColorAndOpacity(FSlateColor(FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)));
+	if (Voice->IsTransmitting())
+	{
+		const FString Mode = Voice->IsOpenMicEnabled()
+			? FString::Printf(TEXT("마이크: 켜짐 · 상시 송신 중 (%s로 끄기)"), *ToggleKey)
+			: FString::Printf(TEXT("마이크: 켜짐 · 송신 중 (%s)"), *PushToTalkKey);
+		MicrophoneText->SetText(FProjectProject01Localization::Text(Mode));
+		MicrophoneText->SetColorAndOpacity(FSlateColor(FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)));
+	}
+	else
+	{
+		MicrophoneText->SetText(FProjectProject01Localization::Text(FString::Printf(
+			TEXT("마이크: 꺼짐 · %s 누르고 말하기 / %s 상시 송신"), *PushToTalkKey, *ToggleKey)));
+		MicrophoneText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.78f, 0.78f, 1.0f)));
 	}
 }
 
@@ -1432,6 +1543,23 @@ void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMat
 	Result = InResult;
 	bSinglePlayer = false;
 	bConfigured = true;
+	if (Result.bSuccess && Result.bLeaderboardVerificationReady)
+	{
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (UProjectProject01LobbySubsystem* Lobby =
+				GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+			{
+				const EProjectProject01LeaderboardRole Role =
+					Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
+					? EProjectProject01LeaderboardRole::Mannequin
+					: EProjectProject01LeaderboardRole::Survivor;
+				Lobby->CachePendingLeaderboardRecord(
+					Result.MatchId, Role, Result.CaptureCount, Result.FirstCaptureSeconds,
+					Result.AllCapturedSeconds, Result.RescueCount, Result.EscapeSeconds);
+			}
+		}
+	}
 	RefreshResultText();
 }
 
@@ -3627,13 +3755,13 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	if (IsValid(RefreshButton)) RefreshButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleRefreshClicked);
-	if (IsValid(RoleComboBox)) RoleComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleRoleSelectionChanged);
+	if (IsValid(MannequinTabButton)) MannequinTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleMannequinTabClicked);
+	if (IsValid(SurvivorTabButton)) SurvivorTabButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSurvivorTabClicked);
 	if (IsValid(SortComboBox)) SortComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSortSelectionChanged);
 	if (IsValid(SubmitRecordButton)) SubmitRecordButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked);
 	if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked);
 
-	PendingTestMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
-	RefreshSortOptions();
+	SetSelectedRole(SelectedRole, false);
 
 	UGameInstance* GameInstance = GetGameInstance();
 	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
@@ -3648,6 +3776,23 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 
 	Lobby->OnRequestCompleted.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult);
 	Lobby->OnLeaderboardChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardChanged);
+	if (Lobby->HasPendingLeaderboardRecord())
+	{
+		const FProjectProject01PendingLeaderboardRecord& Pending = Lobby->GetPendingLeaderboardRecord();
+		SetSelectedRole(Pending.Role, false);
+		if (IsValid(CaptureCountInput)) CaptureCountInput->SetText(FText::AsNumber(Pending.CaptureCount));
+		if (IsValid(FirstCaptureSecondsInput)) FirstCaptureSecondsInput->SetText(FText::AsNumber(Pending.FirstCaptureSeconds));
+		if (IsValid(AllCapturedSecondsInput)) AllCapturedSecondsInput->SetText(FText::AsNumber(Pending.AllCapturedSeconds));
+		if (IsValid(RescueCountInput)) RescueCountInput->SetText(FText::AsNumber(Pending.RescueCount));
+		if (IsValid(EscapeSecondsInput)) EscapeSecondsInput->SetText(FText::AsNumber(Pending.EscapeSeconds));
+		if (IsValid(SubmitRecordButton)) SubmitRecordButton->SetIsEnabled(true);
+		SetStatus(TEXT("방금 종료된 서버 검증 성공 기록을 등록할 수 있습니다."), false);
+	}
+	else
+	{
+		if (IsValid(SubmitRecordButton)) SubmitRecordButton->SetIsEnabled(false);
+		SetStatus(TEXT("조회 전용입니다. 등록할 서버 검증 경기 기록이 없습니다."), false);
+	}
 	Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort());
 }
 
@@ -3675,12 +3820,14 @@ void UProjectProject01LeaderboardWidget::HandleRefreshClicked()
 	}
 }
 
-void UProjectProject01LeaderboardWidget::HandleRoleSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
+void UProjectProject01LeaderboardWidget::HandleMannequinTabClicked()
 {
-	(void)SelectedItem;
-	(void)SelectionType;
-	RefreshSortOptions();
-	HandleRefreshClicked();
+	SetSelectedRole(EProjectProject01LeaderboardRole::Mannequin, true);
+}
+
+void UProjectProject01LeaderboardWidget::HandleSurvivorTabClicked()
+{
+	SetSelectedRole(EProjectProject01LeaderboardRole::Survivor, true);
 }
 
 void UProjectProject01LeaderboardWidget::HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
@@ -3705,15 +3852,14 @@ void UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked()
 		return;
 	}
 
-	const int32 CaptureCount = IsValid(CaptureCountInput) ? FCString::Atoi(*CaptureCountInput->GetText().ToString()) : 0;
-	const double FirstCaptureSeconds = IsValid(FirstCaptureSecondsInput) ? FCString::Atod(*FirstCaptureSecondsInput->GetText().ToString()) : 0.0;
-	const double AllCapturedSeconds = IsValid(AllCapturedSecondsInput) ? FCString::Atod(*AllCapturedSecondsInput->GetText().ToString()) : 0.0;
-	const int32 RescueCount = IsValid(RescueCountInput) ? FCString::Atoi(*RescueCountInput->GetText().ToString()) : 0;
-	const double EscapeSeconds = IsValid(EscapeSecondsInput) ? FCString::Atod(*EscapeSecondsInput->GetText().ToString()) : 0.0;
+	if (!Lobby->HasPendingLeaderboardRecord())
+	{
+		SetStatus(TEXT("등록할 서버 검증 경기 기록이 없습니다."), true);
+		return;
+	}
 
-	SetStatus(TEXT("테스트 성공 기록을 등록하는 중..."), false);
-	Lobby->SubmitLeaderboardRecord(PendingTestMatchId, GetSelectedRole(), true,
-		CaptureCount, FirstCaptureSeconds, AllCapturedSeconds, RescueCount, EscapeSeconds);
+	SetStatus(TEXT("방금 경기의 서버 검증 성공 기록을 등록하는 중..."), false);
+	Lobby->SubmitPendingLeaderboardRecord();
 }
 
 void UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked()
@@ -3739,7 +3885,7 @@ void UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult(
 	SetStatus(Message, !bSuccess);
 	if (bSuccess && Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
 	{
-		PendingTestMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+		if (IsValid(SubmitRecordButton)) SubmitRecordButton->SetIsEnabled(false);
 		if (UGameInstance* GameInstance = GetGameInstance())
 		{
 			if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
@@ -3819,10 +3965,38 @@ void UProjectProject01LeaderboardWidget::RefreshSortOptions()
 	bUpdatingSortOptions = false;
 }
 
+void UProjectProject01LeaderboardWidget::SetSelectedRole(
+	const EProjectProject01LeaderboardRole NewRole,
+	const bool bRefreshLeaderboard)
+{
+	SelectedRole = NewRole;
+	const bool bMannequin = SelectedRole == EProjectProject01LeaderboardRole::Mannequin;
+	if (IsValid(MannequinTabButton))
+	{
+		ProjectProject01LoginUI::SetButtonText(
+			MannequinTabButton, bMannequin ? TEXT("● 마네킹") : TEXT("마네킹"));
+		MannequinTabButton->SetBackgroundColor(bMannequin
+			? FLinearColor(0.55f, 0.72f, 0.95f, 1.0f)
+			: FLinearColor(0.82f, 0.82f, 0.82f, 1.0f));
+	}
+	if (IsValid(SurvivorTabButton))
+	{
+		ProjectProject01LoginUI::SetButtonText(
+			SurvivorTabButton, bMannequin ? TEXT("생존자") : TEXT("● 생존자"));
+		SurvivorTabButton->SetBackgroundColor(!bMannequin
+			? FLinearColor(0.55f, 0.72f, 0.95f, 1.0f)
+			: FLinearColor(0.82f, 0.82f, 0.82f, 1.0f));
+	}
+	RefreshSortOptions();
+	if (bRefreshLeaderboard)
+	{
+		HandleRefreshClicked();
+	}
+}
+
 EProjectProject01LeaderboardRole UProjectProject01LeaderboardWidget::GetSelectedRole() const
 {
-	return IsValid(RoleComboBox) && RoleComboBox->GetSelectedOption() == TEXT("생존자")
-		? EProjectProject01LeaderboardRole::Survivor : EProjectProject01LeaderboardRole::Mannequin;
+	return SelectedRole;
 }
 
 EProjectProject01LeaderboardSort UProjectProject01LeaderboardWidget::GetSelectedSort() const
@@ -3843,17 +4017,19 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
 	ScrollRoot->AddChild(Root);
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 LeaderBoardTest"), 24.0f);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 리더보드"), 24.0f);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
-		TEXT("성공한 경기만 등록하는 리더보드 테스트입니다. 미지정 정렬은 역할별 평균 순위 기반 종합점수입니다."), 14.0f);
+		TEXT("서버가 검증한 성공 경기만 등록됩니다. 미지정 정렬은 역할별 평균 순위 기반 종합점수입니다."), 14.0f);
 	LeaderboardStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("리더보드를 불러오는 중..."), 14.0f);
 
-	RoleComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
-	ProjectProject01LoginUI::SetComboBoxTextBlack(RoleComboBox);
-	RoleComboBox->AddOption(TEXT("마네킹"));
-	RoleComboBox->AddOption(TEXT("생존자"));
-	RoleComboBox->SetSelectedOption(TEXT("마네킹"));
-	Root->AddChildToVerticalBox(RoleComboBox)->SetPadding(FMargin(6.0f));
+	UHorizontalBox* RoleTabBar = WidgetTree->ConstructWidget<UHorizontalBox>();
+	if (UVerticalBoxSlot* RoleTabBarSlot = Root->AddChildToVerticalBox(RoleTabBar))
+	{
+		RoleTabBarSlot->SetPadding(FMargin(6.0f, 4.0f));
+		RoleTabBarSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	MannequinTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, RoleTabBar, TEXT("마네킹"));
+	SurvivorTabButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, RoleTabBar, TEXT("생존자"));
 
 	SortComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
 	ProjectProject01LoginUI::SetComboBoxTextBlack(SortComboBox);
@@ -3866,22 +4042,24 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	Root->AddChildToVerticalBox(LeaderboardText)->SetPadding(FMargin(6.0f));
 
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
-		TEXT("테스트 성공 결과 입력 (실제 게임 종료 연결 전 수동 검증용)"), 16.0f);
+		TEXT("방금 종료된 경기 기록 (서버 검증 값)"), 16.0f);
 	auto AddInput = [this, Root](const FString& Hint, const FString& DefaultValue)
 	{
 		UEditableTextBox* Input = WidgetTree->ConstructWidget<UEditableTextBox>();
 		Input->SetHintText(FProjectProject01Localization::Text(Hint));
 		Input->SetText(FText::FromString(DefaultValue));
+		Input->SetIsReadOnly(true);
 		ProjectProject01LoginUI::SetEditableTextBoxTextBlack(Input);
 		Root->AddChildToVerticalBox(Input)->SetPadding(FMargin(6.0f));
 		return Input;
 	};
-	CaptureCountInput = AddInput(TEXT("붙잡은 횟수"), TEXT("2"));
-	FirstCaptureSecondsInput = AddInput(TEXT("첫 포획 시간(초)"), TEXT("30"));
-	AllCapturedSecondsInput = AddInput(TEXT("전원 포획 시간(초)"), TEXT("120"));
-	RescueCountInput = AddInput(TEXT("구출 횟수"), TEXT("1"));
-	EscapeSecondsInput = AddInput(TEXT("탈출 시간(초)"), TEXT("180"));
-	SubmitRecordButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("현재 성공 기록을 리더보드에 등록"));
+	CaptureCountInput = AddInput(TEXT("붙잡은 횟수"), FString());
+	FirstCaptureSecondsInput = AddInput(TEXT("첫 포획 시간(초)"), FString());
+	AllCapturedSecondsInput = AddInput(TEXT("전원 포획 시간(초)"), FString());
+	RescueCountInput = AddInput(TEXT("구출 횟수"), FString());
+	EscapeSecondsInput = AddInput(TEXT("탈출 시간(초)"), FString());
+	SubmitRecordButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("방금 경기의 성공 기록을 리더보드에 등록"));
+	SubmitRecordButton->SetIsEnabled(false);
 	ReturnToLobbyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("등록하지 않고 로비로 돌아가기"));
 }
 

@@ -181,6 +181,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01ServiceNoticeWidget> ServiceNoticeWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01VoiceStatusWidget> VoiceStatusWidget;
+
 	UPROPERTY(Replicated)
 	EMultiplayTestMatchPhase MatchPhase = EMultiplayTestMatchPhase::Waiting;
 

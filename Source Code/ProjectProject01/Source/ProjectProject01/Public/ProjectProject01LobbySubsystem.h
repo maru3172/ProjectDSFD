@@ -80,6 +80,20 @@ struct PROJECTPROJECT01_API FProjectProject01LeaderboardEntry
 	FString CreatedAtUtc;
 };
 
+/** 레벨 전환 뒤에도 유지되는, 데디케이티드 서버가 검증한 마지막 성공 경기 기록입니다. */
+struct PROJECTPROJECT01_API FProjectProject01PendingLeaderboardRecord
+{
+	FString MatchId;
+	EProjectProject01LeaderboardRole Role = EProjectProject01LeaderboardRole::Survivor;
+	int32 CaptureCount = 0;
+	double FirstCaptureSeconds = 0.0;
+	double AllCapturedSeconds = 0.0;
+	int32 RescueCount = 0;
+	double EscapeSeconds = 0.0;
+
+	bool IsValid() const { return !MatchId.IsEmpty(); }
+};
+
 USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FProjectProject01RoomSummary
 {
@@ -274,6 +288,23 @@ public:
 		int32 RescueCount,
 		double EscapeSeconds);
 
+	/** 결과 화면에서 받은 검증 완료 기록을 리더보드 레벨까지 안전하게 유지합니다. */
+	void CachePendingLeaderboardRecord(
+		const FString& MatchId,
+		EProjectProject01LeaderboardRole Role,
+		int32 CaptureCount,
+		double FirstCaptureSeconds,
+		double AllCapturedSeconds,
+		int32 RescueCount,
+		double EscapeSeconds);
+	bool HasPendingLeaderboardRecord() const { return PendingLeaderboardRecord.IsValid(); }
+	const FProjectProject01PendingLeaderboardRecord& GetPendingLeaderboardRecord() const
+	{
+		return PendingLeaderboardRecord;
+	}
+	void SubmitPendingLeaderboardRecord();
+	void ClearPendingLeaderboardRecord();
+
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool HasCurrentRoom() const { return CurrentRoom.IsValid(); }
 
@@ -335,6 +366,7 @@ private:
 
 	EProjectProject01LeaderboardRole LeaderboardRole = EProjectProject01LeaderboardRole::Mannequin;
 	EProjectProject01LeaderboardSort LeaderboardSort = EProjectProject01LeaderboardSort::Overall;
+	FProjectProject01PendingLeaderboardRecord PendingLeaderboardRecord;
 
 	FString GameJoinTicket;
 	FString GameEncryptionKeyBase64;

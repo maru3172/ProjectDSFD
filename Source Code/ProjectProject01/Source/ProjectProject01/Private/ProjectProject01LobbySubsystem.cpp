@@ -93,6 +93,7 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 	CurrentRoom = FProjectProject01RoomState();
 	ClearGameJoinTicket();
 	LeaderboardEntries.Reset();
+	ClearPendingLeaderboardRecord();
 	Super::Deinitialize();
 }
 
@@ -285,6 +286,51 @@ void UProjectProject01LobbySubsystem::SubmitLeaderboardRecord(
 		TEXT("/api/leaderboards/records"), Body);
 }
 
+void UProjectProject01LobbySubsystem::CachePendingLeaderboardRecord(
+	const FString& MatchId,
+	const EProjectProject01LeaderboardRole Role,
+	const int32 CaptureCount,
+	const double FirstCaptureSeconds,
+	const double AllCapturedSeconds,
+	const int32 RescueCount,
+	const double EscapeSeconds)
+{
+	FGuid ParsedMatchId;
+	if (!FGuid::Parse(MatchId, ParsedMatchId))
+	{
+		ClearPendingLeaderboardRecord();
+		return;
+	}
+
+	PendingLeaderboardRecord.MatchId = ParsedMatchId.ToString(EGuidFormats::DigitsWithHyphens);
+	PendingLeaderboardRecord.Role = Role;
+	PendingLeaderboardRecord.CaptureCount = CaptureCount;
+	PendingLeaderboardRecord.FirstCaptureSeconds = FirstCaptureSeconds;
+	PendingLeaderboardRecord.AllCapturedSeconds = AllCapturedSeconds;
+	PendingLeaderboardRecord.RescueCount = RescueCount;
+	PendingLeaderboardRecord.EscapeSeconds = EscapeSeconds;
+}
+
+void UProjectProject01LobbySubsystem::SubmitPendingLeaderboardRecord()
+{
+	if (!PendingLeaderboardRecord.IsValid())
+	{
+		Complete(EProjectProject01LobbyOperation::SubmitLeaderboardRecord, false,
+			TEXT("등록할 서버 검증 경기 기록이 없습니다."));
+		return;
+	}
+
+	const FProjectProject01PendingLeaderboardRecord Record = PendingLeaderboardRecord;
+	SubmitLeaderboardRecord(Record.MatchId, Record.Role, true,
+		Record.CaptureCount, Record.FirstCaptureSeconds, Record.AllCapturedSeconds,
+		Record.RescueCount, Record.EscapeSeconds);
+}
+
+void UProjectProject01LobbySubsystem::ClearPendingLeaderboardRecord()
+{
+	PendingLeaderboardRecord = FProjectProject01PendingLeaderboardRecord();
+}
+
 void UProjectProject01LobbySubsystem::SendRequest(
 	const EProjectProject01LobbyOperation Operation,
 	const FString& Verb,
@@ -402,6 +448,14 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	{
 		Json->TryGetStringField(TEXT("message"), Message);
 	}
+	else if (StatusCode == 403 && Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
+	{
+		Message = TEXT("서버가 검증한 현재 계정의 성공 경기 기록을 찾지 못했습니다.");
+	}
+	else if (StatusCode == 429)
+	{
+		Message = TEXT("요청이 너무 많습니다. 잠시 후 다시 시도하세요.");
+	}
 	if (StatusCode < 200 || StatusCode >= 300 || !bJsonValid)
 	{
 		if (StatusCode == 404 && Operation == EProjectProject01LobbyOperation::RefreshCurrentRoom)
@@ -449,6 +503,7 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	else if (Operation == EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
 	{
 		// 등록 응답에는 방 또는 리더보드 배열이 없으며, UI가 성공 후 목록을 새로 요청한다.
+		ClearPendingLeaderboardRecord();
 	}
 	else
 	{

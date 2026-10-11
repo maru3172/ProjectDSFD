@@ -1087,7 +1087,9 @@ internal static class LobbyEndpoints
                 {
                     await SecurityAudit.WriteAsync(database, request, "LeaderboardPublish", "UnverifiedResultRejected", user.Id,
                         $"MatchId={matchId:D}; Role={normalizedRole}", ct);
-                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                    return Results.Json(
+                        new LobbyFailure("서버가 검증한 현재 계정의 성공 경기 기록을 찾지 못했습니다."),
+                        statusCode: StatusCodes.Status403Forbidden);
                 }
 
                 var captureCount = hasVerifiedResult ? verifiedCaptureCount : body.CaptureCount;

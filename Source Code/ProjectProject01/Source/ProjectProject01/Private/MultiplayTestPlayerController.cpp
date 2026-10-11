@@ -38,6 +38,12 @@ void AMultiplayTestPlayerController::BeginPlay()
 	{
 		ServiceNoticeWidget->AddToViewport(950);
 	}
+	VoiceStatusWidget = CreateWidget<UProjectProject01VoiceStatusWidget>(
+		this, UProjectProject01VoiceStatusWidget::StaticClass());
+	if (IsValid(VoiceStatusWidget))
+	{
+		VoiceStatusWidget->AddToViewport(940);
+	}
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01AuthSubsystem* Auth =
@@ -64,6 +70,11 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 		if (UWorld* World = GetWorld())
 		{
 			World->GetTimerManager().ClearTimer(ServiceStatusTimer);
+		}
+		if (IsValid(VoiceStatusWidget))
+		{
+			VoiceStatusWidget->RemoveFromParent();
+			VoiceStatusWidget = nullptr;
 		}
 		if (UGameInstance* GameInstance = GetGameInstance())
 		{

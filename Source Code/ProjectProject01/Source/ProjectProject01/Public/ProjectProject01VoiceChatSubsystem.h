@@ -36,6 +36,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
 	bool IsOpenMicEnabled() const { return bOpenMic; }
 
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
+	bool IsConfiguredForSurvivor() const { return bConfiguredForSurvivor; }
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
+	bool IsPushToTalkHeld() const { return bPushToTalkHeld; }
+
+	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
+	bool IsTransmitting() const { return bJoinedChannel && (bOpenMic || bPushToTalkHeld); }
+
 private:
 	void ApplyRuntimeEosConfiguration();
 	void BeginProductUserLogin();
