@@ -33,14 +33,33 @@ internal sealed class ServerAdministrationForm : Form
         ScrollBars = ScrollBars.Vertical,
         MaxLength = 512
     };
-    private readonly CheckBox useShutdownTime = new() { AutoSize = true, Text = "서버 종료 예정 시각 사용" };
-    private readonly DateTimePicker shutdownTime = new()
+    private readonly DateTimePicker maintenanceStartTime = new()
     {
-        Width = 210,
+        Width = 190,
         Format = DateTimePickerFormat.Custom,
         CustomFormat = "yyyy-MM-dd HH:mm:ss",
         ShowUpDown = true,
-        Value = DateTime.Now.AddMinutes(10)
+        Value = DateTime.Now.AddMinutes(5)
+    };
+    private readonly DateTimePicker maintenanceEndTime = new()
+    {
+        Width = 190,
+        Format = DateTimePickerFormat.Custom,
+        CustomFormat = "yyyy-MM-dd HH:mm:ss",
+        ShowUpDown = true,
+        Value = DateTime.Now.AddMinutes(15)
+    };
+    private readonly TextBox scheduleAnnouncement = new()
+    {
+        Width = 300,
+        PlaceholderText = "예약 공지 (비우면 전체 공지 사용)",
+        MaxLength = 512
+    };
+    private readonly ListBox maintenanceSchedules = new()
+    {
+        Dock = DockStyle.Fill,
+        Height = 110,
+        IntegralHeight = false
     };
     private readonly TextBox accountId = new() { Width = 230, PlaceholderText = "강제 로그아웃할 계정 ID" };
     private readonly RichTextBox operationLog = new()
@@ -55,11 +74,36 @@ internal sealed class ServerAdministrationForm : Form
     private sealed class ServiceControlDto
     {
         public bool MaintenanceEnabled { get; set; }
+        public bool ManualMaintenanceEnabled { get; set; }
         public string Announcement { get; set; } = string.Empty;
+        public string BaseAnnouncement { get; set; } = string.Empty;
+        public DateTime? MaintenanceStartAtUtc { get; set; }
         public DateTime? ShutdownAtUtc { get; set; }
         public ulong Revision { get; set; }
         public DateTime UpdatedAtUtc { get; set; }
         public string Message { get; set; } = string.Empty;
+    }
+
+    private sealed class MaintenanceScheduleDto
+    {
+        public ulong Id { get; set; }
+        public DateTime StartsAtUtc { get; set; }
+        public DateTime EndsAtUtc { get; set; }
+        public string Announcement { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+
+        public override string ToString()
+        {
+            string status = Status.Equals("Active", StringComparison.OrdinalIgnoreCase) ? "진행 중" : "예약";
+            string notice = string.IsNullOrWhiteSpace(Announcement) ? "공지 없음" : Announcement;
+            return $"#{Id} [{status}] {StartsAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} ~ {EndsAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · {notice}";
+        }
+    }
+
+    private sealed class MaintenanceScheduleListDto
+    {
+        public List<MaintenanceScheduleDto> Schedules { get; set; } = [];
+        public int Maximum { get; set; }
     }
 
     public ServerAdministrationForm(string projectRoot, Action<string> mainLog)
@@ -73,6 +117,7 @@ internal sealed class ServerAdministrationForm : Form
         StartPosition = FormStartPosition.CenterParent;
         BuildUi();
         Shown += async (_, _) => await RefreshStatusAsync();
+        maintenanceSchedules.SelectedIndexChanged += (_, _) => LoadSelectedScheduleIntoEditor();
     }
 
     protected override void Dispose(bool disposing)
@@ -116,19 +161,28 @@ internal sealed class ServerAdministrationForm : Form
         root.Controls.Add(maintenanceEnabled);
 
         var noticeGroup = new GroupBox { Text = "전체 공지", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
-        var noticeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, AutoSize = true };
+        var noticeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, AutoSize = true };
         noticeLayout.Controls.Add(announcement, 0, 0);
-        var shutdownPanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false };
-        shutdownPanel.Controls.Add(useShutdownTime);
-        shutdownPanel.Controls.Add(shutdownTime);
-        shutdownPanel.Controls.Add(new Label { Text = "(현재 PC의 로컬 시각)", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
-        noticeLayout.Controls.Add(shutdownPanel, 0, 1);
+        var schedulePanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
+        schedulePanel.Controls.Add(new Label { Text = "새 점검 예약", AutoSize = true, Padding = new Padding(0, 7, 5, 0) });
+        schedulePanel.Controls.Add(new Label { Text = "시작", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
+        schedulePanel.Controls.Add(maintenanceStartTime);
+        schedulePanel.Controls.Add(new Label { Text = "종료", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
+        schedulePanel.Controls.Add(maintenanceEndTime);
+        schedulePanel.Controls.Add(scheduleAnnouncement);
+        schedulePanel.Controls.Add(new Label { Text = "(현재 PC의 로컬 시각)", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
+        noticeLayout.Controls.Add(schedulePanel, 0, 1);
+        noticeLayout.Controls.Add(new Label { Text = "진행 중·예정된 점검 예약 (최대 100개, 선택 후 개별 취소)", AutoSize = true }, 0, 2);
+        noticeLayout.Controls.Add(maintenanceSchedules, 0, 3);
         noticeGroup.Controls.Add(noticeLayout);
         root.Controls.Add(noticeGroup);
 
         var serviceButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
         AddButton(serviceButtons, "상태 새로고침", RefreshStatusAsync);
         AddButton(serviceButtons, "점검·공지 적용", ApplyServiceControlAsync);
+        AddButton(serviceButtons, "점검 예약 추가", AddMaintenanceScheduleAsync);
+        AddButton(serviceButtons, "선택 예약 변경", UpdateSelectedMaintenanceScheduleAsync);
+        AddButton(serviceButtons, "점검 예약 취소", CancelMaintenanceScheduleAsync);
         AddButton(serviceButtons, "공지 지우기", ClearAnnouncementAsync);
         root.Controls.Add(serviceButtons);
 
@@ -136,7 +190,7 @@ internal sealed class ServerAdministrationForm : Form
         {
             AutoSize = true,
             ForeColor = Color.DarkRed,
-            Text = "점검 모드는 신규 로그인·회원가입·방 생성만 막습니다. 이미 로그인한 사용자는 아래 강제 로그아웃 기능으로 정리할 수 있습니다.",
+            Text = "점검 모드는 신규 로그인·회원가입·방 생성만 막습니다. 각 예약은 종료 시각에 자동 해제되며, 시간이 겹친 다른 예약이 있으면 점검을 유지합니다. 예약 공지는 해당 시간에만 표시되고 전체 공지는 별도로 유지됩니다.",
             Padding = new Padding(0, 4, 0, 8)
         };
         root.Controls.Add(explanation);
@@ -175,15 +229,39 @@ internal sealed class ServerAdministrationForm : Form
             using var request = CreateAdminRequest(HttpMethod.Get, "/api/admin/service");
             using var response = await http.SendAsync(request);
             ServiceControlDto dto = await ReadResponseAsync<ServiceControlDto>(response);
-            maintenanceEnabled.Checked = dto.MaintenanceEnabled;
-            announcement.Text = dto.Announcement;
-            useShutdownTime.Checked = dto.ShutdownAtUtc.HasValue;
+            maintenanceEnabled.Checked = dto.ManualMaintenanceEnabled;
+            announcement.Text = dto.BaseAnnouncement;
+            if (dto.MaintenanceStartAtUtc.HasValue)
+                maintenanceStartTime.Value = dto.MaintenanceStartAtUtc.Value.ToLocalTime();
             if (dto.ShutdownAtUtc.HasValue)
-                shutdownTime.Value = dto.ShutdownAtUtc.Value.ToLocalTime();
+                maintenanceEndTime.Value = dto.ShutdownAtUtc.Value.ToLocalTime();
             serviceState.Text = dto.MaintenanceEnabled
                 ? $"현재 상태: 점검 중 · 로그인/회원가입/방 생성 차단 · Revision {dto.Revision}"
-                : $"현재 상태: 정상 운영 · Revision {dto.Revision}";
+                : dto.MaintenanceStartAtUtc.HasValue
+                    ? $"현재 상태: 점검 예약 · {dto.MaintenanceStartAtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss} 시작 · Revision {dto.Revision}"
+                    : $"현재 상태: 정상 운영 · Revision {dto.Revision}";
             serviceState.ForeColor = dto.MaintenanceEnabled ? Color.DarkRed : Color.DarkGreen;
+
+            using var schedulesRequest = CreateAdminRequest(HttpMethod.Get, "/api/admin/service/schedules");
+            using var schedulesResponse = await http.SendAsync(schedulesRequest);
+            MaintenanceScheduleListDto scheduleList = await ReadResponseAsync<MaintenanceScheduleListDto>(schedulesResponse);
+            ulong? selectedId = (maintenanceSchedules.SelectedItem as MaintenanceScheduleDto)?.Id;
+            maintenanceSchedules.BeginUpdate();
+            maintenanceSchedules.Items.Clear();
+            foreach (MaintenanceScheduleDto schedule in scheduleList.Schedules)
+                maintenanceSchedules.Items.Add(schedule);
+            if (selectedId.HasValue)
+            {
+                for (var index = 0; index < maintenanceSchedules.Items.Count; ++index)
+                {
+                    if (maintenanceSchedules.Items[index] is MaintenanceScheduleDto item && item.Id == selectedId.Value)
+                    {
+                        maintenanceSchedules.SelectedIndex = index;
+                        break;
+                    }
+                }
+            }
+            maintenanceSchedules.EndUpdate();
             Append("[OK] 서버 운영 상태를 불러왔습니다.");
             SetOperationStatus("상태 확인 완료");
         }
@@ -203,7 +281,8 @@ internal sealed class ServerAdministrationForm : Form
         {
             maintenanceEnabled = maintenanceEnabled.Checked,
             announcement = announcement.Text.Trim(),
-            shutdownAtUtc = useShutdownTime.Checked ? shutdownTime.Value.ToUniversalTime() : (DateTime?)null
+            maintenanceStartAtUtc = (DateTime?)null,
+            shutdownAtUtc = (DateTime?)null
         };
         using var request = CreateAdminRequest(HttpMethod.Put, "/api/admin/service", body);
         using var response = await http.SendAsync(request);
@@ -219,8 +298,78 @@ internal sealed class ServerAdministrationForm : Form
     private async Task ClearAnnouncementAsync()
     {
         announcement.Clear();
-        useShutdownTime.Checked = false;
         await ApplyServiceControlAsync();
+    }
+
+    private async Task AddMaintenanceScheduleAsync()
+    {
+        if (maintenanceEndTime.Value <= maintenanceStartTime.Value)
+            throw new InvalidOperationException("점검 종료 시각은 시작 시각보다 늦어야 합니다.");
+        if (maintenanceEndTime.Value.ToUniversalTime() <= DateTime.UtcNow)
+            throw new InvalidOperationException("이미 종료된 시각으로 점검을 예약할 수 없습니다.");
+
+        SetOperationStatus("점검 예약 추가 중...");
+        var body = new
+        {
+            startsAtUtc = maintenanceStartTime.Value.ToUniversalTime(),
+            endsAtUtc = maintenanceEndTime.Value.ToUniversalTime(),
+            announcement = scheduleAnnouncement.Text.Trim()
+        };
+        using var request = CreateAdminRequest(HttpMethod.Post, "/api/admin/service/schedules", body);
+        using var response = await http.SendAsync(request);
+        MaintenanceScheduleDto created = await ReadResponseAsync<MaintenanceScheduleDto>(response);
+        Append($"[OK] 점검 예약 #{created.Id}을 추가했습니다.");
+        mainLog($"[운영] 점검 예약 #{created.Id} 추가");
+        SetOperationStatus("점검 예약 추가 완료");
+        await RefreshStatusAsync();
+    }
+
+    private async Task UpdateSelectedMaintenanceScheduleAsync()
+    {
+        if (maintenanceSchedules.SelectedItem is not MaintenanceScheduleDto selected)
+            throw new InvalidOperationException("변경할 점검 예약을 목록에서 선택하세요.");
+        if (maintenanceEndTime.Value <= maintenanceStartTime.Value)
+            throw new InvalidOperationException("점검 종료 시각은 시작 시각보다 늦어야 합니다.");
+        if (maintenanceEndTime.Value.ToUniversalTime() <= DateTime.UtcNow)
+            throw new InvalidOperationException("이미 종료된 시각으로 점검 예약을 변경할 수 없습니다.");
+
+        SetOperationStatus("선택한 점검 예약 변경 중...");
+        var body = new
+        {
+            startsAtUtc = maintenanceStartTime.Value.ToUniversalTime(),
+            endsAtUtc = maintenanceEndTime.Value.ToUniversalTime(),
+            announcement = scheduleAnnouncement.Text.Trim()
+        };
+        using var request = CreateAdminRequest(HttpMethod.Put, $"/api/admin/service/schedules/{selected.Id}", body);
+        using var response = await http.SendAsync(request);
+        MaintenanceScheduleDto updated = await ReadResponseAsync<MaintenanceScheduleDto>(response);
+        Append($"[OK] 점검 예약 #{updated.Id}의 시간을 변경했습니다.");
+        mainLog($"[운영] 점검 예약 #{updated.Id} 변경");
+        SetOperationStatus("점검 예약 변경 완료");
+        await RefreshStatusAsync();
+    }
+
+    private void LoadSelectedScheduleIntoEditor()
+    {
+        if (maintenanceSchedules.SelectedItem is not MaintenanceScheduleDto selected) return;
+        maintenanceStartTime.Value = selected.StartsAtUtc.ToLocalTime();
+        maintenanceEndTime.Value = selected.EndsAtUtc.ToLocalTime();
+        scheduleAnnouncement.Text = selected.Announcement;
+    }
+
+    private async Task CancelMaintenanceScheduleAsync()
+    {
+        if (maintenanceSchedules.SelectedItem is not MaintenanceScheduleDto selected)
+            throw new InvalidOperationException("취소할 점검 예약을 목록에서 선택하세요.");
+
+        SetOperationStatus("점검 예약 취소 중...");
+        using var request = CreateAdminRequest(HttpMethod.Delete, $"/api/admin/service/schedules/{selected.Id}");
+        using var response = await http.SendAsync(request);
+        string message = await ReadMessageAsync(response);
+        Append($"[OK] {message} (#{selected.Id})");
+        mainLog($"[운영] 점검 예약 #{selected.Id} 취소");
+        SetOperationStatus("점검 예약 취소 완료");
+        await RefreshStatusAsync();
     }
 
     private async Task ForceLogoutAllAsync()

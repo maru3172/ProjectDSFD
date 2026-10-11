@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS service_control
   id TINYINT UNSIGNED NOT NULL,
   maintenance_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   announcement VARCHAR(512) NOT NULL DEFAULT '',
+  maintenance_start_at_utc DATETIME(6) NULL,
   shutdown_at_utc DATETIME(6) NULL,
   revision BIGINT UNSIGNED NOT NULL DEFAULT 1,
   updated_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -62,6 +63,18 @@ CREATE TABLE IF NOT EXISTS service_control
 INSERT IGNORE INTO service_control
   (id, maintenance_enabled, announcement, shutdown_at_utc, revision)
 VALUES (1, FALSE, '', NULL, 1);
+
+CREATE TABLE IF NOT EXISTS maintenance_schedules
+(
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  starts_at_utc DATETIME(6) NOT NULL,
+  ends_at_utc DATETIME(6) NOT NULL,
+  announcement VARCHAR(512) NOT NULL DEFAULT '',
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  KEY ix_maintenance_schedules_window (starts_at_utc, ends_at_utc),
+  CONSTRAINT ck_maintenance_schedules_window CHECK (ends_at_utc > starts_at_utc)
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS game_rooms
 (

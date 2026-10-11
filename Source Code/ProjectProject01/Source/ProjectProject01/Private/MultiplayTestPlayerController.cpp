@@ -141,7 +141,7 @@ void AMultiplayTestPlayerController::HandleServiceStatusChanged(
 	FString Notice = !Announcement.IsEmpty() ? Announcement : (bMaintenanceEnabled ? Message : FString());
 	if (!Notice.IsEmpty() && !ShutdownAtUtc.IsEmpty())
 	{
-		Notice += FString::Printf(TEXT(" (서버 종료 예정: %s)"), *ShutdownAtUtc);
+		Notice += FString::Printf(TEXT(" (점검 자동 해제 예정: %s)"), *ShutdownAtUtc);
 	}
 	ServiceNoticeWidget->SetNotice(Notice, bMaintenanceEnabled);
 }

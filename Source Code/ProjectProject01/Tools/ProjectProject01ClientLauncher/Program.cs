@@ -247,18 +247,23 @@ internal sealed class LauncherForm : Form
                 HttpCompletionOption.ResponseHeadersRead,
                 lifetime.Token);
             response.EnsureSuccessStatusCode();
-            await using Stream source = await response.Content.ReadAsStreamAsync(lifetime.Token);
-            await using var destination = new FileStream(
-                tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 128, true);
-            byte[] buffer = new byte[1024 * 128];
-            int read;
-            while ((read = await source.ReadAsync(buffer, lifetime.Token)) > 0)
+            // Hash verification opens the completed file again. Keep both transfer streams in
+            // this inner scope so FileShare.None is released before ComputeSha256Async runs.
+            await using (Stream source = await response.Content.ReadAsStreamAsync(lifetime.Token))
+            await using (var destination = new FileStream(
+                tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 128, true))
             {
-                await destination.WriteAsync(buffer.AsMemory(0, read), lifetime.Token);
-                downloadedBytes += read;
-                SetProgress(downloadedBytes, totalBytes, $"받는 중: {file.Path}");
+                byte[] buffer = new byte[1024 * 128];
+                int read;
+                while ((read = await source.ReadAsync(buffer, lifetime.Token)) > 0)
+                {
+                    await destination.WriteAsync(buffer.AsMemory(0, read), lifetime.Token);
+                    downloadedBytes += read;
+                    SetProgress(downloadedBytes, totalBytes, $"받는 중: {file.Path}");
+                }
+                await destination.FlushAsync(lifetime.Token);
             }
-            await destination.FlushAsync(lifetime.Token);
+
             string hash = await ComputeSha256Async(tempPath, lifetime.Token);
             if (!string.Equals(hash, file.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"다운로드 파일 검증 실패: {file.Path}");

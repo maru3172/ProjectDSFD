@@ -918,7 +918,7 @@ void UProjectProject01LoginWidget::HandleServiceStatusChanged(
 	else if (!Announcement.IsEmpty())
 	{
 		SetStatus(ShutdownAtUtc.IsEmpty() ? Announcement :
-			FString::Printf(TEXT("%s (서버 종료 예정: %s)"), *Announcement, *ShutdownAtUtc), false);
+			FString::Printf(TEXT("%s (점검 자동 해제 예정: %s)"), *Announcement, *ShutdownAtUtc), false);
 	}
 }
 
@@ -3305,7 +3305,7 @@ void UProjectProject01LobbyWidget::HandleServiceStatusChanged(
 	else if (!Announcement.IsEmpty())
 	{
 		SetStatus(ShutdownAtUtc.IsEmpty() ? Announcement :
-			FString::Printf(TEXT("%s (서버 종료 예정: %s)"), *Announcement, *ShutdownAtUtc), false);
+			FString::Printf(TEXT("%s (점검 자동 해제 예정: %s)"), *Announcement, *ShutdownAtUtc), false);
 	}
 }
 

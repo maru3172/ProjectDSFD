@@ -56,6 +56,7 @@ builder.Services.AddSingleton(versionCompatibility);
 var administratorOptions = AdministratorOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(administratorOptions);
 builder.Services.AddSingleton<ServiceControlState>();
+builder.Services.AddHostedService<ServiceControlScheduleWorker>();
 builder.Services.AddSingleton<GameServerPresenceState>();
 builder.Services.AddSingleton<EosVoiceTokenService>();
 builder.Services.AddHostedService(services => services.GetRequiredService<EosVoiceTokenService>());
@@ -774,6 +775,7 @@ internal sealed class AuthDatabase
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
         await EnsureSecuritySchemaAsync(connection, cancellationToken);
+        await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
     }
 
     private static async Task EnsureLobbyJoinCodeSchemaAsync(
@@ -896,6 +898,48 @@ internal sealed class AuthDatabase
 				connection) { CommandTimeout = 15 };
 			await addReturnedColumn.ExecuteNonQueryAsync(cancellationToken);
 		}
+    }
+
+    private static async Task EnsureServiceControlScheduleSchemaAsync(
+        MySqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await connection.ChangeDatabaseAsync("projectproject01", cancellationToken);
+        await using var columnCommand = new MySqlCommand(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'service_control' AND column_name = 'maintenance_start_at_utc';",
+            connection) { CommandTimeout = 5 };
+        if (Convert.ToInt32(await columnCommand.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addColumn = new MySqlCommand(
+                "ALTER TABLE service_control ADD COLUMN maintenance_start_at_utc DATETIME(6) NULL AFTER announcement;",
+                connection) { CommandTimeout = 15 };
+            await addColumn.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // Preserve a reservation created by the former single-window implementation.
+        // The singleton columns remain for wire compatibility, but new reservations live in
+        // maintenance_schedules so operators can keep and cancel several windows independently.
+        await using var migrateLegacySchedule = new MySqlCommand(
+            """
+            INSERT INTO maintenance_schedules (starts_at_utc, ends_at_utc, announcement)
+            SELECT maintenance_start_at_utc, shutdown_at_utc, announcement
+            FROM service_control
+            WHERE id = 1
+              AND maintenance_start_at_utc IS NOT NULL
+              AND shutdown_at_utc IS NOT NULL
+              AND shutdown_at_utc > UTC_TIMESTAMP(6)
+              AND NOT EXISTS (
+                  SELECT 1 FROM maintenance_schedules s
+                  WHERE s.starts_at_utc = service_control.maintenance_start_at_utc
+                    AND s.ends_at_utc = service_control.shutdown_at_utc
+              );
+
+            UPDATE service_control
+            SET maintenance_start_at_utc = NULL, shutdown_at_utc = NULL
+            WHERE id = 1
+              AND (maintenance_start_at_utc IS NOT NULL OR shutdown_at_utc IS NOT NULL);
+            """, connection) { CommandTimeout = 15 };
+        await migrateLegacySchedule.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
