@@ -11,6 +11,7 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Multiplayer, Log, All);
 struct FMannequinAITuningRow;
+enum class EProjectProject01SpawnRole : uint8;
 
 struct FMultiplayTestServerPlayerRecord
 {
@@ -82,10 +83,15 @@ public:
 		const FString& Portal = TEXT("")) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual void SetPlayerDefaults(APawn* PlayerPawn) override;
 
 private:
+	void InitializeRoleSpawnPoints();
+	void InitializeMannequinSpawns();
+	TArray<class AProjectProject01RoleSpawnPoint*> GetRoleSpawnPoints(
+		EProjectProject01SpawnRole SpawnRole) const;
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;
 	void AssignRandomInitialMannequinView(class AMultiplayTestPlayerController* Controller);
 	void QueueDefaultAIControllerRestore(class AMannequinAICharacter* Mannequin) const;
@@ -142,6 +148,7 @@ private:
 	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord> MatchPlayerRecords;
 	TMap<FString, FMultiplayTestServerPlayerRecord> DisconnectedMatchRecords;
 	TMap<FString, FMultiplayTestMatchResult> CompletedResultsByUserId;
+	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<AActor>> AssignedSurvivorSpawnPoints;
 	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, bool> ResultVerificationStatus;
 	EMultiplayTestMatchPhase AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
 	FString AuthoritativeMatchId;
@@ -154,6 +161,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1", UIMin = "1"))
 	int32 ExpectedMatchPlayers = 3;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "1", UIMin = "1"))
+	int32 SurvivorSpawnCount = 2;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
+	int32 MannequinSpawnCount = 10;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning")
+	TSubclassOf<class AMannequinAICharacter> MannequinPawnClass;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1.0", UIMin = "1.0", Units = "s"))
 	float MatchTimeLimitSeconds = 1800.0f;

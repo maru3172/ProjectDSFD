@@ -56,6 +56,15 @@ AMannequinAICharacter::AMannequinAICharacter()
 
 }
 
+void AMannequinAICharacter::SetControlSlotForGameMode(const int32 InControlSlot)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	ControlSlot = FMath::Clamp(InControlSlot, -1, 9);
+}
+
 // Called when the game starts or when spawned
 void AMannequinAICharacter::BeginPlay()
 {

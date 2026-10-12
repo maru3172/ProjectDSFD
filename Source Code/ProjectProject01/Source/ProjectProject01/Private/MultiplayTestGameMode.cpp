@@ -10,6 +10,7 @@
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01RoleSpawnPoint.h"
 #include "ProjectProject01VersionContract.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/TriggerBox.h"
@@ -70,6 +71,15 @@ namespace
 
 		const float MinimumDotProduct = FMath::Cos(FMath::DegreesToRadians(FMath::Max(0.0f, HalfAngleDegrees)));
 		return FVector::DotProduct(ViewDirection.GetSafeNormal(), ToTarget.GetSafeNormal()) >= MinimumDotProduct;
+	}
+
+	bool IsLocalEditorPlaySession(const UWorld* World)
+	{
+#if WITH_EDITOR
+		return IsValid(World) && World->WorldType == EWorldType::PIE;
+#else
+		return false;
+#endif
 	}
 }
 
@@ -139,12 +149,20 @@ AMultiplayTestGameMode::AMultiplayTestGameMode()
 	}
 
 	PlayerControllerClass = AMultiplayTestPlayerController::StaticClass();
+	MannequinPawnClass = AMannequinAICharacter::StaticClass();
+	static ConstructorHelpers::FClassFinder<AMannequinAICharacter> MannequinPawnClassFinder(
+		TEXT("/Game/MyProject/BP_MannequinAICharacter"));
+	if (MannequinPawnClassFinder.Succeeded())
+	{
+		MannequinPawnClass = MannequinPawnClassFinder.Class;
+	}
 }
 
 void AMultiplayTestGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
+	InitializeRoleSpawnPoints();
 	BindEscapeTriggers();
 	if (GetNetMode() == NM_DedicatedServer)
 	{
@@ -165,6 +183,127 @@ void AMultiplayTestGameMode::BeginPlay()
 			}
 		}
 	}
+}
+
+void AMultiplayTestGameMode::InitializeRoleSpawnPoints()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const int32 SurvivorPointCount = GetRoleSpawnPoints(EProjectProject01SpawnRole::Survivor).Num();
+	if (SurvivorPointCount < SurvivorSpawnCount)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("MultiplayTest needs at least %d survivor role spawn points, but found %d. Missing players will use default PlayerStarts."),
+			SurvivorSpawnCount, SurvivorPointCount);
+	}
+	InitializeMannequinSpawns();
+}
+
+TArray<AProjectProject01RoleSpawnPoint*> AMultiplayTestGameMode::GetRoleSpawnPoints(
+	const EProjectProject01SpawnRole SpawnRole) const
+{
+	TArray<AProjectProject01RoleSpawnPoint*> Result;
+	if (!IsValid(GetWorld()))
+	{
+		return Result;
+	}
+	for (TActorIterator<AProjectProject01RoleSpawnPoint> It(GetWorld()); It; ++It)
+	{
+		AProjectProject01RoleSpawnPoint* SpawnPoint = *It;
+		if (IsValid(SpawnPoint) && SpawnPoint->GetSpawnRole() == SpawnRole)
+		{
+			Result.Add(SpawnPoint);
+		}
+	}
+	return Result;
+}
+
+void AMultiplayTestGameMode::InitializeMannequinSpawns()
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !IsValid(World))
+	{
+		return;
+	}
+
+	TArray<AProjectProject01RoleSpawnPoint*> SpawnPoints =
+		GetRoleSpawnPoints(EProjectProject01SpawnRole::Mannequin);
+	if (SpawnPoints.Num() < MannequinSpawnCount)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Warning,
+			TEXT("MultiplayTest needs at least %d mannequin role spawn points, but found %d. Keeping the legacy map mannequin placement unchanged."),
+			MannequinSpawnCount, SpawnPoints.Num());
+		return;
+	}
+
+	for (int32 Index = SpawnPoints.Num() - 1; Index > 0; --Index)
+	{
+		SpawnPoints.Swap(Index, FMath::RandRange(0, Index));
+	}
+	SpawnPoints.SetNum(MannequinSpawnCount);
+
+	TArray<AMannequinAICharacter*> Mannequins;
+	for (TActorIterator<AMannequinAICharacter> It(World); It; ++It)
+	{
+		if (AMannequinAICharacter* Mannequin = *It; IsValid(Mannequin))
+		{
+			Mannequins.Add(Mannequin);
+		}
+	}
+	Mannequins.Sort([](const AMannequinAICharacter& Left, const AMannequinAICharacter& Right)
+	{
+		return Left.GetName() < Right.GetName();
+	});
+
+	while (Mannequins.Num() < MannequinSpawnCount)
+	{
+		if (!MannequinPawnClass)
+		{
+			UE_LOG(LogProjectProject01Multiplayer, Error,
+				TEXT("Cannot create the required mannequins because MannequinPawnClass is not configured."));
+			break;
+		}
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AMannequinAICharacter* Spawned = World->SpawnActor<AMannequinAICharacter>(
+			MannequinPawnClass, SpawnPoints[Mannequins.Num()]->GetActorTransform(), SpawnParameters);
+		if (!IsValid(Spawned))
+		{
+			UE_LOG(LogProjectProject01Multiplayer, Error, TEXT("Failed to spawn a required mannequin actor."));
+			break;
+		}
+		Mannequins.Add(Spawned);
+	}
+
+	for (int32 Index = 0; Index < Mannequins.Num(); ++Index)
+	{
+		AMannequinAICharacter* Mannequin = Mannequins[Index];
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+		if (Index >= MannequinSpawnCount)
+		{
+			Mannequin->Destroy();
+			continue;
+		}
+
+		Mannequin->SetActorTransform(SpawnPoints[Index]->GetActorTransform(), false, nullptr,
+			ETeleportType::TeleportPhysics);
+		Mannequin->SetControlSlotForGameMode(Index);
+		if (!IsValid(Mannequin->GetController()))
+		{
+			Mannequin->SpawnDefaultController();
+		}
+		Mannequin->ForceNetUpdate();
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Randomly assigned %d mannequins to %d configured mannequin spawn candidates."),
+		FMath::Min(Mannequins.Num(), MannequinSpawnCount), SpawnPoints.Num());
 }
 
 void AMultiplayTestGameMode::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
@@ -222,7 +361,7 @@ void AMultiplayTestGameMode::PreLogin(
 	{
 		return;
 	}
-	if (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket)
+	if (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket || IsLocalEditorPlaySession(GetWorld()))
 	{
 		if (GetNumPlayers() >= ExpectedMatchPlayers)
 		{
@@ -311,7 +450,7 @@ FString AMultiplayTestGameMode::InitNewPlayer(
 		}
 		PendingValidatedJoinClaims.Remove(Ticket);
 	}
-	else if (!bRequireGameJoinTicket || GetNetMode() == NM_Standalone)
+	else if (!bRequireGameJoinTicket || GetNetMode() == NM_Standalone || IsLocalEditorPlaySession(GetWorld()))
 	{
 		// 티켓 검증을 명시적으로 끈 로컬 호환 모드에서만 과거 URL 역할 옵션을 허용한다.
 		LobbyRole = UGameplayStatics::ParseOption(Options, TEXT("LobbyRole"));
@@ -393,6 +532,50 @@ void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerContr
 	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 }
 
+AActor* AMultiplayTestGameMode::ChoosePlayerStart_Implementation(AController* Player)
+{
+	if (!HasAuthority() || !IsValid(Player) || IsMannequinController(Cast<AMultiplayTestPlayerController>(Player)))
+	{
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	if (const TWeakObjectPtr<AActor>* Existing = AssignedSurvivorSpawnPoints.Find(Player);
+		Existing != nullptr && Existing->IsValid())
+	{
+		return Existing->Get();
+	}
+
+	TSet<const AActor*> AlreadyAssigned;
+	for (const TPair<TWeakObjectPtr<AController>, TWeakObjectPtr<AActor>>& Pair : AssignedSurvivorSpawnPoints)
+	{
+		if (Pair.Value.IsValid())
+		{
+			AlreadyAssigned.Add(Pair.Value.Get());
+		}
+	}
+
+	TArray<AProjectProject01RoleSpawnPoint*> Available;
+	for (AProjectProject01RoleSpawnPoint* SpawnPoint : GetRoleSpawnPoints(EProjectProject01SpawnRole::Survivor))
+	{
+		if (IsValid(SpawnPoint) && !AlreadyAssigned.Contains(SpawnPoint))
+		{
+			Available.Add(SpawnPoint);
+		}
+	}
+	if (Available.IsEmpty())
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("No unclaimed survivor role spawn point is available. Falling back to the default PlayerStart selection."));
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	AProjectProject01RoleSpawnPoint* Selected = Available[FMath::RandHelper(Available.Num())];
+	AssignedSurvivorSpawnPoints.Add(Player, Selected);
+	UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("Assigned survivor %s to random spawn point %s."),
+		*GetNameSafe(Player), *GetNameSafe(Selected));
+	return Selected;
+}
+
 void AMultiplayTestGameMode::Logout(AController* Exiting)
 {
 	AMultiplayTestPlayerController* ExitingMultiplayController = Cast<AMultiplayTestPlayerController>(Exiting);
@@ -406,6 +589,7 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 	}
 	RequestedMannequinControllers.Remove(ExitingMultiplayController);
 	ExplicitRoleControllers.Remove(ExitingMultiplayController);
+	AssignedSurvivorSpawnPoints.Remove(Exiting);
 	if (IsMannequinController(ExitingMultiplayController))
 	{
 		if (AMannequinAICharacter* ControlledMannequin = Cast<AMannequinAICharacter>(ExitingMultiplayController->GetPawn());
@@ -520,11 +704,13 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 	Record.MatchId = Controller->GetAuthenticatedMatchId();
 	// 티켓 검증을 생략하는 Standalone/로컬 PIE에서도 통신 기능을 서로 격리된
 	// 하나의 테스트 매치로 묶는다. 실제 티켓 기반 접속에서는 인증된 값을 그대로 쓴다.
-	if (Record.UserId.IsEmpty() && (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket))
+	if (Record.UserId.IsEmpty() &&
+		(GetNetMode() == NM_Standalone || !bRequireGameJoinTicket || IsLocalEditorPlaySession(GetWorld())))
 	{
 		Record.UserId = FString::Printf(TEXT("LocalPIE-%d"), Controller->GetUniqueID());
 	}
-	if (Record.MatchId.IsEmpty() && (GetNetMode() == NM_Standalone || !bRequireGameJoinTicket))
+	if (Record.MatchId.IsEmpty() &&
+		(GetNetMode() == NM_Standalone || !bRequireGameJoinTicket || IsLocalEditorPlaySession(GetWorld())))
 	{
 		if (AuthoritativeMatchId.IsEmpty())
 		{

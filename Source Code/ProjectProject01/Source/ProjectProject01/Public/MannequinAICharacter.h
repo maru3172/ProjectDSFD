@@ -77,6 +77,9 @@ public:
 	void PlayFootstep(FName FootBoneName);
 
 private:
+	friend class AMultiplayTestGameMode;
+	void SetControlSlotForGameMode(int32 InControlSlot);
+
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",
 		meta = (AllowPrivateAccess = "true", ClampMin = "-1", ClampMax = "9", UIMin = "-1", UIMax = "9"))
 	int32 ControlSlot = -1;
