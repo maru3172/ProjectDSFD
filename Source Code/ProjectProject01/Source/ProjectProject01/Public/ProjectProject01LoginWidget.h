@@ -932,6 +932,9 @@ private:
 	void HandleReturnToLobbyClicked();
 
 	UFUNCTION()
+	void HandleReturnToRoomClicked();
+
+	UFUNCTION()
 	void HandleLeaderboardChanged();
 
 	UFUNCTION()
@@ -975,25 +978,13 @@ private:
 	TObjectPtr<class UMultiLineEditableTextBox> LeaderboardText;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UEditableTextBox> CaptureCountInput;
-
-	UPROPERTY(Transient)
-	TObjectPtr<class UEditableTextBox> FirstCaptureSecondsInput;
-
-	UPROPERTY(Transient)
-	TObjectPtr<class UEditableTextBox> AllCapturedSecondsInput;
-
-	UPROPERTY(Transient)
-	TObjectPtr<class UEditableTextBox> RescueCountInput;
-
-	UPROPERTY(Transient)
-	TObjectPtr<class UEditableTextBox> EscapeSecondsInput;
-
-	UPROPERTY(Transient)
 	TObjectPtr<class UButton> SubmitRecordButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToLobbyButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ReturnToRoomButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> LeaderboardStatusText;
@@ -1001,4 +992,6 @@ private:
 	EProjectProject01LeaderboardRole SelectedRole = EProjectProject01LeaderboardRole::Mannequin;
 	EProjectProject01LeaderboardScope SelectedScope = EProjectProject01LeaderboardScope::Individual;
 	bool bUpdatingSortOptions = false;
+	bool bOpenedFromMatchResult = false;
+	bool bReturnToLobbyAfterLeave = false;
 };

@@ -105,6 +105,7 @@ void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 	LeaderboardEntries.Reset();
 	ClearGameJoinTicket();
 	ClearPendingLeaderboardRecord();
+	bLeaderboardOpenedFromMatchResult = false;
 	OnRoomListChanged.Broadcast();
 	OnCurrentRoomChanged.Broadcast();
 	OnLeaderboardChanged.Broadcast();

@@ -2440,6 +2440,10 @@ void UProjectProject01MatchResultWidget::HandleLeaderboardClicked()
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (IsValid(Lobby))
+	{
+		Lobby->SetLeaderboardOpenedFromMatchResult(true);
+	}
 	if (IsValid(Lobby) && Lobby->HasCurrentRoom())
 	{
 		bOpenLeaderboardAfterReturn = true;
@@ -2518,6 +2522,17 @@ void UProjectProject01MatchResultWidget::HandleLobbyRequestResult(
 	}
 	if (!bSuccess)
 	{
+		if (bOpenLeaderboardAfterReturn)
+		{
+			if (UGameInstance* GameInstance = GetGameInstance())
+			{
+				if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+				{
+					Lobby->SetLeaderboardOpenedFromMatchResult(false);
+				}
+			}
+			bOpenLeaderboardAfterReturn = false;
+		}
 		SetBusy(false, Message, true);
 		return;
 	}
@@ -2698,7 +2713,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 			: !Result.bSuccess
 			? TEXT("실패 기록은 리더보드에 등록되지 않습니다.")
 			: Result.bLeaderboardVerificationReady
-				? TEXT("기록을 등록하거나 등록하지 않고 기존 방으로 돌아갈 수 있습니다.")
+				? TEXT("리더보드를 열어 이번 경기 기록을 확인하고 등록할 수 있습니다.")
 				: TEXT("서버의 리더보드 검증 기록에 실패했습니다. 방 복귀만 가능합니다.");
 		StatusText->SetText(FProjectProject01Localization::Text(Status));
 		StatusText->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
@@ -2770,7 +2785,6 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	StatusText->SetJustification(ETextJustify::Center);
 	ResultMenu->AddChildToVerticalBox(StatusText)->SetPadding(FMargin(8.0f));
 
-	RegisterButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("성공 기록을 리더보드에 등록"));
 	LeaderboardButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("리더보드"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("방으로 돌아가기"));
 	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("로그아웃"));
@@ -3995,6 +4009,13 @@ void UProjectProject01LobbyWidget::HandleLogoutClicked()
 
 void UProjectProject01LobbyWidget::HandleOpenLeaderboardTestClicked()
 {
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->SetLeaderboardOpenedFromMatchResult(false);
+		}
+	}
 	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LeaderBoardTest")));
 }
 
@@ -4493,6 +4514,7 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 	if (IsValid(SortComboBox)) SortComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSortSelectionChanged);
 	if (IsValid(SubmitRecordButton)) SubmitRecordButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked);
 	if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked);
+	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToRoomClicked);
 
 	SetSelectedRole(SelectedRole, false);
 
@@ -4509,15 +4531,16 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 
 	Lobby->OnRequestCompleted.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult);
 	Lobby->OnLeaderboardChanged.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardChanged);
+	bOpenedFromMatchResult = Lobby->IsLeaderboardOpenedFromMatchResult() && Lobby->HasCurrentRoom();
+	if (IsValid(ReturnToRoomButton))
+	{
+		ReturnToRoomButton->SetVisibility(bOpenedFromMatchResult
+			? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
 	if (Lobby->HasPendingLeaderboardRecord())
 	{
 		const FProjectProject01PendingLeaderboardRecord& Pending = Lobby->GetPendingLeaderboardRecord();
 		SetSelectedRole(Pending.Role, false);
-		if (IsValid(CaptureCountInput)) CaptureCountInput->SetText(FText::AsNumber(Pending.CaptureCount));
-		if (IsValid(FirstCaptureSecondsInput)) FirstCaptureSecondsInput->SetText(FText::AsNumber(Pending.FirstCaptureSeconds));
-		if (IsValid(AllCapturedSecondsInput)) AllCapturedSecondsInput->SetText(FText::AsNumber(Pending.AllCapturedSeconds));
-		if (IsValid(RescueCountInput)) RescueCountInput->SetText(FText::AsNumber(Pending.RescueCount));
-		if (IsValid(EscapeSecondsInput)) EscapeSecondsInput->SetText(FText::AsNumber(Pending.EscapeSeconds));
 		if (IsValid(SubmitRecordButton)) SubmitRecordButton->SetIsEnabled(true);
 		SetStatus(TEXT("방금 종료된 서버 검증 성공 기록을 등록할 수 있습니다."), false);
 	}
@@ -4607,6 +4630,40 @@ void UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked()
 
 void UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked()
 {
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (IsValid(Lobby))
+	{
+		Lobby->ClearPendingLeaderboardRecord();
+		Lobby->SetLeaderboardOpenedFromMatchResult(false);
+		if (bOpenedFromMatchResult && Lobby->HasCurrentRoom())
+		{
+			bReturnToLobbyAfterLeave = true;
+			if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->SetIsEnabled(false);
+			if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(false);
+			SetStatus(TEXT("방을 나간 뒤 로비로 돌아가는 중..."), false);
+			Lobby->LeaveRoom();
+			return;
+		}
+	}
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")));
+}
+
+void UProjectProject01LeaderboardWidget::HandleReturnToRoomClicked()
+{
+	if (!bOpenedFromMatchResult)
+	{
+		return;
+	}
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
+		{
+			Lobby->ClearPendingLeaderboardRecord();
+			Lobby->SetLeaderboardOpenedFromMatchResult(false);
+		}
+	}
 	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")));
 }
 
@@ -4620,6 +4677,19 @@ void UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult(
 	const bool bSuccess,
 	const FString& Message)
 {
+	if (Operation == EProjectProject01LobbyOperation::LeaveRoom && bReturnToLobbyAfterLeave)
+	{
+		bReturnToLobbyAfterLeave = false;
+		if (!bSuccess)
+		{
+			if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->SetIsEnabled(true);
+			if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(true);
+			SetStatus(Message, true);
+			return;
+		}
+		UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")));
+		return;
+	}
 	if (Operation != EProjectProject01LobbyOperation::RefreshLeaderboard &&
 		Operation != EProjectProject01LobbyOperation::SubmitLeaderboardRecord)
 	{
@@ -4711,11 +4781,6 @@ void UProjectProject01LeaderboardWidget::RefreshSortOptions()
 		SortComboBox->AddOption(bTeam ? TEXT("마지막 탈출 시간") : TEXT("탈출 시간"));
 	}
 	SortComboBox->SetSelectedOption(bTeam ? TEXT("팀 종합 평균 점수") : TEXT("개별 플레이어 점수"));
-	if (IsValid(CaptureCountInput)) CaptureCountInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (IsValid(FirstCaptureSecondsInput)) FirstCaptureSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (IsValid(AllCapturedSecondsInput)) AllCapturedSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (IsValid(RescueCountInput)) RescueCountInput->SetVisibility(bMannequin ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
-	if (IsValid(EscapeSecondsInput)) EscapeSecondsInput->SetVisibility(bMannequin ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	bUpdatingSortOptions = false;
 }
 
@@ -4851,26 +4916,11 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(LeaderboardText);
 	Root->AddChildToVerticalBox(LeaderboardText)->SetPadding(FMargin(6.0f));
 
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
-		TEXT("방금 종료된 경기 기록 (서버 검증 값)"), 16.0f);
-	auto AddInput = [this, Root](const FString& Hint, const FString& DefaultValue)
-	{
-		UEditableTextBox* Input = WidgetTree->ConstructWidget<UEditableTextBox>();
-		Input->SetHintText(FProjectProject01Localization::Text(Hint));
-		Input->SetText(FText::FromString(DefaultValue));
-		Input->SetIsReadOnly(true);
-		ProjectProject01LoginUI::SetEditableTextBoxTextBlack(Input);
-		Root->AddChildToVerticalBox(Input)->SetPadding(FMargin(6.0f));
-		return Input;
-	};
-	CaptureCountInput = AddInput(TEXT("붙잡은 횟수"), FString());
-	FirstCaptureSecondsInput = AddInput(TEXT("첫 포획 시간(초)"), FString());
-	AllCapturedSecondsInput = AddInput(TEXT("전원 포획 시간(초)"), FString());
-	RescueCountInput = AddInput(TEXT("구출 횟수"), FString());
-	EscapeSecondsInput = AddInput(TEXT("탈출 시간(초)"), FString());
 	SubmitRecordButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("방금 경기의 성공 기록을 리더보드에 등록"));
 	SubmitRecordButton->SetIsEnabled(false);
-	ReturnToLobbyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("등록하지 않고 로비로 돌아가기"));
+	ReturnToLobbyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("로비로 돌아가기"));
+	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("방으로 돌아가기"));
+	ReturnToRoomButton->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void UProjectProject01LeaderboardWidget::SetStatus(const FString& Message, const bool bIsError)

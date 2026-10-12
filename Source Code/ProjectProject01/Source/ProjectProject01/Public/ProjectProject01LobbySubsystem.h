@@ -333,6 +333,11 @@ public:
 	}
 	void SubmitPendingLeaderboardRecord();
 	void ClearPendingLeaderboardRecord();
+	void SetLeaderboardOpenedFromMatchResult(bool bInOpenedFromMatchResult)
+	{
+		bLeaderboardOpenedFromMatchResult = bInOpenedFromMatchResult;
+	}
+	bool IsLeaderboardOpenedFromMatchResult() const { return bLeaderboardOpenedFromMatchResult; }
 
 	/** 로그아웃/서버 단절 시 방, 준비 상태, 티켓 및 결과 캐시를 모두 로컬에서 폐기합니다. */
 	void ForceClearLocalSession();
@@ -401,6 +406,7 @@ private:
 	EProjectProject01LeaderboardSort LeaderboardSort = EProjectProject01LeaderboardSort::Overall;
 	EProjectProject01LeaderboardScope LeaderboardScope = EProjectProject01LeaderboardScope::Individual;
 	FProjectProject01PendingLeaderboardRecord PendingLeaderboardRecord;
+	bool bLeaderboardOpenedFromMatchResult = false;
 
 	FString GameJoinTicket;
 	FString GameEncryptionKeyBase64;
