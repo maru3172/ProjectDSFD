@@ -2524,6 +2524,11 @@ void UProjectProject01MatchResultWidget::NativeConstruct()
 	{
 		ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToTitleClicked);
 	}
+	if (IsValid(LoadLastCheckpointButton))
+	{
+		LoadLastCheckpointButton->OnClicked.AddUniqueDynamic(
+			this, &UProjectProject01MatchResultWidget::HandleLoadLastCheckpointClicked);
+	}
 	if (IsValid(LogoutButton))
 	{
 		LogoutButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleLogoutClicked);
@@ -2578,6 +2583,11 @@ void UProjectProject01MatchResultWidget::NativeDestruct()
 	if (IsValid(ReturnToTitleButton))
 	{
 		ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToTitleClicked);
+	}
+	if (IsValid(LoadLastCheckpointButton))
+	{
+		LoadLastCheckpointButton->OnClicked.RemoveDynamic(
+			this, &UProjectProject01MatchResultWidget::HandleLoadLastCheckpointClicked);
 	}
 	if (IsValid(LogoutButton))
 	{
@@ -2705,6 +2715,37 @@ void UProjectProject01MatchResultWidget::HandleReturnToTitleClicked()
 		PlayerController->SetIgnoreMoveInput(false);
 		PlayerController->SetIgnoreLookInput(false);
 		PlayerController->ClientTravel(ProjectProject01TitleRoutes::TitleLevel.ToString(), TRAVEL_Absolute);
+	}
+}
+
+void UProjectProject01MatchResultWidget::HandleLoadLastCheckpointClicked()
+{
+	if (!bSinglePlayer || Result.bSuccess || bBusy || FadeElapsedSeconds < FadeDurationSeconds)
+	{
+		return;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* SaveSubsystem = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(SaveSubsystem) || !SaveSubsystem->HasRecoverableSave())
+	{
+		SetBusy(false, TEXT("현재 저장소에 불러올 체크포인트가 없습니다."), true);
+		if (IsValid(StatusText))
+		{
+			StatusText->SetVisibility(ESlateVisibility::Visible);
+		}
+		return;
+	}
+
+	SetBusy(true, TEXT("현재 저장소의 마지막 체크포인트를 불러오는 중..."));
+	if (!SaveSubsystem->LoadLatestCheckpoint())
+	{
+		SetBusy(false, TEXT("마지막 체크포인트를 불러오지 못했습니다."), true);
+		if (IsValid(StatusText))
+		{
+			StatusText->SetVisibility(ESlateVisibility::Visible);
+		}
 	}
 }
 
@@ -2938,6 +2979,16 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	if (IsValid(LeaderboardButton)) LeaderboardButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (IsValid(LogoutButton)) LogoutButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(LoadLastCheckpointButton))
+	{
+		const bool bShowCheckpointButton = bSinglePlayer && !Result.bSuccess;
+		UProjectProject01SaveSubsystem* SaveSubsystem = GetGameInstance()
+			? GetGameInstance()->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+		LoadLastCheckpointButton->SetVisibility(
+			bShowCheckpointButton ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		LoadLastCheckpointButton->SetIsEnabled(
+			bShowCheckpointButton && !bBusy && IsValid(SaveSubsystem) && SaveSubsystem->HasRecoverableSave());
+	}
 	if (IsValid(StatusText))
 	{
 		const FString Status = bSinglePlayer
@@ -2969,6 +3020,13 @@ void UProjectProject01MatchResultWidget::SetBusy(
 	if (IsValid(LeaderboardButton)) LeaderboardButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(bFadeFinished && !bBusy);
+	if (IsValid(LoadLastCheckpointButton))
+	{
+		UProjectProject01SaveSubsystem* SaveSubsystem = GetGameInstance()
+			? GetGameInstance()->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+		LoadLastCheckpointButton->SetIsEnabled(bFadeFinished && !bBusy && bSinglePlayer &&
+			!Result.bSuccess && IsValid(SaveSubsystem) && SaveSubsystem->HasRecoverableSave());
+	}
 	if (IsValid(LogoutButton)) LogoutButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
 	{
@@ -3020,6 +3078,8 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	LeaderboardButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("리더보드"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("방으로 돌아가기"));
 	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("로그아웃"));
+	LoadLastCheckpointButton = ProjectProject01LoginUI::AddButton(
+		WidgetTree, ResultMenu, TEXT("마지막 체크포인트에서 시작"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("타이틀로 돌아가기"));
 }
 

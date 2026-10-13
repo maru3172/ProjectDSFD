@@ -128,6 +128,12 @@ void UProjectProject01VoiceChatSubsystem::LeaveMatch()
 
 void UProjectProject01VoiceChatSubsystem::SetPushToTalkHeld(const bool bHeld)
 {
+	if (!bConfiguredForSurvivor)
+	{
+		bPushToTalkHeld = false;
+		ApplyTransmitMode();
+		return;
+	}
 	bPushToTalkHeld = bHeld;
 	ApplyTransmitMode();
 }

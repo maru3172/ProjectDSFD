@@ -9,6 +9,7 @@
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "ProjectPracticeGameModeBase.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -25,6 +26,7 @@
 
 // 카메라 B 키 디버깅 관련
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/GameStateBase.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
 #include "InputCoreTypes.h"
@@ -41,6 +43,33 @@
 
 namespace
 {
+	bool IsSinglePlayerGameModeClass(const UClass* GameModeClass)
+	{
+		return IsValid(GameModeClass) && GameModeClass->IsChildOf(AProjectPracticeGameModeBase::StaticClass());
+	}
+
+	bool UsesSinglePlayerRules(const UWorld* World)
+	{
+		if (!IsValid(World))
+		{
+			return false;
+		}
+
+		if (const AGameModeBase* GameMode = World->GetAuthGameMode(); IsValid(GameMode))
+		{
+			return IsSinglePlayerGameModeClass(GameMode->GetClass());
+		}
+
+		if (const AGameStateBase* GameState = World->GetGameState();
+			IsValid(GameState) && IsSinglePlayerGameModeClass(GameState->GameModeClass))
+		{
+			return true;
+		}
+
+		// GameState가 아직 복제되기 전인 실제 로컬 싱글 시작 구간의 안전한 기본값이다.
+		return World->GetNetMode() == NM_Standalone;
+	}
+
 	float CalculateNormalizedVisionRate(
 		const float MaximumSightHalfAngleDegrees,
 		const float MaximumStamina,
@@ -153,6 +182,10 @@ bool FProjectProject01StaminaRulesTest::RunTest(const FString& Parameters)
 		FMath::IsNearlyEqual(CalculateNormalizedVisionRate(60.0f, 100.0f, 5.0f, 2.0f), 6.0f));
 	TestTrue(TEXT("Zero maximum stamina is handled without division"),
 		FMath::IsNearlyZero(CalculateNormalizedVisionRate(60.0f, 0.0f, 5.0f, 1.0f)));
+	TestTrue(TEXT("Single-player game mode selects the single stamina rules"),
+		IsSinglePlayerGameModeClass(AProjectPracticeGameModeBase::StaticClass()));
+	TestFalse(TEXT("Multiplayer game mode does not select the single stamina rules"),
+		IsSinglePlayerGameModeClass(AMultiplayTestGameMode::StaticClass()));
 	return true;
 }
 
@@ -432,7 +465,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
 		EnhancedInputComponent->BindAction(IA_Sprint, ETriggerEvent::Canceled, this, &APlayerCharacter::StopSprint);
-		if (GetNetMode() == NM_Standalone)
+		if (UsesSinglePlayerRules(GetWorld()))
 		{
 			PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &APlayerCharacter::ToggleSessionMenu);
 		}
@@ -455,7 +488,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 void APlayerCharacter::ToggleSessionMenu()
 {
-	if (GetNetMode() != NM_Standalone)
+	if (!UsesSinglePlayerRules(GetWorld()))
 	{
 		return;
 	}
@@ -508,12 +541,23 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 
 	// 싱글플레이도 첫 스폰 화면이 검은색에서 자연스럽게 밝아지도록 한다.
 	// 멀티플레이의 맵 전환 암전/복구는 PlayerController가 별도로 관리한다.
-	if (GetNetMode() == NM_Standalone && !bInitialStandaloneSpawnFadePlayed &&
+	if (UsesSinglePlayerRules(GetWorld()) && !bInitialStandaloneSpawnFadePlayed &&
 		IsValid(PlayerController->PlayerCameraManager))
 	{
 		bInitialStandaloneSpawnFadePlayed = true;
+		// 첫 렌더 프레임부터 검은 화면을 확실히 고정한 다음, 다음 틱에 플레이 화면을 드러낸다.
 		PlayerController->PlayerCameraManager->StartCameraFade(
-			1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+			1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
+		const TWeakObjectPtr<APlayerController> WeakPlayerController(PlayerController);
+		GetWorldTimerManager().SetTimerForNextTick([WeakPlayerController]()
+		{
+			APlayerController* ReadyController = WeakPlayerController.Get();
+			if (IsValid(ReadyController) && IsValid(ReadyController->PlayerCameraManager))
+			{
+				ReadyController->PlayerCameraManager->StartCameraFade(
+					1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+			}
+		});
 	}
 
 	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
@@ -531,7 +575,7 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 
 	// 역할별 조작 가이드는 멀티플레이에서만 이 PC에 최초 한 번 자동 표시한다.
 	// 싱글플레이 진입이 멀티 생존자 가이드의 확인 기록을 소비해서도 안 된다.
-	const bool bIsMultiplayer = GetNetMode() != NM_Standalone;
+	const bool bIsMultiplayer = !UsesSinglePlayerRules(GetWorld());
 	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
 	if (bIsMultiplayer && IsValid(Settings) && !Settings->HasSeenSurvivorGuide())
 	{
@@ -624,10 +668,11 @@ void APlayerCharacter::StopSprint()
 void APlayerCharacter::SetSprinting(const bool bNewSprinting)
 {
 	UWorld* World = GetWorld();
-	const bool bIsStandalone = IsValid(World) && World->GetNetMode() == NM_Standalone;
-	const bool bHasMultiplayerStamina = !bIsStandalone &&
+	const bool bUsesSinglePlayerStamina = UsesSinglePlayerRules(World);
+	const bool bHasMultiplayerStamina = !bUsesSinglePlayerStamina &&
 		(StaminaDrainPerSecond <= KINDA_SMALL_NUMBER || CurrentStamina > KINDA_SMALL_NUMBER);
-	const bool bAllowedSprinting = bNewSprinting && !bGameOver && (bIsStandalone || bHasMultiplayerStamina);
+	const bool bAllowedSprinting = bNewSprinting && !bGameOver &&
+		(bUsesSinglePlayerStamina || bHasMultiplayerStamina);
 	ApplySprintingState(bAllowedSprinting);
 
 	if (!HasAuthority())
@@ -656,9 +701,9 @@ void APlayerCharacter::ServerSetSprinting_Implementation(const bool bNewSprintin
 		ClientCorrectSprinting(bIsSprinting);
 		return;
 	}
-	const bool bIsStandalone = IsValid(World) && World->GetNetMode() == NM_Standalone;
+	const bool bUsesSinglePlayerStamina = UsesSinglePlayerRules(World);
 	const bool bAllowedSprinting = bNewSprinting && !bGameOver &&
-		(bIsStandalone || StaminaDrainPerSecond <= KINDA_SMALL_NUMBER || CurrentStamina > KINDA_SMALL_NUMBER);
+		(bUsesSinglePlayerStamina || StaminaDrainPerSecond <= KINDA_SMALL_NUMBER || CurrentStamina > KINDA_SMALL_NUMBER);
 	ApplySprintingState(bAllowedSprinting);
 	ClientCorrectSprinting(bAllowedSprinting);
 }
@@ -837,9 +882,9 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 	CurrentStamina = FMath::Clamp(CurrentStamina, 0.0f, MaxStamina);
 	const bool bHasMovementIntent = !Movement->GetCurrentAcceleration().GetSafeNormal2D().IsNearlyZero();
 	const bool bActivelySprinting = bIsSprinting && bHasMovementIntent;
-	const bool bIsStandalone = World->GetNetMode() == NM_Standalone;
+	const bool bUsesSinglePlayerStamina = UsesSinglePlayerRules(World);
 
-	if (!bIsStandalone)
+	if (!bUsesSinglePlayerStamina)
 	{
 		if (bActivelySprinting)
 		{
@@ -1102,7 +1147,12 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 			RemoveGuardingHelpers();
 		}
 
-		MulticastPlayPainAndDeathWorldSFX(false);
+		const float PainIntensity = StartingDeathCount > 0
+			? FMath::Clamp(0.55f + 0.45f *
+				(static_cast<float>(StartingDeathCount - RemainingDeathCount) / static_cast<float>(StartingDeathCount)),
+				0.55f, 1.0f)
+			: 1.0f;
+		MulticastPlayPainAndDeathWorldSFX(false, PainIntensity);
 		if (IsLocallyControlled())
 		{
 			PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
@@ -1121,7 +1171,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	}
 
 	bGameOver = true;
-	MulticastPlayPainAndDeathWorldSFX(true);
+	MulticastPlayPainAndDeathWorldSFX(true, 1.0f);
 	if (IsLocallyControlled())
 	{
 		PlayLocalDeathSequence(FallPitchDirection, FallRollDirection);
@@ -1216,8 +1266,23 @@ void APlayerCharacter::RestoreSinglePlayerState(
 void APlayerCharacter::PresentSinglePlayerResult(const bool bEscaped)
 {
 	UWorld* World = GetWorld();
-	if (bSinglePlayerResultPresented || !IsValid(World) || World->GetNetMode() != NM_Standalone ||
-		!IsLocallyControlled())
+	if (bSinglePlayerResultPresented || !UsesSinglePlayerRules(World))
+	{
+		return;
+	}
+	if (HasAuthority() && !IsLocallyControlled())
+	{
+		bSinglePlayerResultPresented = true;
+		ApplySprintingState(false);
+		if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
+		{
+			Movement->StopMovementImmediately();
+			Movement->DisableMovement();
+		}
+		ClientPresentSinglePlayerResult(bEscaped);
+		return;
+	}
+	if (!IsLocallyControlled())
 	{
 		return;
 	}
@@ -1267,6 +1332,11 @@ void APlayerCharacter::PresentSinglePlayerResult(const bool bEscaped)
 	PlayerController->SetInputMode(InputMode);
 }
 
+void APlayerCharacter::ClientPresentSinglePlayerResult_Implementation(const bool bEscaped)
+{
+	PresentSinglePlayerResult(bEscaped);
+}
+
 bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper)
 {
 	if (!HasAuthority() || !IsValid(PushingHelper) || bGameOver || RemainingDeathCount <= 0)
@@ -1289,7 +1359,12 @@ bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* Pushing
 	float FallPitchDirection = 0.0f;
 	float FallRollDirection = 0.0f;
 	ResolveFallDirection(PushingHelper->GetActorLocation(), FallPitchDirection, FallRollDirection);
-	MulticastPlayPainAndDeathWorldSFX(false);
+	const float PainIntensity = StartingDeathCount > 0
+		? FMath::Clamp(0.55f + 0.45f *
+			(static_cast<float>(StartingDeathCount - RemainingDeathCount) / static_cast<float>(StartingDeathCount)),
+			0.55f, 1.0f)
+		: 1.0f;
+	MulticastPlayPainAndDeathWorldSFX(false, PainIntensity);
 	if (IsLocallyControlled())
 	{
 		PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
@@ -1338,7 +1413,7 @@ void APlayerCharacter::ClientPlayDeathSequence_Implementation(
 	PlayLocalDeathSequence(FallPitchDirection, FallRollDirection);
 }
 
-void APlayerCharacter::PlayPainSFX(const bool bFatal)
+void APlayerCharacter::PlayPainSFX(const bool bFatal, const float Intensity)
 {
 	if (GetNetMode() == NM_DedicatedServer || !IsValid(PainGroanSFXComponent))
 	{
@@ -1349,7 +1424,7 @@ void APlayerCharacter::PlayPainSFX(const bool bFatal)
 		PainGroanSFXComponent->SoundClass = Settings->GetSFXSoundClass();
 	}
 	PainGroanSFXComponent->SetVolumeMultiplier(PainGroanSFXVolume);
-	PainGroanSFXComponent->TriggerPain(bFatal);
+	PainGroanSFXComponent->TriggerPain(bFatal, Intensity);
 }
 
 void APlayerCharacter::PlayBodyFallSFX()
@@ -1366,13 +1441,14 @@ void APlayerCharacter::PlayBodyFallSFX()
 	BodyFallSFXComponent->TriggerBodyFall();
 }
 
-void APlayerCharacter::MulticastPlayPainAndDeathWorldSFX_Implementation(const bool bFatal)
+void APlayerCharacter::MulticastPlayPainAndDeathWorldSFX_Implementation(
+	const bool bFatal, const float Intensity)
 {
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
-	PlayPainSFX(bFatal);
+	PlayPainSFX(bFatal, FMath::Clamp(Intensity, 0.35f, 1.0f));
 	if (!bFatal)
 	{
 		return;
@@ -1459,7 +1535,7 @@ void APlayerCharacter::PlayLocalDeathSequence(
 		DeathFeedbackWidget->AddToViewport(900);
 	}
 
-	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() == NM_Standalone)
+	if (UWorld* World = GetWorld(); UsesSinglePlayerRules(World))
 	{
 		World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
 		World->GetTimerManager().SetTimer(

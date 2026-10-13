@@ -22,6 +22,38 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
+
+namespace ProjectProject01SurvivorVoice
+{
+	bool IsAllowedRole(const FString& Role)
+	{
+		return Role.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase);
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01SurvivorVoiceRoleIsolationTest,
+	"ProjectProject01.Multiplayer.SurvivorVoice.RoleIsolation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01SurvivorVoiceRoleIsolationTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("Survivor role joins survivor voice"),
+		ProjectProject01SurvivorVoice::IsAllowedRole(TEXT("Survivor")));
+	TestTrue(TEXT("Role check remains case-insensitive"),
+		ProjectProject01SurvivorVoice::IsAllowedRole(TEXT("survivor")));
+	TestFalse(TEXT("Mannequin role cannot join or see survivor voice UI"),
+		ProjectProject01SurvivorVoice::IsAllowedRole(TEXT("Mannequin")));
+	TestFalse(TEXT("Disabled communication cannot join survivor voice"),
+		ProjectProject01SurvivorVoice::IsAllowedRole(TEXT("Disabled")));
+	return true;
+}
+#endif
+
 AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 {
 	MannequinCaptureSFXComponent = CreateDefaultSubobject<UMannequinCaptureSynthComponent>(
@@ -40,6 +72,16 @@ void AMultiplayTestPlayerController::BeginPlay()
 	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+	bInitialGameplayFadePending = true;
+	bLocalMultiplayerRoleKnown = false;
+	bLocalMultiplayerMannequinRole = false;
+	if (IsValid(PlayerCameraManager))
+	{
+		// 새 경기의 첫 프레임부터 완전한 검은 화면을 유지한다. 생존자 Pawn 또는
+		// 마네킹 시점이 준비된 뒤 TryRevealInitialGameplayFade에서만 해제한다.
+		PlayerCameraManager->StartCameraFade(
+			1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
+	}
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 	{
 		Settings->RestoreGameplaySFX();
@@ -54,12 +96,6 @@ void AMultiplayTestPlayerController::BeginPlay()
 	if (IsValid(ServiceNoticeWidget))
 	{
 		ServiceNoticeWidget->AddToViewport(950);
-	}
-	VoiceStatusWidget = CreateWidget<UProjectProject01VoiceStatusWidget>(
-		this, UProjectProject01VoiceStatusWidget::StaticClass());
-	if (IsValid(VoiceStatusWidget))
-	{
-		VoiceStatusWidget->AddToViewport(940);
 	}
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -208,8 +244,11 @@ bool AMultiplayTestPlayerController::InputKey(const FInputKeyEventArgs& Params)
 				{
 					if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
 					{
-						if (Params.Event == IE_Pressed) Voice->SetPushToTalkHeld(true);
-						else if (Params.Event == IE_Released) Voice->SetPushToTalkHeld(false);
+						if (Voice->IsConfiguredForSurvivor())
+						{
+							if (Params.Event == IE_Pressed) Voice->SetPushToTalkHeld(true);
+							else if (Params.Event == IE_Released) Voice->SetPushToTalkHeld(false);
+						}
 					}
 				}
 			}
@@ -217,9 +256,13 @@ bool AMultiplayTestPlayerController::InputKey(const FInputKeyEventArgs& Params)
 			{
 				if (UGameInstance* GI = GetGameInstance())
 				{
-					if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>()) Voice->ToggleOpenMic();
+					if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>();
+						IsValid(Voice) && Voice->IsConfiguredForSurvivor())
+					{
+						Voice->ToggleOpenMic();
+						return true;
+					}
 				}
-				return true;
 			}
 			else if (SurvivorState == EMultiplayTestSurvivorState::Active &&
 				Params.Event == IE_Pressed && Params.Key == Settings->GetHelpPingKey())
@@ -295,6 +338,14 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 	const FString& MatchId,
 	const FString& InRole)
 {
+	const bool bAllowSurvivorVoice = ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
+	SetSurvivorVoiceStatusVisible(bAllowSurvivorVoice);
+	if (bAllowSurvivorVoice || InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+	{
+		bLocalMultiplayerRoleKnown = true;
+		bLocalMultiplayerMannequinRole = !bAllowSurvivorVoice;
+	}
+
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
@@ -302,6 +353,56 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 			Voice->ConfigureForMatch(UserId, MatchId, InRole, this);
 		}
 	}
+	TryRevealInitialGameplayFade();
+}
+
+void AMultiplayTestPlayerController::SetSurvivorVoiceStatusVisible(const bool bVisible)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!bVisible)
+	{
+		if (IsValid(VoiceStatusWidget))
+		{
+			VoiceStatusWidget->RemoveFromParent();
+			VoiceStatusWidget = nullptr;
+		}
+		return;
+	}
+
+	if (!IsValid(VoiceStatusWidget))
+	{
+		VoiceStatusWidget = CreateWidget<UProjectProject01VoiceStatusWidget>(
+			this, UProjectProject01VoiceStatusWidget::StaticClass());
+	}
+	if (IsValid(VoiceStatusWidget) && !VoiceStatusWidget->IsInViewport())
+	{
+		VoiceStatusWidget->AddToViewport(940);
+	}
+}
+
+void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
+{
+	if (!IsLocalController() || !bInitialGameplayFadePending || bLocalLevelTransitionFadeHeld ||
+		!bLocalMultiplayerRoleKnown || !IsValid(PlayerCameraManager))
+	{
+		return;
+	}
+
+	const bool bViewReady = bLocalMultiplayerMannequinRole
+		? IsValid(GetViewedMannequin())
+		: IsValid(GetPawn());
+	if (!bViewReady)
+	{
+		return;
+	}
+
+	bInitialGameplayFadePending = false;
+	PlayerCameraManager->StartCameraFade(
+		1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
 }
 
 void AMultiplayTestPlayerController::SetupInputComponent()
@@ -482,11 +583,13 @@ void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
 	ApplyViewedMannequinCamera(GetViewedMannequin());
+	TryRevealInitialGameplayFade();
 }
 
 void AMultiplayTestPlayerController::ClientApplyViewedMannequin_Implementation(AMannequinAICharacter* Mannequin)
 {
 	ApplyViewedMannequinCamera(Mannequin);
+	TryRevealInitialGameplayFade();
 }
 
 void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
@@ -592,6 +695,7 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 		return;
 	}
 
+	bInitialGameplayFadePending = false;
 	bLocalLevelTransitionFadeHeld = true;
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
@@ -626,6 +730,7 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+	bInitialGameplayFadePending = false;
 	bLocalLevelTransitionFadeHeld = false;
 	if (IsValid(PlayerCameraManager))
 	{
@@ -638,6 +743,7 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 void AMultiplayTestPlayerController::OnRep_ViewedMannequin()
 {
 	ApplyViewedMannequinCamera(GetViewedMannequin());
+	TryRevealInitialGameplayFade();
 }
 
 void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAICharacter* Mannequin)

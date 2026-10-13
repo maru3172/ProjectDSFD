@@ -503,6 +503,9 @@ private:
 	void HandleReturnToTitleClicked();
 
 	UFUNCTION()
+	void HandleLoadLastCheckpointClicked();
+
+	UFUNCTION()
 	void HandleLogoutClicked();
 
 	UFUNCTION()
@@ -538,6 +541,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToTitleButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> LoadLastCheckpointButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> LogoutButton;

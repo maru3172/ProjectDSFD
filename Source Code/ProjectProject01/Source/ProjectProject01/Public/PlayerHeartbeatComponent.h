@@ -47,7 +47,7 @@ class PROJECTPROJECT01_API UPainGroanSynthComponent final : public USynthCompone
 
 public:
 	UPainGroanSynthComponent(const FObjectInitializer& ObjectInitializer);
-	void TriggerPain(bool bFatal);
+	void TriggerPain(bool bFatal, float Intensity = 1.0f);
 
 protected:
 	virtual bool Init(int32& SampleRate) override;
@@ -59,7 +59,9 @@ private:
 	float VoicePhase = 0.0f;
 	float FlutterPhase = 0.0f;
 	float VoiceDurationSeconds = 0.75f;
+	float VoiceIntensity = 1.0f;
 	uint32 NoiseState = 0x91E10DA5u;
+	bool bFatalVoice = false;
 	bool bVoiceActive = false;
 };
 

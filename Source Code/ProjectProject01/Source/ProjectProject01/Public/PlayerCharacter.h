@@ -123,9 +123,13 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientPlayDeathSequence(float FallPitchDirection, float FallRollDirection);
 
+	/** PIE 네트워크 실행에서도 싱글 GameMode가 확정한 탈출 결과를 소유 클라이언트에 표시합니다. */
+	UFUNCTION(Client, Reliable)
+	void ClientPresentSinglePlayerResult(bool bEscaped);
+
 	/** 서버가 확정한 신음과 사망 충돌음을 모든 근처 클라이언트가 월드 공간음으로 재생합니다. */
 	UFUNCTION(NetMulticast, Reliable)
-	void MulticastPlayPainAndDeathWorldSFX(bool bFatal);
+	void MulticastPlayPainAndDeathWorldSFX(bool bFatal, float Intensity);
 
 	UPROPERTY(VisibleAnywhere, Category = "Component")
 	class USpringArmComponent* SpringArm;
@@ -255,7 +259,7 @@ private:
 	void PlayLocalDeathSequence(float FallPitchDirection, float FallRollDirection);
 	void UpdateCameraFeedback(float DeltaTime);
 	void RestoreFeedbackCamera();
-	void PlayPainSFX(bool bFatal);
+	void PlayPainSFX(bool bFatal, float Intensity);
 	void PlayBodyFallSFX();
 
 	UFUNCTION()

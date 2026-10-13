@@ -118,6 +118,10 @@ private:
 		EProjectProject01SpawnRole SpawnRole) const;
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;
 	void AssignRandomInitialMannequinView(class AMultiplayTestPlayerController* Controller);
+	void CompleteInitialMannequinViewAssignment(
+		class AMultiplayTestPlayerController* Controller,
+		int32 Slot,
+		int32 RemainingAttempts);
 	void QueueDefaultAIControllerRestore(class AMannequinAICharacter* Mannequin) const;
 	void ResetDedicatedServerWorldIfEmpty();
 	bool IsMannequinController(const class AMultiplayTestPlayerController* Controller) const;
@@ -165,6 +169,8 @@ private:
 	float MultiplayerAIUpdateAccumulatorSeconds = 0.0f;
 	float GameServerHeartbeatAccumulatorSeconds = 0.0f;
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerPatrolTargets;
+	/** 각 마네킹이 최근 방문한 정찰 목적지입니다. 같은 구역을 짧게 반복하는 것을 막습니다. */
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, TArray<FVector>> MultiplayerPatrolTargetHistory;
 	/** 정찰 중 생존자 시야에 노출된 뒤, 시야가 풀리면 추격할 대상을 기억합니다. */
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, TWeakObjectPtr<class APlayerCharacter>> MultiplayerObservedChaseTargets;
 	bool bMannequinCatchDamageEnabled = true;
@@ -175,6 +181,26 @@ private:
 	float MultiplayerFollowSeparation = 175.0f;
 	float MultiplayerRepathInterval = 0.2f;
 	float MultiplayerAcceptanceRadius = 60.0f;
+
+	/** 최근 몇 개의 정찰 구역을 재방문 금지 대상으로 기억할지 결정합니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "1", UIMin = "1", UIMax = "10"))
+	int32 MultiplayerPatrolHistorySize = 3;
+
+	/** 최근 정찰 목적지 주변에서 새 목적지를 뽑지 않는 거리입니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "0.0", Units = "cm"))
+	float MultiplayerPatrolRevisitAvoidanceRadius = 800.0f;
+
+	/** 최근 방문 기록이 가득 차면 탐색 반경을 넓혀 맵의 다른 구역으로 이동시킵니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float MultiplayerPatrolExplorationRadiusMultiplier = 2.0f;
+
+	/** 한 번의 정찰점 선택에서 비교할 완전한 A* 경로 후보 수입니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "1", UIMin = "1", UIMax = "64"))
+	int32 MultiplayerPatrolCandidateAttempts = 16;
 
 	// 로비에서 무작위 배정된 한 명만 마네킹을 조종한다. 역할 옵션이 없는 기존 PIE는 첫 접속자를 사용한다.
 	TWeakObjectPtr<class AMultiplayTestPlayerController> MannequinController;

@@ -43,6 +43,35 @@ namespace ProjectProject01HeartbeatVFX
 	}
 }
 
+namespace ProjectProject01PainVoice
+{
+	constexpr float GroanEndSeconds = 0.42f;
+	constexpr float PantStartSeconds = 0.70f;
+	constexpr float PantCount = 3.0f;
+	constexpr float PostPantPauseSeconds = 0.45f;
+	constexpr float RecoveryDurationSeconds = 1.45f;
+
+	float GetPantRate(const float Intensity)
+	{
+		return FMath::Lerp(1.10f, 1.65f, FMath::Clamp(Intensity, 0.35f, 1.0f));
+	}
+
+	float GetPantEndSeconds(const float Intensity)
+	{
+		return PantStartSeconds + (PantCount / GetPantRate(Intensity));
+	}
+
+	float GetRecoveryStartSeconds(const float Intensity)
+	{
+		return GetPantEndSeconds(Intensity) + PostPantPauseSeconds;
+	}
+
+	float GetNonFatalDurationSeconds(const float Intensity)
+	{
+		return GetRecoveryStartSeconds(Intensity) + RecoveryDurationSeconds;
+	}
+}
+
 UHeartbeatSynthComponent::UHeartbeatSynthComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -139,14 +168,23 @@ UPainGroanSynthComponent::UPainGroanSynthComponent(const FObjectInitializer& Obj
 	AttenuationOverrides.FalloffDistance = 2500.0f;
 }
 
-void UPainGroanSynthComponent::TriggerPain(const bool bFatal)
+void UPainGroanSynthComponent::TriggerPain(const bool bFatal, const float Intensity)
 {
-	SynthCommand([this, bFatal]()
+	const float SafeIntensity = FMath::Clamp(Intensity, 0.35f, 1.0f);
+	SynthCommand([this, bFatal, SafeIntensity]()
 	{
 		VoiceFrameIndex = 0;
 		VoicePhase = 0.0f;
 		FlutterPhase = 0.0f;
-		VoiceDurationSeconds = bFatal ? 1.15f : 0.72f;
+		VoiceIntensity = SafeIntensity;
+		bFatalVoice = bFatal;
+		// 살아남은 피격은 짧은 고통 신음 뒤 정확히 세 번 헐떡이고,
+		// 잠깐 쉰 다음 긴 날숨으로 호흡을 고르는 한 묶음으로 재생한다.
+		// Fatal hits end with the initial scream/groan only. Panting and the recovery
+		// exhale below are deliberately reserved for survivors of non-fatal hits.
+		VoiceDurationSeconds = bFatal
+			? 1.15f
+			: ProjectProject01PainVoice::GetNonFatalDurationSeconds(SafeIntensity);
 		NoiseState ^= bFatal ? 0xA511E9B3u : 0x63D83595u;
 		bVoiceActive = true;
 	});
@@ -163,6 +201,8 @@ bool UPainGroanSynthComponent::Init(int32& SampleRate)
 	VoiceFrameIndex = 0;
 	VoicePhase = 0.0f;
 	FlutterPhase = 0.0f;
+	VoiceIntensity = 1.0f;
+	bFatalVoice = false;
 	bVoiceActive = false;
 	return true;
 }
@@ -185,16 +225,74 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 			const float Progress = static_cast<float>(VoiceFrameIndex) / static_cast<float>(VoiceFrameCount);
 			const float TimeSeconds = static_cast<float>(VoiceFrameIndex) / static_cast<float>(SynthSampleRate);
 			const float Attack = FMath::Clamp(TimeSeconds / 0.025f, 0.0f, 1.0f);
-			const float Release = FMath::Pow(FMath::Max(0.0f, 1.0f - Progress), 1.45f);
-			const float Frequency = FMath::Lerp(132.0f, 72.0f, FMath::SmoothStep(0.0f, 1.0f, Progress));
+			float Envelope = FMath::Pow(FMath::Max(0.0f, 1.0f - Progress), 1.45f);
+			float Frequency = FMath::Lerp(132.0f, 72.0f, FMath::SmoothStep(0.0f, 1.0f, Progress));
+			float NoiseAmount = 0.12f;
+			if (!bFatalVoice)
+			{
+				using namespace ProjectProject01PainVoice;
+				// 신음과 헐떡임을 한 덩어리로 이어 붙이면 동시에 재생되는 것처럼 들린다.
+				// 피격 신음이 완전히 끝난 뒤 짧은 무음 구간을 둔 다음 호흡을 시작한다.
+				const float PantRate = GetPantRate(VoiceIntensity);
+				const float PantEnd = GetPantEndSeconds(VoiceIntensity);
+				const float RecoveryStart = GetRecoveryStartSeconds(VoiceIntensity);
+				if (TimeSeconds < GroanEndSeconds)
+				{
+					// 피격 직후 숨이 턱 막히는 낮은 신음/들이마심.
+					const float Segment = TimeSeconds / GroanEndSeconds;
+					Envelope = FMath::Sin(PI * FMath::Clamp(Segment, 0.0f, 1.0f));
+					Frequency = FMath::Lerp(148.0f, 102.0f, Segment);
+					NoiseAmount = 0.18f;
+				}
+				else if (TimeSeconds < PantStartSeconds)
+				{
+					// 비명/신음 뒤의 짧은 숨 멎는 구간. 합성기 위상은 계속 진행하되
+					// 출력만 0으로 만들어 다음 헐떡임이 별개의 반응으로 들리게 한다.
+					Envelope = 0.0f;
+					NoiseAmount = 0.0f;
+				}
+				else if (TimeSeconds < PantEnd)
+				{
+					// 느린 속도로 정확히 세 번 헐떡인다. 각 호흡의 끝은 짧게 비워서
+					// 합성음이 연속 톤처럼 들리지 않게 한다.
+					const float PantProgress = (TimeSeconds - PantStartSeconds) /
+						FMath::Max(0.01f, PantEnd - PantStartSeconds);
+					// 한 번 맞았을 때는 약 0.9초, 반복 피격으로 불안이 커져도 약 0.6초에
+					// 한 호흡을 넘지 않게 해 "후후"가 지나치게 급하게 반복되지 않도록 한다.
+					const float PantCycle = FMath::Fmod((TimeSeconds - PantStartSeconds) * PantRate, 1.0f);
+					const float PantPulse = PantCycle < 0.72f
+						? FMath::Sin(PI * PantCycle / 0.72f)
+						: 0.0f;
+					Envelope = PantPulse * FMath::Lerp(0.9f, 0.28f, PantProgress);
+					Frequency = FMath::Lerp(112.0f, 82.0f, PantProgress);
+					NoiseAmount = FMath::Lerp(0.25f, 0.13f, PantProgress);
+				}
+				else if (TimeSeconds < RecoveryStart)
+				{
+					// 세 번의 헐떡임과 마지막 긴 날숨 사이를 한 박자 비운다.
+					Envelope = 0.0f;
+					NoiseAmount = 0.0f;
+				}
+				else
+				{
+					// 마지막에는 약 1.45초 동안 "후우..." 하고 길게 내쉬며 호흡을 고른다.
+					const float Recovery = (TimeSeconds - RecoveryStart) /
+						FMath::Max(0.01f, VoiceDurationSeconds - RecoveryStart);
+					Envelope = FMath::Sin(PI * FMath::Clamp(Recovery, 0.0f, 1.0f)) * 0.42f;
+					Frequency = FMath::Lerp(86.0f, 62.0f, Recovery);
+					NoiseAmount = FMath::Lerp(0.15f, 0.06f, Recovery);
+				}
+			}
 			FlutterPhase = FMath::Fmod(FlutterPhase + (2.0f * UE_PI * 5.2f / SynthSampleRate), 2.0f * UE_PI);
-			const float Flutter = FMath::Sin(FlutterPhase) * 2.8f;
+			const float Flutter = FMath::Sin(FlutterPhase) * FMath::Lerp(1.8f, 4.2f, VoiceIntensity);
 			VoicePhase = FMath::Fmod(VoicePhase + (2.0f * UE_PI * (Frequency + Flutter) / SynthSampleRate), 2.0f * UE_PI);
 			NoiseState = (NoiseState * 1664525u) + 1013904223u;
 			const float BreathNoise = (static_cast<float>((NoiseState >> 8) & 0xFFFFu) / 32767.5f) - 1.0f;
 			const float Voice = FMath::Sin(VoicePhase) + (0.28f * FMath::Sin(VoicePhase * 2.0f)) +
 				(0.11f * FMath::Sin(VoicePhase * 3.0f));
-			Sample = FMath::Clamp((Voice * 0.52f + BreathNoise * 0.12f) * Attack * Release, -0.88f, 0.88f);
+			const float Strength = FMath::Lerp(0.62f, 1.0f, VoiceIntensity);
+			Sample = FMath::Clamp((Voice * 0.48f + BreathNoise * NoiseAmount) * Attack * Envelope * Strength,
+				-0.88f, 0.88f);
 			++VoiceFrameIndex;
 			if (VoiceFrameIndex >= VoiceFrameCount)
 			{
@@ -391,6 +489,26 @@ bool FProjectProject01HeartbeatVFXMappingTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("At the player maps to full visibility"), CalculateProximityAlpha(0.0f, 1500.0f), 1.0f);
 	TestEqual(TEXT("Density reaches maximum at configured count"), CalculateDensityAlpha(5, 5), 1.0f);
 	TestEqual(TEXT("Density clamps above configured count"), CalculateDensityAlpha(10, 5), 1.0f);
+
+	const float TestIntensity = 0.7f;
+	const float PantRate = ProjectProject01PainVoice::GetPantRate(TestIntensity);
+	const float GeneratedPantCount =
+		(ProjectProject01PainVoice::GetPantEndSeconds(TestIntensity) -
+		 ProjectProject01PainVoice::PantStartSeconds) * PantRate;
+	TestTrue(TEXT("Non-fatal pain voice contains exactly three pant cycles"),
+		FMath::IsNearlyEqual(GeneratedPantCount, ProjectProject01PainVoice::PantCount));
+	TestTrue(TEXT("Recovery exhale begins after the post-pant pause"),
+		FMath::IsNearlyEqual(
+			ProjectProject01PainVoice::GetRecoveryStartSeconds(TestIntensity) -
+			ProjectProject01PainVoice::GetPantEndSeconds(TestIntensity),
+			ProjectProject01PainVoice::PostPantPauseSeconds,
+			0.001f));
+	TestTrue(TEXT("Recovery exhale keeps the configured long duration"),
+		FMath::IsNearlyEqual(
+			ProjectProject01PainVoice::GetNonFatalDurationSeconds(TestIntensity) -
+			ProjectProject01PainVoice::GetRecoveryStartSeconds(TestIntensity),
+			ProjectProject01PainVoice::RecoveryDurationSeconds,
+			0.001f));
 	return true;
 }
 #endif

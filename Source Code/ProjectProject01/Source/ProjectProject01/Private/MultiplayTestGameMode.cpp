@@ -24,6 +24,7 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
+#include "NavigationPath.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
@@ -128,6 +129,26 @@ namespace
 			? EMultiplayMannequinCommand::Patrol
 			: Command;
 	}
+
+	float CalculatePatrolNoveltyScoreSquared(
+		const FVector& Candidate,
+		const TArray<FVector>& RecentTargets,
+		const FVector& CurrentLocation)
+	{
+		if (RecentTargets.IsEmpty())
+		{
+			return FVector::DistSquared2D(Candidate, CurrentLocation);
+		}
+
+		float MinimumDistanceSquared = TNumericLimits<float>::Max();
+		for (const FVector& RecentTarget : RecentTargets)
+		{
+			MinimumDistanceSquared = FMath::Min(
+				MinimumDistanceSquared,
+				static_cast<float>(FVector::DistSquared2D(Candidate, RecentTarget)));
+		}
+		return MinimumDistanceSquared;
+	}
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -226,6 +247,17 @@ bool FProjectProject01MultiplayerMannequinAITest::RunTest(const FString& Paramet
 		First.Size2D() >= 300.0f && Second.Size2D() >= 300.0f && Third.Size2D() >= 300.0f);
 	TestTrue(TEXT("Adjacent formation slots keep the configured follower separation"),
 		FVector::Dist2D(First, Second) >= 175.0f && FVector::Dist2D(Second, Third) >= 175.0f);
+
+	const TArray<FVector> RecentPatrolTargets = {
+		FVector(0.0f, 0.0f, 0.0f),
+		FVector(1000.0f, 0.0f, 0.0f),
+		FVector(2000.0f, 0.0f, 0.0f) };
+	const float RepeatedAreaScore = CalculatePatrolNoveltyScoreSquared(
+		FVector(2050.0f, 0.0f, 0.0f), RecentPatrolTargets, FVector::ZeroVector);
+	const float UnvisitedAreaScore = CalculatePatrolNoveltyScoreSquared(
+		FVector(4000.0f, 0.0f, 0.0f), RecentPatrolTargets, FVector::ZeroVector);
+	TestTrue(TEXT("An unvisited patrol area scores higher than a recently visited area"),
+		UnvisitedAreaScore > RepeatedAreaScore);
 	return true;
 }
 #endif
@@ -336,19 +368,21 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 
 	TArray<AProjectProject01RoleSpawnPoint*> SpawnPoints =
 		GetRoleSpawnPoints(EProjectProject01SpawnRole::Mannequin);
-	if (SpawnPoints.Num() < MannequinSpawnCount)
+	const bool bHasCompleteSpawnPointSet = SpawnPoints.Num() >= MannequinSpawnCount;
+	if (!bHasCompleteSpawnPointSet)
 	{
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
-			TEXT("MultiplayTest needs at least %d mannequin role spawn points, but found %d. Keeping the legacy map mannequin placement unchanged."),
+			TEXT("MultiplayTest needs at least %d mannequin role spawn points, but found %d. Keeping legacy mannequin transforms while still assigning control slots and multiplayer AI."),
 			MannequinSpawnCount, SpawnPoints.Num());
-		return;
 	}
-
-	for (int32 Index = SpawnPoints.Num() - 1; Index > 0; --Index)
+	else
 	{
-		SpawnPoints.Swap(Index, FMath::RandRange(0, Index));
+		for (int32 Index = SpawnPoints.Num() - 1; Index > 0; --Index)
+		{
+			SpawnPoints.Swap(Index, FMath::RandRange(0, Index));
+		}
+		SpawnPoints.SetNum(MannequinSpawnCount);
 	}
-	SpawnPoints.SetNum(MannequinSpawnCount);
 
 	TArray<AMannequinAICharacter*> Mannequins;
 	for (TActorIterator<AMannequinAICharacter> It(World); It; ++It)
@@ -363,7 +397,7 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		return Left.GetName() < Right.GetName();
 	});
 
-	while (Mannequins.Num() < MannequinSpawnCount)
+	while (bHasCompleteSpawnPointSet && Mannequins.Num() < MannequinSpawnCount)
 	{
 		if (!MannequinPawnClass)
 		{
@@ -390,15 +424,30 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		{
 			continue;
 		}
-		if (Index >= MannequinSpawnCount)
+		if (bHasCompleteSpawnPointSet && Index >= MannequinSpawnCount)
 		{
 			Mannequin->Destroy();
 			continue;
 		}
+		if (Index >= MannequinSpawnCount)
+		{
+			// Legacy maps may contain extra decorative mannequins. They are not part of the
+			// ten controllable multiplayer slots, so leave their placement untouched.
+			continue;
+		}
 
-		Mannequin->SetActorTransform(SpawnPoints[Index]->GetActorTransform(), false, nullptr,
-			ETeleportType::TeleportPhysics);
+		if (bHasCompleteSpawnPointSet)
+		{
+			Mannequin->SetActorTransform(SpawnPoints[Index]->GetActorTransform(), false, nullptr,
+				ETeleportType::TeleportPhysics);
+		}
 		Mannequin->SetControlSlotForGameMode(Index);
+		Mannequin->SetManualControlEnabled(false);
+		// Blueprint instances created before the multiplayer command enum was added can
+		// retain a serialized HoldPosition value. Force every match spawn into patrol.
+		Mannequin->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);
+		MultiplayerPatrolTargets.Remove(Mannequin);
+		MultiplayerPatrolTargetHistory.Remove(Mannequin);
 		if (!IsValid(Mannequin->GetController()))
 		{
 			Mannequin->SpawnDefaultController();
@@ -407,8 +456,9 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 	}
 
 	UE_LOG(LogProjectProject01Multiplayer, Log,
-		TEXT("Randomly assigned %d mannequins to %d configured mannequin spawn candidates."),
-		FMath::Min(Mannequins.Num(), MannequinSpawnCount), SpawnPoints.Num());
+		TEXT("Initialized %d multiplayer mannequins (%s spawn placement; %d candidates)."),
+		FMath::Min(Mannequins.Num(), MannequinSpawnCount),
+		bHasCompleteSpawnPointSet ? TEXT("random") : TEXT("legacy"), SpawnPoints.Num());
 }
 
 void AMultiplayTestGameMode::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
@@ -537,10 +587,14 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 		// A* 요청을 다시 넣어 정찰이 한 번만 수행되고 멈추는 현상을 막는다.
 		const EPathFollowingRequestResult::Type ResumeResult = AIController->MoveToLocation(
 			*ExistingTarget, MultiplayerAcceptanceRadius, true, true, true, true, nullptr, true);
-		if (ResumeResult != EPathFollowingRequestResult::Failed)
+		if (ResumeResult == EPathFollowingRequestResult::RequestSuccessful)
 		{
 			return;
 		}
+		// MoveToLocation may report AlreadyAtGoal while the actor's center is still
+		// outside our smaller acceptance test because the pawn/goal radii overlap.
+		// Treat that as completion and choose another point instead of resubmitting
+		// the same completed request forever.
 		MultiplayerPatrolTargets.Remove(Mannequin);
 	}
 	else if (ExistingTarget)
@@ -553,19 +607,55 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 	{
 		return;
 	}
-	FNavLocation RandomLocation;
+	const TArray<FVector>* RecentTargets = MultiplayerPatrolTargetHistory.Find(Mannequin);
+	const int32 SafeHistorySize = FMath::Max(1, MultiplayerPatrolHistorySize);
+	const bool bExpandExploration = RecentTargets != nullptr && RecentTargets->Num() >= SafeHistorySize;
+	const float SearchRadius = MultiplayerPatrolRadius *
+		(bExpandExploration ? FMath::Max(1.0f, MultiplayerPatrolExplorationRadiusMultiplier) : 1.0f);
+	const float AvoidanceRadiusSquared = FMath::Square(
+		static_cast<double>(FMath::Max(0.0f, MultiplayerPatrolRevisitAvoidanceRadius)));
+	const int32 CandidateAttempts = FMath::Max(1, MultiplayerPatrolCandidateAttempts);
+	FNavLocation BestLocation;
+	float BestNoveltyScoreSquared = -1.0f;
 	bool bFoundUsefulLocation = false;
-	for (int32 Attempt = 0; Attempt < 8; ++Attempt)
+	bool bFoundLocationOutsideRecentAreas = false;
+	for (int32 Attempt = 0; Attempt < CandidateAttempts; ++Attempt)
 	{
-		// 현재 위치를 기준으로 다음 점을 계속 뽑으므로 최초 스폰 지점 주변 한 바퀴로
-		// 끝나지 않고 연결된 NavMesh 전역을 향해 연속 정찰한다.
-		if (Navigation->GetRandomReachablePointInRadius(
-			Mannequin->GetActorLocation(), MultiplayerPatrolRadius, RandomLocation) &&
-			FVector::DistSquared2D(Mannequin->GetActorLocation(), RandomLocation.Location) >
+		FNavLocation CandidateLocation;
+		// 최근 세 목적지가 쌓인 뒤에는 검색 반경도 넓힌다. 이 방식으로 현재 구역만
+		// 왕복하지 않고 연결된 NavMesh의 다른 구역을 향해 정찰 범위를 확장한다.
+		if (!Navigation->GetRandomReachablePointInRadius(
+			Mannequin->GetActorLocation(), SearchRadius, CandidateLocation) ||
+			FVector::DistSquared2D(Mannequin->GetActorLocation(), CandidateLocation.Location) <=
 			FMath::Square(static_cast<double>(FMath::Max(MultiplayerAcceptanceRadius * 2.0f, 100.0f))))
 		{
+			continue;
+		}
+
+		// ReachablePoint 결과에 더해 현재 NavMesh에서 시작점부터 목적지까지의
+		// 완전한 경로를 직접 확인한다. 막힌 방이나 끊긴 섬으로 끝나는 부분 경로는
+		// 정찰 후보로 사용하지 않는다.
+		UNavigationPath* CandidatePath = Navigation->FindPathToLocationSynchronously(
+			GetWorld(), Mannequin->GetActorLocation(), CandidateLocation.Location, Mannequin);
+		if (!IsValid(CandidatePath) || !CandidatePath->IsValid() || CandidatePath->IsPartial())
+		{
+			continue;
+		}
+
+		const TArray<FVector> EmptyHistory;
+		const TArray<FVector>& History = RecentTargets != nullptr ? *RecentTargets : EmptyHistory;
+		const float NoveltyScoreSquared = CalculatePatrolNoveltyScoreSquared(
+			CandidateLocation.Location, History, Mannequin->GetActorLocation());
+		const bool bOutsideRecentAreas = History.IsEmpty() || NoveltyScoreSquared > AvoidanceRadiusSquared;
+		if (!bFoundUsefulLocation ||
+			(bOutsideRecentAreas && !bFoundLocationOutsideRecentAreas) ||
+			(bOutsideRecentAreas == bFoundLocationOutsideRecentAreas &&
+			 NoveltyScoreSquared > BestNoveltyScoreSquared))
+		{
+			BestLocation = CandidateLocation;
+			BestNoveltyScoreSquared = NoveltyScoreSquared;
 			bFoundUsefulLocation = true;
-			break;
+			bFoundLocationOutsideRecentAreas = bOutsideRecentAreas;
 		}
 	}
 	if (!bFoundUsefulLocation)
@@ -573,12 +663,26 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 		return;
 	}
 
-	MultiplayerPatrolTargets.FindOrAdd(Mannequin) = RandomLocation.Location;
-	if (AIController->MoveToLocation(RandomLocation.Location, MultiplayerAcceptanceRadius,
-		true, true, true, true, nullptr, true) == EPathFollowingRequestResult::Failed)
+	MultiplayerPatrolTargets.FindOrAdd(Mannequin) = BestLocation.Location;
+	const EPathFollowingRequestResult::Type MoveResult = AIController->MoveToLocation(
+		BestLocation.Location, MultiplayerAcceptanceRadius,
+		true, true, true, true, nullptr, true);
+	if (MoveResult == EPathFollowingRequestResult::Failed)
 	{
 		MultiplayerPatrolTargets.Remove(Mannequin);
+		return;
 	}
+
+	TArray<FVector>& History = MultiplayerPatrolTargetHistory.FindOrAdd(Mannequin);
+	History.Add(BestLocation.Location);
+	while (History.Num() > SafeHistorySize)
+	{
+		History.RemoveAt(0);
+	}
+	UE_LOG(LogProjectProject01Multiplayer, Verbose,
+		TEXT("Mannequin %s selected patrol point %s (recent history %d/%d, search radius %.0f)."),
+		*GetNameSafe(Mannequin), *BestLocation.Location.ToCompactString(),
+		History.Num(), SafeHistorySize, SearchRadius);
 }
 
 void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
@@ -698,7 +802,15 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		AAIController* AIController = Cast<AAIController>(Mannequin->GetController());
 		if (!IsValid(AIController))
 		{
-			continue;
+			// Dynamically spawned and legacy map mannequins can enter this update before
+			// AutoPossessAI has installed a controller. Recover here instead of skipping
+			// that mannequin forever.
+			Mannequin->SpawnDefaultController();
+			AIController = Cast<AAIController>(Mannequin->GetController());
+			if (!IsValid(AIController))
+			{
+				continue;
+			}
 		}
 
 		const EMultiplayMannequinCommand Command = Mannequin->GetMultiplayCommand();
@@ -761,6 +873,13 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 	}
 
 	for (auto It = MultiplayerPatrolTargets.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (auto It = MultiplayerPatrolTargetHistory.CreateIterator(); It; ++It)
 	{
 		if (!It.Key().IsValid())
 		{
@@ -978,8 +1097,8 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 	}
 
-	// 마네킹 역할은 Pawn을 빙의하지 않고 시작한다. 서버가 유효한 0~9 슬롯 중 하나를
-	// 무작위로 골라 시점만 배정하며, 해당 마네킹의 AIController는 R 입력 전까지 유지된다.
+	// 스폰 후보는 이미 무작위로 골랐고, 여기서 다시 0~9 중 하나를 무작위로 골라
+	// 마네킹 플레이어가 실제로 빙의한 상태로 시작한다(이중 무작위 배정).
 	if (IsMannequinController(NewMultiplayController))
 	{
 		AssignRandomInitialMannequinView(NewMultiplayController);
@@ -2390,16 +2509,85 @@ void AMultiplayTestGameMode::AssignRandomInitialMannequinView(
 	}
 
 	const int32 SelectedSlot = AvailableSlots[FMath::RandHelper(AvailableSlots.Num())];
-	if (!ensureMsgf(TryPossessMannequin(Controller, SelectedSlot),
-		TEXT("Failed to assign mannequin slot %d as the initial view for %s."),
-		SelectedSlot, *GetNameSafe(Controller)))
+	CompleteInitialMannequinViewAssignment(Controller, SelectedSlot, 4);
+}
+
+void AMultiplayTestGameMode::CompleteInitialMannequinViewAssignment(
+	AMultiplayTestPlayerController* Controller,
+	const int32 Slot,
+	const int32 RemainingAttempts)
+{
+	if (!HasAuthority() || !IsMannequinController(Controller))
 	{
 		return;
 	}
 
+	AMannequinAICharacter* TargetMannequin = FindMannequinBySlot(Slot);
+	const bool bViewAssigned = IsValid(TargetMannequin) &&
+		TryPossessMannequin(Controller, Slot) &&
+		Controller->GetViewedMannequin() == TargetMannequin;
+	if (!bViewAssigned)
+	{
+		if (RemainingAttempts <= 0 || !IsValid(GetWorld()))
+		{
+			UE_LOG(LogProjectProject01Multiplayer, Error,
+				TEXT("Failed to start %s viewing runtime-spawned mannequin slot %d."),
+				*GetNameSafe(Controller), Slot);
+			return;
+		}
+
+		// PIE 클라이언트 접속과 런타임 마네킹 스폰이 같은 프레임에 겹쳐도
+		// 시점 대상이 준비될 때까지 짧게 재시도한다.
+		const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(Controller);
+		FTimerHandle RetryTimer;
+		GetWorld()->GetTimerManager().SetTimer(
+			RetryTimer,
+			FTimerDelegate::CreateWeakLambda(this, [this, WeakController, Slot, RemainingAttempts]()
+			{
+				if (AMultiplayTestPlayerController* RetryController = WeakController.Get(); IsValid(RetryController))
+				{
+					CompleteInitialMannequinViewAssignment(RetryController, Slot, RemainingAttempts - 1);
+				}
+			}),
+			0.10f,
+			false);
+		return;
+	}
+
+	// 시작 시에는 마네킹과 시점만 공유한다. 실제 Pawn Possess와 직접 조작은
+	// 플레이어가 이후 직접 조작 입력을 실행했을 때만 TryEnableMannequinManualControl에서 수행한다.
+	if (AMannequinAICharacter* ControlledMannequin = Cast<AMannequinAICharacter>(Controller->GetPawn());
+		IsValid(ControlledMannequin))
+	{
+		ControlledMannequin->SetManualControlEnabled(false);
+		Controller->UnPossess();
+		QueueDefaultAIControllerRestore(ControlledMannequin);
+	}
+
+	// 런타임 스폰 Actor 복제가 클라이언트에 도착한 뒤 카메라를 한 번 더 확정한다.
+	const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(Controller);
+	const TWeakObjectPtr<AMannequinAICharacter> WeakTarget(TargetMannequin);
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		FTimerHandle CameraRefreshTimer;
+		World->GetTimerManager().SetTimer(
+			CameraRefreshTimer,
+			FTimerDelegate::CreateWeakLambda(this, [WeakController, WeakTarget]()
+			{
+				AMultiplayTestPlayerController* RefreshController = WeakController.Get();
+				AMannequinAICharacter* RefreshTarget = WeakTarget.Get();
+				if (IsValid(RefreshController) && IsValid(RefreshTarget))
+				{
+					RefreshController->SetViewedMannequin(RefreshTarget);
+				}
+			}),
+			0.20f,
+			false);
+	}
+
 	UE_LOG(LogProjectProject01Multiplayer, Log,
-		TEXT("%s received random initial mannequin view slot %d."),
-		*GetNameSafe(Controller), SelectedSlot);
+		TEXT("%s now shares the view of random initial mannequin slot %d without manual control."),
+		*GetNameSafe(Controller), Slot);
 }
 
 bool AMultiplayTestGameMode::IsMannequinController(const AMultiplayTestPlayerController* Controller) const

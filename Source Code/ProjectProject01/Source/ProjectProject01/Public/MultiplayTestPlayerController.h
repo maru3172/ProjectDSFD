@@ -139,6 +139,10 @@ private:
 	void SelectNextSpectatorTarget();
 	void RequestTeamPing(EProjectProject01PingType Type);
 	void PollMultiplayerService();
+	/** 권위 서버가 생존자 역할을 확인한 로컬 플레이어에게만 음성 상태 UI를 표시한다. */
+	void SetSurvivorVoiceStatusVisible(bool bVisible);
+	/** 최초 멀티 경기 진입은 역할별 시점 대상이 준비된 뒤에만 검은 화면을 걷어낸다. */
+	void TryRevealInitialGameplayFade();
 
 	UFUNCTION()
 	void HandleServiceStatusChanged(bool bMaintenanceEnabled, const FString& Announcement,
@@ -246,6 +250,10 @@ private:
 	bool bSpawnAfterLevelTransition = false;
 	/** 클라이언트 카메라가 맵 로딩 중 검은 화면을 유지해야 하는지 나타냅니다. */
 	bool bLocalLevelTransitionFadeHeld = false;
+	/** 새 경기 첫 화면이 Pawn/마네킹 시점 준비 전에 노출되는 것을 막는다. */
+	bool bInitialGameplayFadePending = false;
+	bool bLocalMultiplayerRoleKnown = false;
+	bool bLocalMultiplayerMannequinRole = false;
 	FTimerHandle ServiceStatusTimer;
 
 	friend class AMultiplayTestGameMode;

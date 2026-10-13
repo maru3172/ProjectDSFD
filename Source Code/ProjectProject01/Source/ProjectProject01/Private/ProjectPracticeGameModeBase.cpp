@@ -57,7 +57,7 @@ void AProjectPracticeGameModeBase::BeginPlay()
 void AProjectPracticeGameModeBase::BindEscapeTriggers()
 {
 	UWorld* World = GetWorld();
-	if (!HasAuthority() || !IsValid(World) || World->GetNetMode() != NM_Standalone)
+	if (!HasAuthority() || !IsValid(World))
 	{
 		return;
 	}
@@ -86,6 +86,7 @@ void AProjectPracticeGameModeBase::HandleEscapeTriggerBeginOverlap(
 	(void)OverlappedActor;
 	if (APlayerCharacter* Player = Cast<APlayerCharacter>(OtherActor); IsValid(Player) && !Player->IsGameOver())
 	{
+		UE_LOG(LogTemp, Log, TEXT("Single-player escape trigger accepted player %s."), *GetNameSafe(Player));
 		Player->PresentSinglePlayerResult(true);
 	}
 }
