@@ -140,12 +140,17 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(DirectChaseHalfAngleDegrees) || !FMath::IsFinite(DirectChaseSectorRadius) ||
 		!FMath::IsFinite(MannequinGatherRadius) || !FMath::IsFinite(SurvivorVisionCheckIntervalSeconds) ||
 		!FMath::IsFinite(SurvivorVisionHalfAngleDegrees) || !FMath::IsFinite(DetectionMargin) ||
-		!FMath::IsFinite(VisionFovMarginMultiplier) || MannequinWalkSpeed < 0.0f ||
+		!FMath::IsFinite(VisionFovMarginMultiplier) || !FMath::IsFinite(MultiplayerPatrolRadius) ||
+		!FMath::IsFinite(MultiplayerFollowDistance) || !FMath::IsFinite(MultiplayerFollowSeparation) ||
+		!FMath::IsFinite(MultiplayerRepathInterval) || !FMath::IsFinite(MultiplayerAcceptanceRadius) ||
+		MannequinWalkSpeed < 0.0f ||
 		DirectChaseRadius < 0.0f || RoamingOuterRadius < 0.0f || PostPossessionCommandDurationSeconds < 0.0f ||
 		DirectChaseHalfAngleDegrees < 0.0f || DirectChaseSectorRadius < 0.0f ||
 		MannequinGatherRadius < 0.0f || RequiredMannequinCount < 0 ||
 		SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
-		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f)
+		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f || MultiplayerPatrolRadius < 0.0f ||
+		MultiplayerFollowDistance < 0.0f || MultiplayerFollowSeparation < 0.0f ||
+		MultiplayerRepathInterval < 0.01f || MultiplayerAcceptanceRadius < 0.0f)
 	{
 		OutError = TEXT("DT_AITuning Default row must contain finite, non-negative numeric values.");
 		return false;

@@ -14,6 +14,7 @@
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
 #include "InputKeyEventArgs.h"
+#include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
@@ -60,6 +61,38 @@ void AMultiplayTestPlayerController::BeginPlay()
 		World->GetTimerManager().SetTimer(
 			ServiceStatusTimer, this, &AMultiplayTestPlayerController::PollMultiplayerService,
 			5.0f, true, 5.0f);
+	}
+}
+
+void AMultiplayTestPlayerController::SeamlessTravelFrom(APlayerController* OldPC)
+{
+	Super::SeamlessTravelFrom(OldPC);
+
+	const AMultiplayTestPlayerController* Previous = Cast<AMultiplayTestPlayerController>(OldPC);
+	if (!IsValid(Previous))
+	{
+		return;
+	}
+
+	AuthenticatedUserId = Previous->AuthenticatedUserId;
+	AuthenticatedMatchId = Previous->AuthenticatedMatchId;
+	AuthenticatedRole = Previous->AuthenticatedRole;
+	MatchPhase = Previous->MatchPhase;
+	SurvivorState = Previous->SurvivorState;
+	bLevelTransitionCarryover = Previous->bLevelTransitionCarryover;
+	bSpawnAfterLevelTransition = Previous->bSpawnAfterLevelTransition;
+	bLocalLevelTransitionFadeHeld = Previous->bLocalLevelTransitionFadeHeld;
+	bHadAuthenticatedSession = Previous->bHadAuthenticatedSession;
+}
+
+void AMultiplayTestPlayerController::PostSeamlessTravel()
+{
+	Super::PostSeamlessTravel();
+	if (IsLocalController() && bLocalLevelTransitionFadeHeld && IsValid(PlayerCameraManager))
+	{
+		// 새 맵의 첫 프레임이 노출되지 않도록 카메라가 만들어지는 즉시 완전 암전을 다시 고정한다.
+		PlayerCameraManager->StartCameraFade(
+			1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
 	}
 }
 
@@ -172,15 +205,18 @@ bool AMultiplayTestPlayerController::InputKey(const FInputKeyEventArgs& Params)
 				}
 				return true;
 			}
-			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetHelpPingKey())
+			else if (SurvivorState == EMultiplayTestSurvivorState::Active &&
+				Params.Event == IE_Pressed && Params.Key == Settings->GetHelpPingKey())
 			{
 				RequestTeamPing(EProjectProject01PingType::Help); return true;
 			}
-			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetDangerPingKey())
+			else if (SurvivorState == EMultiplayTestSurvivorState::Active &&
+				Params.Event == IE_Pressed && Params.Key == Settings->GetDangerPingKey())
 			{
 				RequestTeamPing(EProjectProject01PingType::Danger); return true;
 			}
-			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetLocationPingKey())
+			else if (SurvivorState == EMultiplayTestSurvivorState::Active &&
+				Params.Event == IE_Pressed && Params.Key == Settings->GetLocationPingKey())
 			{
 				RequestTeamPing(EProjectProject01PingType::Location); return true;
 			}
@@ -271,8 +307,12 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot7);
 	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot8);
 	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot9);
-	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
-	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AMultiplayTestPlayerController::RequestPostPossessionChaseCommand);
+	InputComponent->BindKey(EKeys::V, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
+	InputComponent->BindKey(EKeys::Z, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinPatrolCommand);
+	InputComponent->BindKey(EKeys::X, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinRangeChaseCommand);
+	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinFollowCommand);
+	InputComponent->BindKey(EKeys::Q, IE_Pressed, this, &AMultiplayTestPlayerController::RequestResetFollowingMannequins);
+	InputComponent->BindKey(EKeys::B, IE_Pressed, this, &AMultiplayTestPlayerController::RequestToggleMannequinCatchDamage);
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
 	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
 	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
@@ -387,6 +427,41 @@ void AMultiplayTestPlayerController::EnterSurvivorSpectator(
 	ClientEnterSurvivorSpectator(InitialTarget, bFadeTransition);
 }
 
+void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
+	const bool bSpawnInNextLevel)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	bLevelTransitionCarryover = true;
+	bSpawnAfterLevelTransition = bSpawnInNextLevel;
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+	ClientPrepareForLevelTransition();
+}
+
+void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
+	AActor* InitialViewTarget,
+	const bool bCanPlay)
+{
+	if (!HasAuthority() || !bLevelTransitionCarryover)
+	{
+		return;
+	}
+
+	SetIgnoreMoveInput(!bCanPlay);
+	SetIgnoreLookInput(false);
+	if (IsValid(InitialViewTarget))
+	{
+		SetViewTarget(InitialViewTarget);
+	}
+	ClientCompleteLevelTransition(InitialViewTarget, bCanPlay);
+	bLevelTransitionCarryover = false;
+	bSpawnAfterLevelTransition = false;
+}
+
 void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
@@ -490,6 +565,56 @@ void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation
 	}, 0.5f, false);
 }
 
+void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementation()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bLocalLevelTransitionFadeHeld = true;
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+	bShowMouseCursor = false;
+	SetInputMode(FInputModeGameOnly());
+	if (IsValid(SessionMenuWidget))
+	{
+		SessionMenuWidget->RemoveFromParent();
+		SessionMenuWidget = nullptr;
+	}
+	if (IsValid(PlayerCameraManager))
+	{
+		PlayerCameraManager->StartCameraFade(
+			0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
+	}
+}
+
+void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementation(
+	AActor* InitialViewTarget,
+	const bool bCanPlay)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (IsValid(InitialViewTarget))
+	{
+		SetViewTarget(InitialViewTarget);
+	}
+	SetIgnoreMoveInput(!bCanPlay);
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = false;
+	SetInputMode(FInputModeGameOnly());
+	bLocalLevelTransitionFadeHeld = false;
+	if (IsValid(PlayerCameraManager))
+	{
+		// 새 맵에서 Pawn과 관전 대상이 준비된 다음에만 검은 화면을 걷어낸다.
+		PlayerCameraManager->StartCameraFade(
+			1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+	}
+}
+
 void AMultiplayTestPlayerController::OnRep_ViewedMannequin()
 {
 	ApplyViewedMannequinCamera(GetViewedMannequin());
@@ -508,6 +633,32 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 
 	const FViewTargetTransitionParams TransitionParams;
 	SetViewTarget(Mannequin, TransitionParams);
+
+	// 이 로컬 컨트롤러가 마네킹 역할임이 확정된 시점에 모든 번호 표기를 한 번 갱신한다.
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		It->RefreshControlSlotLabelVisibility();
+	}
+
+	// 마네킹 역할 가이드는 생존자 가이드와 별도로 이 PC에서 최초 한 번만 자동 표시한다.
+	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	if (IsValid(Settings) && !Settings->HasSeenMannequinGuide())
+	{
+		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
+			this, UProjectProject01GameGuideWidget::StaticClass());
+		if (ensureMsgf(IsValid(Guide), TEXT("Could not create the first mannequin guide.")))
+		{
+			Settings->MarkMannequinGuideSeen();
+			Guide->Configure(true, true, false);
+			Guide->AddToViewport(700);
+			bShowMouseCursor = true;
+			FInputModeGameAndUI GuideInput;
+			GuideInput.SetWidgetToFocus(Guide->TakeWidget());
+			GuideInput.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			GuideInput.SetHideCursorDuringCapture(false);
+			SetInputMode(GuideInput);
+		}
+	}
 }
 
 void AMultiplayTestPlayerController::SelectMannequinSlot0() { RequestMannequinSlot(0); }
@@ -533,25 +684,43 @@ void AMultiplayTestPlayerController::RequestMannequinSlot(int32 Slot)
 
 void AMultiplayTestPlayerController::RequestMannequinManualControl()
 {
-	if (IsLocalController())
+	if (IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable)
 	{
 		ServerRequestMannequinManualControl();
 	}
 }
 
-void AMultiplayTestPlayerController::RequestPostPossessionChaseCommand()
+void AMultiplayTestPlayerController::RequestMannequinPatrolCommand()
 {
-	if (IsLocalController())
-	{
-		ServerRequestPostPossessionChaseCommand();
-	}
+	if (IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable) ServerRequestMannequinCommand(EMultiplayMannequinCommand::Patrol);
+}
+
+void AMultiplayTestPlayerController::RequestMannequinRangeChaseCommand()
+{
+	if (IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable) ServerRequestMannequinCommand(EMultiplayMannequinCommand::ChaseInDetectionRange);
+}
+
+void AMultiplayTestPlayerController::RequestMannequinFollowCommand()
+{
+	if (IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable) ServerRequestMannequinCommand(EMultiplayMannequinCommand::FollowMannequinPlayer);
+}
+
+void AMultiplayTestPlayerController::RequestResetFollowingMannequins()
+{
+	if (IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable) ServerResetFollowingMannequins();
+}
+
+void AMultiplayTestPlayerController::RequestToggleMannequinCatchDamage()
+{
+	if (IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable) ServerToggleMannequinCatchDamage();
 }
 
 void AMultiplayTestPlayerController::SelectPreviousSpectatorTarget()
 {
 	if (IsLocalController() &&
 		(SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
-		 SurvivorState == EMultiplayTestSurvivorState::Escaped))
+		 SurvivorState == EMultiplayTestSurvivorState::Escaped ||
+		 SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting))
 	{
 		ServerCycleSurvivorSpectator(-1);
 	}
@@ -561,7 +730,8 @@ void AMultiplayTestPlayerController::SelectNextSpectatorTarget()
 {
 	if (IsLocalController() &&
 		(SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
-		 SurvivorState == EMultiplayTestSurvivorState::Escaped))
+		 SurvivorState == EMultiplayTestSurvivorState::Escaped ||
+		 SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting))
 	{
 		ServerCycleSurvivorSpectator(1);
 	}
@@ -620,27 +790,60 @@ bool AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Validat
 	return true;
 }
 
-void AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Implementation()
+void AMultiplayTestPlayerController::ServerRequestMannequinCommand_Implementation(
+	const EMultiplayMannequinCommand Command)
 {
-	if (!AllowServerRequest(2, 6, 1.0f))
+	if (!AllowServerRequest(6, 8, 1.0f)) return;
+	if (AMultiplayTestGameMode* GameMode = GetWorld()
+		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
-		return;
+		GameMode->TryIssueMannequinCommand(this, Command);
 	}
-	UWorld* World = GetWorld();
-	AMultiplayTestGameMode* GameMode = IsValid(World)
-		? World->GetAuthGameMode<AMultiplayTestGameMode>()
-		: nullptr;
-	if (!ensureMsgf(IsValid(GameMode), TEXT("Mannequin post-possession command requires AMultiplayTestGameMode.")))
-	{
-		return;
-	}
-
-	GameMode->TryQueuePostPossessionChaseCommand(this);
 }
 
-bool AMultiplayTestPlayerController::ServerRequestPostPossessionChaseCommand_Validate()
+bool AMultiplayTestPlayerController::ServerRequestMannequinCommand_Validate(
+	const EMultiplayMannequinCommand Command)
+{
+	return Command == EMultiplayMannequinCommand::Patrol ||
+		Command == EMultiplayMannequinCommand::ChaseInDetectionRange ||
+		Command == EMultiplayMannequinCommand::FollowMannequinPlayer;
+}
+
+void AMultiplayTestPlayerController::ServerResetFollowingMannequins_Implementation()
+{
+	if (!AllowServerRequest(7, 3, 1.0f)) return;
+	if (AMultiplayTestGameMode* GameMode = GetWorld()
+		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
+	{
+		GameMode->TryResetFollowingMannequins(this);
+	}
+}
+
+bool AMultiplayTestPlayerController::ServerResetFollowingMannequins_Validate()
 {
 	return true;
+}
+
+void AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Implementation()
+{
+	if (!AllowServerRequest(8, 2, 1.0f)) return;
+	if (AMultiplayTestGameMode* GameMode = GetWorld()
+		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
+	{
+		ClientNotifyMannequinCatchDamage(GameMode->ToggleMannequinCatchDamage(this));
+	}
+}
+
+bool AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Validate()
+{
+	return true;
+}
+
+void AMultiplayTestPlayerController::ClientNotifyMannequinCatchDamage_Implementation(const bool bEnabled)
+{
+	ClientMessage(bEnabled
+		? TEXT("Mannequin catch damage: ON")
+		: TEXT("Mannequin catch damage: OFF"));
 }
 
 void AMultiplayTestPlayerController::ServerDeclareVoluntaryExit_Implementation()

@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputActionValue.h"
+#include "MultiplayMannequinTypes.h"
 #include "MannequinAICharacter.generated.h"
 
 class UInputAction;
@@ -13,6 +14,7 @@ class UInputMappingContext;
 class APlayerCharacter;
 class UPrimitiveComponent;
 class UFootstepSynthComponent;
+class UTextRenderComponent;
 struct FMannequinAITuningRow;
 
 UCLASS()
@@ -27,6 +29,9 @@ public:
 	// 숫자 키 0~9에 대응하는 서버 권한 슬롯이다. -1은 선택 대상이 아님을 뜻한다.
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	int32 GetControlSlot() const;
+
+	/** 로컬 플레이어가 마네킹 역할일 때만 머리 위 슬롯 번호를 표시한다. */
+	void RefreshControlSlotLabelVisibility();
 
 protected:
 	// Called when the game starts or when spawned
@@ -61,7 +66,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	bool IsManualControlEnabled() const { return bManualControlEnabled; }
 
-	/** 직접 조작 중 E 입력으로, 다음 빙의 해제 시 실행할 추격 명령을 기록합니다. */
+	/** MultiplayTest 전용 영구 명령입니다. 싱글 Behavior Tree에서는 사용하지 않습니다. */
+	void SetMultiplayCommand(EMultiplayMannequinCommand NewCommand);
+
+	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
+	EMultiplayMannequinCommand GetMultiplayCommand() const { return MultiplayCommand; }
+
+	const FVector& GetMultiplayPatrolOrigin() const { return MultiplayPatrolOrigin; }
+
+	/** 싱글플레이 직접 조작 중 E 입력으로 다음 빙의 해제 시 실행할 추격 명령을 기록합니다. */
 	bool QueuePostPossessionChaseCommand();
 
 	/** 빙의 해제 직후 서버가 기록된 추격 또는 정지 명령을 활성화합니다. */
@@ -79,10 +92,14 @@ public:
 private:
 	friend class AMultiplayTestGameMode;
 	void SetControlSlotForGameMode(int32 InControlSlot);
+	void SetMultiplayPatrolOriginForGameMode(const FVector& InOrigin);
 
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",
+	UPROPERTY(ReplicatedUsing = OnRep_ControlSlot, EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",
 		meta = (AllowPrivateAccess = "true", ClampMin = "-1", ClampMax = "9", UIMin = "-1", UIMax = "9"))
 	int32 ControlSlot = -1;
+
+	UPROPERTY(VisibleAnywhere, Category = "Multiplayer|Mannequin")
+	TObjectPtr<UTextRenderComponent> ControlSlotLabel;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> IMC_MannequinControl;
@@ -104,6 +121,12 @@ private:
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	bool bManualControlEnabled = false;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
+	EMultiplayMannequinCommand MultiplayCommand = EMultiplayMannequinCommand::Patrol;
+
+	/** 멀티 정찰 목적지를 뽑는 기준점. 서버에서 최초 배치 위치로 고정됩니다. */
+	FVector MultiplayPatrolOrigin = FVector::ZeroVector;
 
 	enum class EPostPossessionCommand : uint8
 	{
@@ -142,6 +165,9 @@ private:
 
 	UFUNCTION()
 	void OnRep_MannequinWalkSpeed();
+
+	UFUNCTION()
+	void OnRep_ControlSlot();
 
 	/** 같은 접촉 동안 포획이 반복 차감되지 않도록 서버에서만 보관합니다. */
 	TArray<TWeakObjectPtr<APlayerCharacter>> CaughtSurvivorsInCurrentContact;

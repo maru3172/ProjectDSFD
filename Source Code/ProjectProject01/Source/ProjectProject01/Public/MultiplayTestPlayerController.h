@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "MultiplayMannequinTypes.h"
 #include "MultiplayTestPlayerController.generated.h"
 
 struct FProjectProject01ValidatedJoinClaim;
@@ -33,6 +34,8 @@ enum class EMultiplayTestSurvivorState : uint8
 {
 	NotApplicable,
 	Active,
+	/** 다음 맵 이동 영역에 먼저 도착하여 남은 생존자를 관전하며 기다리는 상태입니다. */
+	TransitionWaiting,
 	Eliminated,
 	Escaped
 };
@@ -91,6 +94,11 @@ public:
 	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
 	void DeclareVoluntaryExit();
 	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
+	/** 서버의 seamless map travel에서 이 컨트롤러와 다음 맵 생존 여부를 보존합니다. */
+	void PrepareLevelTransitionCarryover(bool bSpawnInNextLevel);
+	bool IsLevelTransitionCarryover() const { return bLevelTransitionCarryover; }
+	bool ShouldSpawnAfterLevelTransition() const { return bSpawnAfterLevelTransition; }
+	void CompleteLevelTransitionCarryover(class AActor* InitialViewTarget, bool bCanPlay);
 	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
 	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
@@ -98,6 +106,8 @@ public:
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
+	virtual void SeamlessTravelFrom(APlayerController* OldPC) override;
+	virtual void PostSeamlessTravel() override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -118,7 +128,11 @@ private:
 	void SelectMannequinSlot9();
 	void RequestMannequinSlot(int32 Slot);
 	void RequestMannequinManualControl();
-	void RequestPostPossessionChaseCommand();
+	void RequestMannequinPatrolCommand();
+	void RequestMannequinRangeChaseCommand();
+	void RequestMannequinFollowCommand();
+	void RequestResetFollowingMannequins();
+	void RequestToggleMannequinCatchDamage();
 	void ToggleSessionMenu();
 	void SelectPreviousSpectatorTarget();
 	void SelectNextSpectatorTarget();
@@ -136,7 +150,13 @@ private:
 	void ServerRequestMannequinManualControl();
 
 	UFUNCTION(Server, Reliable, WithValidation)
-	void ServerRequestPostPossessionChaseCommand();
+	void ServerRequestMannequinCommand(EMultiplayMannequinCommand Command);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerResetFollowingMannequins();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerToggleMannequinCatchDamage();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDeclareVoluntaryExit();
@@ -156,11 +176,20 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientEnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition);
 
+	UFUNCTION(Client, Reliable)
+	void ClientPrepareForLevelTransition();
+
+	UFUNCTION(Client, Reliable)
+	void ClientCompleteLevelTransition(class AActor* InitialViewTarget, bool bCanPlay);
+
 	UFUNCTION(Client, Unreliable)
 	void ClientReceiveTeamPing(EProjectProject01PingType Type, FVector_NetQuantize Location, const FString& SenderName);
 
 	UFUNCTION(Client, Reliable)
 	void ClientConfigureSurvivorCommunication(const FString& UserId, const FString& MatchId, const FString& InRole);
+
+	UFUNCTION(Client, Reliable)
+	void ClientNotifyMannequinCatchDamage(bool bEnabled);
 
 	UFUNCTION()
 	void OnRep_ViewedMannequin();
@@ -193,10 +222,17 @@ private:
 	FString AuthenticatedUserId;
 	FString AuthenticatedMatchId;
 	FString AuthenticatedRole;
-	float RpcWindowStartSeconds[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-	int32 RpcWindowCallCount[6] = { 0, 0, 0, 0, 0, 0 };
+	float RpcWindowStartSeconds[9] = {};
+	int32 RpcWindowCallCount[9] = {};
 	bool bVoluntaryExitDeclared = false;
 	bool bHadAuthenticatedSession = false;
+	/** V로 직접 조작한 현재 마네킹에 빙의 해제 후 적용할 명령(Z/X/C)이 지정되었는지 서버에서만 추적한다. */
+	bool bManualMannequinCommandIssued = false;
+	/** 서버에서 seamless travel 동안만 유지되는 다음 맵 진입 정보입니다. */
+	bool bLevelTransitionCarryover = false;
+	bool bSpawnAfterLevelTransition = false;
+	/** 클라이언트 카메라가 맵 로딩 중 검은 화면을 유지해야 하는지 나타냅니다. */
+	bool bLocalLevelTransitionFadeHeld = false;
 	FTimerHandle ServiceStatusTimer;
 
 	friend class AMultiplayTestGameMode;

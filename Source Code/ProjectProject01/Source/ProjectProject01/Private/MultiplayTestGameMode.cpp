@@ -5,6 +5,7 @@
 
 #include "MannequinAICharacter.h"
 #include "MannequinAIController.h"
+#include "AIController.h"
 #include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
 #include "ProjectProject01TuningData.h"
@@ -22,6 +23,7 @@
 #include "GameFramework/PlayerState.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "NavigationSystem.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -53,6 +55,26 @@ namespace
 			Summary.ResolvedCount += State == EMultiplayTestSurvivorState::Eliminated ||
 				State == EMultiplayTestSurvivorState::Escaped ? 1 : 0;
 			Summary.EliminatedCount += State == EMultiplayTestSurvivorState::Eliminated ? 1 : 0;
+		}
+		return Summary;
+	}
+
+	struct FLevelTransitionSummary
+	{
+		int32 ActiveCount = 0;
+		int32 AdvancingCount = 0;
+
+		bool CanTravel() const { return ActiveCount == 0 && AdvancingCount > 0; }
+	};
+
+	FLevelTransitionSummary EvaluateLevelTransition(
+		const TArray<EMultiplayTestSurvivorState>& SurvivorStates)
+	{
+		FLevelTransitionSummary Summary;
+		for (const EMultiplayTestSurvivorState State : SurvivorStates)
+		{
+			Summary.ActiveCount += State == EMultiplayTestSurvivorState::Active ? 1 : 0;
+			Summary.AdvancingCount += State == EMultiplayTestSurvivorState::TransitionWaiting ? 1 : 0;
 		}
 		return Summary;
 	}
@@ -125,11 +147,41 @@ bool FProjectProject01MatchResolutionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Any escaped survivor prevents a mannequin victory"), MixedResolution.DidMannequinWin());
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01LevelTransitionResolutionTest,
+	"ProjectProject01.Multiplayer.LevelTransitionResolution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01LevelTransitionResolutionTest::RunTest(const FString& Parameters)
+{
+	const FLevelTransitionSummary StillWaiting = EvaluateLevelTransition({
+		EMultiplayTestSurvivorState::TransitionWaiting,
+		EMultiplayTestSurvivorState::Active });
+	TestFalse(TEXT("An active survivor keeps the first survivor waiting"), StillWaiting.CanTravel());
+
+	const FLevelTransitionSummary BothAdvance = EvaluateLevelTransition({
+		EMultiplayTestSurvivorState::TransitionWaiting,
+		EMultiplayTestSurvivorState::TransitionWaiting });
+	TestTrue(TEXT("Two waiting survivors may travel"), BothAdvance.CanTravel());
+	TestEqual(TEXT("Two waiting survivors respawn in the next level"), BothAdvance.AdvancingCount, 2);
+
+	const FLevelTransitionSummary OneSurvivorAfterPartnerDeath = EvaluateLevelTransition({
+		EMultiplayTestSurvivorState::TransitionWaiting,
+		EMultiplayTestSurvivorState::Eliminated });
+	TestTrue(TEXT("One waiting survivor may travel after the partner is eliminated"),
+		OneSurvivorAfterPartnerDeath.CanTravel());
+	TestEqual(TEXT("Only the waiting survivor respawns after partner death"),
+		OneSurvivorAfterPartnerDeath.AdvancingCount, 1);
+	return true;
+}
 #endif
 
 AMultiplayTestGameMode::AMultiplayTestGameMode()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	// 맵 구간 이동 때 접속을 끊거나 일회용 티켓을 다시 소비하지 않고 컨트롤러를 넘긴다.
+	bUseSeamlessTravel = true;
 
 	// 콘텐츠 Blueprint를 불러오지 못해도 네트워크 이동이 가능한 네이티브 Pawn으로 안전하게 대체한다.
 	DefaultPawnClass = APlayerCharacter::StaticClass();
@@ -294,6 +346,7 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		Mannequin->SetActorTransform(SpawnPoints[Index]->GetActorTransform(), false, nullptr,
 			ETeleportType::TeleportPhysics);
 		Mannequin->SetControlSlotForGameMode(Index);
+		Mannequin->SetMultiplayPatrolOriginForGameMode(Mannequin->GetActorLocation());
 		if (!IsValid(Mannequin->GetController()))
 		{
 			Mannequin->SpawnDefaultController();
@@ -310,6 +363,260 @@ void AMultiplayTestGameMode::ApplyMannequinTuning(const FMannequinAITuningRow& T
 {
 	SurvivorVisionCheckIntervalSeconds = FMath::Max(0.0f, Tuning.SurvivorVisionCheckIntervalSeconds);
 	SurvivorVisionHalfAngleDegrees = FMath::Max(0.0f, Tuning.SurvivorVisionHalfAngleDegrees);
+	// 멀티 전용 AI는 기존 싱글 추적 로직과 분리되어 있지만, 검증된 수치만 DataTable에서 받는다.
+	MultiplayerDetectionRadius = FMath::Max(0.0f, Tuning.DirectChaseRadius);
+	MultiplayerPatrolRadius = FMath::Max(0.0f, Tuning.MultiplayerPatrolRadius);
+	MultiplayerFollowDistance = FMath::Max(0.0f, Tuning.MultiplayerFollowDistance);
+	MultiplayerFollowSeparation = FMath::Max(0.0f, Tuning.MultiplayerFollowSeparation);
+	MultiplayerRepathInterval = FMath::Max(0.01f, Tuning.MultiplayerRepathInterval);
+	MultiplayerAcceptanceRadius = FMath::Max(0.0f, Tuning.MultiplayerAcceptanceRadius);
+}
+
+bool AMultiplayTestGameMode::CanMannequinDetectSurvivor(
+	const AMannequinAICharacter* Mannequin,
+	const APlayerCharacter* Survivor) const
+{
+	if (!IsValid(Mannequin) || !IsValid(Survivor) || Survivor->IsGameOver() ||
+		FVector::DistSquared2D(Mannequin->GetActorLocation(), Survivor->GetActorLocation()) >
+		FMath::Square(static_cast<double>(MultiplayerDetectionRadius)))
+	{
+		return false;
+	}
+
+	const AAIController* AIController = Cast<AAIController>(Mannequin->GetController());
+	if (!IsValid(AIController))
+	{
+		return false;
+	}
+
+	// AAIController의 시야 검사는 장애물을 고려한다. 감지 반경은 빨간 원과 같은 DirectChaseRadius다.
+	return const_cast<AAIController*>(AIController)->LineOfSightTo(Survivor);
+}
+
+APlayerCharacter* AMultiplayTestGameMode::FindDetectedSurvivor(const AMannequinAICharacter* Mannequin) const
+{
+	APlayerCharacter* Closest = nullptr;
+	double ClosestDistanceSquared = TNumericLimits<double>::Max();
+	for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
+	{
+		APlayerCharacter* Survivor = *It;
+		const APlayerController* SurvivorController = IsValid(Survivor)
+			? Cast<APlayerController>(Survivor->GetController())
+			: nullptr;
+		if (!IsSurvivorController(SurvivorController) || !CanMannequinDetectSurvivor(Mannequin, Survivor))
+		{
+			continue;
+		}
+
+		const double DistanceSquared = FVector::DistSquared2D(
+			Mannequin->GetActorLocation(), Survivor->GetActorLocation());
+		if (DistanceSquared < ClosestDistanceSquared)
+		{
+			ClosestDistanceSquared = DistanceSquared;
+			Closest = Survivor;
+		}
+	}
+	return Closest;
+}
+
+AMannequinAICharacter* AMultiplayTestGameMode::GetMannequinPlayerFocusPawn() const
+{
+	AMultiplayTestPlayerController* Controller = MannequinController.Get();
+	if (!IsValid(Controller))
+	{
+		return nullptr;
+	}
+	if (AMannequinAICharacter* Controlled = Cast<AMannequinAICharacter>(Controller->GetPawn()); IsValid(Controlled))
+	{
+		return Controlled;
+	}
+	return Controller->GetViewedMannequin();
+}
+
+void AMultiplayTestGameMode::StopMannequinAI(AMannequinAICharacter* Mannequin) const
+{
+	if (!IsValid(Mannequin))
+	{
+		return;
+	}
+	if (AAIController* AIController = Cast<AAIController>(Mannequin->GetController()); IsValid(AIController))
+	{
+		AIController->StopMovement();
+	}
+	if (UCharacterMovementComponent* Movement = Mannequin->GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+	}
+}
+
+void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
+	AMannequinAICharacter* Mannequin,
+	AAIController* AIController)
+{
+	if (!IsValid(Mannequin) || !IsValid(AIController) || MultiplayerPatrolRadius <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	FVector* ExistingTarget = MultiplayerPatrolTargets.Find(Mannequin);
+	if (ExistingTarget && FVector::DistSquared2D(Mannequin->GetActorLocation(), *ExistingTarget) >
+		FMath::Square(static_cast<double>(MultiplayerAcceptanceRadius)))
+	{
+		return;
+	}
+
+	UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld());
+	if (!IsValid(Navigation))
+	{
+		return;
+	}
+	FNavLocation RandomLocation;
+	if (!Navigation->GetRandomReachablePointInRadius(
+		Mannequin->GetMultiplayPatrolOrigin(), MultiplayerPatrolRadius, RandomLocation))
+	{
+		return;
+	}
+
+	MultiplayerPatrolTargets.FindOrAdd(Mannequin) = RandomLocation.Location;
+	AIController->MoveToLocation(RandomLocation.Location, MultiplayerAcceptanceRadius,
+		true, true, true, true, nullptr, true);
+}
+
+void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
+	AMannequinAICharacter* Mannequin,
+	AAIController* AIController,
+	AMannequinAICharacter* Leader,
+	const TArray<AMannequinAICharacter*>& Followers)
+{
+	if (!IsValid(Mannequin) || !IsValid(AIController) || !IsValid(Leader) || Mannequin == Leader)
+	{
+		return;
+	}
+
+	const int32 FollowerIndex = Followers.IndexOfByKey(Mannequin);
+	const float CenteredIndex = static_cast<float>(FollowerIndex) - (static_cast<float>(Followers.Num() - 1) * 0.5f);
+	FVector DesiredLocation = Leader->GetActorLocation()
+		- Leader->GetActorForwardVector() * MultiplayerFollowDistance
+		+ Leader->GetActorRightVector() * CenteredIndex * MultiplayerFollowSeparation;
+
+	// 대형의 기본 슬롯 외에도 현재 위치가 겹치면 반발 벡터를 더해 밀집을 해소한다.
+	FVector SeparationOffset = FVector::ZeroVector;
+	for (const AMannequinAICharacter* Other : Followers)
+	{
+		if (!IsValid(Other) || Other == Mannequin)
+		{
+			continue;
+		}
+		FVector Away = Mannequin->GetActorLocation() - Other->GetActorLocation();
+		Away.Z = 0.0f;
+		const float Distance = Away.Size();
+		if (Distance > KINDA_SMALL_NUMBER && Distance < MultiplayerFollowSeparation)
+		{
+			SeparationOffset += Away / Distance * (MultiplayerFollowSeparation - Distance);
+		}
+	}
+	DesiredLocation += SeparationOffset;
+
+	if (UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld()); IsValid(Navigation))
+	{
+		FNavLocation Projected;
+		if (Navigation->ProjectPointToNavigation(DesiredLocation, Projected))
+		{
+			DesiredLocation = Projected.Location;
+		}
+	}
+	AIController->MoveToLocation(DesiredLocation, MultiplayerAcceptanceRadius,
+		true, true, true, true, nullptr, true);
+}
+
+void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
+{
+	if (!HasAuthority() || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	TArray<AMannequinAICharacter*> Mannequins;
+	TArray<AMannequinAICharacter*> Followers;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		AMannequinAICharacter* Mannequin = *It;
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+		Mannequins.Add(Mannequin);
+		if (Mannequin->GetMultiplayCommand() == EMultiplayMannequinCommand::FollowMannequinPlayer)
+		{
+			Followers.Add(Mannequin);
+		}
+	}
+	Followers.Sort([](const AMannequinAICharacter& Left, const AMannequinAICharacter& Right)
+	{
+		return Left.GetControlSlot() < Right.GetControlSlot();
+	});
+	AMannequinAICharacter* Leader = GetMannequinPlayerFocusPawn();
+
+	for (AMannequinAICharacter* Mannequin : Mannequins)
+	{
+		if (!IsValid(Mannequin) || Mannequin->IsManualControlEnabled())
+		{
+			continue;
+		}
+		AAIController* AIController = Cast<AAIController>(Mannequin->GetController());
+		if (!IsValid(AIController))
+		{
+			continue;
+		}
+
+		const EMultiplayMannequinCommand Command = Mannequin->GetMultiplayCommand();
+		if (Mannequin->IsFrozenBySurvivorVision() || Command == EMultiplayMannequinCommand::HoldPosition)
+		{
+			StopMannequinAI(Mannequin);
+			continue;
+		}
+
+		// 정지 외의 모든 명령보다 각 마네킹 자신의 빨간 원 감지를 우선한다.
+		if (APlayerCharacter* DetectedSurvivor = FindDetectedSurvivor(Mannequin); IsValid(DetectedSurvivor))
+		{
+			AIController->MoveToActor(DetectedSurvivor, MultiplayerAcceptanceRadius,
+				true, true, true, nullptr, true);
+			continue;
+		}
+
+		switch (Command)
+		{
+		case EMultiplayMannequinCommand::Patrol:
+			MoveMannequinToPatrolTarget(Mannequin, AIController);
+			break;
+		case EMultiplayMannequinCommand::ChaseInDetectionRange:
+			// 범위 추격 명령은 대상이 감지 범위에 들어올 때까지 현재 위치에서 기다린다.
+			StopMannequinAI(Mannequin);
+			break;
+		case EMultiplayMannequinCommand::FollowMannequinPlayer:
+			if (IsValid(Leader) && Leader != Mannequin)
+			{
+				MoveMannequinToFollowTarget(Mannequin, AIController, Leader, Followers);
+			}
+			else
+			{
+				StopMannequinAI(Mannequin);
+			}
+			break;
+		case EMultiplayMannequinCommand::HoldPosition:
+		default:
+			StopMannequinAI(Mannequin);
+			break;
+		}
+	}
+
+	for (auto It = MultiplayerPatrolTargets.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
 }
 
 void AMultiplayTestGameMode::Tick(float DeltaSeconds)
@@ -339,6 +646,13 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 		FinishAuthoritativeMatch(TEXT("TimeLimit"));
 	}
 	ProcessReconnectTimeouts();
+
+	MultiplayerAIUpdateAccumulatorSeconds += DeltaSeconds;
+	if (MultiplayerAIUpdateAccumulatorSeconds >= FMath::Max(0.01f, MultiplayerRepathInterval))
+	{
+		MultiplayerAIUpdateAccumulatorSeconds = 0.0f;
+		UpdateMultiplayerMannequinAI();
+	}
 
 	SurvivorVisionCheckAccumulatorSeconds += DeltaSeconds;
 	if (SurvivorVisionCheckAccumulatorSeconds < FMath::Max(SurvivorVisionCheckIntervalSeconds, 0.01f))
@@ -528,8 +842,37 @@ void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerContr
 		// OnlySpectator는 APlayerController::OnPossess에서 이후 R 빙의를 거부하므로 시점 전용 대기만 수행한다.
 		return;
 	}
+	if (IsValid(MultiplayController) && MultiplayController->IsLevelTransitionCarryover() &&
+		!MultiplayController->ShouldSpawnAfterLevelTransition())
+	{
+		// 이전 맵에서 탈락했거나 다음 구간에 도착하지 못한 생존자는 새 Pawn을 만들지 않는다.
+		return;
+	}
 
 	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
+}
+
+void AMultiplayTestGameMode::HandleSeamlessTravelPlayer(AController*& Controller)
+{
+	Super::HandleSeamlessTravelPlayer(Controller);
+
+	AMultiplayTestPlayerController* MultiplayController =
+		Cast<AMultiplayTestPlayerController>(Controller);
+	if (!IsValid(MultiplayController))
+	{
+		return;
+	}
+
+	ExplicitRoleControllers.Add(MultiplayController);
+	if (MultiplayController->GetAuthenticatedRole().Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+	{
+		RequestedMannequinControllers.Add(MultiplayController);
+		MannequinController = MultiplayController;
+		AssignRandomInitialMannequinView(MultiplayController);
+	}
+
+	RegisterMatchPlayer(MultiplayController);
+	TryStartAuthoritativeMatch();
 }
 
 AActor* AMultiplayTestGameMode::ChoosePlayerStart_Implementation(AController* Player)
@@ -720,7 +1063,9 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 	}
 	Record.Role = IsMannequinController(Controller) ? TEXT("Mannequin") : TEXT("Survivor");
 	Record.SurvivorState = Record.Role == TEXT("Survivor")
-		? EMultiplayTestSurvivorState::Active
+		? (Controller->IsLevelTransitionCarryover() && !Controller->ShouldSpawnAfterLevelTransition()
+			? EMultiplayTestSurvivorState::Eliminated
+			: EMultiplayTestSurvivorState::Active)
 		: EMultiplayTestSurvivorState::NotApplicable;
 	Record.SurvivorPawn = Record.Role == TEXT("Survivor")
 		? Cast<APlayerCharacter>(Controller->GetPawn())
@@ -951,9 +1296,40 @@ void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
 	CompletedResultsByUserId.Reset();
 	ResultVerificationStatus.Reset();
 	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+	FinalizeLevelTransitionArrivals();
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("Authoritative match %s started with %d player(s)."),
 		*AuthoritativeMatchId, MatchPlayerRecords.Num());
+}
+
+void AMultiplayTestGameMode::FinalizeLevelTransitionArrivals()
+{
+	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair :
+		MatchPlayerRecords)
+	{
+		AMultiplayTestPlayerController* Controller = Pair.Key.Get();
+		if (!IsValid(Controller) || !Controller->IsLevelTransitionCarryover())
+		{
+			continue;
+		}
+
+		const bool bCanPlay = Pair.Value.Role == TEXT("Mannequin") ||
+			Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active;
+		AActor* InitialViewTarget = nullptr;
+		if (Pair.Value.Role == TEXT("Mannequin"))
+		{
+			InitialViewTarget = Controller->GetViewedMannequin();
+		}
+		else if (bCanPlay)
+		{
+			InitialViewTarget = Controller->GetPawn();
+		}
+		else
+		{
+			InitialViewTarget = FindLivingSurvivorSpectatorTarget(Controller, 1);
+		}
+		Controller->CompleteLevelTransitionCarryover(InitialViewTarget, bCanPlay);
+	}
 }
 
 void AMultiplayTestGameMode::SetAuthoritativeMatchPhase(const EMultiplayTestMatchPhase NewPhase)
@@ -1057,7 +1433,8 @@ void AMultiplayTestGameMode::CycleSurvivorSpectator(
 	const FMultiplayTestServerPlayerRecord* Record = MatchPlayerRecords.Find(RequestingController);
 	if (Record == nullptr || Record->Role != TEXT("Survivor") ||
 		(Record->SurvivorState != EMultiplayTestSurvivorState::Eliminated &&
-		 Record->SurvivorState != EMultiplayTestSurvivorState::Escaped))
+		 Record->SurvivorState != EMultiplayTestSurvivorState::Escaped &&
+		 Record->SurvivorState != EMultiplayTestSurvivorState::TransitionWaiting))
 	{
 		return;
 	}
@@ -1189,6 +1566,76 @@ bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 		TEXT("Survivor %s escaped at %.2f seconds."), *GetNameSafe(Survivor), Record->EscapeSeconds);
 	CheckForMatchCompletion();
 	return true;
+}
+
+bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharacter* Survivor)
+{
+	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress ||
+		!IsValid(Survivor))
+	{
+		return false;
+	}
+
+	FMultiplayTestServerPlayerRecord* Record = FindSurvivorRecord(Survivor);
+	if (Record == nullptr || Record->SurvivorState != EMultiplayTestSurvivorState::Active)
+	{
+		return false;
+	}
+
+	Record->SurvivorState = EMultiplayTestSurvivorState::TransitionWaiting;
+	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+	Survivor->SetActorEnableCollision(false);
+	Survivor->SetActorHiddenInGame(true);
+
+	AMultiplayTestPlayerController* Controller =
+		Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+	if (IsValid(Controller))
+	{
+		Controller->SetServerMatchState(AuthoritativeMatchPhase, Record->SurvivorState);
+		Controller->EnterSurvivorSpectator(
+			FindLivingSurvivorSpectatorTarget(Controller, 1), true);
+	}
+
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Survivor %s is waiting for the next level."), *GetNameSafe(Survivor));
+	return true;
+}
+
+bool AMultiplayTestGameMode::CanCommitLevelTransition() const
+{
+	TArray<EMultiplayTestSurvivorState> SurvivorStates;
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair :
+		MatchPlayerRecords)
+	{
+		if (Pair.Value.Role == TEXT("Survivor"))
+		{
+			SurvivorStates.Add(Pair.Value.SurvivorState);
+		}
+	}
+	return EvaluateLevelTransition(SurvivorStates).CanTravel();
+}
+
+void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair :
+		MatchPlayerRecords)
+	{
+		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+		{
+			const bool bSpawnInNextLevel = Pair.Value.Role == TEXT("Survivor") &&
+				Pair.Value.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting;
+			Controller->PrepareLevelTransitionCarryover(bSpawnInNextLevel);
+		}
+	}
 }
 
 void AMultiplayTestGameMode::CheckForMatchCompletion()
@@ -1496,12 +1943,19 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 	AMannequinAICharacter* PreviousManuallyControlledMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
 	if (IsValid(PreviousManuallyControlledMannequin))
 	{
+		// 직접 조작 중 Z/X/C 명령을 지정하지 않았다면, 손을 뗀 마네킹은 그대로 정지한다.
+		if (!RequestingController->bManualMannequinCommandIssued)
+		{
+			PreviousManuallyControlledMannequin->SetMultiplayCommand(EMultiplayMannequinCommand::HoldPosition);
+			MultiplayerPatrolTargets.Remove(PreviousManuallyControlledMannequin);
+		}
+		RequestingController->bManualMannequinCommandIssued = false;
 		PreviousManuallyControlledMannequin->SetManualControlEnabled(false);
-		PreviousManuallyControlledMannequin->ActivatePostPossessionCommand();
 		RequestingController->UnPossess();
 		UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 			TEXT("MannequinPlayerUnPossess"), FString::Printf(TEXT("Controller=%s; NextSlot=%d; Command=%s"),
-				*GetNameSafe(RequestingController), Slot, *PreviousManuallyControlledMannequin->GetDiagnosticCommandState(GetWorld()->GetTimeSeconds())),
+				*GetNameSafe(RequestingController), Slot,
+				*UEnum::GetValueAsString(PreviousManuallyControlledMannequin->GetMultiplayCommand())),
 			PreviousManuallyControlledMannequin);
 		QueueDefaultAIControllerRestore(PreviousManuallyControlledMannequin);
 	}
@@ -1543,6 +1997,10 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 
 	if (RequestingController->GetPawn() == TargetMannequin)
 	{
+		if (!TargetMannequin->IsManualControlEnabled())
+		{
+			RequestingController->bManualMannequinCommandIssued = false;
+		}
 		TargetMannequin->SetManualControlEnabled(true);
 		return true;
 	}
@@ -1562,6 +2020,7 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 	}
 
 	TargetMannequin->SetManualControlEnabled(true);
+	RequestingController->bManualMannequinCommandIssued = false;
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 		TEXT("MannequinPlayerPossess"), FString::Printf(TEXT("Controller=%s; Slot=%d"), *GetNameSafe(RequestingController), TargetMannequin->GetControlSlot()), TargetMannequin);
 	TargetMannequin->ForceNetUpdate();
@@ -1571,26 +2030,73 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 	return true;
 }
 
-bool AMultiplayTestGameMode::TryQueuePostPossessionChaseCommand(AMultiplayTestPlayerController* RequestingController)
+bool AMultiplayTestGameMode::TryIssueMannequinCommand(
+	AMultiplayTestPlayerController* RequestingController,
+	const EMultiplayMannequinCommand Command)
 {
-	if (!HasAuthority() || !IsValid(RequestingController) || !IsMannequinController(RequestingController))
+	if (!HasAuthority() || !IsMannequinController(RequestingController))
 	{
 		return false;
 	}
 
-	AMannequinAICharacter* ManuallyControlledMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
-	if (!IsValid(ManuallyControlledMannequin) || !ManuallyControlledMannequin->IsManualControlEnabled())
+	AMannequinAICharacter* Target = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
+	if (!IsValid(Target) || !Target->IsManualControlEnabled() ||
+		Target != RequestingController->GetViewedMannequin())
 	{
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
-			TEXT("Rejected post-possession chase command from %s because manual control is not active."),
+			TEXT("Rejected mannequin command because %s is not directly controlling its viewed mannequin."),
 			*GetNameSafe(RequestingController));
 		return false;
 	}
 
-	const bool bQueued = ManuallyControlledMannequin->QueuePostPossessionChaseCommand();
-	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), bQueued ? EProjectProject01DiagnosticSeverity::Normal : EProjectProject01DiagnosticSeverity::Warning,
-		TEXT("MannequinCommandQueued"), FString::Printf(TEXT("Controller=%s; Queued=%s"), *GetNameSafe(RequestingController), bQueued ? TEXT("true") : TEXT("false")), ManuallyControlledMannequin);
-	return bQueued;
+	// 직접 조작은 계속 유지하고, 빙의 해제 뒤 AI가 이어서 수행할 명령만 저장한다.
+	Target->SetMultiplayCommand(Command);
+	MultiplayerPatrolTargets.Remove(Target);
+	RequestingController->bManualMannequinCommandIssued = true;
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+		TEXT("MultiplayerMannequinCommand"),
+		FString::Printf(TEXT("Controller=%s; Slot=%d; Command=%s"),
+			*GetNameSafe(RequestingController), Target->GetControlSlot(), *UEnum::GetValueAsString(Command)), Target);
+	return true;
+}
+
+bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerController* RequestingController)
+{
+	const AMannequinAICharacter* Controlled = IsValid(RequestingController)
+		? Cast<AMannequinAICharacter>(RequestingController->GetPawn()) : nullptr;
+	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
+		!IsValid(Controlled) || !Controlled->IsManualControlEnabled())
+	{
+		return false;
+	}
+	bool bChangedAny = false;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		AMannequinAICharacter* Mannequin = *It;
+		if (IsValid(Mannequin) &&
+			Mannequin->GetMultiplayCommand() == EMultiplayMannequinCommand::FollowMannequinPlayer)
+		{
+			Mannequin->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);
+			MultiplayerPatrolTargets.Remove(Mannequin);
+			bChangedAny = true;
+		}
+	}
+	return bChangedAny;
+}
+
+bool AMultiplayTestGameMode::ToggleMannequinCatchDamage(AMultiplayTestPlayerController* RequestingController)
+{
+	const AMannequinAICharacter* Controlled = IsValid(RequestingController)
+		? Cast<AMannequinAICharacter>(RequestingController->GetPawn()) : nullptr;
+	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
+		!IsValid(Controlled) || !Controlled->IsManualControlEnabled())
+	{
+		return bMannequinCatchDamageEnabled;
+	}
+	bMannequinCatchDamageEnabled = !bMannequinCatchDamageEnabled;
+	UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("Mannequin catch damage is now %s."),
+		bMannequinCatchDamageEnabled ? TEXT("enabled") : TEXT("disabled"));
+	return bMannequinCatchDamageEnabled;
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const
@@ -1711,7 +2217,9 @@ void AMultiplayTestGameMode::AssignRandomInitialMannequinView(
 
 bool AMultiplayTestGameMode::IsMannequinController(const AMultiplayTestPlayerController* Controller) const
 {
-	return IsValid(Controller) && MannequinController.Get() == Controller;
+	return IsValid(Controller) &&
+		(MannequinController.Get() == Controller ||
+		 Controller->GetAuthenticatedRole().Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase));
 }
 
 bool AMultiplayTestGameMode::IsSurvivorController(const APlayerController* Controller) const

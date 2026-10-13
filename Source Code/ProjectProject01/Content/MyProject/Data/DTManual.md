@@ -88,7 +88,7 @@ AI 상태와 플레이어가 조종 중인 상태 모두의 마네킹 `Character
 
 `PostPossessionCommandDurationSeconds`
 
-마네킹 플레이어가 다른 마네킹으로 옮겨 이전 마네킹의 빙의가 해제된 뒤, 기록된 명령을 기존 AI보다 우선하는 시간이다. 단위는 초이며 기본값은 5다. 직접 조작 중 `E`를 눌렀다면 이 시간 동안 `RoamingOuterRadius` 안의 가장 가까운 생존자를 추격하고, `E`를 누르지 않았다면 같은 시간 동안 제자리에서 정지한다. 시간이 끝나면 기존 AI 행동 로직으로 복귀한다.
+싱글용 기존 AI에서 빙의 해제 직후 명령을 유지하는 시간이다. MultiplayTest는 이 값을 사용하지 않고 레벨이 바뀌거나 다른 명령을 받을 때까지 명령을 영구 유지한다.
 
 `DirectChaseHalfAngleDegrees`
 
@@ -109,6 +109,22 @@ SurvivorVisionCheckIntervalSeconds 시야 정지 판정 주기. 낮을수록 즉
 DetectionMargin	마네킹 신체 외곽까지 시야 감지 여유
 
 VisionFovMarginMultiplier	카메라 FOV보다 약간 넓게 “봤다”고 판정하는 보정값
+
+### MultiplayTest 전용 AI
+
+MultiplayTest에서는 위 싱글용 Behavior Tree 추적 알고리즘을 실행하지 않는다. 서버 게임모드가 별도 상태 머신을 관리하고 UE Navigation의 경로 탐색을 통해 이동시킨다. `DirectChaseRadius`는 멀티에서도 각 마네킹의 빨간 감지 원 반경으로 공유한다.
+
+마네킹 플레이어는 번호 키로 대상을 고르고 `V`로 직접 조작한다. 직접 조작 중 `Z`(정찰), `X`(범위 추격), `C`(마네킹 플레이어 추종) 중 하나를 지정하면 빙의가 해제된 뒤 해당 마네킹의 AI가 그 명령을 맵이 바뀔 때까지 유지한다. 명령 없이 빙의가 해제되면 정지한다. 정지를 제외한 저장 명령을 수행하던 중 생존자가 자기 감지 범위에 들어오면 A* 추적이 우선되고, 범위 밖으로 나가면 저장 명령으로 복귀한다. `E/R/T`는 생존자 핑 전용이다. 마네킹의 머리 위 슬롯 번호는 마네킹 플레이어의 로컬 화면에만 표시된다.
+
+`MultiplayerPatrolRadius` 시작 위치를 중심으로 정찰 목적지를 선택하는 반경
+
+`MultiplayerFollowDistance` 마네킹 플레이어와 추종 마네킹의 기본 거리
+
+`MultiplayerFollowSeparation` 추종 마네킹끼리 유지하려는 최소 이격 거리
+
+`MultiplayerRepathInterval` 감지 대상과 A* 경로를 다시 계산하는 주기
+
+`MultiplayerAcceptanceRadius` A* 이동 목표 도달 허용 반경
 
 ## Player: 심박수
 

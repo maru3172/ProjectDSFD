@@ -65,6 +65,24 @@ UProjectProject01GameUserSettings* UProjectProject01GameUserSettings::Get()
 	return IsValid(GEngine) ? Cast<UProjectProject01GameUserSettings>(GEngine->GetGameUserSettings()) : nullptr;
 }
 
+void UProjectProject01GameUserSettings::MarkSurvivorGuideSeen()
+{
+	if (!bHasSeenSurvivorGuide)
+	{
+		bHasSeenSurvivorGuide = true;
+		SaveSettings();
+	}
+}
+
+void UProjectProject01GameUserSettings::MarkMannequinGuideSeen()
+{
+	if (!bHasSeenMannequinGuide)
+	{
+		bHasSeenMannequinGuide = true;
+		SaveSettings();
+	}
+}
+
 void UProjectProject01GameUserSettings::SetToDefaults()
 {
 	Super::SetToDefaults();
@@ -94,9 +112,9 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	SprintKeyName = EKeys::LeftShift.GetFName();
 	VoicePushToTalkKeyName = EKeys::F2.GetFName();
 	VoiceToggleKeyName = EKeys::U.GetFName();
-	HelpPingKeyName = EKeys::Z.GetFName();
-	DangerPingKeyName = EKeys::X.GetFName();
-	LocationPingKeyName = EKeys::C.GetFName();
+	HelpPingKeyName = EKeys::E.GetFName();
+	DangerPingKeyName = EKeys::R.GetFName();
+	LocationPingKeyName = EKeys::T.GetFName();
 	SetFrameRateLimit(120.0f);
 	SetResolutionScaleValueEx(100.0f);
 	SetOverallScalabilityLevel(3);
@@ -148,6 +166,16 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 	{
 		ColorVisionMode = EProjectProject01ColorVisionMode::Normal;
 	}
+	// 기존 빌드의 기본 생존자 핑 Z/X/C만 새 기본 E/R/T로 한 번 이동한다.
+	// 사용자가 다른 키로 직접 지정한 조합은 보존한다.
+	if (HelpPingKeyName == EKeys::Z.GetFName() &&
+		DangerPingKeyName == EKeys::X.GetFName() &&
+		LocationPingKeyName == EKeys::C.GetFName())
+	{
+		HelpPingKeyName = EKeys::E.GetFName();
+		DangerPingKeyName = EKeys::R.GetFName();
+		LocationPingKeyName = EKeys::T.GetFName();
+	}
 
 	TArray<FKey> Keys = {
 		GetValidatedKey(MoveForwardKeyName, EKeys::W),
@@ -157,9 +185,9 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 		GetValidatedKey(SprintKeyName, EKeys::LeftShift),
 		GetValidatedKey(VoicePushToTalkKeyName, EKeys::F2),
 		GetValidatedKey(VoiceToggleKeyName, EKeys::U),
-		GetValidatedKey(HelpPingKeyName, EKeys::Z),
-		GetValidatedKey(DangerPingKeyName, EKeys::X),
-		GetValidatedKey(LocationPingKeyName, EKeys::C)
+		GetValidatedKey(HelpPingKeyName, EKeys::E),
+		GetValidatedKey(DangerPingKeyName, EKeys::R),
+		GetValidatedKey(LocationPingKeyName, EKeys::T)
 	};
 	TSet<FKey> UniqueKeys;
 	bool bHasInvalidOrDuplicate = false;
@@ -183,9 +211,9 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 		SprintKeyName = EKeys::LeftShift.GetFName();
 		VoicePushToTalkKeyName = EKeys::F2.GetFName();
 		VoiceToggleKeyName = EKeys::U.GetFName();
-		HelpPingKeyName = EKeys::Z.GetFName();
-		DangerPingKeyName = EKeys::X.GetFName();
-		LocationPingKeyName = EKeys::C.GetFName();
+		HelpPingKeyName = EKeys::E.GetFName();
+		DangerPingKeyName = EKeys::R.GetFName();
+		LocationPingKeyName = EKeys::T.GetFName();
 	}
 }
 
@@ -279,9 +307,9 @@ FKey UProjectProject01GameUserSettings::GetMoveRightKey() const { return GetVali
 FKey UProjectProject01GameUserSettings::GetSprintKey() const { return GetValidatedKey(SprintKeyName, EKeys::LeftShift); }
 FKey UProjectProject01GameUserSettings::GetVoicePushToTalkKey() const { return GetValidatedKey(VoicePushToTalkKeyName, EKeys::F2); }
 FKey UProjectProject01GameUserSettings::GetVoiceToggleKey() const { return GetValidatedKey(VoiceToggleKeyName, EKeys::U); }
-FKey UProjectProject01GameUserSettings::GetHelpPingKey() const { return GetValidatedKey(HelpPingKeyName, EKeys::Z); }
-FKey UProjectProject01GameUserSettings::GetDangerPingKey() const { return GetValidatedKey(DangerPingKeyName, EKeys::X); }
-FKey UProjectProject01GameUserSettings::GetLocationPingKey() const { return GetValidatedKey(LocationPingKeyName, EKeys::C); }
+FKey UProjectProject01GameUserSettings::GetHelpPingKey() const { return GetValidatedKey(HelpPingKeyName, EKeys::E); }
+FKey UProjectProject01GameUserSettings::GetDangerPingKey() const { return GetValidatedKey(DangerPingKeyName, EKeys::R); }
+FKey UProjectProject01GameUserSettings::GetLocationPingKey() const { return GetValidatedKey(LocationPingKeyName, EKeys::T); }
 
 void UProjectProject01GameUserSettings::EnsureRuntimeAudioObjects()
 {

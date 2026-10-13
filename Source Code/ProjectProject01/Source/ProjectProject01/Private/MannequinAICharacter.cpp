@@ -5,6 +5,8 @@
 
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/TextRenderComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -14,6 +16,8 @@
 #include "InputMappingContext.h"
 #include "Net/UnrealNetwork.h"
 #include "ProjectProject01TuningData.h"
+#include "MultiplayTestGameMode.h"
+#include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -32,6 +36,16 @@ AMannequinAICharacter::AMannequinAICharacter()
 	FootstepSFXComponent = CreateDefaultSubobject<UFootstepSynthComponent>(TEXT("Footstep SFX Component"));
 	FootstepSFXComponent->SetupAttachment(RootComponent);
 	FootstepSFXComponent->Configure(EProjectProject01FootstepStyle::MarblePlastic, 0.9f, false);
+	ControlSlotLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Control Slot Label"));
+	ControlSlotLabel->SetupAttachment(RootComponent);
+	ControlSlotLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 125.0f));
+	ControlSlotLabel->SetHorizontalAlignment(EHTA_Center);
+	ControlSlotLabel->SetVerticalAlignment(EVRTA_TextCenter);
+	ControlSlotLabel->SetWorldSize(42.0f);
+	ControlSlotLabel->SetTextRenderColor(FColor(255, 64, 64));
+	ControlSlotLabel->SetCastShadow(false);
+	ControlSlotLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ControlSlotLabel->SetVisibility(false);
 
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> MannequinInputContext(
 		TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
@@ -63,12 +77,51 @@ void AMannequinAICharacter::SetControlSlotForGameMode(const int32 InControlSlot)
 		return;
 	}
 	ControlSlot = FMath::Clamp(InControlSlot, -1, 9);
+	RefreshControlSlotLabelVisibility();
+	ForceNetUpdate();
+}
+
+void AMannequinAICharacter::RefreshControlSlotLabelVisibility()
+{
+	if (!IsValid(ControlSlotLabel) || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	bool bVisibleToLocalMannequinPlayer = false;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		const AMultiplayTestPlayerController* LocalController = Cast<AMultiplayTestPlayerController>(It->Get());
+		if (IsValid(LocalController) && LocalController->IsLocalController() &&
+			IsValid(LocalController->GetViewedMannequin()))
+		{
+			bVisibleToLocalMannequinPlayer = true;
+			break;
+		}
+	}
+
+	ControlSlotLabel->SetText(ControlSlot >= 0 ? FText::AsNumber(ControlSlot) : FText::GetEmpty());
+	ControlSlotLabel->SetVisibility(bVisibleToLocalMannequinPlayer && ControlSlot >= 0);
+}
+
+void AMannequinAICharacter::OnRep_ControlSlot()
+{
+	RefreshControlSlotLabelVisibility();
+}
+
+void AMannequinAICharacter::SetMultiplayPatrolOriginForGameMode(const FVector& InOrigin)
+{
+	if (HasAuthority() && !InOrigin.ContainsNaN())
+	{
+		MultiplayPatrolOrigin = InOrigin;
+	}
 }
 
 // Called when the game starts or when spawned
 void AMannequinAICharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	MultiplayPatrolOrigin = GetActorLocation();
 
 	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
 	{
@@ -94,6 +147,19 @@ void AMannequinAICharacter::Tick(float DeltaTime)
 	if (HasAuthority())
 	{
 		RemoveSeparatedCatchContacts();
+	}
+	if (IsValid(ControlSlotLabel) && ControlSlotLabel->IsVisible())
+	{
+		if (const APlayerController* LocalController = GetWorld()->GetFirstPlayerController();
+			IsValid(LocalController) && IsValid(LocalController->PlayerCameraManager))
+		{
+			const FVector ToCamera = LocalController->PlayerCameraManager->GetCameraLocation()
+				- ControlSlotLabel->GetComponentLocation();
+			if (!ToCamera.IsNearlyZero())
+			{
+				ControlSlotLabel->SetWorldRotation(ToCamera.Rotation());
+			}
+		}
 	}
 }
 
@@ -225,6 +291,17 @@ void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
 	ForceNetUpdate();
 }
 
+void AMannequinAICharacter::SetMultiplayCommand(const EMultiplayMannequinCommand NewCommand)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	MultiplayCommand = NewCommand;
+	ForceNetUpdate();
+}
+
 bool AMannequinAICharacter::QueuePostPossessionChaseCommand()
 {
 	if (!HasAuthority() || !bManualControlEnabled)
@@ -294,6 +371,12 @@ void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)
 
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(OtherActor);
 	if (!IsValid(PlayerCharacter) || PlayerCharacter->IsGameOver())
+	{
+		return;
+	}
+	if (const AMultiplayTestGameMode* MultiplayerGameMode = GetWorld()
+		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr;
+		IsValid(MultiplayerGameMode) && !MultiplayerGameMode->IsMannequinCatchDamageEnabled())
 	{
 		return;
 	}
@@ -415,6 +498,8 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
 	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
+	DOREPLIFETIME(AMannequinAICharacter, MultiplayCommand);
+	DOREPLIFETIME(AMannequinAICharacter, ControlSlot);
 }
 
 // 발소리 함수

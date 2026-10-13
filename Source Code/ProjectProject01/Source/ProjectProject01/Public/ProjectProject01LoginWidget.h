@@ -13,6 +13,51 @@
 #include "ProjectProject01LoginWidget.generated.h"
 
 class UProjectProject01SettingsWidget;
+class UProjectProject01SessionMenuWidget;
+
+/** 역할별 목표와 조작키를 보여주는 전체 화면 클릭 종료 가이드입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01GameGuideWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void Configure(bool bInMannequinRole, bool bInMultiplayer,
+		bool bInReturnToSessionMenu, UProjectProject01SessionMenuWidget* InReturnMenu = nullptr);
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+
+private:
+	UFUNCTION()
+	void HandleScreenClicked();
+
+	void BuildWidgetTree();
+	void RefreshGuideText();
+	void CloseGuide();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ScreenButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> TitleText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> GoalText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> ControlsText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01SessionMenuWidget> ReturnMenu;
+
+	bool bMannequinRole = false;
+	bool bMultiplayer = true;
+	bool bReturnToSessionMenu = false;
+};
 
 /** 경기 중 음성 채널 연결 및 마이크 송신 상태를 우측 상단에 표시합니다. */
 UCLASS()
@@ -328,6 +373,9 @@ private:
 	void HandleSettingsClicked();
 
 	UFUNCTION()
+	void HandleGameRulesClicked();
+
+	UFUNCTION()
 	void HandleQuitGameClicked();
 
 	UFUNCTION()
@@ -397,6 +445,9 @@ private:
 	TObjectPtr<class UButton> SettingsButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UButton> GameRulesButton;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToTitleButton;
 
 	UPROPERTY(Transient)
@@ -410,6 +461,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01GameGuideWidget> GameGuideWidget;
 
 	bool bMultiplayer = false;
 	bool bBusy = false;
@@ -711,9 +765,9 @@ private:
 	FKey PendingSprintKey = EKeys::LeftShift;
 	FKey PendingVoicePushToTalkKey = EKeys::F2;
 	FKey PendingVoiceToggleKey = EKeys::U;
-	FKey PendingHelpPingKey = EKeys::Z;
-	FKey PendingDangerPingKey = EKeys::X;
-	FKey PendingLocationPingKey = EKeys::C;
+	FKey PendingHelpPingKey = EKeys::E;
+	FKey PendingDangerPingKey = EKeys::R;
+	FKey PendingLocationPingKey = EKeys::T;
 	EBindingTarget BindingTarget = EBindingTarget::None;
 	bool bRefreshingControls = false;
 	bool bAwaitingVideoConfirmation = false;

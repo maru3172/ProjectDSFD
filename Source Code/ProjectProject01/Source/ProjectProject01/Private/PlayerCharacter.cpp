@@ -463,6 +463,31 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 	}
 
 	RegisterRuntimeSprintMapping(InputSubsystem);
+
+	// 생존자 역할 가이드는 이 PC에서 최초 한 번만 자동 표시한다.
+	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	if (IsValid(Settings) && !Settings->HasSeenSurvivorGuide())
+	{
+		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
+			PlayerController, UProjectProject01GameGuideWidget::StaticClass());
+		if (ensureMsgf(IsValid(Guide), TEXT("Could not create the first survivor guide.")))
+		{
+			const bool bIsMultiplayer = GetNetMode() != NM_Standalone;
+			Settings->MarkSurvivorGuideSeen();
+			Guide->Configure(false, bIsMultiplayer, false);
+			Guide->AddToViewport(700);
+			if (!bIsMultiplayer)
+			{
+				UGameplayStatics::SetGamePaused(this, true);
+			}
+			PlayerController->bShowMouseCursor = true;
+			FInputModeGameAndUI GuideInput;
+			GuideInput.SetWidgetToFocus(Guide->TakeWidget());
+			GuideInput.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			GuideInput.SetHideCursorDuringCapture(false);
+			PlayerController->SetInputMode(GuideInput);
+		}
+	}
 }
 
 void APlayerCharacter::ApplyUserInputSettings()

@@ -26,6 +26,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "Kismet/GameplayStatics.h"
+#include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
 #include "MultiplayTestPlayerController.h"
 #include "ProjectProject01GameInstance.h"
@@ -1465,6 +1466,193 @@ void UProjectProject01LoginWidget::EnterLobby()
 	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")));
 }
 
+bool UProjectProject01GameGuideWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	SetIsFocusable(true);
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01GameGuideWidget::Configure(
+	const bool bInMannequinRole,
+	const bool bInMultiplayer,
+	const bool bInReturnToSessionMenu,
+	UProjectProject01SessionMenuWidget* InReturnMenu)
+{
+	bMannequinRole = bInMannequinRole;
+	bMultiplayer = bInMultiplayer;
+	bReturnToSessionMenu = bInReturnToSessionMenu;
+	ReturnMenu = InReturnMenu;
+	RefreshGuideText();
+}
+
+void UProjectProject01GameGuideWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	if (IsValid(ScreenButton))
+	{
+		ScreenButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01GameGuideWidget::HandleScreenClicked);
+	}
+	RefreshGuideText();
+	SetKeyboardFocus();
+}
+
+void UProjectProject01GameGuideWidget::NativeDestruct()
+{
+	if (IsValid(ScreenButton))
+	{
+		ScreenButton->OnClicked.RemoveDynamic(this, &UProjectProject01GameGuideWidget::HandleScreenClicked);
+	}
+	Super::NativeDestruct();
+}
+
+FReply UProjectProject01GameGuideWidget::NativeOnKeyDown(
+	const FGeometry& InGeometry,
+	const FKeyEvent& InKeyEvent)
+{
+	if (InKeyEvent.GetKey() == EKeys::Escape)
+	{
+		CloseGuide();
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+}
+
+void UProjectProject01GameGuideWidget::HandleScreenClicked()
+{
+	CloseGuide();
+}
+
+void UProjectProject01GameGuideWidget::CloseGuide()
+{
+	APlayerController* PlayerController = GetOwningPlayer();
+	if (bReturnToSessionMenu && IsValid(ReturnMenu))
+	{
+		ReturnMenu->SetVisibility(ESlateVisibility::Visible);
+		if (IsValid(PlayerController))
+		{
+			PlayerController->bShowMouseCursor = true;
+			FInputModeGameAndUI InputMode;
+			InputMode.SetWidgetToFocus(ReturnMenu->TakeWidget());
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			InputMode.SetHideCursorDuringCapture(false);
+			PlayerController->SetInputMode(InputMode);
+			ReturnMenu->SetKeyboardFocus();
+		}
+	}
+	else
+	{
+		if (!bMultiplayer)
+		{
+			UGameplayStatics::SetGamePaused(this, false);
+		}
+		if (IsValid(PlayerController))
+		{
+			PlayerController->bShowMouseCursor = false;
+			PlayerController->SetInputMode(FInputModeGameOnly());
+		}
+	}
+	RemoveFromParent();
+}
+
+void UProjectProject01GameGuideWidget::RefreshGuideText()
+{
+	if (!IsValid(TitleText) || !IsValid(GoalText) || !IsValid(ControlsText))
+	{
+		return;
+	}
+
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const auto KeyName = [](const FKey& Key)
+	{
+		return Key.IsValid() ? Key.GetDisplayName().ToString() : FString(TEXT("미지정"));
+	};
+
+	if (bMannequinRole)
+	{
+		TitleText->SetText(FProjectProject01Localization::Text(TEXT("마네킹 플레이어 게임 규칙")));
+		GoalText->SetText(FProjectProject01Localization::Text(
+			TEXT("목표: 생존자 전원을 붙잡으세요. 생존자가 보고 있는 마네킹은 움직이지 못합니다. 각 마네킹은 자기 감지 범위에서 생존자를 발견하면 저장된 명령보다 추적을 우선하며, 놓치면 기존 명령으로 복귀합니다.")));
+		ControlsText->SetText(FProjectProject01Localization::Text(
+			TEXT("조작키\n"
+				"0~9 : 머리 위 번호와 같은 마네킹 시점 선택\n"
+				"V : 선택한 마네킹 직접 조작\n"
+				"Z : 직접 조작 중 정찰 명령 저장\n"
+				"X : 직접 조작 중 감지 범위 추격 명령 저장\n"
+				"C : 직접 조작 중 마네킹 플레이어 추종 명령 저장\n"
+				"Q : 추종 중인 마네킹을 정찰 상태로 초기화\n"
+				"B : 접촉 시 생존자 데스카운트 소모 켜기/끄기\n"
+				"W/A/S/D : 직접 조작 이동 | 마우스 : 시점\n"
+				"ESC : 게임 메뉴")));
+	}
+	else
+	{
+		const FKey Sprint = IsValid(Settings) ? Settings->GetSprintKey() : EKeys::LeftShift;
+		const FKey Help = IsValid(Settings) ? Settings->GetHelpPingKey() : EKeys::E;
+		const FKey Danger = IsValid(Settings) ? Settings->GetDangerPingKey() : EKeys::R;
+		const FKey Location = IsValid(Settings) ? Settings->GetLocationPingKey() : EKeys::T;
+		const FKey PushToTalk = IsValid(Settings) ? Settings->GetVoicePushToTalkKey() : EKeys::F2;
+		const FKey VoiceToggle = IsValid(Settings) ? Settings->GetVoiceToggleKey() : EKeys::U;
+		TitleText->SetText(FProjectProject01Localization::Text(TEXT("생존자 플레이어 게임 규칙")));
+		GoalText->SetText(FProjectProject01Localization::Text(
+			TEXT("목표: 살아 있는 생존자들과 협력해 탈출하세요. 마네킹을 시야에 두면 움직임을 멈출 수 있습니다. 먼저 탈출하거나 탈락하면 살아 있는 생존자를 관전합니다.")));
+		ControlsText->SetText(FProjectProject01Localization::Text(FString::Printf(
+			TEXT("조작키\n"
+				"W/A/S/D : 이동 | 마우스 : 시점\n"
+				"%s : 달리기\n"
+				"%s : 도움 핑 | %s : 위험 핑 | %s : 위치 핑\n"
+				"%s : 누르는 동안 음성 송신 | %s : 음성 송신 고정 전환\n"
+				"좌/우 방향키 : 관전 대상 전환\n"
+				"ESC : 게임 메뉴"),
+			*KeyName(Sprint), *KeyName(Help), *KeyName(Danger), *KeyName(Location),
+			*KeyName(PushToTalk), *KeyName(VoiceToggle))));
+	}
+}
+
+void UProjectProject01GameGuideWidget::BuildWidgetTree()
+{
+	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Game guide widget has no WidgetTree.")))
+	{
+		return;
+	}
+
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = Overlay;
+	ScreenButton = WidgetTree->ConstructWidget<UButton>();
+	ScreenButton->SetBackgroundColor(FLinearColor(0.01f, 0.01f, 0.015f, 0.94f));
+	if (UOverlaySlot* ScreenSlot = Overlay->AddChildToOverlay(ScreenButton))
+	{
+		ScreenSlot->SetHorizontalAlignment(HAlign_Fill);
+		ScreenSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	UBorder* GuidePanel = WidgetTree->ConstructWidget<UBorder>();
+	GuidePanel->SetBrushColor(FLinearColor(0.88f, 0.88f, 0.88f, 0.98f));
+	GuidePanel->SetPadding(FMargin(24.0f));
+	GuidePanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	if (UOverlaySlot* PanelSlot = Overlay->AddChildToOverlay(GuidePanel))
+	{
+		PanelSlot->SetHorizontalAlignment(HAlign_Center);
+		PanelSlot->SetVerticalAlignment(VAlign_Center);
+		PanelSlot->SetPadding(FMargin(60.0f));
+	}
+
+	UVerticalBox* Guide = WidgetTree->ConstructWidget<UVerticalBox>();
+	GuidePanel->AddChild(Guide);
+	TitleText = ProjectProject01LoginUI::AddLabel(WidgetTree, Guide, TEXT("게임 규칙"), 30.0f);
+	GoalText = ProjectProject01LoginUI::AddLabel(WidgetTree, Guide, TEXT("목표"), 18.0f);
+	GoalText->SetAutoWrapText(true);
+	ControlsText = ProjectProject01LoginUI::AddLabel(WidgetTree, Guide, TEXT("조작키"), 17.0f);
+	ControlsText->SetAutoWrapText(true);
+	UTextBlock* CloseHint = ProjectProject01LoginUI::AddLabel(
+		WidgetTree, Guide, TEXT("화면 아무 곳이나 클릭하면 닫힙니다."), 15.0f);
+	CloseHint->SetJustification(ETextJustify::Center);
+}
+
 bool UProjectProject01SessionMenuWidget::Initialize()
 {
 	if (!Super::Initialize())
@@ -1554,6 +1742,7 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 	}
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
 	if (IsValid(SettingsButton)) SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
+	if (IsValid(GameRulesButton)) GameRulesButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleGameRulesClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
 
@@ -1603,6 +1792,7 @@ void UProjectProject01SessionMenuWidget::NativeDestruct()
 	}
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
 	if (IsValid(SettingsButton)) SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
+	if (IsValid(GameRulesButton)) GameRulesButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleGameRulesClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
 
@@ -1899,6 +2089,35 @@ void UProjectProject01SessionMenuWidget::HandleSettingsClicked()
 	SettingsWidget->AddToViewport(600);
 }
 
+void UProjectProject01SessionMenuWidget::HandleGameRulesClicked()
+{
+	if (bBusy || !IsValid(GetOwningPlayer()))
+	{
+		return;
+	}
+
+	const AMultiplayTestPlayerController* MultiplayerController =
+		Cast<AMultiplayTestPlayerController>(GetOwningPlayer());
+	const bool bShowMannequinGuide = bMultiplayer && IsValid(MultiplayerController) &&
+		IsValid(MultiplayerController->GetViewedMannequin());
+	GameGuideWidget = CreateWidget<UProjectProject01GameGuideWidget>(
+		GetOwningPlayer(), UProjectProject01GameGuideWidget::StaticClass());
+	if (!ensureMsgf(IsValid(GameGuideWidget), TEXT("Session menu could not create game guide widget.")))
+	{
+		return;
+	}
+
+	GameGuideWidget->Configure(bShowMannequinGuide, bMultiplayer, true, this);
+	SetVisibility(ESlateVisibility::Collapsed);
+	GameGuideWidget->AddToViewport(600);
+	GetOwningPlayer()->bShowMouseCursor = true;
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(GameGuideWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	GetOwningPlayer()->SetInputMode(InputMode);
+}
+
 void UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked()
 {
 	if (bBusy)
@@ -2134,6 +2353,7 @@ void UProjectProject01SessionMenuWidget::SetBusy(
 	if (IsValid(LoadSaveCancelButton)) LoadSaveCancelButton->SetIsEnabled(!bBusy);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(!bBusy);
 	if (IsValid(SettingsButton)) SettingsButton->SetIsEnabled(!bBusy);
+	if (IsValid(GameRulesButton)) GameRulesButton->SetIsEnabled(!bBusy);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(!bBusy);
 	if (IsValid(QuitGameButton)) QuitGameButton->SetIsEnabled(!bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
@@ -2186,6 +2406,7 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 		WidgetTree, Menu, TEXT("다른 저장소 불러오기"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("방으로 돌아가기"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
+	GameRulesButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 규칙"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 
@@ -3135,9 +3356,9 @@ void UProjectProject01SettingsWidget::SetPendingDefaults()
 	PendingSprintKey = EKeys::LeftShift;
 	PendingVoicePushToTalkKey = EKeys::F2;
 	PendingVoiceToggleKey = EKeys::U;
-	PendingHelpPingKey = EKeys::Z;
-	PendingDangerPingKey = EKeys::X;
-	PendingLocationPingKey = EKeys::C;
+	PendingHelpPingKey = EKeys::E;
+	PendingDangerPingKey = EKeys::R;
+	PendingLocationPingKey = EKeys::T;
 	PendingDirectServerAddress.Reset();
 }
 

@@ -134,7 +134,12 @@ namespace ProjectProject01TuningEditor
 			TEXT("SurvivorVisionCheckIntervalSeconds"),
 			TEXT("SurvivorVisionHalfAngleDegrees"),
 			TEXT("DetectionMargin"),
-			TEXT("VisionFovMarginMultiplier")
+			TEXT("VisionFovMarginMultiplier"),
+			TEXT("MultiplayerPatrolRadius"),
+			TEXT("MultiplayerFollowDistance"),
+			TEXT("MultiplayerFollowSeparation"),
+			TEXT("MultiplayerRepathInterval"),
+			TEXT("MultiplayerAcceptanceRadius")
 		};
 		return FieldNames;
 	}

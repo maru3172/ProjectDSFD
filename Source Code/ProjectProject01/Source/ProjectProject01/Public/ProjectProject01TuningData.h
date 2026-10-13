@@ -196,6 +196,26 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Survivor Vision", meta = (ClampMin = "0.0"))
 	float VisionFovMarginMultiplier = 1.15f;
 
+	/** MultiplayTest 전용 정찰 중심 반경입니다. 싱글 AI에는 사용하지 않습니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.0", Units = "cm"))
+	float MultiplayerPatrolRadius = 1200.0f;
+
+	/** 마네킹 플레이어와 추종 마네킹 사이의 기본 거리입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.0", Units = "cm"))
+	float MultiplayerFollowDistance = 300.0f;
+
+	/** 추종 마네킹끼리 유지하려는 최소 이격 거리입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.0", Units = "cm"))
+	float MultiplayerFollowSeparation = 175.0f;
+
+	/** 멀티 AI가 목표와 경로를 다시 계산하는 주기입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.01", Units = "s"))
+	float MultiplayerRepathInterval = 0.2f;
+
+	/** 멀티 A* 이동을 완료했다고 판단하는 목표 허용 반경입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.0", Units = "cm"))
+	float MultiplayerAcceptanceRadius = 60.0f;
+
 	bool IsValidForApplication(FString& OutError) const;
 };
 

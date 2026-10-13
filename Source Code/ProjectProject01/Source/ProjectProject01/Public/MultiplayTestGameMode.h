@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "MultiplayTestPlayerController.h"
+#include "MultiplayMannequinTypes.h"
 #include "ProjectProject01GameInstance.h"
 #include "MultiplayTestGameMode.generated.h"
 
@@ -57,11 +58,21 @@ public:
 
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
 	bool TryEnableMannequinManualControl(class AMultiplayTestPlayerController* RequestingController);
-	bool TryQueuePostPossessionChaseCommand(class AMultiplayTestPlayerController* RequestingController);
+	bool TryIssueMannequinCommand(class AMultiplayTestPlayerController* RequestingController,
+		EMultiplayMannequinCommand Command);
+	bool TryResetFollowingMannequins(class AMultiplayTestPlayerController* RequestingController);
+	bool ToggleMannequinCatchDamage(class AMultiplayTestPlayerController* RequestingController);
+	bool IsMannequinCatchDamageEnabled() const { return bMannequinCatchDamageEnabled; }
 	void DeclareVoluntaryExit(class AMultiplayTestPlayerController* RequestingController);
 	void CycleSurvivorSpectator(class AMultiplayTestPlayerController* RequestingController, int32 Direction);
 	bool TryBroadcastSurvivorPing(class AMultiplayTestPlayerController* RequestingController,
 		EProjectProject01PingType Type, const FVector& Location);
+	/** 맵 이동 영역에 들어온 생존자를 관전 대기 상태로 확정합니다. */
+	bool MarkSurvivorWaitingForLevelTransition(class APlayerCharacter* Survivor);
+	/** 한 명 이상 대기 중이고 더 이상 활동 중인 생존자가 없으면 true입니다. */
+	bool CanCommitLevelTransition() const;
+	/** seamless travel 직전 각 컨트롤러의 다음 맵 스폰 여부와 암전을 준비합니다. */
+	void PrepareLevelTransitionTravel();
 
 	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
 	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
@@ -86,10 +97,20 @@ public:
 	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual void SetPlayerDefaults(APawn* PlayerPawn) override;
+	virtual void HandleSeamlessTravelPlayer(AController*& Controller) override;
 
 private:
 	void InitializeRoleSpawnPoints();
 	void InitializeMannequinSpawns();
+	void UpdateMultiplayerMannequinAI();
+	class APlayerCharacter* FindDetectedSurvivor(const class AMannequinAICharacter* Mannequin) const;
+	bool CanMannequinDetectSurvivor(const class AMannequinAICharacter* Mannequin,
+		const class APlayerCharacter* Survivor) const;
+	class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
+	void MoveMannequinToPatrolTarget(class AMannequinAICharacter* Mannequin, class AAIController* AIController);
+	void MoveMannequinToFollowTarget(class AMannequinAICharacter* Mannequin, class AAIController* AIController,
+		class AMannequinAICharacter* Leader, const TArray<class AMannequinAICharacter*>& Followers);
+	void StopMannequinAI(class AMannequinAICharacter* Mannequin) const;
 	TArray<class AProjectProject01RoleSpawnPoint*> GetRoleSpawnPoints(
 		EProjectProject01SpawnRole SpawnRole) const;
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;
@@ -118,6 +139,7 @@ private:
 		TWeakObjectPtr<class AMultiplayTestPlayerController> Controller,
 		bool bSucceeded);
 	void PresentFinalResults();
+	void FinalizeLevelTransitionArrivals();
 	FMultiplayTestMatchResult BuildFinalResult(
 		const class AMultiplayTestPlayerController* Controller,
 		const FMultiplayTestServerPlayerRecord& Record) const;
@@ -137,7 +159,17 @@ private:
 	float SurvivorVisionHalfAngleDegrees = 55.0f;
 
 	float SurvivorVisionCheckAccumulatorSeconds = 0.0f;
+	float MultiplayerAIUpdateAccumulatorSeconds = 0.0f;
 	float GameServerHeartbeatAccumulatorSeconds = 0.0f;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerPatrolTargets;
+	bool bMannequinCatchDamageEnabled = true;
+
+	float MultiplayerDetectionRadius = 500.0f;
+	float MultiplayerPatrolRadius = 1200.0f;
+	float MultiplayerFollowDistance = 300.0f;
+	float MultiplayerFollowSeparation = 175.0f;
+	float MultiplayerRepathInterval = 0.2f;
+	float MultiplayerAcceptanceRadius = 60.0f;
 
 	// 로비에서 무작위 배정된 한 명만 마네킹을 조종한다. 역할 옵션이 없는 기존 PIE는 첫 접속자를 사용한다.
 	TWeakObjectPtr<class AMultiplayTestPlayerController> MannequinController;

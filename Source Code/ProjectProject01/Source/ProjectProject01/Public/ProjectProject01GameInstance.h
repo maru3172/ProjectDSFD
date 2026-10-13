@@ -87,6 +87,10 @@ public:
 	FKey GetHelpPingKey() const;
 	FKey GetDangerPingKey() const;
 	FKey GetLocationPingKey() const;
+	bool HasSeenSurvivorGuide() const { return bHasSeenSurvivorGuide; }
+	bool HasSeenMannequinGuide() const { return bHasSeenMannequinGuide; }
+	void MarkSurvivorGuideSeen();
+	void MarkMannequinGuideSeen();
 
 	void SetMasterVolume(float Value) { MasterVolume = Value; }
 	void SetSFXVolume(float Value) { SFXVolume = Value; }
@@ -210,13 +214,20 @@ private:
 	FName VoiceToggleKeyName = TEXT("U");
 
 	UPROPERTY(Config)
-	FName HelpPingKeyName = TEXT("Z");
+	FName HelpPingKeyName = TEXT("E");
 
 	UPROPERTY(Config)
-	FName DangerPingKeyName = TEXT("X");
+	FName DangerPingKeyName = TEXT("R");
 
 	UPROPERTY(Config)
-	FName LocationPingKeyName = TEXT("C");
+	FName LocationPingKeyName = TEXT("T");
+
+	/** 역할별 최초 게임 가이드 표시 여부. 환경설정 초기화와 별도로 유지한다. */
+	UPROPERTY(Config)
+	bool bHasSeenSurvivorGuide = false;
+
+	UPROPERTY(Config)
+	bool bHasSeenMannequinGuide = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class USoundClass> RuntimeSFXSoundClass;
