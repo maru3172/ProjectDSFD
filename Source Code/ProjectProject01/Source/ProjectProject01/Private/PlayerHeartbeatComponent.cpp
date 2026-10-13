@@ -14,6 +14,7 @@
 #include "Materials/MaterialInterface.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "Sound/SoundAttenuation.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -126,9 +127,16 @@ UPainGroanSynthComponent::UPainGroanSynthComponent(const FObjectInitializer& Obj
 	bAutoActivate = false;
 	bAutoDestroy = false;
 	bStopWhenOwnerDestroyed = true;
-	bAllowSpatialization = false;
+	bAllowSpatialization = true;
 	bIsUISound = false;
-	NumChannels = 2;
+	NumChannels = 1;
+	bOverrideAttenuation = true;
+	AttenuationOverrides.bAttenuate = true;
+	AttenuationOverrides.bSpatialize = true;
+	AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
+	AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
+	AttenuationOverrides.AttenuationShapeExtents = FVector(250.0f, 0.0f, 0.0f);
+	AttenuationOverrides.FalloffDistance = 2500.0f;
 }
 
 void UPainGroanSynthComponent::TriggerPain(const bool bFatal)
@@ -150,7 +158,7 @@ void UPainGroanSynthComponent::TriggerPain(const bool bFatal)
 
 bool UPainGroanSynthComponent::Init(int32& SampleRate)
 {
-	NumChannels = 2;
+	NumChannels = 1;
 	SynthSampleRate = FMath::Max(SampleRate, 8000);
 	VoiceFrameIndex = 0;
 	VoicePhase = 0.0f;
@@ -207,9 +215,16 @@ UBodyFallSynthComponent::UBodyFallSynthComponent(const FObjectInitializer& Objec
 	bAutoActivate = false;
 	bAutoDestroy = false;
 	bStopWhenOwnerDestroyed = true;
-	bAllowSpatialization = false;
+	bAllowSpatialization = true;
 	bIsUISound = false;
-	NumChannels = 2;
+	NumChannels = 1;
+	bOverrideAttenuation = true;
+	AttenuationOverrides.bAttenuate = true;
+	AttenuationOverrides.bSpatialize = true;
+	AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
+	AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
+	AttenuationOverrides.AttenuationShapeExtents = FVector(180.0f, 0.0f, 0.0f);
+	AttenuationOverrides.FalloffDistance = 2200.0f;
 }
 
 void UBodyFallSynthComponent::TriggerBodyFall()
@@ -229,7 +244,7 @@ void UBodyFallSynthComponent::TriggerBodyFall()
 
 bool UBodyFallSynthComponent::Init(int32& SampleRate)
 {
-	NumChannels = 2;
+	NumChannels = 1;
 	SynthSampleRate = FMath::Max(SampleRate, 8000);
 	ImpactFrameIndex = 0;
 	LowPhase = 0.0f;
@@ -268,6 +283,86 @@ int32 UBodyFallSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 			Sample = FMath::Clamp(
 				FMath::Sin(LowPhase) * LowEnvelope * 0.68f + Noise * ClothEnvelope * 0.24f + MarbleContact * 0.16f,
 				-0.9f, 0.9f);
+			++ImpactFrameIndex;
+			if (ImpactFrameIndex >= ImpactFrameCount)
+			{
+				bImpactActive = false;
+			}
+		}
+		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
+		{
+			OutAudio[FrameIndex * ChannelCount + ChannelIndex] = Sample;
+		}
+	}
+	return NumSamples;
+}
+
+UMannequinCaptureSynthComponent::UMannequinCaptureSynthComponent(
+	const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	bAutoActivate = false;
+	bAutoDestroy = false;
+	bStopWhenOwnerDestroyed = true;
+	bAllowSpatialization = false;
+	bIsUISound = false;
+	NumChannels = 2;
+}
+
+void UMannequinCaptureSynthComponent::TriggerImpact(const bool bElimination)
+{
+	SynthCommand([this, bElimination]()
+	{
+		ImpactFrameIndex = 0;
+		LowPhase = 0.0f;
+		PlasticPhase = 0.0f;
+		ImpactDurationSeconds = bElimination ? 0.46f : 0.32f;
+		NoiseState ^= bElimination ? 0x9E3779B9u : 0x85EBCA6Bu;
+		bImpactActive = true;
+	});
+	if (!IsPlaying())
+	{
+		Start();
+	}
+}
+
+bool UMannequinCaptureSynthComponent::Init(int32& SampleRate)
+{
+	NumChannels = 2;
+	SynthSampleRate = FMath::Max(SampleRate, 8000);
+	ImpactFrameIndex = 0;
+	LowPhase = 0.0f;
+	PlasticPhase = 0.0f;
+	bImpactActive = false;
+	return true;
+}
+
+int32 UMannequinCaptureSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumSamples)
+{
+	if (OutAudio == nullptr || NumSamples <= 0)
+	{
+		return 0;
+	}
+	FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
+	const int32 ChannelCount = FMath::Max(NumChannels, 1);
+	const int32 FrameCount = NumSamples / ChannelCount;
+	const int32 ImpactFrameCount = FMath::Max(1, FMath::RoundToInt(ImpactDurationSeconds * SynthSampleRate));
+	for (int32 FrameIndex = 0; FrameIndex < FrameCount; ++FrameIndex)
+	{
+		float Sample = 0.0f;
+		if (bImpactActive && ImpactFrameIndex < ImpactFrameCount)
+		{
+			const float TimeSeconds = static_cast<float>(ImpactFrameIndex) / SynthSampleRate;
+			const float Progress = FMath::Clamp(TimeSeconds / ImpactDurationSeconds, 0.0f, 1.0f);
+			const float Attack = FMath::Clamp(TimeSeconds / 0.006f, 0.0f, 1.0f);
+			const float Envelope = Attack * FMath::Pow(FMath::Max(0.0f, 1.0f - Progress), 2.8f);
+			LowPhase = FMath::Fmod(LowPhase + (2.0f * UE_PI * FMath::Lerp(88.0f, 42.0f, Progress) / SynthSampleRate), 2.0f * UE_PI);
+			PlasticPhase = FMath::Fmod(PlasticPhase + (2.0f * UE_PI * FMath::Lerp(178.0f, 116.0f, Progress) / SynthSampleRate), 2.0f * UE_PI);
+			NoiseState = NoiseState * 1664525u + 1013904223u;
+			const float Noise = (static_cast<float>((NoiseState >> 8) & 0xFFFFu) / 32767.5f) - 1.0f;
+			const float PlasticKnock = FMath::Sin(LowPhase) * 0.64f + FMath::Sin(PlasticPhase) * 0.23f;
+			const float SurfaceScuff = Noise * FMath::Exp(-24.0f * TimeSeconds) * 0.13f;
+			Sample = FMath::Clamp((PlasticKnock + SurfaceScuff) * Envelope, -0.92f, 0.92f);
 			++ImpactFrameIndex;
 			if (ImpactFrameIndex >= ImpactFrameCount)
 			{

@@ -123,6 +123,10 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientPlayDeathSequence(float FallPitchDirection, float FallRollDirection);
 
+	/** 서버가 확정한 신음과 사망 충돌음을 모든 근처 클라이언트가 월드 공간음으로 재생합니다. */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastPlayPainAndDeathWorldSFX(bool bFatal);
+
 	UPROPERTY(VisibleAnywhere, Category = "Component")
 	class USpringArmComponent* SpringArm;
 	UPROPERTY(VisibleAnywhere, Category = "Component")
@@ -252,6 +256,7 @@ private:
 	void UpdateCameraFeedback(float DeltaTime);
 	void RestoreFeedbackCamera();
 	void PlayPainSFX(bool bFatal);
+	void PlayBodyFallSFX();
 
 	UFUNCTION()
 	void OnRep_PlayerWalkSpeed();
@@ -320,6 +325,7 @@ private:
 	bool bCameraHitFeedbackActive = false;
 	bool bCameraDeathFeedbackActive = false;
 	bool bBodyFallSFXPlayed = false;
+	FTimerHandle BodyFallWorldSFXTimer;
 	float CameraFeedbackElapsedSeconds = 0.0f;
 	float CameraFallPitchDirection = 0.0f;
 	float CameraFallRollDirection = 0.0f;

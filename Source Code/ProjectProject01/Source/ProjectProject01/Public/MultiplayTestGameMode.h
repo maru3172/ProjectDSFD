@@ -76,6 +76,8 @@ public:
 
 	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
 	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
+	/** 서버가 확정한 포획 성공 피드백을 이번 경기의 마네킹 플레이어에게만 전달합니다. */
+	void NotifyMannequinCaptureFeedback(bool bElimination);
 
 	/** Escape 태그 TriggerBox 또는 이후의 탈출 장치가 서버에서 호출하는 탈출 확정 경로다. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Multiplayer|Match")

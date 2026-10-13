@@ -8,6 +8,36 @@
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 
+void UProjectProject01MannequinCaptureCameraModifier::PlayCaptureShake(
+	const float InDurationSeconds, const float InYawAmplitudeDegrees)
+{
+	DurationSeconds = FMath::Max(InDurationSeconds, 0.01f);
+	YawAmplitudeDegrees = FMath::Max(InYawAmplitudeDegrees, 0.0f);
+	ElapsedSeconds = 0.0f;
+	bPlaying = YawAmplitudeDegrees > UE_KINDA_SMALL_NUMBER;
+	EnableModifier();
+}
+
+bool UProjectProject01MannequinCaptureCameraModifier::ModifyCamera(
+	const float DeltaTime, FMinimalViewInfo& InOutPOV)
+{
+	if (!bPlaying)
+	{
+		return false;
+	}
+	ElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+	const float Progress = FMath::Clamp(ElapsedSeconds / DurationSeconds, 0.0f, 1.0f);
+	const float Envelope = FMath::Square(1.0f - Progress);
+	const float Wave = FMath::Sin(Progress * UE_PI * 8.0f);
+	InOutPOV.Rotation.Yaw += Wave * YawAmplitudeDegrees * Envelope;
+	InOutPOV.Rotation.Roll += Wave * YawAmplitudeDegrees * Envelope * 0.22f;
+	if (Progress >= 1.0f)
+	{
+		bPlaying = false;
+	}
+	return false;
+}
+
 bool UProjectProject01DamageFeedbackWidget::Initialize()
 {
 	const bool bInitializationSucceeded = Super::Initialize();
@@ -194,4 +224,88 @@ void UProjectProject01DeathFeedbackWidget::NativeTick(const FGeometry& MyGeometr
 	{
 		RemoveFromParent();
 	}
+}
+
+bool UProjectProject01MannequinCaptureFeedbackWidget::Initialize()
+{
+	const bool bInitializationSucceeded = Super::Initialize();
+	if (bInitializationSucceeded && !IsValid(WidgetTree->RootWidget))
+	{
+		BuildWidgetTree();
+	}
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	return bInitializationSucceeded;
+}
+
+void UProjectProject01MannequinCaptureFeedbackWidget::BuildWidgetTree()
+{
+	UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+	WidgetTree->RootWidget = Canvas;
+}
+
+void UProjectProject01MannequinCaptureFeedbackWidget::Configure(
+	const bool bInElimination, const float InIntensityScale)
+{
+	DurationSeconds = bInElimination ? 0.95f : 0.68f;
+	ElapsedSeconds = 0.0f;
+	IntensityScale = FMath::Clamp(InIntensityScale, 0.0f, 1.0f);
+	Invalidate(EInvalidateWidgetReason::Paint);
+}
+
+void UProjectProject01MannequinCaptureFeedbackWidget::NativeTick(
+	const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	ElapsedSeconds += FMath::Max(InDeltaTime, 0.0f);
+	if (ElapsedSeconds >= DurationSeconds)
+	{
+		RemoveFromParent();
+		return;
+	}
+	Invalidate(EInvalidateWidgetReason::Paint);
+}
+
+int32 UProjectProject01MannequinCaptureFeedbackWidget::NativePaint(
+	const FPaintArgs& Args,
+	const FGeometry& AllottedGeometry,
+	const FSlateRect& MyCullingRect,
+	FSlateWindowElementList& OutDrawElements,
+	const int32 LayerId,
+	const FWidgetStyle& InWidgetStyle,
+	const bool bParentEnabled) const
+{
+	const int32 BaseLayer = Super::NativePaint(
+		Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
+	const FVector2D Size = AllottedGeometry.GetLocalSize();
+	if (Size.X <= 1.0f || Size.Y <= 1.0f || IntensityScale <= UE_KINDA_SMALL_NUMBER)
+	{
+		return BaseLayer;
+	}
+
+	const float Progress = FMath::Clamp(ElapsedSeconds / FMath::Max(DurationSeconds, 0.01f), 0.0f, 1.0f);
+	const float Fade = (1.0f - FMath::SmoothStep(0.0f, 1.0f, Progress)) * IntensityScale;
+	const float Expansion = FMath::InterpEaseOut(0.35f, 1.0f, FMath::Min(Progress * 5.0f, 1.0f), 2.0f);
+	const FVector2D Center = Size * 0.5f;
+	const FLinearColor BloodColor(0.48f, 0.005f, 0.008f, Fade * 0.82f);
+	const FVector2D Directions[] = {
+		FVector2D(-0.39f, -0.24f), FVector2D(-0.31f, 0.17f), FVector2D(-0.18f, -0.36f),
+		FVector2D(0.14f, -0.33f), FVector2D(0.34f, -0.13f), FVector2D(0.38f, 0.22f),
+		FVector2D(0.12f, 0.34f), FVector2D(-0.23f, 0.31f)
+	};
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Directions); ++Index)
+	{
+		const FVector2D Direction = Directions[Index];
+		const FVector2D End = Center + FVector2D(Direction.X * Size.X, Direction.Y * Size.Y) * Expansion;
+		const FVector2D Start = FMath::Lerp(Center, End, 0.70f);
+		const FVector2D Normal(-Direction.Y, Direction.X);
+		TArray<FVector2d> Streak;
+		Streak.Reserve(3);
+		Streak.Add(FVector2d(Start));
+		Streak.Add(FVector2d(FMath::Lerp(Start, End, 0.55f) + Normal * (Index % 2 == 0 ? 7.0f : -6.0f)));
+		Streak.Add(FVector2d(End));
+		FSlateDrawElement::MakeLines(
+			OutDrawElements, BaseLayer + 1, AllottedGeometry.ToPaintGeometry(), Streak,
+			ESlateDrawEffect::None, BloodColor, true, 2.5f + static_cast<float>(Index % 3) * 1.5f);
+	}
+	return BaseLayer + 1;
 }

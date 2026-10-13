@@ -1702,6 +1702,18 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 	}
 }
 
+void AMultiplayTestGameMode::NotifyMannequinCaptureFeedback(const bool bElimination)
+{
+	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
+	{
+		return;
+	}
+	if (AMultiplayTestPlayerController* Controller = MannequinController.Get(); IsValid(Controller))
+	{
+		Controller->ClientPlayMannequinCaptureFeedback(bElimination);
+	}
+}
+
 bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 {
 	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress || !IsValid(Survivor))

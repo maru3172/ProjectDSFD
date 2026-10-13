@@ -87,6 +87,7 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 	GENERATED_BODY()
 
 public:
+	AMultiplayTestPlayerController();
 	class AMannequinAICharacter* GetViewedMannequin() const;
 	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
 	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
@@ -191,6 +192,9 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientNotifyMannequinCatchDamage(bool bEnabled);
 
+	UFUNCTION(Client, Reliable)
+	void ClientPlayMannequinCaptureFeedback(bool bElimination);
+
 	UFUNCTION()
 	void OnRep_ViewedMannequin();
 
@@ -212,6 +216,15 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01VoiceStatusWidget> VoiceStatusWidget;
+
+	UPROPERTY(VisibleAnywhere, Category="Feedback")
+	TObjectPtr<class UMannequinCaptureSynthComponent> MannequinCaptureSFXComponent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01MannequinCaptureFeedbackWidget> MannequinCaptureFeedbackWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01MannequinCaptureCameraModifier> MannequinCaptureCameraModifier;
 
 	UPROPERTY(Replicated)
 	EMultiplayTestMatchPhase MatchPhase = EMultiplayTestMatchPhase::Waiting;

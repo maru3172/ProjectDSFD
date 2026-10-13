@@ -12,6 +12,8 @@
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01PingMarker.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
+#include "PlayerFeedbackWidgets.h"
+#include "PlayerHeartbeatComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "InputKeyEventArgs.h"
 #include "EngineUtils.h"
@@ -19,6 +21,12 @@
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+
+AMultiplayTestPlayerController::AMultiplayTestPlayerController()
+{
+	MannequinCaptureSFXComponent = CreateDefaultSubobject<UMannequinCaptureSynthComponent>(
+		TEXT("Mannequin Capture SFX Component"));
+}
 
 void AMultiplayTestPlayerController::BeginPlay()
 {
@@ -32,6 +40,14 @@ void AMultiplayTestPlayerController::BeginPlay()
 	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		Settings->RestoreGameplaySFX();
+		if (IsValid(MannequinCaptureSFXComponent))
+		{
+			MannequinCaptureSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+		}
+	}
 
 	ServiceNoticeWidget = CreateWidget<UProjectProject01ServiceNoticeWidget>(
 		this, UProjectProject01ServiceNoticeWidget::StaticClass());
@@ -483,6 +499,10 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		Settings->FadeGameplaySFX(0.12f, 1.5f);
+	}
 	if (IsValid(SessionMenuWidget))
 	{
 		SessionMenuWidget->RemoveFromParent();
@@ -844,6 +864,66 @@ void AMultiplayTestPlayerController::ClientNotifyMannequinCatchDamage_Implementa
 	ClientMessage(bEnabled
 		? TEXT("Mannequin catch damage: ON")
 		: TEXT("Mannequin catch damage: OFF"));
+}
+
+void AMultiplayTestPlayerController::ClientPlayMannequinCaptureFeedback_Implementation(
+	const bool bElimination)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	float VFXScale = 1.0f;
+	float ShakeScale = 1.0f;
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		VFXScale = Settings->GetLocalFlashScale();
+		ShakeScale = Settings->GetScreenShakeScale();
+		if (IsValid(MannequinCaptureSFXComponent))
+		{
+			MannequinCaptureSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+		}
+	}
+	if (IsValid(MannequinCaptureSFXComponent))
+	{
+		MannequinCaptureSFXComponent->SetVolumeMultiplier(bElimination ? 1.0f : 0.82f);
+		MannequinCaptureSFXComponent->TriggerImpact(bElimination);
+	}
+
+	if (IsValid(MannequinCaptureFeedbackWidget))
+	{
+		MannequinCaptureFeedbackWidget->RemoveFromParent();
+	}
+	MannequinCaptureFeedbackWidget = CreateWidget<UProjectProject01MannequinCaptureFeedbackWidget>(
+		this, UProjectProject01MannequinCaptureFeedbackWidget::StaticClass());
+	if (IsValid(MannequinCaptureFeedbackWidget))
+	{
+		MannequinCaptureFeedbackWidget->Configure(bElimination, VFXScale);
+		MannequinCaptureFeedbackWidget->AddToViewport(875);
+	}
+
+	if (IsValid(PlayerCameraManager) && ShakeScale > UE_KINDA_SMALL_NUMBER)
+	{
+		if (!IsValid(MannequinCaptureCameraModifier))
+		{
+			MannequinCaptureCameraModifier = Cast<UProjectProject01MannequinCaptureCameraModifier>(
+				PlayerCameraManager->FindCameraModifierByClass(
+					UProjectProject01MannequinCaptureCameraModifier::StaticClass()));
+			if (!IsValid(MannequinCaptureCameraModifier))
+			{
+				MannequinCaptureCameraModifier = Cast<UProjectProject01MannequinCaptureCameraModifier>(
+					PlayerCameraManager->AddNewCameraModifier(
+						UProjectProject01MannequinCaptureCameraModifier::StaticClass()));
+			}
+		}
+		if (IsValid(MannequinCaptureCameraModifier))
+		{
+			MannequinCaptureCameraModifier->PlayCaptureShake(
+				bElimination ? 0.24f : 0.18f,
+				(bElimination ? 7.0f : 5.2f) * ShakeScale);
+		}
+	}
 }
 
 void AMultiplayTestPlayerController::ServerDeclareVoluntaryExit_Implementation()

@@ -46,6 +46,10 @@ public:
 	void ValidateProjectSettings();
 	void ApplyProjectSettings(bool bApplicationActive = true);
 	void ApplyAudioSettings(bool bApplicationActive = true);
+	/** 사용자 설정값은 보존한 채, 사망·경기 종료 연출 동안 게임 효과음만 서서히 낮춥니다. */
+	void FadeGameplaySFX(float TargetMultiplier = 0.12f, float FadeSeconds = 1.5f);
+	/** 다음 플레이를 시작할 때 일시적인 효과음 감쇄를 원래 사용자 음량으로 복구합니다. */
+	void RestoreGameplaySFX(float FadeSeconds = 0.15f);
 
 	float GetMasterVolume() const { return MasterVolume; }
 	float GetSFXVolume() const { return SFXVolume; }
@@ -242,6 +246,7 @@ private:
 	TObjectPtr<class USoundMix> RuntimeSoundMix;
 
 	bool bRuntimeSoundMixPushed = false;
+	float GameplaySFXMultiplier = 1.0f;
 };
 
 struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim

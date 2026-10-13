@@ -288,10 +288,41 @@ void UProjectProject01GameUserSettings::ApplyAudioSettings(const bool bApplicati
 			AudioDevice->PushSoundMixModifier(RuntimeSoundMix);
 			bRuntimeSoundMixPushed = true;
 		}
-		AudioDevice->SetSoundMixClassOverride(RuntimeSoundMix, RuntimeSFXSoundClass, SFXVolume, 1.0f, 0.05f, true);
+		AudioDevice->SetSoundMixClassOverride(
+			RuntimeSoundMix, RuntimeSFXSoundClass,
+			SFXVolume * FMath::Clamp(GameplaySFXMultiplier, 0.0f, 1.0f), 1.0f, 0.05f, true);
 		AudioDevice->SetSoundMixClassOverride(RuntimeSoundMix, RuntimeMusicSoundClass, MusicVolume, 1.0f, 0.05f, true);
 		AudioDevice->SetSoundMixClassOverride(RuntimeSoundMix, RuntimeUISoundClass, UIVolume, 1.0f, 0.05f, true);
 	}
+}
+
+void UProjectProject01GameUserSettings::FadeGameplaySFX(
+	const float TargetMultiplier, const float FadeSeconds)
+{
+	GameplaySFXMultiplier = FMath::Clamp(TargetMultiplier, 0.0f, 1.0f);
+	EnsureRuntimeAudioObjects();
+	if (!IsValid(GEngine))
+	{
+		return;
+	}
+	FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice();
+	if (!AudioDevice.IsValid() || !IsValid(RuntimeSoundMix) || !IsValid(RuntimeSFXSoundClass))
+	{
+		return;
+	}
+	if (!bRuntimeSoundMixPushed)
+	{
+		AudioDevice->PushSoundMixModifier(RuntimeSoundMix);
+		bRuntimeSoundMixPushed = true;
+	}
+	AudioDevice->SetSoundMixClassOverride(
+		RuntimeSoundMix, RuntimeSFXSoundClass,
+		SFXVolume * GameplaySFXMultiplier, 1.0f, FMath::Max(FadeSeconds, 0.0f), true);
+}
+
+void UProjectProject01GameUserSettings::RestoreGameplaySFX(const float FadeSeconds)
+{
+	FadeGameplaySFX(1.0f, FadeSeconds);
 }
 
 FKey UProjectProject01GameUserSettings::GetValidatedKey(const FName StoredName, const FKey Fallback) const

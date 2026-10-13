@@ -39,7 +39,7 @@ private:
 	bool bPulseActive = false;
 };
 
-/** 외부 음원 없이 피격 순간의 낮고 거친 고통 신음을 생성하는 로컬 전용 신시사이저입니다. */
+/** 외부 음원 없이 피격 순간의 낮고 거친 고통 신음을 생성하는 3D 공간음 신시사이저입니다. */
 UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UPainGroanSynthComponent final : public USynthComponent
 {
@@ -82,6 +82,30 @@ private:
 	int32 ImpactFrameIndex = 0;
 	float LowPhase = 0.0f;
 	uint32 NoiseState = 0x4B1D3A27u;
+	bool bImpactActive = false;
+};
+
+/** 마네킹 플레이어에게 포획 성공을 알리는 낮고 둔탁한 플라스틱 충격음을 생성합니다. */
+UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
+class PROJECTPROJECT01_API UMannequinCaptureSynthComponent final : public USynthComponent
+{
+	GENERATED_BODY()
+
+public:
+	UMannequinCaptureSynthComponent(const FObjectInitializer& ObjectInitializer);
+	void TriggerImpact(bool bElimination);
+
+protected:
+	virtual bool Init(int32& SampleRate) override;
+	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
+
+private:
+	int32 SynthSampleRate = 48000;
+	int32 ImpactFrameIndex = 0;
+	float LowPhase = 0.0f;
+	float PlasticPhase = 0.0f;
+	float ImpactDurationSeconds = 0.34f;
+	uint32 NoiseState = 0xD13A761Bu;
 	bool bImpactActive = false;
 };
 
