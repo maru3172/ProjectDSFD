@@ -604,7 +604,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     const double CurrentTime = GetWorld()->GetTimeSeconds();
     // 빙의 해제 때 남겨진 명령은 기존 AI 반경/배회 판단보다 우선한다.
     // 단, 생존자 시야 정지 상태는 MultiplayTest GameMode가 별도로 이동 권한을 막는다.
-    if (Mannequin->ShouldHoldPostPossessionCommand(CurrentTime))
+    if (Mannequin->ShouldHoldPostPossessionCommand())
     {
         AIController->StopMovement();
         Mannequin->SetFrozen(true);
@@ -614,7 +614,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         return;
     }
 
-    if (Mannequin->ShouldChasePostPossessionCommand(CurrentTime))
+    if (Mannequin->ShouldChasePostPossessionCommand())
     {
         const bool bCommandTargetInRange =
             PlayerDistanceSquared <= FMath::Square(static_cast<double>(RoamingOuterRadius));

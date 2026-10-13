@@ -113,7 +113,22 @@ namespace ProjectProject01TuningEditor
 			TEXT("HeartbeatVFXMinDistortionFrequency"),
 			TEXT("HeartbeatVFXMaxDistortionFrequency"),
 			TEXT("HeartbeatVFXBlendInSpeed"),
-			TEXT("HeartbeatVFXBlendOutSpeed")
+			TEXT("HeartbeatVFXBlendOutSpeed"),
+			TEXT("DamageFeedbackIntroSeconds"),
+			TEXT("DamageFeedbackFadeSeconds"),
+			TEXT("DamageFeedbackMaxOpacity"),
+			TEXT("DamageFeedbackMaxThicknessPixels"),
+			TEXT("PainGroanSFXVolume"),
+			TEXT("DamageCameraStumbleSeconds"),
+			TEXT("DamageCameraRecoverySeconds"),
+			TEXT("DamageCameraTiltDegrees"),
+			TEXT("DeathCameraStumbleSeconds"),
+			TEXT("DeathCameraFallSeconds"),
+			TEXT("DeathBlackFadeSeconds"),
+			TEXT("DeathMessageHoldSeconds"),
+			TEXT("DeathCameraDropCentimeters"),
+			TEXT("DeathCameraTiltDegrees"),
+			TEXT("BodyFallSFXVolume")
 		};
 		return FieldNames;
 	}
@@ -126,7 +141,6 @@ namespace ProjectProject01TuningEditor
 			TEXT("MannequinWalkSpeed"),
 			TEXT("DirectChaseRadius"),
 			TEXT("RoamingOuterRadius"),
-			TEXT("PostPossessionCommandDurationSeconds"),
 			TEXT("DirectChaseHalfAngleDegrees"),
 			TEXT("DirectChaseSectorRadius"),
 			TEXT("MannequinGatherRadius"),

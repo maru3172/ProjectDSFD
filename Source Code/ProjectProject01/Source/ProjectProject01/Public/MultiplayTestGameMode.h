@@ -104,6 +104,7 @@ private:
 	void InitializeMannequinSpawns();
 	void UpdateMultiplayerMannequinAI();
 	class APlayerCharacter* FindDetectedSurvivor(const class AMannequinAICharacter* Mannequin) const;
+	bool IsActiveSurvivorTarget(const class APlayerCharacter* Survivor) const;
 	bool CanMannequinDetectSurvivor(const class AMannequinAICharacter* Mannequin,
 		const class APlayerCharacter* Survivor) const;
 	class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
@@ -162,6 +163,8 @@ private:
 	float MultiplayerAIUpdateAccumulatorSeconds = 0.0f;
 	float GameServerHeartbeatAccumulatorSeconds = 0.0f;
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerPatrolTargets;
+	/** 정찰 중 생존자 시야에 노출된 뒤, 시야가 풀리면 추격할 대상을 기억합니다. */
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, TWeakObjectPtr<class APlayerCharacter>> MultiplayerObservedChaseTargets;
 	bool bMannequinCatchDamageEnabled = true;
 
 	float MultiplayerDetectionRadius = 500.0f;

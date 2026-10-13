@@ -56,10 +56,6 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 	FlexibleMannequinRow.RoamingOuterRadius = 0.0f;
 	TestTrue(TEXT("Non-negative mannequin values are accepted for tuning"), FlexibleMannequinRow.IsValidForApplication(Error));
 
-	FlexibleMannequinRow = ValidMannequinRow;
-	FlexibleMannequinRow.PostPossessionCommandDurationSeconds = -1.0f;
-	TestFalse(TEXT("Negative post-possession command duration is rejected"), FlexibleMannequinRow.IsValidForApplication(Error));
-
 	FHelperTuningRow ValidHelperRow;
 	TestTrue(TEXT("Default helper tuning is accepted"), ValidHelperRow.IsValidForApplication(Error));
 
@@ -110,6 +106,14 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(HeartbeatVFXMinDistortionSpeed) || !FMath::IsFinite(HeartbeatVFXMaxDistortionSpeed) ||
 		!FMath::IsFinite(HeartbeatVFXMinDistortionFrequency) || !FMath::IsFinite(HeartbeatVFXMaxDistortionFrequency) ||
 		!FMath::IsFinite(HeartbeatVFXBlendInSpeed) || !FMath::IsFinite(HeartbeatVFXBlendOutSpeed) ||
+		!FMath::IsFinite(DamageFeedbackIntroSeconds) || !FMath::IsFinite(DamageFeedbackFadeSeconds) ||
+		!FMath::IsFinite(DamageFeedbackMaxOpacity) || !FMath::IsFinite(DamageFeedbackMaxThicknessPixels) ||
+		!FMath::IsFinite(PainGroanSFXVolume) || !FMath::IsFinite(DamageCameraStumbleSeconds) ||
+		!FMath::IsFinite(DamageCameraRecoverySeconds) || !FMath::IsFinite(DamageCameraTiltDegrees) ||
+		!FMath::IsFinite(DeathCameraStumbleSeconds) ||
+		!FMath::IsFinite(DeathCameraFallSeconds) || !FMath::IsFinite(DeathBlackFadeSeconds) ||
+		!FMath::IsFinite(DeathMessageHoldSeconds) || !FMath::IsFinite(DeathCameraDropCentimeters) ||
+		!FMath::IsFinite(DeathCameraTiltDegrees) || !FMath::IsFinite(BodyFallSFXVolume) ||
 		PlayerWalkSpeed < 0.0f || PlayerSprintSpeed < 0.0f ||
 		MaxStamina < 0.0f || StaminaDrainPerSecond < 0.0f || StaminaRecoveryPerSecond < 0.0f ||
 		BaseVisionRange < 0.0f || BaseVisionHalfAngleDegrees < 0.0f || BaseMinBPM < 0.0f || BaseMaxBPM < 0.0f ||
@@ -123,7 +127,16 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 		HeartbeatVFXMinNoiseFrequency < 0.0f || HeartbeatVFXMaxNoiseFrequency < 0.0f ||
 		HeartbeatVFXMaxDistortionAmount < 0.0f || HeartbeatVFXMinDistortionSpeed < 0.0f ||
 		HeartbeatVFXMaxDistortionSpeed < 0.0f || HeartbeatVFXMinDistortionFrequency < 0.0f ||
-		HeartbeatVFXMaxDistortionFrequency < 0.0f || HeartbeatVFXBlendInSpeed < 0.0f || HeartbeatVFXBlendOutSpeed < 0.0f)
+		HeartbeatVFXMaxDistortionFrequency < 0.0f || HeartbeatVFXBlendInSpeed < 0.0f || HeartbeatVFXBlendOutSpeed < 0.0f ||
+		DamageFeedbackIntroSeconds < 0.01f || DamageFeedbackFadeSeconds < 0.01f ||
+		DamageFeedbackMaxOpacity < 0.0f || DamageFeedbackMaxOpacity > 1.0f ||
+		DamageFeedbackMaxThicknessPixels < 1.0f || PainGroanSFXVolume < 0.0f ||
+		DamageCameraStumbleSeconds < 0.01f || DamageCameraRecoverySeconds < 0.01f ||
+		DamageCameraTiltDegrees < 0.0f || DamageCameraTiltDegrees > 20.0f ||
+		DeathCameraStumbleSeconds < 0.0f || DeathCameraFallSeconds < 0.01f ||
+		DeathBlackFadeSeconds < 0.01f || DeathMessageHoldSeconds < 0.0f ||
+		DeathCameraDropCentimeters < 0.0f || DeathCameraTiltDegrees < 0.0f || DeathCameraTiltDegrees > 90.0f ||
+		BodyFallSFXVolume < 0.0f)
 	{
 		OutError = TEXT("DT_PlayerTuning Default row must contain finite, non-negative numeric values.");
 		return false;
@@ -136,7 +149,7 @@ bool FPlayerTuningRow::IsValidForApplication(FString& OutError) const
 bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 {
 	if (!FMath::IsFinite(MannequinWalkSpeed) || !FMath::IsFinite(DirectChaseRadius) ||
-		!FMath::IsFinite(RoamingOuterRadius) || !FMath::IsFinite(PostPossessionCommandDurationSeconds) ||
+		!FMath::IsFinite(RoamingOuterRadius) ||
 		!FMath::IsFinite(DirectChaseHalfAngleDegrees) || !FMath::IsFinite(DirectChaseSectorRadius) ||
 		!FMath::IsFinite(MannequinGatherRadius) || !FMath::IsFinite(SurvivorVisionCheckIntervalSeconds) ||
 		!FMath::IsFinite(SurvivorVisionHalfAngleDegrees) || !FMath::IsFinite(DetectionMargin) ||
@@ -144,7 +157,7 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(MultiplayerFollowDistance) || !FMath::IsFinite(MultiplayerFollowSeparation) ||
 		!FMath::IsFinite(MultiplayerRepathInterval) || !FMath::IsFinite(MultiplayerAcceptanceRadius) ||
 		MannequinWalkSpeed < 0.0f ||
-		DirectChaseRadius < 0.0f || RoamingOuterRadius < 0.0f || PostPossessionCommandDurationSeconds < 0.0f ||
+		DirectChaseRadius < 0.0f || RoamingOuterRadius < 0.0f ||
 		DirectChaseHalfAngleDegrees < 0.0f || DirectChaseSectorRadius < 0.0f ||
 		MannequinGatherRadius < 0.0f || RequiredMannequinCount < 0 ||
 		SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||

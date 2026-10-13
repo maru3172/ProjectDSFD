@@ -535,11 +535,11 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 				? TargetActor->GetActorLocation()
 				: (bHasRoamingLocation ? RoamingLocation : FVector::ZeroVector);
 			StateSignature = FString::Printf(TEXT("Mannequin;Slot=%d;Manual=%d;Frozen=%d;Command=%s;Controller=%s;TargetActor=%s;TargetLocation=(%.1f,%.1f,%.1f);Location=(%.1f,%.1f,%.1f);Velocity=%.1f;Distance=%.1f"),
-				Mannequin->GetControlSlot(), Mannequin->IsManualControlEnabled(), Mannequin->IsFrozenBySurvivorVision(), *Mannequin->GetDiagnosticCommandState(World->GetTimeSeconds()),
+				Mannequin->GetControlSlot(), Mannequin->IsManualControlEnabled(), Mannequin->IsFrozenBySurvivorVision(), *Mannequin->GetDiagnosticCommandState(),
 				*GetNameSafe(Mannequin->GetController()), *GetNameSafe(TargetActor), DiagnosticTargetLocation.X, DiagnosticTargetLocation.Y, DiagnosticTargetLocation.Z,
 				Location.X, Location.Y, Location.Z, Mannequin->GetVelocity().Size2D(), CumulativeDistance);
 			if (Mannequin->HasAuthority() && !IsValid(Mannequin->GetController()) && !OneShotRiskKeys.Contains(TEXT("NoController_") + ActorKey)) { OneShotRiskKeys.Add(TEXT("NoController_") + ActorKey); RecordEvent(EProjectProject01DiagnosticSeverity::Risk, TEXT("AIControllerMissing"), TEXT("Authoritative mannequin has no controller."), Mannequin); }
-			const bool bShouldBeMoving = bHasTarget && IsValid(AIController) && !Mannequin->IsManualControlEnabled() && !Mannequin->IsFrozenBySurvivorVision() && !Mannequin->ShouldHoldPostPossessionCommand(World->GetTimeSeconds());
+			const bool bShouldBeMoving = bHasTarget && IsValid(AIController) && !Mannequin->IsManualControlEnabled() && !Mannequin->IsFrozenBySurvivorVision() && !Mannequin->ShouldHoldPostPossessionCommand();
 			if (bShouldBeMoving && Mannequin->GetVelocity().Size2D() < 5.0f)
 			{
 				double& StuckStart = StuckStartTimes.FindOrAdd(ActorKey, World->GetTimeSeconds());
@@ -808,10 +808,9 @@ void UProjectProject01DiagnosticsSubsystem::ValidateAppliedTuning()
 		It->GetDiagnosticAppliedTuning(Actual);
 		TArray<FString> Mismatches;
 		if (!FMath::IsNearlyEqual(Actual.MannequinWalkSpeed, MannequinRow.MannequinWalkSpeed)) Mismatches.Add(TEXT("MannequinWalkSpeed"));
-		if (!FMath::IsNearlyEqual(Actual.PostPossessionCommandDurationSeconds, MannequinRow.PostPossessionCommandDurationSeconds)) Mismatches.Add(TEXT("PostPossessionCommandDurationSeconds"));
 		RecordEvent(Mismatches.Num() == 0 ? EProjectProject01DiagnosticSeverity::Normal : EProjectProject01DiagnosticSeverity::Risk,
 			Mismatches.Num() == 0 ? TEXT("ActorTuningMatches") : TEXT("ActorTuningMismatch"),
-			FString::Printf(TEXT("Layer=RuntimeCacheToActor; Tuning=Mannequin; ComparedCopiedFields=MannequinWalkSpeed|PostPossessionCommandDurationSeconds; MismatchedFields=%s; RemainingFields=ReadFromRuntimeCache"),
+			FString::Printf(TEXT("Layer=RuntimeCacheToActor; Tuning=Mannequin; ComparedCopiedFields=MannequinWalkSpeed; MismatchedFields=%s; RemainingFields=ReadFromRuntimeCache"),
 				Mismatches.Num() == 0 ? TEXT("None") : *FString::Join(Mismatches, TEXT("|"))), *It);
 	}
 	if (const AMultiplayTestGameMode* GameMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(GameMode) && bHasMannequinRow)

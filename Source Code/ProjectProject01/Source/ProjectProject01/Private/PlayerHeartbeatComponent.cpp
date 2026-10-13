@@ -120,6 +120,168 @@ int32 UHeartbeatSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 	return NumSamples;
 }
 
+UPainGroanSynthComponent::UPainGroanSynthComponent(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	bAutoActivate = false;
+	bAutoDestroy = false;
+	bStopWhenOwnerDestroyed = true;
+	bAllowSpatialization = false;
+	bIsUISound = false;
+	NumChannels = 2;
+}
+
+void UPainGroanSynthComponent::TriggerPain(const bool bFatal)
+{
+	SynthCommand([this, bFatal]()
+	{
+		VoiceFrameIndex = 0;
+		VoicePhase = 0.0f;
+		FlutterPhase = 0.0f;
+		VoiceDurationSeconds = bFatal ? 1.15f : 0.72f;
+		NoiseState ^= bFatal ? 0xA511E9B3u : 0x63D83595u;
+		bVoiceActive = true;
+	});
+	if (!IsPlaying())
+	{
+		Start();
+	}
+}
+
+bool UPainGroanSynthComponent::Init(int32& SampleRate)
+{
+	NumChannels = 2;
+	SynthSampleRate = FMath::Max(SampleRate, 8000);
+	VoiceFrameIndex = 0;
+	VoicePhase = 0.0f;
+	FlutterPhase = 0.0f;
+	bVoiceActive = false;
+	return true;
+}
+
+int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumSamples)
+{
+	if (OutAudio == nullptr || NumSamples <= 0)
+	{
+		return 0;
+	}
+	FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
+	const int32 ChannelCount = FMath::Max(NumChannels, 1);
+	const int32 FrameCount = NumSamples / ChannelCount;
+	const int32 VoiceFrameCount = FMath::Max(1, FMath::RoundToInt(VoiceDurationSeconds * SynthSampleRate));
+	for (int32 FrameIndex = 0; FrameIndex < FrameCount; ++FrameIndex)
+	{
+		float Sample = 0.0f;
+		if (bVoiceActive && VoiceFrameIndex < VoiceFrameCount)
+		{
+			const float Progress = static_cast<float>(VoiceFrameIndex) / static_cast<float>(VoiceFrameCount);
+			const float TimeSeconds = static_cast<float>(VoiceFrameIndex) / static_cast<float>(SynthSampleRate);
+			const float Attack = FMath::Clamp(TimeSeconds / 0.025f, 0.0f, 1.0f);
+			const float Release = FMath::Pow(FMath::Max(0.0f, 1.0f - Progress), 1.45f);
+			const float Frequency = FMath::Lerp(132.0f, 72.0f, FMath::SmoothStep(0.0f, 1.0f, Progress));
+			FlutterPhase = FMath::Fmod(FlutterPhase + (2.0f * UE_PI * 5.2f / SynthSampleRate), 2.0f * UE_PI);
+			const float Flutter = FMath::Sin(FlutterPhase) * 2.8f;
+			VoicePhase = FMath::Fmod(VoicePhase + (2.0f * UE_PI * (Frequency + Flutter) / SynthSampleRate), 2.0f * UE_PI);
+			NoiseState = (NoiseState * 1664525u) + 1013904223u;
+			const float BreathNoise = (static_cast<float>((NoiseState >> 8) & 0xFFFFu) / 32767.5f) - 1.0f;
+			const float Voice = FMath::Sin(VoicePhase) + (0.28f * FMath::Sin(VoicePhase * 2.0f)) +
+				(0.11f * FMath::Sin(VoicePhase * 3.0f));
+			Sample = FMath::Clamp((Voice * 0.52f + BreathNoise * 0.12f) * Attack * Release, -0.88f, 0.88f);
+			++VoiceFrameIndex;
+			if (VoiceFrameIndex >= VoiceFrameCount)
+			{
+				bVoiceActive = false;
+			}
+		}
+		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
+		{
+			OutAudio[FrameIndex * ChannelCount + ChannelIndex] = Sample;
+		}
+	}
+	return NumSamples;
+}
+
+UBodyFallSynthComponent::UBodyFallSynthComponent(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	bAutoActivate = false;
+	bAutoDestroy = false;
+	bStopWhenOwnerDestroyed = true;
+	bAllowSpatialization = false;
+	bIsUISound = false;
+	NumChannels = 2;
+}
+
+void UBodyFallSynthComponent::TriggerBodyFall()
+{
+	SynthCommand([this]()
+	{
+		ImpactFrameIndex = 0;
+		LowPhase = 0.0f;
+		NoiseState ^= 0x7F4A7C15u;
+		bImpactActive = true;
+	});
+	if (!IsPlaying())
+	{
+		Start();
+	}
+}
+
+bool UBodyFallSynthComponent::Init(int32& SampleRate)
+{
+	NumChannels = 2;
+	SynthSampleRate = FMath::Max(SampleRate, 8000);
+	ImpactFrameIndex = 0;
+	LowPhase = 0.0f;
+	bImpactActive = false;
+	return true;
+}
+
+int32 UBodyFallSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumSamples)
+{
+	if (OutAudio == nullptr || NumSamples <= 0)
+	{
+		return 0;
+	}
+	FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
+	const int32 ChannelCount = FMath::Max(NumChannels, 1);
+	const int32 FrameCount = NumSamples / ChannelCount;
+	constexpr float ImpactDurationSeconds = 0.62f;
+	const int32 ImpactFrameCount = FMath::Max(1, FMath::RoundToInt(ImpactDurationSeconds * SynthSampleRate));
+	for (int32 FrameIndex = 0; FrameIndex < FrameCount; ++FrameIndex)
+	{
+		float Sample = 0.0f;
+		if (bImpactActive && ImpactFrameIndex < ImpactFrameCount)
+		{
+			const float TimeSeconds = static_cast<float>(ImpactFrameIndex) / SynthSampleRate;
+			const float Progress = FMath::Clamp(TimeSeconds / ImpactDurationSeconds, 0.0f, 1.0f);
+			const float LowEnvelope = FMath::Exp(-10.5f * TimeSeconds);
+			const float Frequency = FMath::Lerp(74.0f, 39.0f, Progress);
+			LowPhase = FMath::Fmod(LowPhase + (2.0f * UE_PI * Frequency / SynthSampleRate), 2.0f * UE_PI);
+			NoiseState = NoiseState * 1664525u + 1013904223u;
+			const float Noise = (static_cast<float>((NoiseState >> 8) & 0xFFFFu) / 32767.5f) - 1.0f;
+			const float ClothEnvelope = FMath::Pow(FMath::Max(0.0f, 1.0f - Progress), 3.0f) *
+				FMath::Clamp(TimeSeconds / 0.012f, 0.0f, 1.0f);
+			const float MarbleContact = TimeSeconds < 0.055f
+				? FMath::Sin(2.0f * UE_PI * 148.0f * TimeSeconds) * FMath::Exp(-55.0f * TimeSeconds)
+				: 0.0f;
+			Sample = FMath::Clamp(
+				FMath::Sin(LowPhase) * LowEnvelope * 0.68f + Noise * ClothEnvelope * 0.24f + MarbleContact * 0.16f,
+				-0.9f, 0.9f);
+			++ImpactFrameIndex;
+			if (ImpactFrameIndex >= ImpactFrameCount)
+			{
+				bImpactActive = false;
+			}
+		}
+		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
+		{
+			OutAudio[FrameIndex * ChannelCount + ChannelIndex] = Sample;
+		}
+	}
+	return NumSamples;
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FProjectProject01HeartbeatVFXMappingTest,

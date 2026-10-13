@@ -150,6 +150,55 @@ struct PROJECTPROJECT01_API FPlayerTuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat VFX", meta = (ClampMin = "0.0"))
 	float HeartbeatVFXBlendOutSpeed = 2.0f;
 
+	/** 피격 테두리가 화면 바깥에서 안쪽으로 빠르게 들어오는 시간입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.01", Units = "s"))
+	float DamageFeedbackIntroSeconds = 0.1f;
+
+	/** 피격 테두리가 안쪽에서 바깥으로 사라지는 시간입니다. 이 시간까지 추가 데스카운트 소모를 막습니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.01", Units = "s"))
+	float DamageFeedbackFadeSeconds = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DamageFeedbackMaxOpacity = 0.7f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "1.0"))
+	float DamageFeedbackMaxThicknessPixels = 150.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.0"))
+	float PainGroanSFXVolume = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.01", Units = "s"))
+	float DamageCameraStumbleSeconds = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.01", Units = "s"))
+	float DamageCameraRecoverySeconds = 0.24f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Damage Feedback", meta = (ClampMin = "0.0", ClampMax = "20.0", Units = "deg"))
+	float DamageCameraTiltDegrees = 6.0f;
+
+	/** 사망 직후 충격의 반대 방향으로 중심을 잃고 휘청하는 구간입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.0", Units = "s"))
+	float DeathCameraStumbleSeconds = 0.16f;
+
+	/** 휘청한 뒤 힘이 풀리며 바닥으로 쓰러지는 구간입니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.01", Units = "s"))
+	float DeathCameraFallSeconds = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.01", Units = "s"))
+	float DeathBlackFadeSeconds = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.0", Units = "s"))
+	float DeathMessageHoldSeconds = 0.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.0", Units = "cm"))
+	float DeathCameraDropCentimeters = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.0", ClampMax = "90.0", Units = "deg"))
+	float DeathCameraTiltDegrees = 82.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Player|Death Camera", meta = (ClampMin = "0.0"))
+	float BodyFallSFXVolume = 0.95f;
+
 	bool IsValidForApplication(FString& OutError) const;
 };
 
@@ -166,10 +215,6 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "cm"))
 	float RoamingOuterRadius = 1500.0f;
-
-	/** 마네킹 플레이어가 남긴 정지 또는 추격 명령을 AI보다 우선하는 시간입니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Player Command", meta = (ClampMin = "0.0", Units = "s"))
-	float PostPossessionCommandDurationSeconds = 5.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI", meta = (ClampMin = "0.0", Units = "deg"))
 	float DirectChaseHalfAngleDegrees = 90.0f;

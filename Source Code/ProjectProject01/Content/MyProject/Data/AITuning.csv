@@ -12,8 +12,7 @@ SurvivorVisionCheckIntervalSeconds,0.05,시야 정지 판정 주기. 낮을수�
 SurvivorVisionHalfAngleDegrees,55,생존자가 마네킹을 보고 있다고 판정하는 시야각
 DetectionMargin,30,마네킹 신체 외곽까지 시야 감지 여유
 VisionFovMarginMultiplier,1.15,카메라 FOV보다 약간 넓게 “봤다”고 판정하는 보정값
-PostPossessionCommandDurationSeconds,5,"싱글플레이에서 마네킹 빙의가 해제된 뒤 기록된 명령을 기존 AI보다 우선하는 시간이다. MultiplayTest의 명령 상태에는 사용되지 않는다."
-MultiplayerPatrolRadius,1200,MultiplayTest 전용 정찰 반경이다. 각 마네킹의 시작 위치를 중심으로 NavMesh 안의 목적지를 선택한다.
+MultiplayerPatrolRadius,1200,MultiplayTest 전용 연속 정찰의 한 이동당 탐색 반경이다. 각 목적지에 도착하면 현재 위치를 기준으로 다음 NavMesh 목적지를 골라 맵을 계속 돌아다닌다.
 MultiplayerFollowDistance,300,마네킹 플레이어를 따르는 마네킹이 리더와 유지하려는 기본 거리다.
 MultiplayerFollowSeparation,175,플레이어를 따르는 마네킹끼리 밀집하지 않도록 유지하는 최소 이격 거리다.
 MultiplayerRepathInterval,0.2,MultiplayTest 전용 AI가 감지 대상과 A* 경로를 다시 계산하는 주기다.

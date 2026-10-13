@@ -109,19 +109,10 @@ void AMannequinAICharacter::OnRep_ControlSlot()
 	RefreshControlSlotLabelVisibility();
 }
 
-void AMannequinAICharacter::SetMultiplayPatrolOriginForGameMode(const FVector& InOrigin)
-{
-	if (HasAuthority() && !InOrigin.ContainsNaN())
-	{
-		MultiplayPatrolOrigin = InOrigin;
-	}
-}
-
 // Called when the game starts or when spawned
 void AMannequinAICharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	MultiplayPatrolOrigin = GetActorLocation();
 
 	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
 	{
@@ -202,11 +193,6 @@ void AMannequinAICharacter::SetFrozen(bool bFrozen)
 void AMannequinAICharacter::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
 {
 	MannequinWalkSpeed = FMath::Max(0.0f, Tuning.MannequinWalkSpeed);
-	PostPossessionCommandDurationSeconds = FMath::Max(0.0f, Tuning.PostPossessionCommandDurationSeconds);
-	if (ActivePostPossessionCommand != EPostPossessionCommand::None)
-	{
-		PostPossessionCommandEndTimeSeconds = PostPossessionCommandStartTimeSeconds + PostPossessionCommandDurationSeconds;
-	}
 	ApplyMannequinWalkSpeed();
 
 	if (HasAuthority())
@@ -285,8 +271,6 @@ void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
 	{
 		bPostPossessionChaseCommandQueued = false;
 		ActivePostPossessionCommand = EPostPossessionCommand::None;
-		PostPossessionCommandStartTimeSeconds = 0.0;
-		PostPossessionCommandEndTimeSeconds = 0.0;
 	}
 	ForceNetUpdate();
 }
@@ -320,46 +304,40 @@ void AMannequinAICharacter::ActivatePostPossessionCommand()
 		return;
 	}
 
-	const UWorld* World = GetWorld();
-	const double CurrentTimeSeconds = IsValid(World) ? World->GetTimeSeconds() : 0.0;
-	PostPossessionCommandStartTimeSeconds = CurrentTimeSeconds;
-	PostPossessionCommandEndTimeSeconds = CurrentTimeSeconds + FMath::Max(0.0f, PostPossessionCommandDurationSeconds);
 	ActivePostPossessionCommand = bPostPossessionChaseCommandQueued
 		? EPostPossessionCommand::ChaseNearestSurvivor
 		: EPostPossessionCommand::HoldPosition;
 	bPostPossessionChaseCommandQueued = false;
 }
 
-bool AMannequinAICharacter::IsPostPossessionCommandActive(double ServerTimeSeconds) const
+bool AMannequinAICharacter::IsPostPossessionCommandActive() const
 {
-	return ActivePostPossessionCommand != EPostPossessionCommand::None &&
-		ServerTimeSeconds < PostPossessionCommandEndTimeSeconds;
+	return ActivePostPossessionCommand != EPostPossessionCommand::None;
 }
 
-bool AMannequinAICharacter::ShouldHoldPostPossessionCommand(double ServerTimeSeconds) const
+bool AMannequinAICharacter::ShouldHoldPostPossessionCommand() const
 {
-	return IsPostPossessionCommandActive(ServerTimeSeconds) &&
+	return IsPostPossessionCommandActive() &&
 		ActivePostPossessionCommand == EPostPossessionCommand::HoldPosition;
 }
 
-bool AMannequinAICharacter::ShouldChasePostPossessionCommand(double ServerTimeSeconds) const
+bool AMannequinAICharacter::ShouldChasePostPossessionCommand() const
 {
-	return IsPostPossessionCommandActive(ServerTimeSeconds) &&
+	return IsPostPossessionCommandActive() &&
 		ActivePostPossessionCommand == EPostPossessionCommand::ChaseNearestSurvivor;
 }
 
-FString AMannequinAICharacter::GetDiagnosticCommandState(const double ServerTimeSeconds) const
+FString AMannequinAICharacter::GetDiagnosticCommandState() const
 {
 	if (bPostPossessionChaseCommandQueued) return TEXT("QueuedChase");
-	if (ShouldHoldPostPossessionCommand(ServerTimeSeconds)) return TEXT("HoldPosition");
-	if (ShouldChasePostPossessionCommand(ServerTimeSeconds)) return TEXT("ChaseNearestSurvivor");
+	if (ShouldHoldPostPossessionCommand()) return TEXT("HoldPosition");
+	if (ShouldChasePostPossessionCommand()) return TEXT("ChaseNearestSurvivor");
 	return TEXT("None");
 }
 
 void AMannequinAICharacter::GetDiagnosticAppliedTuning(FMannequinAITuningRow& OutTuning) const
 {
 	OutTuning.MannequinWalkSpeed = IsValid(GetCharacterMovement()) ? GetCharacterMovement()->MaxWalkSpeed : 0.0f;
-	OutTuning.PostPossessionCommandDurationSeconds = PostPossessionCommandDurationSeconds;
 }
 
 void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)

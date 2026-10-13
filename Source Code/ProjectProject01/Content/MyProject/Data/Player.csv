@@ -38,3 +38,19 @@ HeartbeatVFXMinDistortionFrequency,5,범위 안에 마네킹이 한 기 있을 �
 HeartbeatVFXMaxDistortionFrequency,35,밀집도가 최대일 때 화면 일렁임의 최대 공간 빈도다.
 HeartbeatVFXBlendInSpeed,4,마네킹이 가까워질 때 효과가 목표 강도까지 선명해지는 보간 속도다.
 HeartbeatVFXBlendOutSpeed,2,마네킹이 멀어지거나 범위를 벗어날 때 효과가 투명해지는 보간 속도다.
+,,
+DamageFeedbackIntroSeconds,0.1,피격 테두리가 화면 바깥에서 안쪽으로 빠르게 들어오는 시간이다. 단위는 초다.
+DamageFeedbackFadeSeconds,2,피격 테두리가 안쪽에서 바깥으로 사라지는 시간이다. 이 연출이 끝날 때까지 추가 데스카운트 소모를 막는다.
+DamageFeedbackMaxOpacity,0.7,피격 테두리의 최대 불투명도다. 범위는 0~1이다.
+DamageFeedbackMaxThicknessPixels,150,피격 테두리가 화면 안쪽으로 들어오는 최대 두께다. 단위는 픽셀이다.
+PainGroanSFXVolume,0.9,피격과 동시에 재생되는 고통 신음 합성 효과음의 음량이다.
+DamageCameraStumbleSeconds,0.08,일반 피격 때 공격 반대 방향으로 살짝 휘청하는 시간이다.
+DamageCameraRecoverySeconds,0.24,일반 피격 휘청임이 원래 시야로 부드럽게 돌아오는 시간이다.
+DamageCameraTiltDegrees,6,일반 피격 휘청임의 최대 카메라 기울기다.
+DeathCameraStumbleSeconds,0.16,사망 직후 공격 반대 방향으로 짧게 휘청하는 시간이다.
+DeathCameraFallSeconds,0.9,휘청한 뒤 힘이 풀려 바닥으로 쓰러지는 시간이다.
+DeathBlackFadeSeconds,0.65,카메라가 쓰러진 뒤 화면이 암전되는 시간이다.
+DeathMessageHoldSeconds,0.85,암전 뒤 사망 문구를 유지하는 시간이다.
+DeathCameraDropCentimeters,120,사망 카메라가 바닥 쪽으로 내려가는 거리다. 단위는 cm다.
+DeathCameraTiltDegrees,82,공격 방향의 반대쪽으로 넘어질 때 적용하는 최종 카메라 기울기다.
+BodyFallSFXVolume,0.95,사망 카메라가 대리석 바닥에 도달할 때 재생되는 풀썩 충격음의 음량이다.

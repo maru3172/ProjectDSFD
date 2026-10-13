@@ -72,6 +72,28 @@
 
 생존자 플레이어의 `CharacterMovement.MaxWalkSpeed`에 적용되는 최대 걷기 속도다. 단위는 cm/s다. 멀티플레이에서는 서버가 적용한 값을 소유 클라이언트에도 복제한다.
 
+## Player: 피격·사망 연출
+
+일반 피격은 붉은 화면 테두리와 신음을 즉시 재생하고 공격 반대 방향으로 살짝 휘청한 뒤 원래 시야로 돌아온다. `DamageFeedbackIntroSeconds + DamageFeedbackFadeSeconds` 동안 서버가 추가 데스카운트 소모를 막는다. 최종 사망에서만 휘청임이 힘없는 바닥 쓰러짐으로 이어지고, 바닥에 도달할 때 대리석 몸 충격음이 난 뒤 암전과 `사망했습니다` 문구가 표시된다.
+
+`DamageFeedbackIntroSeconds`, `DamageFeedbackFadeSeconds` 붉은 테두리의 안쪽 진입·바깥쪽 소멸 시간
+
+`DamageFeedbackMaxOpacity`, `DamageFeedbackMaxThicknessPixels` 테두리 최대 불투명도와 두께
+
+`PainGroanSFXVolume` 피격·사망 신음 효과음 음량
+
+`DamageCameraStumbleSeconds`, `DamageCameraRecoverySeconds`, `DamageCameraTiltDegrees` 일반 피격 휘청임과 원상 복귀 수치
+
+`DeathCameraStumbleSeconds`, `DeathCameraFallSeconds` 사망 직후 휘청임과 힘없이 쓰러지는 시간
+
+`DeathCameraDropCentimeters`, `DeathCameraTiltDegrees` 바닥으로 내려가는 거리와 공격 반대 방향의 최종 기울기
+
+`DeathBlackFadeSeconds`, `DeathMessageHoldSeconds` 쓰러진 뒤 암전과 사망 문구 시간
+
+`BodyFallSFXVolume` 대리석 바닥에 몸이 닿는 풀썩 충격음 음량
+
+방향 판정은 플레이어의 현재 시야를 기준으로 한다. 왼쪽 피격은 오른쪽, 오른쪽 피격은 왼쪽, 앞쪽 피격은 뒤쪽, 뒤쪽 피격은 앞쪽으로 넘어지며 대각선은 앞뒤·좌우 중 더 큰 성분을 사용한다.
+
 ## AITuning: 적 AI
 
 `MannequinWalkSpeed`
@@ -85,10 +107,6 @@ AI 상태와 플레이어가 조종 중인 상태 모두의 마네킹 `Character
 `RoamingOuterRadius`
 
 바깥 원의 반경이자 랜덤 배회와 중간 부채꼴 판정의 최대 길이다. 이 거리 밖의 마네킹은 기존 규칙대로 이동을 중단한다. 단위는 cm다.
-
-`PostPossessionCommandDurationSeconds`
-
-싱글용 기존 AI에서 빙의 해제 직후 명령을 유지하는 시간이다. MultiplayTest는 이 값을 사용하지 않고 레벨이 바뀌거나 다른 명령을 받을 때까지 명령을 영구 유지한다.
 
 `DirectChaseHalfAngleDegrees`
 
@@ -114,9 +132,9 @@ VisionFovMarginMultiplier	카메라 FOV보다 약간 넓게 “봤다”고 판�
 
 MultiplayTest에서는 위 싱글용 Behavior Tree 추적 알고리즘을 실행하지 않는다. 서버 게임모드가 별도 상태 머신을 관리하고 UE Navigation의 경로 탐색을 통해 이동시킨다. `DirectChaseRadius`는 멀티에서도 각 마네킹의 빨간 감지 원 반경으로 공유한다.
 
-마네킹 플레이어는 번호 키로 대상을 고르고 `V`로 직접 조작한다. 직접 조작 중 `Z`(정찰), `X`(범위 추격), `C`(마네킹 플레이어 추종) 중 하나를 지정하면 빙의가 해제된 뒤 해당 마네킹의 AI가 그 명령을 맵이 바뀔 때까지 유지한다. 명령 없이 빙의가 해제되면 정지한다. 정지를 제외한 저장 명령을 수행하던 중 생존자가 자기 감지 범위에 들어오면 A* 추적이 우선되고, 범위 밖으로 나가면 저장 명령으로 복귀한다. `E/R/T`는 생존자 핑 전용이다. 마네킹의 머리 위 슬롯 번호는 마네킹 플레이어의 로컬 화면에만 표시된다.
+마네킹 플레이어는 번호 키로 대상을 고르고 `V`로 직접 조작한다. 직접 조작 중 `Z`(정찰), `X`(범위 추격), `C`(마네킹 플레이어 추종) 중 하나를 지정하면 빙의가 해제된 뒤 해당 마네킹의 AI가 그 명령을 맵이 바뀔 때까지 유지한다. 명령 없이 빙의가 해제되면 정지한다. 정지를 제외한 저장 명령을 수행하던 중 생존자가 자기 감지 범위에 들어오면 A* 추적이 우선되고, 범위 밖으로 나가면 저장 명령으로 복귀한다. 정찰 중 생존자의 시야에 노출되면 바라보는 동안 정지하고, 생존자가 시선을 돌리면 그 생존자를 추격한다. `X` 범위 추격은 현재 대상이 사라졌을 때 범위 안의 다른 생존자를 이어서 쫓고, 대상이 없으면 정찰 명령으로 바뀐다. `E/R/T`는 생존자 핑 전용이다. 마네킹의 머리 위 슬롯 번호는 마네킹 플레이어의 로컬 화면에만 표시된다.
 
-`MultiplayerPatrolRadius` 시작 위치를 중심으로 정찰 목적지를 선택하는 반경
+`MultiplayerPatrolRadius` 현재 위치를 기준으로 다음 정찰 목적지를 선택하는 한 이동당 반경. 목적지에 도착할 때마다 새 지점을 골라 NavMesh가 연결된 맵을 계속 돌아다닌다.
 
 `MultiplayerFollowDistance` 마네킹 플레이어와 추종 마네킹의 기본 거리
 

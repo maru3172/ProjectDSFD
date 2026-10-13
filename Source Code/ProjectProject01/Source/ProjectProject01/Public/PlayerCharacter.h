@@ -15,8 +15,12 @@ class AMannequinAICharacter;
 class AHelperRearGuardCharacter;
 class UPlayerHeartbeatComponent;
 class UHeartbeatSynthComponent;
+class UPainGroanSynthComponent;
+class UBodyFallSynthComponent;
 class UFootstepSynthComponent;
 class UProjectProject01SessionMenuWidget;
+class UProjectProject01DamageFeedbackWidget;
+class UProjectProject01DeathFeedbackWidget;
 
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
@@ -75,6 +79,9 @@ public:
 	bool HandlePartnerPushDeath(AHelperRearGuardCharacter* PushingHelper);
 	void GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTuning) const;
 
+	/** 멀티 GameMode가 사망 카메라와 암전이 끝나기 전에 관전 시점으로 잘라 바꾸지 않도록 기다릴 시간입니다. */
+	float GetDeathSequenceHandoffDelaySeconds() const;
+
 	UFUNCTION(BlueprintPure, Category = "Player|Stamina")
 	float GetCurrentStamina() const { return CurrentStamina; }
 
@@ -110,6 +117,12 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientApplyPlayerTuning(const FPlayerTuningRow& Tuning);
 
+	UFUNCTION(Client, Reliable)
+	void ClientPlayDamageFeedback(float FallPitchDirection, float FallRollDirection);
+
+	UFUNCTION(Client, Reliable)
+	void ClientPlayDeathSequence(float FallPitchDirection, float FallRollDirection);
+
 	UPROPERTY(VisibleAnywhere, Category = "Component")
 	class USpringArmComponent* SpringArm;
 	UPROPERTY(VisibleAnywhere, Category = "Component")
@@ -144,6 +157,8 @@ private:
 	TObjectPtr<class UProjectProject01MatchResultWidget> SinglePlayerResultWidget;
 
 	bool bSinglePlayerResultPresented = false;
+	bool bInitialStandaloneSpawnFadePlayed = false;
+	FTimerHandle SinglePlayerDeathResultTimer;
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSetSprinting(bool bNewSprinting);
@@ -231,6 +246,12 @@ private:
 	AHelperRearGuardCharacter* ResolveStaminaHelper();
 	void ApplyGameOverState();
 	void RemoveGuardingHelpers();
+	void ResolveFallDirection(const FVector& HitSourceLocation, float& OutPitchDirection, float& OutRollDirection) const;
+	void PlayLocalDamageFeedback(float FallPitchDirection, float FallRollDirection, bool bAlsoShowVFX = true);
+	void PlayLocalDeathSequence(float FallPitchDirection, float FallRollDirection);
+	void UpdateCameraFeedback(float DeltaTime);
+	void RestoreFeedbackCamera();
+	void PlayPainSFX(bool bFatal);
 
 	UFUNCTION()
 	void OnRep_PlayerWalkSpeed();
@@ -264,9 +285,46 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat|SFX", meta=(AllowPrivateAccess = "true"))
 	TObjectPtr<UHeartbeatSynthComponent> HeartbeatSFXComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Damage|SFX", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UPainGroanSynthComponent> PainGroanSFXComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Death|SFX", meta=(AllowPrivateAccess = "true"))
+	TObjectPtr<UBodyFallSynthComponent> BodyFallSFXComponent;
+
 	/** 대리석 위 운동화 걷기·달리기 효과음을 로컬에서 생성합니다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Footstep|SFX", meta=(AllowPrivateAccess = "true"))
 	TObjectPtr<UFootstepSynthComponent> FootstepSFXComponent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01DamageFeedbackWidget> DamageFeedbackWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01DeathFeedbackWidget> DeathFeedbackWidget;
+
+	float DamageFeedbackIntroSeconds = 0.1f;
+	float DamageFeedbackFadeSeconds = 2.0f;
+	float DamageFeedbackMaxOpacity = 0.7f;
+	float DamageFeedbackMaxThicknessPixels = 150.0f;
+	float PainGroanSFXVolume = 0.9f;
+	float DamageCameraStumbleSeconds = 0.08f;
+	float DamageCameraRecoverySeconds = 0.24f;
+	float DamageCameraTiltDegrees = 6.0f;
+	float DeathCameraStumbleSeconds = 0.16f;
+	float DeathCameraFallSeconds = 0.9f;
+	float DeathBlackFadeSeconds = 0.65f;
+	float DeathMessageHoldSeconds = 0.85f;
+	float DeathCameraDropCentimeters = 120.0f;
+	float DeathCameraTiltDegrees = 82.0f;
+	float BodyFallSFXVolume = 0.95f;
+	double NextDeathCountDamageAllowedWorldSeconds = -1.0;
+	bool bCameraHitFeedbackActive = false;
+	bool bCameraDeathFeedbackActive = false;
+	bool bBodyFallSFXPlayed = false;
+	float CameraFeedbackElapsedSeconds = 0.0f;
+	float CameraFallPitchDirection = 0.0f;
+	float CameraFallRollDirection = 0.0f;
+	FVector FeedbackCameraStartLocation = FVector::ZeroVector;
+	FRotator FeedbackCameraStartRotation = FRotator::ZeroRotator;
 	bool bStaminaInitialized = false;
 	TWeakObjectPtr<AHelperRearGuardCharacter> StaminaHelper;
 

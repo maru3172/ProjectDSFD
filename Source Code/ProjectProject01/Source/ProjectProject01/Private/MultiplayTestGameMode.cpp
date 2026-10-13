@@ -24,6 +24,7 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
+#include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -103,6 +104,30 @@ namespace
 		return false;
 #endif
 	}
+
+	FVector CalculateFollowFormationLocation(
+		const FVector& LeaderLocation,
+		const FVector& LeaderForward,
+		const FVector& LeaderRight,
+		const int32 FollowerIndex,
+		const int32 FollowerCount,
+		const float FollowDistance,
+		const float FollowSeparation)
+	{
+		const float CenteredIndex = static_cast<float>(FollowerIndex) -
+			(static_cast<float>(FMath::Max(0, FollowerCount - 1)) * 0.5f);
+		return LeaderLocation
+			- LeaderForward.GetSafeNormal2D() * FMath::Max(0.0f, FollowDistance)
+			+ LeaderRight.GetSafeNormal2D() * CenteredIndex * FMath::Max(0.0f, FollowSeparation);
+	}
+
+	EMultiplayMannequinCommand ResolveCommandWithoutDetectedSurvivor(
+		const EMultiplayMannequinCommand Command)
+	{
+		return Command == EMultiplayMannequinCommand::ChaseInDetectionRange
+			? EMultiplayMannequinCommand::Patrol
+			: Command;
+	}
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -173,6 +198,34 @@ bool FProjectProject01LevelTransitionResolutionTest::RunTest(const FString& Para
 		OneSurvivorAfterPartnerDeath.CanTravel());
 	TestEqual(TEXT("Only the waiting survivor respawns after partner death"),
 		OneSurvivorAfterPartnerDeath.AdvancingCount, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01MultiplayerMannequinAITest,
+	"ProjectProject01.Multiplayer.MannequinAIStateAndFormation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01MultiplayerMannequinAITest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("Range chase returns to patrol when no survivor remains detected"),
+		ResolveCommandWithoutDetectedSurvivor(EMultiplayMannequinCommand::ChaseInDetectionRange),
+		EMultiplayMannequinCommand::Patrol);
+	TestEqual(TEXT("Follow command remains follow when its temporary detection override ends"),
+		ResolveCommandWithoutDetectedSurvivor(EMultiplayMannequinCommand::FollowMannequinPlayer),
+		EMultiplayMannequinCommand::FollowMannequinPlayer);
+
+	const FVector LeaderLocation = FVector::ZeroVector;
+	const FVector First = CalculateFollowFormationLocation(
+		LeaderLocation, FVector::ForwardVector, FVector::RightVector, 0, 3, 300.0f, 175.0f);
+	const FVector Second = CalculateFollowFormationLocation(
+		LeaderLocation, FVector::ForwardVector, FVector::RightVector, 1, 3, 300.0f, 175.0f);
+	const FVector Third = CalculateFollowFormationLocation(
+		LeaderLocation, FVector::ForwardVector, FVector::RightVector, 2, 3, 300.0f, 175.0f);
+	TestTrue(TEXT("Every formation slot keeps at least the configured leader distance"),
+		First.Size2D() >= 300.0f && Second.Size2D() >= 300.0f && Third.Size2D() >= 300.0f);
+	TestTrue(TEXT("Adjacent formation slots keep the configured follower separation"),
+		FVector::Dist2D(First, Second) >= 175.0f && FVector::Dist2D(Second, Third) >= 175.0f);
 	return true;
 }
 #endif
@@ -346,7 +399,6 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		Mannequin->SetActorTransform(SpawnPoints[Index]->GetActorTransform(), false, nullptr,
 			ETeleportType::TeleportPhysics);
 		Mannequin->SetControlSlotForGameMode(Index);
-		Mannequin->SetMultiplayPatrolOriginForGameMode(Mannequin->GetActorLocation());
 		if (!IsValid(Mannequin->GetController()))
 		{
 			Mannequin->SpawnDefaultController();
@@ -376,7 +428,7 @@ bool AMultiplayTestGameMode::CanMannequinDetectSurvivor(
 	const AMannequinAICharacter* Mannequin,
 	const APlayerCharacter* Survivor) const
 {
-	if (!IsValid(Mannequin) || !IsValid(Survivor) || Survivor->IsGameOver() ||
+	if (!IsValid(Mannequin) || !IsActiveSurvivorTarget(Survivor) ||
 		FVector::DistSquared2D(Mannequin->GetActorLocation(), Survivor->GetActorLocation()) >
 		FMath::Square(static_cast<double>(MultiplayerDetectionRadius)))
 	{
@@ -391,6 +443,25 @@ bool AMultiplayTestGameMode::CanMannequinDetectSurvivor(
 
 	// AAIController의 시야 검사는 장애물을 고려한다. 감지 반경은 빨간 원과 같은 DirectChaseRadius다.
 	return const_cast<AAIController*>(AIController)->LineOfSightTo(Survivor);
+}
+
+bool AMultiplayTestGameMode::IsActiveSurvivorTarget(const APlayerCharacter* Survivor) const
+{
+	if (!IsValid(Survivor) || Survivor->IsGameOver())
+	{
+		return false;
+	}
+
+	const APlayerController* SurvivorController = Cast<APlayerController>(Survivor->GetController());
+	if (!IsSurvivorController(SurvivorController))
+	{
+		return false;
+	}
+
+	const AMultiplayTestPlayerController* MultiplayerController =
+		Cast<AMultiplayTestPlayerController>(SurvivorController);
+	return !IsValid(MultiplayerController) ||
+		MultiplayerController->GetSurvivorState() == EMultiplayTestSurvivorState::Active;
 }
 
 APlayerCharacter* AMultiplayTestGameMode::FindDetectedSurvivor(const AMannequinAICharacter* Mannequin) const
@@ -462,7 +533,19 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 	if (ExistingTarget && FVector::DistSquared2D(Mannequin->GetActorLocation(), *ExistingTarget) >
 		FMath::Square(static_cast<double>(MultiplayerAcceptanceRadius)))
 	{
-		return;
+		// 생존자 시야로 StopMovement가 호출됐더라도 시야가 풀리면 같은 목적지로
+		// A* 요청을 다시 넣어 정찰이 한 번만 수행되고 멈추는 현상을 막는다.
+		const EPathFollowingRequestResult::Type ResumeResult = AIController->MoveToLocation(
+			*ExistingTarget, MultiplayerAcceptanceRadius, true, true, true, true, nullptr, true);
+		if (ResumeResult != EPathFollowingRequestResult::Failed)
+		{
+			return;
+		}
+		MultiplayerPatrolTargets.Remove(Mannequin);
+	}
+	else if (ExistingTarget)
+	{
+		MultiplayerPatrolTargets.Remove(Mannequin);
 	}
 
 	UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld());
@@ -471,15 +554,31 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 		return;
 	}
 	FNavLocation RandomLocation;
-	if (!Navigation->GetRandomReachablePointInRadius(
-		Mannequin->GetMultiplayPatrolOrigin(), MultiplayerPatrolRadius, RandomLocation))
+	bool bFoundUsefulLocation = false;
+	for (int32 Attempt = 0; Attempt < 8; ++Attempt)
+	{
+		// 현재 위치를 기준으로 다음 점을 계속 뽑으므로 최초 스폰 지점 주변 한 바퀴로
+		// 끝나지 않고 연결된 NavMesh 전역을 향해 연속 정찰한다.
+		if (Navigation->GetRandomReachablePointInRadius(
+			Mannequin->GetActorLocation(), MultiplayerPatrolRadius, RandomLocation) &&
+			FVector::DistSquared2D(Mannequin->GetActorLocation(), RandomLocation.Location) >
+			FMath::Square(static_cast<double>(FMath::Max(MultiplayerAcceptanceRadius * 2.0f, 100.0f))))
+		{
+			bFoundUsefulLocation = true;
+			break;
+		}
+	}
+	if (!bFoundUsefulLocation)
 	{
 		return;
 	}
 
 	MultiplayerPatrolTargets.FindOrAdd(Mannequin) = RandomLocation.Location;
-	AIController->MoveToLocation(RandomLocation.Location, MultiplayerAcceptanceRadius,
-		true, true, true, true, nullptr, true);
+	if (AIController->MoveToLocation(RandomLocation.Location, MultiplayerAcceptanceRadius,
+		true, true, true, true, nullptr, true) == EPathFollowingRequestResult::Failed)
+	{
+		MultiplayerPatrolTargets.Remove(Mannequin);
+	}
 }
 
 void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
@@ -494,10 +593,9 @@ void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
 	}
 
 	const int32 FollowerIndex = Followers.IndexOfByKey(Mannequin);
-	const float CenteredIndex = static_cast<float>(FollowerIndex) - (static_cast<float>(Followers.Num() - 1) * 0.5f);
-	FVector DesiredLocation = Leader->GetActorLocation()
-		- Leader->GetActorForwardVector() * MultiplayerFollowDistance
-		+ Leader->GetActorRightVector() * CenteredIndex * MultiplayerFollowSeparation;
+	FVector DesiredLocation = CalculateFollowFormationLocation(
+		Leader->GetActorLocation(), Leader->GetActorForwardVector(), Leader->GetActorRightVector(),
+		FollowerIndex, Followers.Num(), MultiplayerFollowDistance, MultiplayerFollowSeparation);
 
 	// 대형의 기본 슬롯 외에도 현재 위치가 겹치면 반발 벡터를 더해 밀집을 해소한다.
 	FVector SeparationOffset = FVector::ZeroVector;
@@ -510,12 +608,38 @@ void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
 		FVector Away = Mannequin->GetActorLocation() - Other->GetActorLocation();
 		Away.Z = 0.0f;
 		const float Distance = Away.Size();
-		if (Distance > KINDA_SMALL_NUMBER && Distance < MultiplayerFollowSeparation)
+		if (Distance < MultiplayerFollowSeparation)
 		{
-			SeparationOffset += Away / Distance * (MultiplayerFollowSeparation - Distance);
+			FVector SeparationDirection;
+			if (Distance > KINDA_SMALL_NUMBER)
+			{
+				SeparationDirection = Away / Distance;
+			}
+			else
+			{
+				const int32 OtherIndex = Followers.IndexOfByKey(Other);
+				SeparationDirection = OtherIndex < FollowerIndex
+					? Leader->GetActorRightVector().GetSafeNormal2D()
+					: -Leader->GetActorRightVector().GetSafeNormal2D();
+			}
+			SeparationOffset += SeparationDirection * (MultiplayerFollowSeparation - Distance);
 		}
 	}
 	DesiredLocation += SeparationOffset;
+
+	// 리더와 너무 가까워졌다면 현재 방사 방향으로 먼저 밀어내어 리더 주위를
+	// 빙빙 돌면서 달라붙는 경로 재계산을 방지한다.
+	FVector LeaderToFollower = Mannequin->GetActorLocation() - Leader->GetActorLocation();
+	LeaderToFollower.Z = 0.0f;
+	if (LeaderToFollower.SizeSquared() < FMath::Square(static_cast<double>(MultiplayerFollowDistance)))
+	{
+		FVector AwayFromLeader = LeaderToFollower.GetSafeNormal();
+		if (AwayFromLeader.IsNearlyZero())
+		{
+			AwayFromLeader = -Leader->GetActorForwardVector().GetSafeNormal2D();
+		}
+		DesiredLocation = Leader->GetActorLocation() + AwayFromLeader * MultiplayerFollowDistance + SeparationOffset;
+	}
 
 	if (UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld()); IsValid(Navigation))
 	{
@@ -524,6 +648,13 @@ void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
 		{
 			DesiredLocation = Projected.Location;
 		}
+	}
+	const float FormationDeadZone = FMath::Max(MultiplayerAcceptanceRadius, MultiplayerFollowDistance * 0.15f);
+	if (FVector::DistSquared2D(Mannequin->GetActorLocation(), DesiredLocation) <=
+		FMath::Square(static_cast<double>(FormationDeadZone)))
+	{
+		StopMannequinAI(Mannequin);
+		return;
 	}
 	AIController->MoveToLocation(DesiredLocation, MultiplayerAcceptanceRadius,
 		true, true, true, true, nullptr, true);
@@ -556,6 +687,7 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		return Left.GetControlSlot() < Right.GetControlSlot();
 	});
 	AMannequinAICharacter* Leader = GetMannequinPlayerFocusPawn();
+	Followers.Remove(Leader);
 
 	for (AMannequinAICharacter* Mannequin : Mannequins)
 	{
@@ -577,9 +709,23 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 
 		// 정지 외의 모든 명령보다 각 마네킹 자신의 빨간 원 감지를 우선한다.
-		if (APlayerCharacter* DetectedSurvivor = FindDetectedSurvivor(Mannequin); IsValid(DetectedSurvivor))
+		APlayerCharacter* ChaseTarget = FindDetectedSurvivor(Mannequin);
+		if (!IsValid(ChaseTarget) && Command == EMultiplayMannequinCommand::Patrol)
 		{
-			AIController->MoveToActor(DetectedSurvivor, MultiplayerAcceptanceRadius,
+			if (TWeakObjectPtr<APlayerCharacter>* ObservedTarget = MultiplayerObservedChaseTargets.Find(Mannequin);
+				ObservedTarget && IsActiveSurvivorTarget(ObservedTarget->Get()))
+			{
+				// 생존자가 마네킹을 본 동안에는 정지하고, 시선을 돌린 직후 기억한 생존자를 추격한다.
+				ChaseTarget = ObservedTarget->Get();
+			}
+			else
+			{
+				MultiplayerObservedChaseTargets.Remove(Mannequin);
+			}
+		}
+		if (IsValid(ChaseTarget))
+		{
+			AIController->MoveToActor(ChaseTarget, MultiplayerAcceptanceRadius,
 				true, true, true, nullptr, true);
 			continue;
 		}
@@ -590,8 +736,12 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 			MoveMannequinToPatrolTarget(Mannequin, AIController);
 			break;
 		case EMultiplayMannequinCommand::ChaseInDetectionRange:
-			// 범위 추격 명령은 대상이 감지 범위에 들어올 때까지 현재 위치에서 기다린다.
-			StopMannequinAI(Mannequin);
+			// 추격 대상이 잡히거나 사망한 경우 다른 범위 내 생존자는 위에서 즉시 이어서 추격한다.
+			// 유효한 범위 내 생존자가 하나도 없으면 명령을 포기하고 연속 정찰로 복귀한다.
+			Mannequin->SetMultiplayCommand(ResolveCommandWithoutDetectedSurvivor(Command));
+			MultiplayerObservedChaseTargets.Remove(Mannequin);
+			MultiplayerPatrolTargets.Remove(Mannequin);
+			MoveMannequinToPatrolTarget(Mannequin, AIController);
 			break;
 		case EMultiplayMannequinCommand::FollowMannequinPlayer:
 			if (IsValid(Leader) && Leader != Mannequin)
@@ -613,6 +763,13 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 	for (auto It = MultiplayerPatrolTargets.CreateIterator(); It; ++It)
 	{
 		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (auto It = MultiplayerObservedChaseTargets.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || !IsActiveSurvivorTarget(It.Value().Get()))
 		{
 			It.RemoveCurrent();
 		}
@@ -1494,7 +1651,6 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 		Movement->DisableMovement();
 	}
 	Survivor->SetActorEnableCollision(false);
-	Survivor->SetActorHiddenInGame(true);
 	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
 	{
 		if (Pair.Value.Role == TEXT("Mannequin"))
@@ -1517,16 +1673,33 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("Survivor %s was authoritatively eliminated at %.2f seconds."),
 		*GetNameSafe(Survivor), CaptureSeconds);
-	if (AMultiplayTestPlayerController* EliminatedController = Cast<AMultiplayTestPlayerController>(Survivor->GetController());
-		IsValid(EliminatedController))
+	AMultiplayTestPlayerController* EliminatedController =
+		Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+	const TWeakObjectPtr<APlayerCharacter> WeakSurvivor(Survivor);
+	const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(EliminatedController);
+	if (UWorld* World = GetWorld(); IsValid(World))
 	{
-		// 탈락 순간에는 현재 카메라를 바로 잘라 바꾸지 않고 암전한 뒤
-		// 살아 있는 생존자 관전 시점으로 전환한다. 마지막 생존자라 관전
-		// 대상이 없으면 암전을 유지하고 이어지는 결과 화면을 표시한다.
-		EliminatedController->EnterSurvivorSpectator(
-			FindLivingSurvivorSpectatorTarget(EliminatedController, 1), true);
+		FTimerHandle DeathSequenceTimer;
+		World->GetTimerManager().SetTimer(
+			DeathSequenceTimer,
+			FTimerDelegate::CreateWeakLambda(this, [this, WeakSurvivor, WeakController]()
+			{
+				APlayerCharacter* EliminatedSurvivor = WeakSurvivor.Get();
+				AMultiplayTestPlayerController* Controller = WeakController.Get();
+				if (IsValid(EliminatedSurvivor))
+				{
+					EliminatedSurvivor->SetActorHiddenInGame(true);
+				}
+				if (IsValid(Controller))
+				{
+					// 사망 카메라가 쓰러지고 암전된 뒤에만 살아 있는 생존자 관전으로 전환한다.
+					Controller->EnterSurvivorSpectator(
+						FindLivingSurvivorSpectatorTarget(Controller, 1), true);
+				}
+				CheckForMatchCompletion();
+			}),
+			Survivor->GetDeathSequenceHandoffDelaySeconds(), false);
 	}
-	CheckForMatchCompletion();
 }
 
 bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
@@ -2052,6 +2225,7 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 	// 직접 조작은 계속 유지하고, 빙의 해제 뒤 AI가 이어서 수행할 명령만 저장한다.
 	Target->SetMultiplayCommand(Command);
 	MultiplayerPatrolTargets.Remove(Target);
+	MultiplayerObservedChaseTargets.Remove(Target);
 	RequestingController->bManualMannequinCommandIssued = true;
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 		TEXT("MultiplayerMannequinCommand"),
@@ -2078,6 +2252,7 @@ bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerCon
 		{
 			Mannequin->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);
 			MultiplayerPatrolTargets.Remove(Mannequin);
+			MultiplayerObservedChaseTargets.Remove(Mannequin);
 			bChangedAny = true;
 		}
 	}
@@ -2317,13 +2492,30 @@ void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
 		}
 
 		bool bObservedByAnySurvivor = false;
+		APlayerCharacter* ClosestObservingSurvivor = nullptr;
+		double ClosestObservingDistanceSquared = TNumericLimits<double>::Max();
 		for (const APlayerController* SurvivorController : SurvivorControllers)
 		{
 			if (CanSurvivorSeeMannequin(SurvivorController, Mannequin))
 			{
 				bObservedByAnySurvivor = true;
-				break;
+				APlayerCharacter* ObservingSurvivor = Cast<APlayerCharacter>(SurvivorController->GetPawn());
+				if (IsActiveSurvivorTarget(ObservingSurvivor))
+				{
+					const double DistanceSquared = FVector::DistSquared2D(
+						Mannequin->GetActorLocation(), ObservingSurvivor->GetActorLocation());
+					if (DistanceSquared < ClosestObservingDistanceSquared)
+					{
+						ClosestObservingDistanceSquared = DistanceSquared;
+						ClosestObservingSurvivor = ObservingSurvivor;
+					}
+				}
 			}
+		}
+		if (Mannequin->GetMultiplayCommand() == EMultiplayMannequinCommand::Patrol &&
+			IsValid(ClosestObservingSurvivor))
+		{
+			MultiplayerObservedChaseTargets.FindOrAdd(Mannequin) = ClosestObservingSurvivor;
 		}
 
 		Mannequin->SetFrozenBySurvivorVision(bObservedByAnySurvivor);

@@ -5,12 +5,14 @@
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01GameInstance.h"
+#include "PlayerFeedbackWidgets.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
@@ -19,6 +21,7 @@
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
 
 // 카메라 B 키 디버깅 관련
 #include "GameFramework/PlayerController.h"
@@ -97,6 +100,25 @@ namespace
 		}
 		return FMath::Max(0.0f, SafeDeltaTime - (VisionDeficit / VisionRecoveryPerSecond));
 	}
+
+	FVector2D ResolveOppositeFallDirection(
+		const FVector& ViewForward, const FVector& ViewRight, const FVector& ToHitSource)
+	{
+		const FVector SafeSource = ToHitSource.GetSafeNormal2D();
+		if (SafeSource.IsNearlyZero())
+		{
+			return FVector2D(1.0f, 0.0f);
+		}
+		const float ForwardDot = FVector::DotProduct(ViewForward.GetSafeNormal2D(), SafeSource);
+		const float RightDot = FVector::DotProduct(ViewRight.GetSafeNormal2D(), SafeSource);
+		if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
+		{
+			// 앞에서 맞으면 뒤로(+Pitch), 뒤에서 맞으면 앞으로(-Pitch) 쓰러진다.
+			return FVector2D(ForwardDot >= 0.0f ? 1.0f : -1.0f, 0.0f);
+		}
+		// 오른쪽에서 맞으면 왼쪽(-Roll), 왼쪽에서 맞으면 오른쪽(+Roll)으로 쓰러진다.
+		return FVector2D(0.0f, RightDot >= 0.0f ? -1.0f : 1.0f);
+	}
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -131,6 +153,24 @@ bool FProjectProject01StaminaRulesTest::RunTest(const FString& Parameters)
 		FMath::IsNearlyEqual(CalculateNormalizedVisionRate(60.0f, 100.0f, 5.0f, 2.0f), 6.0f));
 	TestTrue(TEXT("Zero maximum stamina is handled without division"),
 		FMath::IsNearlyZero(CalculateNormalizedVisionRate(60.0f, 0.0f, 5.0f, 1.0f)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01DeathFallDirectionTest,
+	"ProjectProject01.Player.DeathFallDirection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01DeathFallDirectionTest::RunTest(const FString& Parameters)
+{
+	const FVector Forward = FVector::ForwardVector;
+	const FVector Right = FVector::RightVector;
+	TestEqual(TEXT("Front hit falls backward"), ResolveOppositeFallDirection(Forward, Right, Forward), FVector2D(1.0f, 0.0f));
+	TestEqual(TEXT("Back hit falls forward"), ResolveOppositeFallDirection(Forward, Right, -Forward), FVector2D(-1.0f, 0.0f));
+	TestEqual(TEXT("Right hit falls left"), ResolveOppositeFallDirection(Forward, Right, Right), FVector2D(0.0f, -1.0f));
+	TestEqual(TEXT("Left hit falls right"), ResolveOppositeFallDirection(Forward, Right, -Right), FVector2D(0.0f, 1.0f));
+	TestEqual(TEXT("A diagonal uses its dominant side"),
+		ResolveOppositeFallDirection(Forward, Right, FVector(0.2f, -1.0f, 0.0f)), FVector2D(0.0f, 1.0f));
 	return true;
 }
 #endif
@@ -211,6 +251,10 @@ APlayerCharacter::APlayerCharacter()
 	HeartbeatComponent = CreateDefaultSubobject<UPlayerHeartbeatComponent>(TEXT("Heartbeat Component"));
 	HeartbeatSFXComponent = CreateDefaultSubobject<UHeartbeatSynthComponent>(TEXT("Heartbeat SFX Component"));
 	HeartbeatSFXComponent->SetupAttachment(RootComponent);
+	PainGroanSFXComponent = CreateDefaultSubobject<UPainGroanSynthComponent>(TEXT("Pain Groan SFX Component"));
+	PainGroanSFXComponent->SetupAttachment(RootComponent);
+	BodyFallSFXComponent = CreateDefaultSubobject<UBodyFallSynthComponent>(TEXT("Body Fall SFX Component"));
+	BodyFallSFXComponent->SetupAttachment(RootComponent);
 	FootstepSFXComponent = CreateDefaultSubobject<UFootstepSynthComponent>(TEXT("Footstep SFX Component"));
 	FootstepSFXComponent->SetupAttachment(RootComponent);
 	FootstepSFXComponent->Configure(EProjectProject01FootstepStyle::MarbleSneaker, 0.85f, true);
@@ -318,6 +362,11 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
+	}
+	RestoreFeedbackCamera();
 	Super::EndPlay(EndPlayReason);
 	
     bUseTopViewInPIE = false;
@@ -333,6 +382,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 	{
 		FootstepSFXComponent->UpdateFootsteps(DeltaTime);
 	}
+	UpdateCameraFeedback(DeltaTime);
 	
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	if (!IsValid(MovementComponent))
@@ -451,6 +501,16 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 	PlayerController->bShowMouseCursor = false;
 	PlayerController->SetInputMode(FInputModeGameOnly());
 
+	// 싱글플레이도 첫 스폰 화면이 검은색에서 자연스럽게 밝아지도록 한다.
+	// 멀티플레이의 맵 전환 암전/복구는 PlayerController가 별도로 관리한다.
+	if (GetNetMode() == NM_Standalone && !bInitialStandaloneSpawnFadePlayed &&
+		IsValid(PlayerController->PlayerCameraManager))
+	{
+		bInitialStandaloneSpawnFadePlayed = true;
+		PlayerController->PlayerCameraManager->StartCameraFade(
+			1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+	}
+
 	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
 	UEnhancedInputLocalPlayerSubsystem* InputSubsystem = IsValid(LocalPlayer)
 		? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer)
@@ -464,22 +524,19 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 
 	RegisterRuntimeSprintMapping(InputSubsystem);
 
-	// 생존자 역할 가이드는 이 PC에서 최초 한 번만 자동 표시한다.
+	// 역할별 조작 가이드는 멀티플레이에서만 이 PC에 최초 한 번 자동 표시한다.
+	// 싱글플레이 진입이 멀티 생존자 가이드의 확인 기록을 소비해서도 안 된다.
+	const bool bIsMultiplayer = GetNetMode() != NM_Standalone;
 	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
-	if (IsValid(Settings) && !Settings->HasSeenSurvivorGuide())
+	if (bIsMultiplayer && IsValid(Settings) && !Settings->HasSeenSurvivorGuide())
 	{
 		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
 			PlayerController, UProjectProject01GameGuideWidget::StaticClass());
 		if (ensureMsgf(IsValid(Guide), TEXT("Could not create the first survivor guide.")))
 		{
-			const bool bIsMultiplayer = GetNetMode() != NM_Standalone;
 			Settings->MarkSurvivorGuideSeen();
-			Guide->Configure(false, bIsMultiplayer, false);
+			Guide->Configure(false, true, false);
 			Guide->AddToViewport(700);
-			if (!bIsMultiplayer)
-			{
-				UGameplayStatics::SetGamePaused(this, true);
-			}
 			PlayerController->bShowMouseCursor = true;
 			FInputModeGameAndUI GuideInput;
 			GuideInput.SetWidgetToFocus(Guide->TakeWidget());
@@ -873,6 +930,28 @@ void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
 	MaxStamina = FMath::Max(0.0f, Tuning.MaxStamina);
 	StaminaDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDrainPerSecond);
 	StaminaRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaRecoveryPerSecond);
+	DamageFeedbackIntroSeconds = FMath::Max(Tuning.DamageFeedbackIntroSeconds, 0.01f);
+	DamageFeedbackFadeSeconds = FMath::Max(Tuning.DamageFeedbackFadeSeconds, 0.01f);
+	DamageFeedbackMaxOpacity = FMath::Clamp(Tuning.DamageFeedbackMaxOpacity, 0.0f, 1.0f);
+	DamageFeedbackMaxThicknessPixels = FMath::Max(Tuning.DamageFeedbackMaxThicknessPixels, 1.0f);
+	PainGroanSFXVolume = FMath::Max(Tuning.PainGroanSFXVolume, 0.0f);
+	DamageCameraStumbleSeconds = FMath::Max(Tuning.DamageCameraStumbleSeconds, 0.01f);
+	DamageCameraRecoverySeconds = FMath::Max(Tuning.DamageCameraRecoverySeconds, 0.01f);
+	DamageCameraTiltDegrees = FMath::Clamp(Tuning.DamageCameraTiltDegrees, 0.0f, 20.0f);
+	DeathCameraStumbleSeconds = FMath::Max(Tuning.DeathCameraStumbleSeconds, 0.0f);
+	DeathCameraFallSeconds = FMath::Max(Tuning.DeathCameraFallSeconds, 0.01f);
+	DeathBlackFadeSeconds = FMath::Max(Tuning.DeathBlackFadeSeconds, 0.01f);
+	DeathMessageHoldSeconds = FMath::Max(Tuning.DeathMessageHoldSeconds, 0.0f);
+	DeathCameraDropCentimeters = FMath::Max(Tuning.DeathCameraDropCentimeters, 0.0f);
+	DeathCameraTiltDegrees = FMath::Clamp(Tuning.DeathCameraTiltDegrees, 0.0f, 90.0f);
+	BodyFallSFXVolume = FMath::Max(Tuning.BodyFallSFXVolume, 0.0f);
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		if (IsValid(PainGroanSFXComponent)) PainGroanSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+		if (IsValid(BodyFallSFXComponent)) BodyFallSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+	}
+	if (IsValid(PainGroanSFXComponent)) PainGroanSFXComponent->SetVolumeMultiplier(PainGroanSFXVolume);
+	if (IsValid(BodyFallSFXComponent)) BodyFallSFXComponent->SetVolumeMultiplier(BodyFallSFXVolume);
 	CurrentStamina = bStaminaInitialized ? FMath::Clamp(CurrentStamina, 0.0f, MaxStamina) : MaxStamina;
 	bStaminaInitialized = true;
 	ApplyPlayerWalkSpeed();
@@ -900,6 +979,21 @@ void APlayerCharacter::GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTun
 	OutTuning.MaxStamina = MaxStamina;
 	OutTuning.StaminaDrainPerSecond = StaminaDrainPerSecond;
 	OutTuning.StaminaRecoveryPerSecond = StaminaRecoveryPerSecond;
+	OutTuning.DamageFeedbackIntroSeconds = DamageFeedbackIntroSeconds;
+	OutTuning.DamageFeedbackFadeSeconds = DamageFeedbackFadeSeconds;
+	OutTuning.DamageFeedbackMaxOpacity = DamageFeedbackMaxOpacity;
+	OutTuning.DamageFeedbackMaxThicknessPixels = DamageFeedbackMaxThicknessPixels;
+	OutTuning.PainGroanSFXVolume = PainGroanSFXVolume;
+	OutTuning.DamageCameraStumbleSeconds = DamageCameraStumbleSeconds;
+	OutTuning.DamageCameraRecoverySeconds = DamageCameraRecoverySeconds;
+	OutTuning.DamageCameraTiltDegrees = DamageCameraTiltDegrees;
+	OutTuning.DeathCameraStumbleSeconds = DeathCameraStumbleSeconds;
+	OutTuning.DeathCameraFallSeconds = DeathCameraFallSeconds;
+	OutTuning.DeathBlackFadeSeconds = DeathBlackFadeSeconds;
+	OutTuning.DeathMessageHoldSeconds = DeathMessageHoldSeconds;
+	OutTuning.DeathCameraDropCentimeters = DeathCameraDropCentimeters;
+	OutTuning.DeathCameraTiltDegrees = DeathCameraTiltDegrees;
+	OutTuning.BodyFallSFXVolume = BodyFallSFXVolume;
 	if (IsValid(HeartbeatComponent)) HeartbeatComponent->GetDiagnosticAppliedTuning(OutTuning);
 }
 
@@ -910,6 +1004,28 @@ void APlayerCharacter::ClientApplyPlayerTuning_Implementation(const FPlayerTunin
 	MaxStamina = FMath::Max(0.0f, Tuning.MaxStamina);
 	StaminaDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDrainPerSecond);
 	StaminaRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaRecoveryPerSecond);
+	DamageFeedbackIntroSeconds = FMath::Max(Tuning.DamageFeedbackIntroSeconds, 0.01f);
+	DamageFeedbackFadeSeconds = FMath::Max(Tuning.DamageFeedbackFadeSeconds, 0.01f);
+	DamageFeedbackMaxOpacity = FMath::Clamp(Tuning.DamageFeedbackMaxOpacity, 0.0f, 1.0f);
+	DamageFeedbackMaxThicknessPixels = FMath::Max(Tuning.DamageFeedbackMaxThicknessPixels, 1.0f);
+	PainGroanSFXVolume = FMath::Max(Tuning.PainGroanSFXVolume, 0.0f);
+	DamageCameraStumbleSeconds = FMath::Max(Tuning.DamageCameraStumbleSeconds, 0.01f);
+	DamageCameraRecoverySeconds = FMath::Max(Tuning.DamageCameraRecoverySeconds, 0.01f);
+	DamageCameraTiltDegrees = FMath::Clamp(Tuning.DamageCameraTiltDegrees, 0.0f, 20.0f);
+	DeathCameraStumbleSeconds = FMath::Max(Tuning.DeathCameraStumbleSeconds, 0.0f);
+	DeathCameraFallSeconds = FMath::Max(Tuning.DeathCameraFallSeconds, 0.01f);
+	DeathBlackFadeSeconds = FMath::Max(Tuning.DeathBlackFadeSeconds, 0.01f);
+	DeathMessageHoldSeconds = FMath::Max(Tuning.DeathMessageHoldSeconds, 0.0f);
+	DeathCameraDropCentimeters = FMath::Max(Tuning.DeathCameraDropCentimeters, 0.0f);
+	DeathCameraTiltDegrees = FMath::Clamp(Tuning.DeathCameraTiltDegrees, 0.0f, 90.0f);
+	BodyFallSFXVolume = FMath::Max(Tuning.BodyFallSFXVolume, 0.0f);
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		if (IsValid(PainGroanSFXComponent)) PainGroanSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+		if (IsValid(BodyFallSFXComponent)) BodyFallSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+	}
+	if (IsValid(PainGroanSFXComponent)) PainGroanSFXComponent->SetVolumeMultiplier(PainGroanSFXVolume);
+	if (IsValid(BodyFallSFXComponent)) BodyFallSFXComponent->SetVolumeMultiplier(BodyFallSFXVolume);
 	CurrentStamina = bStaminaInitialized ? FMath::Clamp(CurrentStamina, 0.0f, MaxStamina) : MaxStamina;
 	bStaminaInitialized = true;
 	ApplyPlayerWalkSpeed();
@@ -954,10 +1070,25 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	{
 		return false;
 	}
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	// 화면 피격 연출이 끝날 때까지 같은 접촉이나 다른 마네킹이 데스카운트를 연속으로 깎지 못한다.
+	if (World->GetTimeSeconds() < NextDeathCountDamageAllowedWorldSeconds)
+	{
+		return true;
+	}
+	float FallPitchDirection = 0.0f;
+	float FallRollDirection = 0.0f;
+	ResolveFallDirection(CatchingMannequin->GetActorLocation(), FallPitchDirection, FallRollDirection);
 
 	if (RemainingDeathCount > 0)
 	{
 		--RemainingDeathCount;
+		NextDeathCountDamageAllowedWorldSeconds = World->GetTimeSeconds() +
+			DamageFeedbackIntroSeconds + DamageFeedbackFadeSeconds;
 		UE_LOG(LogTemp, Log, TEXT("Player %s was caught by mannequin %s. Remaining death count: %d."),
 			*GetName(), *CatchingMannequin->GetName(), RemainingDeathCount);
 
@@ -966,14 +1097,30 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 			RemoveGuardingHelpers();
 		}
 
+		if (IsLocallyControlled())
+		{
+			PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
+		}
+		else
+		{
+			ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection);
+		}
 		ForceNetUpdate();
 		return true;
 	}
 
 	bGameOver = true;
+	if (IsLocallyControlled())
+	{
+		PlayLocalDeathSequence(FallPitchDirection, FallRollDirection);
+	}
+	else
+	{
+		ClientPlayDeathSequence(FallPitchDirection, FallRollDirection);
+	}
 	ApplyGameOverState();
 	ForceNetUpdate();
-	if (UWorld* World = GetWorld(); IsValid(World))
+	if (IsValid(World))
 	{
 		if (AMultiplayTestGameMode* MultiplayGameMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
 			IsValid(MultiplayGameMode))
@@ -995,6 +1142,7 @@ void APlayerCharacter::SetRemainingDeathCountForGameMode(int32 NewDeathCount)
 
 	StartingDeathCount = FMath::Max(0, NewDeathCount);
 	RemainingDeathCount = StartingDeathCount;
+	NextDeathCountDamageAllowedWorldSeconds = -1.0;
 	ForceNetUpdate();
 }
 
@@ -1006,6 +1154,7 @@ void APlayerCharacter::ResetDeathCountAtCheckpoint()
 		return;
 	}
 	RemainingDeathCount = FMath::Max(0, StartingDeathCount);
+	NextDeathCountDamageAllowedWorldSeconds = -1.0;
 	ForceNetUpdate();
 }
 
@@ -1024,6 +1173,13 @@ void APlayerCharacter::RestoreSinglePlayerState(
 
 	bGameOver = false;
 	bSinglePlayerResultPresented = false;
+	NextDeathCountDamageAllowedWorldSeconds = -1.0;
+	World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
+	RestoreFeedbackCamera();
+	if (IsValid(DamageFeedbackWidget)) DamageFeedbackWidget->RemoveFromParent();
+	if (IsValid(DeathFeedbackWidget)) DeathFeedbackWidget->RemoveFromParent();
+	DamageFeedbackWidget = nullptr;
+	DeathFeedbackWidget = nullptr;
 	RemainingDeathCount = FMath::Max(0, SavedDeathCount);
 	CurrentStamina = FMath::Clamp(SavedStamina, 0.0f, MaxStamina);
 	ApplySprintingState(false);
@@ -1100,8 +1256,30 @@ bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* Pushing
 	{
 		return false;
 	}
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	if (World->GetTimeSeconds() < NextDeathCountDamageAllowedWorldSeconds)
+	{
+		return true;
+	}
 
 	--RemainingDeathCount;
+	NextDeathCountDamageAllowedWorldSeconds = World->GetTimeSeconds() +
+		DamageFeedbackIntroSeconds + DamageFeedbackFadeSeconds;
+	float FallPitchDirection = 0.0f;
+	float FallRollDirection = 0.0f;
+	ResolveFallDirection(PushingHelper->GetActorLocation(), FallPitchDirection, FallRollDirection);
+	if (IsLocallyControlled())
+	{
+		PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
+	}
+	else
+	{
+		ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection);
+	}
 	UE_LOG(LogTemp, Warning, TEXT("Player %s lost one death count after being pushed by helper %s. Remaining death count: %d."),
 		*GetName(), *PushingHelper->GetName(), RemainingDeathCount);
 	if (RemainingDeathCount == 0)
@@ -1111,6 +1289,235 @@ bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* Pushing
 
 	ForceNetUpdate();
 	return true;
+}
+
+void APlayerCharacter::ResolveFallDirection(
+	const FVector& HitSourceLocation, float& OutPitchDirection, float& OutRollDirection) const
+{
+	FVector ViewForward = GetActorForwardVector();
+	FVector ViewRight = GetActorRightVector();
+	if (const AController* PlayerController = GetController(); IsValid(PlayerController))
+	{
+		const FRotator HorizontalView(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f);
+		ViewForward = HorizontalView.Vector();
+		ViewRight = FRotationMatrix(HorizontalView).GetUnitAxis(EAxis::Y);
+	}
+	const FVector2D Direction = ResolveOppositeFallDirection(
+		ViewForward, ViewRight, HitSourceLocation - GetActorLocation());
+	OutPitchDirection = Direction.X;
+	OutRollDirection = Direction.Y;
+}
+
+void APlayerCharacter::ClientPlayDamageFeedback_Implementation(
+	const float FallPitchDirection, const float FallRollDirection)
+{
+	PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
+}
+
+void APlayerCharacter::ClientPlayDeathSequence_Implementation(
+	const float FallPitchDirection, const float FallRollDirection)
+{
+	PlayLocalDeathSequence(FallPitchDirection, FallRollDirection);
+}
+
+void APlayerCharacter::PlayPainSFX(const bool bFatal)
+{
+	if (!IsLocallyControlled() || !IsValid(PainGroanSFXComponent))
+	{
+		return;
+	}
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	{
+		PainGroanSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+	}
+	PainGroanSFXComponent->SetVolumeMultiplier(PainGroanSFXVolume);
+	PainGroanSFXComponent->TriggerPain(bFatal);
+}
+
+void APlayerCharacter::PlayLocalDamageFeedback(
+	const float FallPitchDirection, const float FallRollDirection, const bool bAlsoShowVFX)
+{
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!IsLocallyControlled() || !IsValid(PlayerController) || bCameraDeathFeedbackActive)
+	{
+		return;
+	}
+	if (bAlsoShowVFX)
+	{
+		if (IsValid(DamageFeedbackWidget)) DamageFeedbackWidget->RemoveFromParent();
+		DamageFeedbackWidget = CreateWidget<UProjectProject01DamageFeedbackWidget>(
+			PlayerController, UProjectProject01DamageFeedbackWidget::StaticClass());
+		if (ensureMsgf(IsValid(DamageFeedbackWidget), TEXT("Unable to create player damage feedback widget.")))
+		{
+			DamageFeedbackWidget->Configure(
+				DamageFeedbackIntroSeconds, DamageFeedbackFadeSeconds,
+				DamageFeedbackMaxOpacity, DamageFeedbackMaxThicknessPixels);
+			DamageFeedbackWidget->AddToViewport(850);
+		}
+		PlayPainSFX(false);
+	}
+	RestoreFeedbackCamera();
+	FeedbackCameraStartLocation = IsValid(Camera) ? Camera->GetRelativeLocation() : FVector::ZeroVector;
+	FeedbackCameraStartRotation = IsValid(Camera) ? Camera->GetRelativeRotation() : FRotator::ZeroRotator;
+	CameraFallPitchDirection = FMath::Clamp(FallPitchDirection, -1.0f, 1.0f);
+	CameraFallRollDirection = FMath::Clamp(FallRollDirection, -1.0f, 1.0f);
+	CameraFeedbackElapsedSeconds = 0.0f;
+	bCameraHitFeedbackActive = true;
+}
+
+void APlayerCharacter::PlayLocalDeathSequence(
+	const float FallPitchDirection, const float FallRollDirection)
+{
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!IsLocallyControlled() || !IsValid(PlayerController) || bCameraDeathFeedbackActive)
+	{
+		return;
+	}
+	RestoreFeedbackCamera();
+	FeedbackCameraStartLocation = IsValid(Camera) ? Camera->GetRelativeLocation() : FVector::ZeroVector;
+	FeedbackCameraStartRotation = IsValid(Camera) ? Camera->GetRelativeRotation() : FRotator::ZeroRotator;
+	CameraFallPitchDirection = FMath::Clamp(FallPitchDirection, -1.0f, 1.0f);
+	CameraFallRollDirection = FMath::Clamp(FallRollDirection, -1.0f, 1.0f);
+	CameraFeedbackElapsedSeconds = 0.0f;
+	bCameraDeathFeedbackActive = true;
+	bBodyFallSFXPlayed = false;
+
+	// 최종 사망도 피격이므로 붉은 테두리와 더 긴 신음을 동시에 시작한다.
+	if (IsValid(DamageFeedbackWidget)) DamageFeedbackWidget->RemoveFromParent();
+	DamageFeedbackWidget = CreateWidget<UProjectProject01DamageFeedbackWidget>(
+		PlayerController, UProjectProject01DamageFeedbackWidget::StaticClass());
+	if (ensureMsgf(IsValid(DamageFeedbackWidget), TEXT("Unable to create fatal damage feedback widget.")))
+	{
+		DamageFeedbackWidget->Configure(
+			DamageFeedbackIntroSeconds, DamageFeedbackFadeSeconds,
+			DamageFeedbackMaxOpacity, DamageFeedbackMaxThicknessPixels);
+		DamageFeedbackWidget->AddToViewport(850);
+	}
+	PlayPainSFX(true);
+
+	if (IsValid(DeathFeedbackWidget)) DeathFeedbackWidget->RemoveFromParent();
+	DeathFeedbackWidget = CreateWidget<UProjectProject01DeathFeedbackWidget>(
+		PlayerController, UProjectProject01DeathFeedbackWidget::StaticClass());
+	if (ensureMsgf(IsValid(DeathFeedbackWidget), TEXT("Unable to create player death feedback widget.")))
+	{
+		DeathFeedbackWidget->Configure(
+			DeathCameraStumbleSeconds + DeathCameraFallSeconds,
+			DeathBlackFadeSeconds);
+		DeathFeedbackWidget->AddToViewport(900);
+	}
+
+	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() == NM_Standalone)
+	{
+		World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
+		World->GetTimerManager().SetTimer(
+			SinglePlayerDeathResultTimer,
+			FTimerDelegate::CreateWeakLambda(this, [this]() { PresentSinglePlayerResult(false); }),
+			GetDeathSequenceHandoffDelaySeconds(), false);
+	}
+}
+
+void APlayerCharacter::UpdateCameraFeedback(const float DeltaTime)
+{
+	if ((!bCameraHitFeedbackActive && !bCameraDeathFeedbackActive) || !IsValid(Camera))
+	{
+		return;
+	}
+	CameraFeedbackElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+	if (bCameraHitFeedbackActive)
+	{
+		const float TotalSeconds = DamageCameraStumbleSeconds + DamageCameraRecoverySeconds;
+		if (CameraFeedbackElapsedSeconds >= TotalSeconds)
+		{
+			RestoreFeedbackCamera();
+			return;
+		}
+		float Strength = 0.0f;
+		if (CameraFeedbackElapsedSeconds <= DamageCameraStumbleSeconds)
+		{
+			const float Alpha = CameraFeedbackElapsedSeconds / DamageCameraStumbleSeconds;
+			Strength = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.5f);
+		}
+		else
+		{
+			const float Alpha = (CameraFeedbackElapsedSeconds - DamageCameraStumbleSeconds) /
+				DamageCameraRecoverySeconds;
+			Strength = 1.0f - FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
+		}
+		Camera->SetRelativeLocation(FeedbackCameraStartLocation + FVector(
+			-CameraFallPitchDirection * 2.5f * Strength,
+			CameraFallRollDirection * 3.5f * Strength,
+			-2.0f * Strength));
+		Camera->SetRelativeRotation(FeedbackCameraStartRotation + FRotator(
+			CameraFallPitchDirection * DamageCameraTiltDegrees * Strength,
+			0.0f,
+			CameraFallRollDirection * DamageCameraTiltDegrees * Strength));
+		return;
+	}
+
+	const float CameraSequenceSeconds = DeathCameraStumbleSeconds + DeathCameraFallSeconds;
+	if (!bBodyFallSFXPlayed && CameraFeedbackElapsedSeconds >= CameraSequenceSeconds)
+	{
+		bBodyFallSFXPlayed = true;
+		if (IsValid(BodyFallSFXComponent))
+		{
+			if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+			{
+				BodyFallSFXComponent->SoundClass = Settings->GetSFXSoundClass();
+			}
+			BodyFallSFXComponent->SetVolumeMultiplier(BodyFallSFXVolume);
+			BodyFallSFXComponent->TriggerBodyFall();
+		}
+	}
+	const float StumbleAngle = FMath::Min(DeathCameraTiltDegrees * 0.16f, 12.0f);
+	float TiltDegrees = StumbleAngle;
+	float DropCentimeters = 5.0f;
+	float SideShift = 5.0f;
+	if (CameraFeedbackElapsedSeconds <= DeathCameraStumbleSeconds && DeathCameraStumbleSeconds > UE_SMALL_NUMBER)
+	{
+		const float Alpha = CameraFeedbackElapsedSeconds / DeathCameraStumbleSeconds;
+		const float Eased = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.2f);
+		TiltDegrees *= Eased;
+		DropCentimeters *= Eased;
+		SideShift *= Eased;
+	}
+	else
+	{
+		const float FallAlpha = FMath::Clamp(
+			(CameraFeedbackElapsedSeconds - DeathCameraStumbleSeconds) / DeathCameraFallSeconds, 0.0f, 1.0f);
+		// 초반에는 버티다 힘이 풀린 듯 가속하고, 바닥 직전에는 과도한 튕김 없이 멈춘다.
+		const float LimpAlpha = FMath::SmoothStep(0.0f, 1.0f, FMath::Pow(FallAlpha, 1.35f));
+		const float DampedWobble = FMath::Sin(FallAlpha * UE_PI * 2.5f) * (1.0f - FallAlpha) * 1.4f;
+		TiltDegrees = FMath::Lerp(StumbleAngle, DeathCameraTiltDegrees, LimpAlpha) + DampedWobble;
+		DropCentimeters = FMath::Lerp(5.0f, DeathCameraDropCentimeters, LimpAlpha);
+		SideShift = FMath::Lerp(5.0f, 13.0f, LimpAlpha);
+	}
+	Camera->SetRelativeLocation(FeedbackCameraStartLocation + FVector(
+		-CameraFallPitchDirection * SideShift,
+		CameraFallRollDirection * SideShift,
+		-DropCentimeters));
+	Camera->SetRelativeRotation(FeedbackCameraStartRotation + FRotator(
+		CameraFallPitchDirection * TiltDegrees,
+		0.0f,
+		CameraFallRollDirection * TiltDegrees));
+}
+
+void APlayerCharacter::RestoreFeedbackCamera()
+{
+	if ((bCameraHitFeedbackActive || bCameraDeathFeedbackActive) && IsValid(Camera))
+	{
+		Camera->SetRelativeLocation(FeedbackCameraStartLocation);
+		Camera->SetRelativeRotation(FeedbackCameraStartRotation);
+	}
+	bCameraHitFeedbackActive = false;
+	bCameraDeathFeedbackActive = false;
+	bBodyFallSFXPlayed = false;
+	CameraFeedbackElapsedSeconds = 0.0f;
+}
+
+float APlayerCharacter::GetDeathSequenceHandoffDelaySeconds() const
+{
+	// 별도의 '사망했습니다' 문구를 기다리지 않고, 쓰러짐과 암전이 끝나면 즉시 결과/관전 화면으로 넘긴다.
+	return FMath::Max(0.01f, DeathCameraStumbleSeconds + DeathCameraFallSeconds + DeathBlackFadeSeconds);
 }
 
 void APlayerCharacter::RemoveGuardingHelpers()
@@ -1137,6 +1544,11 @@ void APlayerCharacter::RemoveGuardingHelpers()
 void APlayerCharacter::ApplyGameOverState()
 {
 	ApplySprintingState(false);
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()); IsValid(PlayerController))
+	{
+		PlayerController->SetIgnoreMoveInput(true);
+		PlayerController->SetIgnoreLookInput(true);
+	}
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement))
 	{
 		Movement->StopMovementImmediately();
@@ -1147,7 +1559,6 @@ void APlayerCharacter::ApplyGameOverState()
 		ensureMsgf(false, TEXT("Player %s has no CharacterMovementComponent for game over."), *GetName());
 	}
 
-	PresentSinglePlayerResult(false);
 }
 
 void APlayerCharacter::OnRep_GameOver()

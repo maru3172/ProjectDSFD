@@ -1672,6 +1672,10 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 	{
 		ReturnToRoomButton->SetVisibility(bMultiplayer ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
+	if (IsValid(GameRulesButton))
+	{
+		GameRulesButton->SetVisibility(bMultiplayer ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
 	if (IsValid(SaveCheckpointButton))
 	{
 		SaveCheckpointButton->SetVisibility(bMultiplayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
@@ -2091,14 +2095,14 @@ void UProjectProject01SessionMenuWidget::HandleSettingsClicked()
 
 void UProjectProject01SessionMenuWidget::HandleGameRulesClicked()
 {
-	if (bBusy || !IsValid(GetOwningPlayer()))
+	if (!bMultiplayer || bBusy || !IsValid(GetOwningPlayer()))
 	{
 		return;
 	}
 
 	const AMultiplayTestPlayerController* MultiplayerController =
 		Cast<AMultiplayTestPlayerController>(GetOwningPlayer());
-	const bool bShowMannequinGuide = bMultiplayer && IsValid(MultiplayerController) &&
+	const bool bShowMannequinGuide = IsValid(MultiplayerController) &&
 		IsValid(MultiplayerController->GetViewedMannequin());
 	GameGuideWidget = CreateWidget<UProjectProject01GameGuideWidget>(
 		GetOwningPlayer(), UProjectProject01GameGuideWidget::StaticClass());
@@ -2107,7 +2111,7 @@ void UProjectProject01SessionMenuWidget::HandleGameRulesClicked()
 		return;
 	}
 
-	GameGuideWidget->Configure(bShowMannequinGuide, bMultiplayer, true, this);
+	GameGuideWidget->Configure(bShowMannequinGuide, true, true, this);
 	SetVisibility(ESlateVisibility::Collapsed);
 	GameGuideWidget->AddToViewport(600);
 	GetOwningPlayer()->bShowMouseCursor = true;
@@ -2538,12 +2542,19 @@ void UProjectProject01MatchResultWidget::NativeConstruct()
 	FadeElapsedSeconds = 0.0f;
 	if (IsValid(FadeBackground))
 	{
-		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f,
+			bSinglePlayer && !Result.bSuccess ? 0.98f : 0.0f));
 	}
 	if (IsValid(ResultMenu))
 	{
-		ResultMenu->SetRenderOpacity(0.0f);
-		ResultMenu->SetVisibility(ESlateVisibility::HitTestInvisible);
+		const bool bShowSinglePlayerDeathImmediately = bSinglePlayer && !Result.bSuccess;
+		ResultMenu->SetRenderOpacity(bShowSinglePlayerDeathImmediately ? 1.0f : 0.0f);
+		ResultMenu->SetVisibility(bShowSinglePlayerDeathImmediately
+			? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+		if (bShowSinglePlayerDeathImmediately)
+		{
+			FadeElapsedSeconds = FadeDurationSeconds;
+		}
 	}
 	SetBusy(false);
 	RefreshResultText();

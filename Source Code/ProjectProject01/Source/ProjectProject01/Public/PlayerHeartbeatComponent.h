@@ -39,6 +39,52 @@ private:
 	bool bPulseActive = false;
 };
 
+/** 외부 음원 없이 피격 순간의 낮고 거친 고통 신음을 생성하는 로컬 전용 신시사이저입니다. */
+UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
+class PROJECTPROJECT01_API UPainGroanSynthComponent final : public USynthComponent
+{
+	GENERATED_BODY()
+
+public:
+	UPainGroanSynthComponent(const FObjectInitializer& ObjectInitializer);
+	void TriggerPain(bool bFatal);
+
+protected:
+	virtual bool Init(int32& SampleRate) override;
+	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
+
+private:
+	int32 SynthSampleRate = 48000;
+	int32 VoiceFrameIndex = 0;
+	float VoicePhase = 0.0f;
+	float FlutterPhase = 0.0f;
+	float VoiceDurationSeconds = 0.75f;
+	uint32 NoiseState = 0x91E10DA5u;
+	bool bVoiceActive = false;
+};
+
+/** 몸이 대리석 바닥에 힘없이 닿는 둔탁한 충격과 옷 마찰음을 합성합니다. */
+UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
+class PROJECTPROJECT01_API UBodyFallSynthComponent final : public USynthComponent
+{
+	GENERATED_BODY()
+
+public:
+	UBodyFallSynthComponent(const FObjectInitializer& ObjectInitializer);
+	void TriggerBodyFall();
+
+protected:
+	virtual bool Init(int32& SampleRate) override;
+	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
+
+private:
+	int32 SynthSampleRate = 48000;
+	int32 ImpactFrameIndex = 0;
+	float LowPhase = 0.0f;
+	uint32 NoiseState = 0x4B1D3A27u;
+	bool bImpactActive = false;
+};
+
 // 각 마네킹의 인지, 노출, 재발견 상태를 보관한다.
 struct FHeartbeatMannequinState
 {

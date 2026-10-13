@@ -72,17 +72,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinCommand GetMultiplayCommand() const { return MultiplayCommand; }
 
-	const FVector& GetMultiplayPatrolOrigin() const { return MultiplayPatrolOrigin; }
-
 	/** 싱글플레이 직접 조작 중 E 입력으로 다음 빙의 해제 시 실행할 추격 명령을 기록합니다. */
 	bool QueuePostPossessionChaseCommand();
 
 	/** 빙의 해제 직후 서버가 기록된 추격 또는 정지 명령을 활성화합니다. */
 	void ActivatePostPossessionCommand();
 
-	bool ShouldHoldPostPossessionCommand(double ServerTimeSeconds) const;
-	bool ShouldChasePostPossessionCommand(double ServerTimeSeconds) const;
-	FString GetDiagnosticCommandState(double ServerTimeSeconds) const;
+	bool ShouldHoldPostPossessionCommand() const;
+	bool ShouldChasePostPossessionCommand() const;
+	FString GetDiagnosticCommandState() const;
 	void GetDiagnosticAppliedTuning(struct FMannequinAITuningRow& OutTuning) const;
 	
 	// 발소리 함수
@@ -92,7 +90,6 @@ public:
 private:
 	friend class AMultiplayTestGameMode;
 	void SetControlSlotForGameMode(int32 InControlSlot);
-	void SetMultiplayPatrolOriginForGameMode(const FVector& InOrigin);
 
 	UPROPERTY(ReplicatedUsing = OnRep_ControlSlot, EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",
 		meta = (AllowPrivateAccess = "true", ClampMin = "-1", ClampMax = "9", UIMin = "-1", UIMax = "9"))
@@ -125,9 +122,6 @@ private:
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinCommand MultiplayCommand = EMultiplayMannequinCommand::Patrol;
 
-	/** 멀티 정찰 목적지를 뽑는 기준점. 서버에서 최초 배치 위치로 고정됩니다. */
-	FVector MultiplayPatrolOrigin = FVector::ZeroVector;
-
 	enum class EPostPossessionCommand : uint8
 	{
 		None,
@@ -138,9 +132,6 @@ private:
 	/** E 입력이 있었는지 서버에서만 보관하는 다음 빙의 해제용 명령입니다. */
 	bool bPostPossessionChaseCommandQueued = false;
 	EPostPossessionCommand ActivePostPossessionCommand = EPostPossessionCommand::None;
-	double PostPossessionCommandStartTimeSeconds = 0.0;
-	double PostPossessionCommandEndTimeSeconds = 0.0;
-	float PostPossessionCommandDurationSeconds = 5.0f;
 
 	UPROPERTY(Transient)
 	bool bLegacyAnimationFrozen = false;
@@ -158,7 +149,7 @@ private:
 	void ApplyMannequinWalkSpeed();
 	void TryCatchSurvivor(AActor* OtherActor);
 	void RemoveSeparatedCatchContacts();
-	bool IsPostPossessionCommandActive(double ServerTimeSeconds) const;
+	bool IsPostPossessionCommandActive() const;
 
 	UFUNCTION()
 	void OnRep_SurvivorVisionFrozen();
