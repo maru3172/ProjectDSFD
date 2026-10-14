@@ -254,3 +254,40 @@ CREATE TABLE IF NOT EXISTS crash_reports
   KEY ix_crash_reports_role_detected (process_role, detected_at_utc),
   KEY ix_crash_reports_match (match_id)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS player_surveys
+(
+  id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  title VARCHAR(128) NOT NULL,
+  description VARCHAR(512) NOT NULL DEFAULT '',
+  questions_json JSON NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  activated_at_utc DATETIME(6) NULL,
+  closed_at_utc DATETIME(6) NULL,
+  PRIMARY KEY (id),
+  KEY ix_player_surveys_active (is_active, activated_at_utc)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS player_survey_responses
+(
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  response_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  survey_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  submitted_at_utc DATETIME(6) NOT NULL,
+  answers_json JSON NOT NULL,
+  build_version VARCHAR(128) NOT NULL,
+  map_name VARCHAR(128) NOT NULL,
+  process_role VARCHAR(32) NOT NULL,
+  player_role VARCHAR(32) NULL,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_player_survey_response_id (response_id),
+  UNIQUE KEY uq_player_survey_user (survey_id, user_id),
+  KEY ix_player_survey_responses_submitted (survey_id, submitted_at_utc),
+  CONSTRAINT fk_player_survey_response_survey
+    FOREIGN KEY (survey_id) REFERENCES player_surveys(id) ON DELETE CASCADE,
+  CONSTRAINT fk_player_survey_response_user
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;

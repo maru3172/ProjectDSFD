@@ -410,6 +410,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
 		World->GetTimerManager().ClearTimer(BodyFallWorldSFXTimer);
+		World->GetTimerManager().ClearTimer(InitialStandaloneRevealTimer);
 	}
 	RestoreFeedbackCamera();
 	Super::EndPlay(EndPlayReason);
@@ -557,11 +558,11 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 		IsValid(PlayerController->PlayerCameraManager))
 	{
 		bInitialStandaloneSpawnFadePlayed = true;
-		// 첫 렌더 프레임부터 검은 화면을 확실히 고정한 다음, 다음 틱에 플레이 화면을 드러낸다.
+		// 첫 렌더 프레임부터 검은 화면을 확실히 고정하고 짧게 유지한 다음 플레이 화면을 드러낸다.
 		PlayerController->PlayerCameraManager->StartCameraFade(
 			1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
 		const TWeakObjectPtr<APlayerController> WeakPlayerController(PlayerController);
-		GetWorldTimerManager().SetTimerForNextTick([WeakPlayerController]()
+		GetWorldTimerManager().SetTimer(InitialStandaloneRevealTimer, [WeakPlayerController]()
 		{
 			APlayerController* ReadyController = WeakPlayerController.Get();
 			if (IsValid(ReadyController) && IsValid(ReadyController->PlayerCameraManager))
@@ -569,7 +570,7 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 				ReadyController->PlayerCameraManager->StartCameraFade(
 					1.0f, 0.0f, 1.5f, FLinearColor::Black, false, false);
 			}
-		});
+		}, 0.25f, false);
 	}
 
 	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
@@ -1402,7 +1403,10 @@ void APlayerCharacter::PresentSinglePlayerResult(const bool bEscaped)
 		return;
 	}
 	SinglePlayerResultWidget->ConfigureSinglePlayerResult(bEscaped);
-	SinglePlayerResultWidget->AddToViewport(700);
+	// 사망 암전 위젯(900)이 같은 프레임에 남아 있어도 종료 메뉴가 뒤에 가려지지 않게 한다.
+	SinglePlayerResultWidget->AddToViewport(1200);
+	UE_LOG(LogTemp, Log, TEXT("Presented single-player result UI. Outcome=%s."),
+		bEscaped ? TEXT("Escaped") : TEXT("Eliminated"));
 	PlayerController->bShowMouseCursor = true;
 	FInputModeGameAndUI InputMode;
 	InputMode.SetWidgetToFocus(SinglePlayerResultWidget->TakeWidget());

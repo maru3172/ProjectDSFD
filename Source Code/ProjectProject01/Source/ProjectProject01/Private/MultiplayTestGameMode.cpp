@@ -22,6 +22,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
@@ -570,6 +571,32 @@ void AMultiplayTestGameMode::StopMannequinAI(AMannequinAICharacter* Mannequin) c
 	}
 }
 
+void AMultiplayTestGameMode::StopAllMannequinsForMatchEnd()
+{
+	if (!HasAuthority() || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		AMannequinAICharacter* Mannequin = *It;
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+		StopMannequinAI(Mannequin);
+		Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);
+		if (UCharacterMovementComponent* Movement = Mannequin->GetCharacterMovement(); IsValid(Movement))
+		{
+			Movement->DisableMovement();
+		}
+	}
+	MultiplayerPatrolTargets.Reset();
+	MultiplayerPatrolTargetHistory.Reset();
+	MultiplayerObservedChaseTargets.Reset();
+}
+
 void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 	AMannequinAICharacter* Mannequin,
 	AAIController* AIController)
@@ -937,6 +964,10 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 		FinishAuthoritativeMatch(TEXT("TimeLimit"));
 	}
 	ProcessReconnectTimeouts();
+	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
+	{
+		return;
+	}
 
 	MultiplayerAIUpdateAccumulatorSeconds += DeltaSeconds;
 	if (MultiplayerAIUpdateAccumulatorSeconds >= FMath::Max(0.01f, MultiplayerRepathInterval))
@@ -1316,9 +1347,26 @@ void AMultiplayTestGameMode::BindEscapeTriggers()
 		++BoundTriggerCount;
 	}
 
-	UE_LOG(LogProjectProject01Multiplayer, Log,
-		TEXT("Bound %d escape TriggerBox actor(s) tagged %s."),
-		BoundTriggerCount, *EscapeTriggerActorTag.ToString());
+	if (BoundTriggerCount <= 0)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("No multiplayer escape TriggerBox is tagged %s. Survivor escape cannot finish the match or open the result UI."),
+			*EscapeTriggerActorTag.ToString());
+#if WITH_EDITOR
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				-1, 12.0f, FColor::Red,
+				TEXT("멀티 종료 조건 누락: TriggerBox에 ProjectProject01Escape 태그가 없어 탈출 결과 UI가 열리지 않습니다."));
+		}
+#endif
+	}
+	else
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Log,
+			TEXT("Bound %d escape TriggerBox actor(s) tagged %s."),
+			BoundTriggerCount, *EscapeTriggerActorTag.ToString());
+	}
 }
 
 void AMultiplayTestGameMode::HandleEscapeTriggerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor)
@@ -1765,9 +1813,23 @@ bool AMultiplayTestGameMode::TryBroadcastSurvivorPing(
 
 void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Survivor)
 {
-	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress ||
-		!IsValid(Survivor) || !Survivor->IsGameOver())
+	if (!HasAuthority() || !IsValid(Survivor) || !Survivor->IsGameOver())
 	{
+		return;
+	}
+	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("Ignored survivor elimination because the authoritative match is not in progress. Phase=%d RegisteredPlayers=%d ExpectedPlayers=%d."),
+			static_cast<int32>(AuthoritativeMatchPhase), MatchPlayerRecords.Num(), ExpectedMatchPlayers);
+#if WITH_EDITOR
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 8.0f, FColor::Red,
+				FString::Printf(TEXT("경기 종료 판정 대기: PIE 참가자 %d/%d (클라이언트 3명 필요)"),
+					MatchPlayerRecords.Num(), ExpectedMatchPlayers));
+		}
+#endif
 		return;
 	}
 
@@ -1850,8 +1912,23 @@ void AMultiplayTestGameMode::NotifyMannequinCaptureFeedback(const bool bEliminat
 
 bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 {
-	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress || !IsValid(Survivor))
+	if (!HasAuthority() || !IsValid(Survivor))
 	{
+		return false;
+	}
+	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
+	{
+		UE_LOG(LogProjectProject01Multiplayer, Error,
+			TEXT("Ignored survivor escape because the authoritative match is not in progress. Phase=%d RegisteredPlayers=%d ExpectedPlayers=%d."),
+			static_cast<int32>(AuthoritativeMatchPhase), MatchPlayerRecords.Num(), ExpectedMatchPlayers);
+#if WITH_EDITOR
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 8.0f, FColor::Red,
+				FString::Printf(TEXT("경기 종료 판정 대기: PIE 참가자 %d/%d (클라이언트 3명 필요)"),
+					MatchPlayerRecords.Num(), ExpectedMatchPlayers));
+		}
+#endif
 		return false;
 	}
 
@@ -1979,6 +2056,10 @@ void AMultiplayTestGameMode::CheckForMatchCompletion()
 	}
 
 	const FMatchResolutionSummary Summary = EvaluateMatchResolution(SurvivorStates);
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Match completion check: Survivors=%d Resolved=%d Eliminated=%d Escaped=%d."),
+		Summary.SurvivorCount, Summary.ResolvedCount, Summary.EliminatedCount,
+		Summary.ResolvedCount - Summary.EliminatedCount);
 	if (Summary.IsComplete())
 	{
 		if (Summary.DidMannequinWin())
@@ -2027,6 +2108,7 @@ void AMultiplayTestGameMode::FinishAuthoritativeMatch(const FString& Reason)
 	bFinishCommitted = true;
 	MatchEndWorldSeconds = GetWorld()->GetTimeSeconds();
 	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending);
+	StopAllMannequinsForMatchEnd();
 	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
 	{
 		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))

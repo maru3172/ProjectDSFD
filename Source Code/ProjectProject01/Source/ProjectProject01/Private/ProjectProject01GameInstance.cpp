@@ -3,6 +3,8 @@
 
 #include "ProjectProject01GameInstance.h"
 
+#include "Containers/Ticker.h"
+
 #include "Dom/JsonObject.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Engine/Engine.h"
@@ -591,6 +593,11 @@ void UProjectProject01GameInstance::Init()
 
 void UProjectProject01GameInstance::Shutdown()
 {
+	if (CrashUploadRetryTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(CrashUploadRetryTickerHandle);
+		CrashUploadRetryTickerHandle.Reset();
+	}
 	if (UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
 	{
 		Auth->OnSessionInvalidated.RemoveDynamic(
@@ -659,6 +666,12 @@ void UProjectProject01GameInstance::InitializeCrashReportCollection()
 			}
 		});
 	RefreshCrashReportContext(GetWorld());
+	CrashUploadRetryTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateWeakLambda(this, [this](float)
+		{
+			RecoverPendingCrashReports();
+			return true;
+		}), 30.0f);
 }
 
 void UProjectProject01GameInstance::RefreshCrashReportContext(UWorld* World)
@@ -738,11 +751,13 @@ void UProjectProject01GameInstance::RecoverPendingCrashReports()
 	IFileManager& FileManager = IFileManager::Get();
 	TArray<FString> ActiveFiles;
 	FileManager.FindFiles(ActiveFiles, *FPaths::Combine(Directory, TEXT("Active-*.json")), true, false);
-	const FString CurrentProcessPrefix = FString::Printf(TEXT("Active-%u-"), FPlatformProcess::GetCurrentProcessId());
 	for (const FString& FileName : ActiveFiles)
 	{
-		if (FileName.StartsWith(CurrentProcessPrefix)) continue;
 		const FString Source = FPaths::Combine(Directory, FileName);
+		if (!ActiveCrashMarkerPath.IsEmpty() && Source.Equals(ActiveCrashMarkerPath, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
 		const FString Destination = FPaths::Combine(Directory, TEXT("Pending-") + FileName.RightChop(7));
 		FileManager.Move(*Destination, *Source, true, true, false, true);
 	}
@@ -757,7 +772,7 @@ void UProjectProject01GameInstance::RecoverPendingCrashReports()
 
 void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& ReportPath)
 {
-	if (!IsBackendUrlAllowed()) return;
+	if (!IsBackendUrlAllowed() || CrashReportsInFlight.Contains(ReportPath)) return;
 	FString Stored;
 	if (!FFileHelper::LoadFileToString(Stored, *ReportPath)) return;
 	const FString Body = ProjectProject01CrashReports::SanitizeStoredReport(Stored);
@@ -769,6 +784,7 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	Request->SetContentAsString(Body);
+	CrashReportsInFlight.Add(ReportPath);
 	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
 	const TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> WeakRequest(Request);
 	Request->OnProcessRequestComplete().BindLambda(
@@ -777,6 +793,7 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
 			{
 				Instance->RemovePendingRequest(WeakRequest.Pin());
+				Instance->CrashReportsInFlight.Remove(ReportPath);
 			}
 			if (bSucceeded && Response.IsValid() && Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300)
 			{
@@ -787,6 +804,164 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 	if (!Request->ProcessRequest())
 	{
 		PendingSecurityRequests.Remove(Request);
+		CrashReportsInFlight.Remove(ReportPath);
+	}
+}
+
+void UProjectProject01GameInstance::FetchActivePlayerSurvey(
+	TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)> Completion)
+{
+	if (!IsBackendUrlAllowed())
+	{
+		Completion(false, false, FProjectProject01SurveyDefinition(), TEXT("설문 서버 주소가 허용되지 않습니다."));
+		return;
+	}
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/surveys/active"));
+	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(SecurityRequestTimeoutSeconds);
+	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
+	const TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> WeakRequest(Request);
+	TSharedRef<TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)>> CompletionRef =
+		MakeShared<TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)>>(MoveTemp(Completion));
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakThis, WeakRequest, CompletionRef](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
+		{
+			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
+			{
+				Instance->RemovePendingRequest(WeakRequest.Pin());
+			}
+			if (bSucceeded && Response.IsValid() && Response->GetResponseCode() == 404)
+			{
+				(*CompletionRef)(true, false, FProjectProject01SurveyDefinition(), TEXT("현재 진행 중인 설문이 없습니다."));
+				return;
+			}
+			if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() < 200 || Response->GetResponseCode() >= 300)
+			{
+				(*CompletionRef)(false, false, FProjectProject01SurveyDefinition(), TEXT("설문 상태를 확인하지 못했습니다."));
+				return;
+			}
+			TSharedPtr<FJsonObject> Root;
+			FProjectProject01SurveyDefinition Survey;
+			if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
+				!Root.IsValid() || !Root->TryGetStringField(TEXT("surveyId"), Survey.SurveyId) ||
+				!Root->TryGetStringField(TEXT("title"), Survey.Title))
+			{
+				(*CompletionRef)(false, false, Survey, TEXT("설문 정보를 읽지 못했습니다."));
+				return;
+			}
+			Root->TryGetStringField(TEXT("description"), Survey.Description);
+			const TArray<TSharedPtr<FJsonValue>>* QuestionValues = nullptr;
+			if (!Root->TryGetArrayField(TEXT("questions"), QuestionValues) || !QuestionValues)
+			{
+				(*CompletionRef)(false, false, Survey, TEXT("설문 문항을 읽지 못했습니다."));
+				return;
+			}
+			for (const TSharedPtr<FJsonValue>& QuestionValue : *QuestionValues)
+			{
+				const TSharedPtr<FJsonObject> QuestionJson = QuestionValue.IsValid() ? QuestionValue->AsObject() : nullptr;
+				if (!QuestionJson.IsValid()) continue;
+				FProjectProject01SurveyQuestion Question;
+				if (!QuestionJson->TryGetStringField(TEXT("id"), Question.Id) ||
+					!QuestionJson->TryGetStringField(TEXT("type"), Question.Type) ||
+					!QuestionJson->TryGetStringField(TEXT("prompt"), Question.Prompt)) continue;
+				QuestionJson->TryGetBoolField(TEXT("required"), Question.bRequired);
+				const TArray<TSharedPtr<FJsonValue>>* OptionValues = nullptr;
+				if (QuestionJson->TryGetArrayField(TEXT("options"), OptionValues) && OptionValues)
+				{
+					for (const TSharedPtr<FJsonValue>& Option : *OptionValues)
+					{
+						if (Option.IsValid()) Question.Options.Add(Option->AsString());
+					}
+				}
+				Survey.Questions.Add(MoveTemp(Question));
+			}
+			const bool bValid = Survey.IsValid();
+			(*CompletionRef)(bValid, bValid, Survey,
+				bValid ? TEXT("활성 설문을 확인했습니다.") : TEXT("설문 문항이 비어 있습니다."));
+		});
+	PendingSecurityRequests.Add(Request);
+	if (!Request->ProcessRequest())
+	{
+		PendingSecurityRequests.Remove(Request);
+		(*CompletionRef)(false, false, FProjectProject01SurveyDefinition(), TEXT("설문 확인 요청을 시작하지 못했습니다."));
+	}
+}
+
+void UProjectProject01GameInstance::SubmitPlayerSurvey(
+	const FProjectProject01SurveyDefinition& Survey,
+	const TArray<FProjectProject01SurveyAnswer>& Answers,
+	TFunction<void(bool, const FString&)> Completion)
+{
+	if (!IsBackendUrlAllowed() || !Survey.IsValid() || Answers.IsEmpty())
+	{
+		Completion(false, TEXT("설문 답변을 확인해주세요."));
+		return;
+	}
+	UWorld* World = GetWorld();
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("responseId"), FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower));
+	Json->SetStringField(TEXT("submittedAtUtc"), FDateTime::UtcNow().ToIso8601());
+	TArray<TSharedPtr<FJsonValue>> AnswerValues;
+	for (const FProjectProject01SurveyAnswer& Answer : Answers)
+	{
+		TSharedRef<FJsonObject> AnswerJson = MakeShared<FJsonObject>();
+		AnswerJson->SetStringField(TEXT("questionId"), Answer.QuestionId);
+		AnswerJson->SetStringField(TEXT("value"), Answer.Value.TrimStartAndEnd());
+		AnswerValues.Add(MakeShared<FJsonValueObject>(AnswerJson));
+	}
+	Json->SetArrayField(TEXT("answers"), MoveTemp(AnswerValues));
+	Json->SetStringField(TEXT("buildVersion"), ProjectProject01CrashReports::GetBuildVersion());
+	Json->SetStringField(TEXT("mapName"), IsValid(World)
+		? ProjectProject01CrashReports::LimitField(World->GetMapName()) : TEXT("Unavailable"));
+	Json->SetStringField(TEXT("processRole"), ProjectProject01CrashReports::GetProcessRole(World));
+	Json->SetStringField(TEXT("playerRole"), ProjectProject01CrashReports::LimitField(PendingCrashPlayerRole));
+	FString Body;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/surveys/") + Survey.SurveyId + TEXT("/responses"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	if (const UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
+		IsValid(Auth) && Auth->IsSignedIn())
+	{
+		Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Auth->GetAccessTokenForAuthenticatedRequest());
+	}
+	Request->SetTimeout(SecurityRequestTimeoutSeconds);
+	Request->SetContentAsString(Body);
+	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
+	const TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> WeakRequest(Request);
+	TSharedRef<TFunction<void(bool, const FString&)>> CompletionRef =
+		MakeShared<TFunction<void(bool, const FString&)>>(MoveTemp(Completion));
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakThis, WeakRequest, CompletionRef](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
+		{
+			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
+			{
+				Instance->RemovePendingRequest(WeakRequest.Pin());
+			}
+			const bool bAccepted = bSucceeded && Response.IsValid() &&
+				Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300;
+			FString ResponseMessage = bAccepted
+				? TEXT("설문 응답을 전송했습니다. 감사합니다.")
+				: TEXT("서버에 설문 응답을 전송하지 못했습니다. 잠시 후 다시 시도해주세요.");
+			if (Response.IsValid())
+			{
+				TSharedPtr<FJsonObject> ResponseJson;
+				if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), ResponseJson) &&
+					ResponseJson.IsValid())
+				{
+					ResponseJson->TryGetStringField(TEXT("message"), ResponseMessage);
+				}
+			}
+			(*CompletionRef)(bAccepted, ResponseMessage);
+		});
+	PendingSecurityRequests.Add(Request);
+	if (!Request->ProcessRequest())
+	{
+		PendingSecurityRequests.Remove(Request);
+		(*CompletionRef)(false, TEXT("설문 전송 요청을 시작하지 못했습니다."));
 	}
 }
 

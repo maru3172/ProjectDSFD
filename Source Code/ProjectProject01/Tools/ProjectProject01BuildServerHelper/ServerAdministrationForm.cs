@@ -106,6 +106,47 @@ internal sealed class ServerAdministrationForm : Form
         public int Maximum { get; set; }
     }
 
+    private sealed class CrashReportDto
+    {
+        public string ReportId { get; set; } = string.Empty;
+        public DateTime DetectedAtUtc { get; set; }
+        public string BuildVersion { get; set; } = string.Empty;
+        public string MapName { get; set; } = string.Empty;
+        public string GameMode { get; set; } = string.Empty;
+        public string ProcessRole { get; set; } = string.Empty;
+        public string? PlayerRole { get; set; }
+        public string LastLogPath { get; set; } = string.Empty;
+        public string DiagnosticRunId { get; set; } = string.Empty;
+        public string? MatchId { get; set; }
+    }
+
+    private sealed class CrashReportListDto
+    {
+        public List<CrashReportDto> CrashReports { get; set; } = [];
+        public int Count { get; set; }
+    }
+
+    private sealed class SurveyDto
+    {
+        public string SurveyId { get; set; } = string.Empty;
+        public DateTime SubmittedAtUtc { get; set; }
+        public int Rating { get; set; }
+        public string Category { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public string BuildVersion { get; set; } = string.Empty;
+        public string MapName { get; set; } = string.Empty;
+        public string ProcessRole { get; set; } = string.Empty;
+        public string? PlayerRole { get; set; }
+        public string? AccountId { get; set; }
+        public string? DisplayName { get; set; }
+    }
+
+    private sealed class SurveyListDto
+    {
+        public List<SurveyDto> Surveys { get; set; } = [];
+        public int Count { get; set; }
+    }
+
     public ServerAdministrationForm(string projectRoot, Action<string> mainLog)
     {
         this.projectRoot = projectRoot;
@@ -184,6 +225,8 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(serviceButtons, "선택 예약 변경", UpdateSelectedMaintenanceScheduleAsync);
         AddButton(serviceButtons, "점검 예약 취소", CancelMaintenanceScheduleAsync);
         AddButton(serviceButtons, "공지 지우기", ClearAnnouncementAsync);
+        AddButton(serviceButtons, "크래시 보고서 보기", LoadCrashReportsAsync);
+        AddButton(serviceButtons, "설문 응답 보기", LoadSurveysAsync);
         root.Controls.Add(serviceButtons);
 
         var explanation = new Label
@@ -413,6 +456,53 @@ internal sealed class ServerAdministrationForm : Form
         Append("[OK] " + message);
         mainLog($"[운영] 계정 '{target}' 강제 로그아웃 실행");
         SetOperationStatus("선택 계정 강제 로그아웃 완료");
+    }
+
+    private async Task LoadCrashReportsAsync()
+    {
+        SetOperationStatus("크래시 보고서 불러오는 중...");
+        using var request = CreateAdminRequest(HttpMethod.Get, "/api/admin/crash-reports?limit=100");
+        using var response = await http.SendAsync(request);
+        CrashReportListDto result = await ReadResponseAsync<CrashReportListDto>(response);
+        operationLog.Clear();
+        Append($"[수집] 최근 크래시 보고서 {result.Count}건");
+        if (result.CrashReports.Count == 0)
+        {
+            Append("수집된 크래시 보고서가 없습니다.");
+        }
+        foreach (CrashReportDto report in result.CrashReports)
+        {
+            Append($"[{report.DetectedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}] " +
+                   $"{report.ProcessRole}/{report.PlayerRole ?? "역할 없음"} · {report.MapName} · 빌드 {report.BuildVersion}\n" +
+                   $"  Report={report.ReportId} Match={report.MatchId ?? "없음"} TestRun={report.DiagnosticRunId}\n" +
+                   $"  GameMode={report.GameMode} Log={report.LastLogPath}");
+        }
+        SetOperationStatus("크래시 보고서 확인 완료");
+    }
+
+    private async Task LoadSurveysAsync()
+    {
+        SetOperationStatus("설문 응답 불러오는 중...");
+        using var request = CreateAdminRequest(HttpMethod.Get, "/api/admin/surveys?limit=100");
+        using var response = await http.SendAsync(request);
+        SurveyListDto result = await ReadResponseAsync<SurveyListDto>(response);
+        operationLog.Clear();
+        Append($"[수집] 최근 설문 응답 {result.Count}건");
+        if (result.Surveys.Count == 0)
+        {
+            Append("수집된 설문 응답이 없습니다.");
+        }
+        foreach (SurveyDto survey in result.Surveys)
+        {
+            string submitter = string.IsNullOrWhiteSpace(survey.AccountId)
+                ? "익명"
+                : $"{survey.DisplayName ?? survey.AccountId} ({survey.AccountId})";
+            Append($"[{survey.SubmittedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}] " +
+                   $"평점 {survey.Rating}/5 · {survey.Category} · {submitter}\n" +
+                   $"  {survey.Message}\n" +
+                   $"  {survey.ProcessRole}/{survey.PlayerRole ?? "역할 없음"} · {survey.MapName} · 빌드 {survey.BuildVersion}");
+        }
+        SetOperationStatus("설문 응답 확인 완료");
     }
 
     private HttpRequestMessage CreateAdminRequest(HttpMethod method, string endpoint, object? body = null)

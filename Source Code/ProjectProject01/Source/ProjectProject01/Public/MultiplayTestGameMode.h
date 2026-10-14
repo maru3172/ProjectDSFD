@@ -105,6 +105,7 @@ private:
 	void InitializeRoleSpawnPoints();
 	void InitializeMannequinSpawns();
 	void UpdateMultiplayerMannequinAI();
+	void StopAllMannequinsForMatchEnd();
 	class APlayerCharacter* FindDetectedSurvivor(const class AMannequinAICharacter* Mannequin) const;
 	bool IsActiveSurvivorTarget(const class APlayerCharacter* Survivor) const;
 	bool CanMannequinDetectSurvivor(const class AMannequinAICharacter* Mannequin,

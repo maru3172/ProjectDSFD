@@ -155,6 +155,7 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 		if (UWorld* World = GetWorld())
 		{
 			World->GetTimerManager().ClearTimer(ServiceStatusTimer);
+			World->GetTimerManager().ClearTimer(InitialGameplayRevealTimer);
 		}
 		if (IsValid(VoiceStatusWidget))
 		{
@@ -419,7 +420,8 @@ void AMultiplayTestPlayerController::SetMannequinStatusVisible(const bool bVisib
 void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 {
 	if (!IsLocalController() || !bInitialGameplayFadePending || bLocalLevelTransitionFadeHeld ||
-		!bLocalMultiplayerRoleKnown || !IsValid(PlayerCameraManager))
+		bInitialGameplayFadeScheduled || !bLocalMultiplayerRoleKnown ||
+		!IsValid(PlayerCameraManager) || !IsValid(GetWorld()))
 	{
 		return;
 	}
@@ -432,6 +434,26 @@ void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 		return;
 	}
 
+	// 역할 RPC가 첫 화면이 실제로 그려지기 전에 도착할 수 있다. 즉시 해제를 시작하면
+	// 로딩 중에 페이드 시간이 소모되므로 짧은 검은 화면 고정 뒤 해제를 시작한다.
+	PlayerCameraManager->StartCameraFade(
+		1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
+	bInitialGameplayFadeScheduled = true;
+	GetWorld()->GetTimerManager().SetTimer(
+		InitialGameplayRevealTimer,
+		this,
+		&AMultiplayTestPlayerController::CompleteInitialGameplayFade,
+		0.25f,
+		false);
+}
+
+void AMultiplayTestPlayerController::CompleteInitialGameplayFade()
+{
+	bInitialGameplayFadeScheduled = false;
+	if (!IsLocalController() || bLocalLevelTransitionFadeHeld || !IsValid(PlayerCameraManager))
+	{
+		return;
+	}
 	bInitialGameplayFadePending = false;
 	PlayerCameraManager->StartCameraFade(
 		1.0f, 0.0f, 1.5f, FLinearColor::Black, false, false);
@@ -650,6 +672,8 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 		// 백엔드 기록 검증이 끝난 최종 결과는 이미 열린 화면만 갱신한다.
 		// 화면을 다시 만들면 암전과 입력 포커스가 두 번 시작되어 보이는 문제를 막는다.
 		MatchResultWidget->ConfigureResult(Result);
+		UE_LOG(LogTemp, Log, TEXT("Updated multiplayer result UI. Outcome=%s Success=%s."),
+			*Result.Outcome, Result.bSuccess ? TEXT("true") : TEXT("false"));
 	}
 	else
 	{
@@ -660,7 +684,10 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 			return;
 		}
 		MatchResultWidget->ConfigureResult(Result);
-		MatchResultWidget->AddToViewport(700);
+		// 피격/사망 암전 위젯(최대 900)보다 항상 위에 두어 최종 결과가 가려지지 않게 한다.
+		MatchResultWidget->AddToViewport(1200);
+		UE_LOG(LogTemp, Log, TEXT("Presented multiplayer result UI. Outcome=%s Success=%s."),
+			*Result.Outcome, Result.bSuccess ? TEXT("true") : TEXT("false"));
 	}
 	bShowMouseCursor = true;
 	FInputModeGameAndUI InputMode;
@@ -734,7 +761,12 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 	}
 
 	bInitialGameplayFadePending = false;
+	bInitialGameplayFadeScheduled = false;
 	bLocalLevelTransitionFadeHeld = true;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(InitialGameplayRevealTimer);
+	}
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
 	bShowMouseCursor = false;

@@ -14,6 +14,7 @@
 
 class UProjectProject01SettingsWidget;
 class UProjectProject01SessionMenuWidget;
+class UProjectProject01SurveyWidget;
 
 /** 체크포인트나 목표 갱신에 재사용할 수 있는 좌측 상단 일시 알림입니다. */
 UCLASS()
@@ -149,6 +150,40 @@ private:
 	TObjectPtr<class UTextBlock> NoticeText;
 };
 
+/** 타이틀과 ESC 메뉴에서 열 수 있는 간단한 플레이어 설문입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01SurveyWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void ConfigureSurvey(const FProjectProject01SurveyDefinition& InSurvey, UUserWidget* InReturnWidget);
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+
+private:
+	UFUNCTION() void HandleSubmitClicked();
+	UFUNCTION() void HandleBackClicked();
+	void BuildWidgetTree();
+	void SetBusy(bool bInBusy, const FString& Message = FString(), bool bIsError = false);
+
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SurveyTitleText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SurveyDescriptionText;
+	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> QuestionPanel;
+	UPROPERTY(Transient) TArray<TObjectPtr<class UComboBoxString>> ChoiceInputs;
+	UPROPERTY(Transient) TArray<TObjectPtr<class UMultiLineEditableTextBox>> TextInputs;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> StatusText;
+	UPROPERTY(Transient) TObjectPtr<class UButton> SubmitButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> BackButton;
+	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
+	FProjectProject01SurveyDefinition Survey;
+	bool bBusy = false;
+};
+
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01TitleWidget final : public UUserWidget
 {
@@ -214,6 +249,9 @@ private:
 	void HandleSettingsClicked();
 
 	UFUNCTION()
+	void HandleSurveyClicked();
+
+	UFUNCTION()
 	void HandleQuitClicked();
 
 	UFUNCTION()
@@ -223,6 +261,7 @@ private:
 	void BuildWidgetTree();
 	void SetMenuEnabled(bool bEnabled);
 	void PollMultiplayerService();
+	void RefreshActiveSurvey();
 	void RefreshSaveSlotPage();
 	void PlaySaveSlot(int32 SlotIndex);
 	void RequestStartNewGameInSaveSlot(int32 SlotIndex);
@@ -282,6 +321,9 @@ private:
 	TObjectPtr<class UButton> SettingsButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SurveyButton;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> QuitButton;
 
 	UPROPERTY(Transient)
@@ -293,8 +335,13 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01SurveyWidget> SurveyWidget;
+
 	bool bNavigationRequested = false;
 	bool bMultiplayerServiceAvailable = false;
+	bool bActiveSurveyAvailable = false;
+	FProjectProject01SurveyDefinition ActiveSurvey;
 	bool bSinglePlayerFadeActive = false;
 	float SinglePlayerFadeElapsedSeconds = 0.0f;
 	float SinglePlayerFadeDurationSeconds = 1.5f;
@@ -444,6 +491,9 @@ private:
 	void HandleGameRulesClicked();
 
 	UFUNCTION()
+	void HandleSurveyClicked();
+
+	UFUNCTION()
 	void HandleQuitGameClicked();
 
 	UFUNCTION()
@@ -466,6 +516,7 @@ private:
 	void ShowLoadSaveSlots(bool bShow);
 	void RefreshLoadSaveSlots();
 	void LoadCheckpointFromSlot(int32 SlotIndex);
+	void RefreshActiveSurvey();
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ContinueButton;
@@ -516,6 +567,9 @@ private:
 	TObjectPtr<class UButton> GameRulesButton;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UButton> SurveyButton;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToTitleButton;
 
 	UPROPERTY(Transient)
@@ -533,7 +587,12 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01GameGuideWidget> GameGuideWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01SurveyWidget> SurveyWidget;
+
 	bool bMultiplayer = false;
+	bool bActiveSurveyAvailable = false;
+	FProjectProject01SurveyDefinition ActiveSurvey;
 	bool bBusy = false;
 	bool bExitFadeActive = false;
 	float ExitFadeElapsedSeconds = 0.0f;

@@ -141,6 +141,16 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    options.AddPolicy("survey", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
     options.AddPolicy("admin", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             RequestSecurity.GetClientAddress(context),
@@ -234,6 +244,7 @@ app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
     Results.Ok(contract.ToResponse()));
 app.MapProjectProject01ClientUpdates();
 app.MapProjectProject01ServiceAdministration();
+app.MapProjectProject01Surveys();
 app.MapProjectProject01Voice();
 
 app.MapPost("/api/auth/register", async (

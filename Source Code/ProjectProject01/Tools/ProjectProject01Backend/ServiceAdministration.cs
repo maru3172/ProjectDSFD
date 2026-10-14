@@ -362,6 +362,45 @@ internal static class ServiceAdministration
         app.MapGet("/api/admin/service", (HttpRequest request, ServiceControlState state, AdministratorOptions admin) =>
             IsAuthorized(request, admin) ? Results.Ok(state.Get().ToResponse()) : Results.Unauthorized());
 
+        app.MapGet("/api/admin/crash-reports", async (
+            HttpRequest request, AuthDatabase database, AdministratorOptions admin, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(request, admin)) return Results.Unauthorized();
+            var limit = ReadLimit(request);
+            var reports = new List<object>();
+            await using var connection = await database.OpenConnectionAsync(ct);
+            await using var command = new MySqlCommand(
+                """
+                SELECT report_id, detected_at_utc, started_at_utc, last_updated_at_utc,
+                       build_version, map_name, game_mode, process_role, player_role,
+                       last_log_path, diagnostic_run_id, match_id
+                FROM crash_reports
+                ORDER BY detected_at_utc DESC, id DESC
+                LIMIT @limit;
+                """, connection) { CommandTimeout = 5 };
+            command.Parameters.AddWithValue("@limit", limit);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                reports.Add(new
+                {
+                    reportId = reader.GetString(0),
+                    detectedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
+                    startedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
+                    lastUpdatedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc),
+                    buildVersion = reader.GetString(4),
+                    mapName = reader.GetString(5),
+                    gameMode = reader.GetString(6),
+                    processRole = reader.GetString(7),
+                    playerRole = reader.IsDBNull(8) ? null : reader.GetString(8),
+                    lastLogPath = reader.GetString(9),
+                    diagnosticRunId = reader.GetString(10),
+                    matchId = reader.IsDBNull(11) ? null : reader.GetString(11)
+                });
+            }
+            return Results.Ok(new { crashReports = reports, count = reports.Count });
+        }).RequireRateLimiting("admin");
+
         app.MapGet("/api/admin/service/schedules", async (
             HttpRequest request, AuthDatabase database, AdministratorOptions admin, CancellationToken ct) =>
         {
@@ -523,4 +562,9 @@ internal static class ServiceAdministration
 
     private static bool IsAuthorized(HttpRequest request, AdministratorOptions options) =>
         options.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"].ToString());
+
+    private static int ReadLimit(HttpRequest request) =>
+        int.TryParse(request.Query["limit"], out var requested)
+            ? Math.Clamp(requested, 1, 200)
+            : 100;
 }

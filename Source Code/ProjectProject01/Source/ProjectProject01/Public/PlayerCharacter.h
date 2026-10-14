@@ -177,6 +177,7 @@ private:
 	/** PIE 다중 클라이언트 테스트에서 공유 설정과 무관하게 이 생존자에게 가이드를 한 번만 표시한다. */
 	bool bRoleGuideShownForThisPawn = false;
 	FTimerHandle SinglePlayerDeathResultTimer;
+	FTimerHandle InitialStandaloneRevealTimer;
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSetSprinting(bool bNewSprinting);

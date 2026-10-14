@@ -37,7 +37,6 @@
 #include "ProjectProject01SaveSubsystem.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "InputCoreTypes.h"
@@ -434,44 +433,34 @@ void UProjectProject01MannequinStatusWidget::BuildWidgetTree()
 
 void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 {
-	if (!IsValid(StatusText) || !IsValid(GetWorld()))
+	if (!IsValid(StatusText))
 	{
 		return;
 	}
-	TArray<AMannequinAICharacter*> Mannequins;
-	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	const AMultiplayTestPlayerController* Controller =
+		Cast<AMultiplayTestPlayerController>(GetOwningPlayer());
+	const AMannequinAICharacter* Mannequin = IsValid(Controller)
+		? Controller->GetViewedMannequin() : nullptr;
+	if (!IsValid(Mannequin))
 	{
-		if (It->GetControlSlot() >= 0)
-		{
-			Mannequins.Add(*It);
-		}
+		StatusText->SetText(FProjectProject01Localization::Text(
+			TEXT("마네킹 시점을 준비하는 중")));
+		return;
 	}
-	Mannequins.Sort([](const AMannequinAICharacter& Left, const AMannequinAICharacter& Right)
-	{
-		return Left.GetControlSlot() < Right.GetControlSlot();
-	});
 
-	FString Lines(TEXT("마네킹 상태"));
-	for (const AMannequinAICharacter* Mannequin : Mannequins)
+	FString Activity;
+	switch (Mannequin->GetMultiplayActivity())
 	{
-		FString Activity;
-		switch (Mannequin->GetMultiplayActivity())
-		{
-		case EMultiplayMannequinActivity::Patrolling: Activity = TEXT("정찰"); break;
-		case EMultiplayMannequinActivity::Chasing: Activity = TEXT("생존자 추격"); break;
-		case EMultiplayMannequinActivity::Following: Activity = TEXT("마네킹 플레이어 추종"); break;
-		case EMultiplayMannequinActivity::Holding: Activity = TEXT("정지"); break;
-		case EMultiplayMannequinActivity::ManualControl: Activity = TEXT("직접 조작"); break;
-		case EMultiplayMannequinActivity::FrozenByVision: Activity = TEXT("생존자 시야로 정지"); break;
-		default: Activity = TEXT("확인 중"); break;
-		}
-		Lines += FString::Printf(TEXT("\n%d번: %s"), Mannequin->GetControlSlot(), *Activity);
+	case EMultiplayMannequinActivity::Patrolling: Activity = TEXT("정찰"); break;
+	case EMultiplayMannequinActivity::Chasing: Activity = TEXT("생존자 추격"); break;
+	case EMultiplayMannequinActivity::Following: Activity = TEXT("마네킹 플레이어 추종"); break;
+	case EMultiplayMannequinActivity::Holding: Activity = TEXT("정지"); break;
+	case EMultiplayMannequinActivity::ManualControl: Activity = TEXT("직접 조작"); break;
+	case EMultiplayMannequinActivity::FrozenByVision: Activity = TEXT("생존자 시야로 정지"); break;
+	default: Activity = TEXT("확인 중"); break;
 	}
-	if (Mannequins.IsEmpty())
-	{
-		Lines += TEXT("\n배치 정보를 기다리는 중");
-	}
-	StatusText->SetText(FProjectProject01Localization::Text(Lines));
+	StatusText->SetText(FProjectProject01Localization::Text(FString::Printf(
+		TEXT("%d번 마네킹: %s"), Mannequin->GetControlSlot(), *Activity)));
 }
 
 bool UProjectProject01VoiceStatusWidget::Initialize()
@@ -612,6 +601,194 @@ void UProjectProject01ServiceNoticeWidget::BuildWidgetTree()
 	NoticeBackground->AddChild(NoticeText);
 }
 
+void UProjectProject01SurveyWidget::ConfigureSurvey(
+	const FProjectProject01SurveyDefinition& InSurvey,
+	UUserWidget* InReturnWidget)
+{
+	Survey = InSurvey;
+	ReturnWidget = InReturnWidget;
+	if (IsValid(SurveyTitleText)) SurveyTitleText->SetText(FProjectProject01Localization::Text(Survey.Title));
+	if (IsValid(SurveyDescriptionText)) SurveyDescriptionText->SetText(FProjectProject01Localization::Text(Survey.Description));
+	if (!IsValid(QuestionPanel)) return;
+	QuestionPanel->ClearChildren();
+	ChoiceInputs.Reset();
+	TextInputs.Reset();
+	for (int32 Index = 0; Index < Survey.Questions.Num(); ++Index)
+	{
+		const FProjectProject01SurveyQuestion& Question = Survey.Questions[Index];
+		const FString RequiredMark = Question.bRequired ? TEXT(" *") : TEXT("");
+		ProjectProject01LoginUI::AddLabel(WidgetTree, QuestionPanel,
+			FString::Printf(TEXT("%d. %s%s"), Index + 1, *Question.Prompt, *RequiredMark), 16.0f);
+		if (Question.Type == TEXT("Choice"))
+		{
+			UComboBoxString* Combo = WidgetTree->ConstructWidget<UComboBoxString>();
+			if (!Question.bRequired) Combo->AddOption(TEXT("응답하지 않음"));
+			for (const FString& Option : Question.Options) Combo->AddOption(Option);
+			if (Combo->GetOptionCount() > 0) Combo->SetSelectedIndex(0);
+			QuestionPanel->AddChildToVerticalBox(Combo)->SetPadding(FMargin(6.0f));
+			ChoiceInputs.Add(Combo);
+			TextInputs.Add(nullptr);
+		}
+		else
+		{
+			UMultiLineEditableTextBox* TextInput = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
+			TextInput->SetHintText(FProjectProject01Localization::Text(TEXT("답변을 입력해주세요.")));
+			ProjectProject01LoginUI::SetEditableTextBoxTextBlack(TextInput);
+			QuestionPanel->AddChildToVerticalBox(TextInput)->SetPadding(FMargin(6.0f));
+			ChoiceInputs.Add(nullptr);
+			TextInputs.Add(TextInput);
+		}
+	}
+}
+
+bool UProjectProject01SurveyWidget::Initialize()
+{
+	if (!Super::Initialize()) return false;
+	SetIsFocusable(true);
+	BuildWidgetTree();
+	return true;
+}
+
+void UProjectProject01SurveyWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	if (IsValid(SubmitButton)) SubmitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SurveyWidget::HandleSubmitClicked);
+	if (IsValid(BackButton)) BackButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SurveyWidget::HandleBackClicked);
+	SetBusy(false);
+	SetKeyboardFocus();
+}
+
+void UProjectProject01SurveyWidget::NativeDestruct()
+{
+	if (IsValid(SubmitButton)) SubmitButton->OnClicked.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleSubmitClicked);
+	if (IsValid(BackButton)) BackButton->OnClicked.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleBackClicked);
+	Super::NativeDestruct();
+}
+
+FReply UProjectProject01SurveyWidget::NativeOnKeyDown(
+	const FGeometry& InGeometry,
+	const FKeyEvent& InKeyEvent)
+{
+	if (InKeyEvent.GetKey() == EKeys::Escape && !bBusy)
+	{
+		HandleBackClicked();
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+}
+
+void UProjectProject01SurveyWidget::HandleSubmitClicked()
+{
+	if (bBusy || !Survey.IsValid()) return;
+	TArray<FProjectProject01SurveyAnswer> Answers;
+	for (int32 Index = 0; Index < Survey.Questions.Num(); ++Index)
+	{
+		const FProjectProject01SurveyQuestion& Question = Survey.Questions[Index];
+		FString Value;
+		if (Question.Type == TEXT("Choice") && ChoiceInputs.IsValidIndex(Index) && IsValid(ChoiceInputs[Index]))
+		{
+			Value = ChoiceInputs[Index]->GetSelectedOption();
+			if (Value == TEXT("응답하지 않음")) Value.Reset();
+		}
+		else if (TextInputs.IsValidIndex(Index) && IsValid(TextInputs[Index]))
+		{
+			Value = TextInputs[Index]->GetText().ToString().TrimStartAndEnd();
+		}
+		if (Question.bRequired && Value.IsEmpty())
+		{
+			SetBusy(false, FString::Printf(TEXT("필수 문항 %d에 응답해주세요."), Index + 1), true);
+			return;
+		}
+		if (Value.Len() > 2000)
+		{
+			SetBusy(false, FString::Printf(TEXT("%d번 답변은 2000자 이하로 입력해주세요."), Index + 1), true);
+			return;
+		}
+		FProjectProject01SurveyAnswer& Answer = Answers.AddDefaulted_GetRef();
+		Answer.QuestionId = Question.Id;
+		Answer.Value = MoveTemp(Value);
+	}
+	UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	if (!IsValid(GameInstance))
+	{
+		SetBusy(false, TEXT("설문 전송 시스템을 찾지 못했습니다."), true);
+		return;
+	}
+	SetBusy(true, TEXT("설문 응답을 전송하는 중..."));
+	const TWeakObjectPtr<UProjectProject01SurveyWidget> WeakThis(this);
+	GameInstance->SubmitPlayerSurvey(Survey, Answers,
+		[WeakThis](const bool bSucceeded, const FString& ResponseMessage)
+		{
+			if (UProjectProject01SurveyWidget* Widget = WeakThis.Get(); IsValid(Widget))
+			{
+				Widget->SetBusy(false, ResponseMessage, !bSucceeded);
+			}
+		});
+}
+
+void UProjectProject01SurveyWidget::HandleBackClicked()
+{
+	if (bBusy) return;
+	if (IsValid(ReturnWidget))
+	{
+		ReturnWidget->SetVisibility(ESlateVisibility::Visible);
+		ReturnWidget->SetKeyboardFocus();
+	}
+	RemoveFromParent();
+}
+
+void UProjectProject01SurveyWidget::SetBusy(
+	const bool bInBusy,
+	const FString& Message,
+	const bool bIsError)
+{
+	bBusy = bInBusy;
+	if (IsValid(SubmitButton)) SubmitButton->SetIsEnabled(!bBusy);
+	if (IsValid(BackButton)) BackButton->SetIsEnabled(!bBusy);
+	for (UComboBoxString* Input : ChoiceInputs) if (IsValid(Input)) Input->SetIsEnabled(!bBusy);
+	for (UMultiLineEditableTextBox* Input : TextInputs) if (IsValid(Input)) Input->SetIsReadOnly(bBusy);
+	if (IsValid(StatusText))
+	{
+		StatusText->SetText(FProjectProject01Localization::Text(Message));
+		StatusText->SetColorAndOpacity(bIsError
+			? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
+	}
+}
+
+void UProjectProject01SurveyWidget::BuildWidgetTree()
+{
+	if (!ensureMsgf(IsValid(WidgetTree), TEXT("Survey widget has no WidgetTree."))) return;
+	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = Overlay;
+	UBorder* Dim = WidgetTree->ConstructWidget<UBorder>();
+	Dim->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.78f));
+	if (UOverlaySlot* DimSlot = Overlay->AddChildToOverlay(Dim))
+	{
+		DimSlot->SetHorizontalAlignment(HAlign_Fill);
+		DimSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+	UVerticalBox* Panel = WidgetTree->ConstructWidget<UVerticalBox>();
+	if (UOverlaySlot* PanelSlot = Overlay->AddChildToOverlay(Panel))
+	{
+		PanelSlot->SetHorizontalAlignment(HAlign_Center);
+		PanelSlot->SetVerticalAlignment(VAlign_Center);
+		PanelSlot->SetPadding(FMargin(48.0f));
+	}
+	SurveyTitleText = ProjectProject01LoginUI::AddLabel(WidgetTree, Panel, TEXT("피드백/설문조사"), 30.0f);
+	SurveyDescriptionText = ProjectProject01LoginUI::AddLabel(WidgetTree, Panel, TEXT(""), 14.0f);
+	UScrollBox* QuestionScroll = WidgetTree->ConstructWidget<UScrollBox>();
+	QuestionPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+	QuestionScroll->AddChild(QuestionPanel);
+	if (UVerticalBoxSlot* QuestionSlot = Panel->AddChildToVerticalBox(QuestionScroll))
+	{
+		QuestionSlot->SetPadding(FMargin(4.0f));
+		QuestionSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
+	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Panel, TEXT(""), 14.0f);
+	SubmitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Panel, TEXT("설문 제출"));
+	BackButton = ProjectProject01LoginUI::AddButton(WidgetTree, Panel, TEXT("돌아가기"));
+}
+
 bool UProjectProject01TitleWidget::Initialize()
 {
 	if (!Super::Initialize())
@@ -629,6 +806,8 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	Super::NativeConstruct();
 	bNavigationRequested = false;
 	bMultiplayerServiceAvailable = false;
+	bActiveSurveyAvailable = false;
+	ActiveSurvey = FProjectProject01SurveyDefinition();
 	bSinglePlayerFadeActive = false;
 	SinglePlayerFadeElapsedSeconds = 0.0f;
 	PendingSinglePlayerLaunchAction = ESinglePlayerLaunchAction::None;
@@ -688,6 +867,10 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	{
 		SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSettingsClicked);
 	}
+	if (IsValid(SurveyButton))
+	{
+		SurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSurveyClicked);
+	}
 	if (IsValid(QuitButton))
 	{
 		QuitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
@@ -703,6 +886,7 @@ void UProjectProject01TitleWidget::NativeConstruct()
 		}
 	}
 	if (IsValid(MultiplayerButton)) MultiplayerButton->SetIsEnabled(false);
+	if (IsValid(SurveyButton)) SurveyButton->SetIsEnabled(false);
 	if (IsValid(StatusText))
 	{
 		StatusText->SetText(FProjectProject01Localization::Text(TEXT("멀티플레이 서버 상태 확인 중...")));
@@ -797,6 +981,10 @@ void UProjectProject01TitleWidget::NativeDestruct()
 	{
 		SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSettingsClicked);
 	}
+	if (IsValid(SurveyButton))
+	{
+		SurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSurveyClicked);
+	}
 	if (IsValid(QuitButton))
 	{
 		QuitButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
@@ -814,6 +1002,30 @@ void UProjectProject01TitleWidget::PollMultiplayerService()
 			Auth->CheckMultiplayerServiceStatus();
 		}
 	}
+	RefreshActiveSurvey();
+}
+
+void UProjectProject01TitleWidget::RefreshActiveSurvey()
+{
+	UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	if (!IsValid(GameInstance)) return;
+	const TWeakObjectPtr<UProjectProject01TitleWidget> WeakThis(this);
+	GameInstance->FetchActivePlayerSurvey(
+		[WeakThis](const bool bRequestSucceeded, const bool bHasSurvey,
+			const FProjectProject01SurveyDefinition& Survey, const FString&)
+		{
+			if (UProjectProject01TitleWidget* Widget = WeakThis.Get(); IsValid(Widget))
+			{
+				Widget->bActiveSurveyAvailable = bRequestSucceeded && bHasSurvey;
+				Widget->ActiveSurvey = Widget->bActiveSurveyAvailable
+					? Survey : FProjectProject01SurveyDefinition();
+				if (IsValid(Widget->SurveyButton))
+				{
+					Widget->SurveyButton->SetIsEnabled(
+						!Widget->bNavigationRequested && Widget->bActiveSurveyAvailable);
+				}
+			}
+		});
 }
 
 void UProjectProject01TitleWidget::HandleServiceStatusChanged(
@@ -1257,6 +1469,17 @@ void UProjectProject01TitleWidget::HandleSettingsClicked()
 	SettingsWidget->AddToViewport(600);
 }
 
+void UProjectProject01TitleWidget::HandleSurveyClicked()
+{
+	if (bNavigationRequested || !bActiveSurveyAvailable || !ActiveSurvey.IsValid() || !IsValid(GetOwningPlayer())) return;
+	SurveyWidget = CreateWidget<UProjectProject01SurveyWidget>(
+		GetOwningPlayer(), UProjectProject01SurveyWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SurveyWidget), TEXT("Title menu could not create survey widget."))) return;
+	SurveyWidget->ConfigureSurvey(ActiveSurvey, this);
+	SetVisibility(ESlateVisibility::Collapsed);
+	SurveyWidget->AddToViewport(600);
+}
+
 void UProjectProject01TitleWidget::HandleQuitClicked()
 {
 	if (bNavigationRequested)
@@ -1315,6 +1538,7 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 	ContinueSinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("이어하기"));
 	MultiplayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("멀티플레이"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
+	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("설문조사"));
 	QuitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 
 	UVerticalBox* SaveSlotMenu = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -1406,6 +1630,10 @@ void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
 	if (IsValid(SettingsButton))
 	{
 		SettingsButton->SetIsEnabled(bEnabled);
+	}
+	if (IsValid(SurveyButton))
+	{
+		SurveyButton->SetIsEnabled(bEnabled && bActiveSurveyAvailable);
 	}
 	if (IsValid(QuitButton))
 	{
@@ -2005,6 +2233,9 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 void UProjectProject01SessionMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	bActiveSurveyAvailable = false;
+	ActiveSurvey = FProjectProject01SurveyDefinition();
+	if (IsValid(SurveyButton)) SurveyButton->SetIsEnabled(false);
 	if (IsValid(ContinueButton)) ContinueButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
 	if (IsValid(SaveCheckpointButton)) SaveCheckpointButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked);
 	if (ManualSaveSlotButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
@@ -2032,6 +2263,7 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
 	if (IsValid(SettingsButton)) SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
 	if (IsValid(GameRulesButton)) GameRulesButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleGameRulesClicked);
+	if (IsValid(SurveyButton)) SurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSurveyClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
 
@@ -2050,6 +2282,7 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 			Saves->OnSaveOperationCompleted.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSaveOperationCompleted);
 		}
 	}
+	RefreshActiveSurvey();
 	SetKeyboardFocus();
 }
 
@@ -2082,6 +2315,7 @@ void UProjectProject01SessionMenuWidget::NativeDestruct()
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked);
 	if (IsValid(SettingsButton)) SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSettingsClicked);
 	if (IsValid(GameRulesButton)) GameRulesButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleGameRulesClicked);
+	if (IsValid(SurveyButton)) SurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSurveyClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
 
@@ -2407,6 +2641,39 @@ void UProjectProject01SessionMenuWidget::HandleGameRulesClicked()
 	GetOwningPlayer()->SetInputMode(InputMode);
 }
 
+void UProjectProject01SessionMenuWidget::HandleSurveyClicked()
+{
+	if (bBusy || !bActiveSurveyAvailable || !ActiveSurvey.IsValid() || !IsValid(GetOwningPlayer())) return;
+	SurveyWidget = CreateWidget<UProjectProject01SurveyWidget>(
+		GetOwningPlayer(), UProjectProject01SurveyWidget::StaticClass());
+	if (!ensureMsgf(IsValid(SurveyWidget), TEXT("Session menu could not create survey widget."))) return;
+	SurveyWidget->ConfigureSurvey(ActiveSurvey, this);
+	SetVisibility(ESlateVisibility::Collapsed);
+	SurveyWidget->AddToViewport(600);
+}
+
+void UProjectProject01SessionMenuWidget::RefreshActiveSurvey()
+{
+	UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	if (!IsValid(GameInstance)) return;
+	const TWeakObjectPtr<UProjectProject01SessionMenuWidget> WeakThis(this);
+	GameInstance->FetchActivePlayerSurvey(
+		[WeakThis](const bool bRequestSucceeded, const bool bHasSurvey,
+			const FProjectProject01SurveyDefinition& Survey, const FString&)
+		{
+			if (UProjectProject01SessionMenuWidget* Widget = WeakThis.Get(); IsValid(Widget))
+			{
+				Widget->bActiveSurveyAvailable = bRequestSucceeded && bHasSurvey;
+				Widget->ActiveSurvey = Widget->bActiveSurveyAvailable
+					? Survey : FProjectProject01SurveyDefinition();
+				if (IsValid(Widget->SurveyButton))
+				{
+					Widget->SurveyButton->SetIsEnabled(!Widget->bBusy && Widget->bActiveSurveyAvailable);
+				}
+			}
+		});
+}
+
 void UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked()
 {
 	if (bBusy)
@@ -2643,6 +2910,7 @@ void UProjectProject01SessionMenuWidget::SetBusy(
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(!bBusy);
 	if (IsValid(SettingsButton)) SettingsButton->SetIsEnabled(!bBusy);
 	if (IsValid(GameRulesButton)) GameRulesButton->SetIsEnabled(!bBusy);
+	if (IsValid(SurveyButton)) SurveyButton->SetIsEnabled(!bBusy && bActiveSurveyAvailable);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(!bBusy);
 	if (IsValid(QuitGameButton)) QuitGameButton->SetIsEnabled(!bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
@@ -2696,6 +2964,7 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("방으로 돌아가기"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	GameRulesButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 규칙"));
+	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("설문조사"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 

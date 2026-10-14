@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "Engine/EngineBaseTypes.h"
 #include "Engine/GameInstance.h"
 #include "Engine/NetworkDelegates.h"
@@ -264,6 +265,30 @@ struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim
 	FDateTime ValidUntilUtc;
 };
 
+struct PROJECTPROJECT01_API FProjectProject01SurveyQuestion
+{
+	FString Id;
+	FString Type;
+	FString Prompt;
+	TArray<FString> Options;
+	bool bRequired = true;
+};
+
+struct PROJECTPROJECT01_API FProjectProject01SurveyDefinition
+{
+	FString SurveyId;
+	FString Title;
+	FString Description;
+	TArray<FProjectProject01SurveyQuestion> Questions;
+	bool IsValid() const { return !SurveyId.IsEmpty() && !Title.IsEmpty() && !Questions.IsEmpty(); }
+};
+
+struct PROJECTPROJECT01_API FProjectProject01SurveyAnswer
+{
+	FString QuestionId;
+	FString Value;
+};
+
 /** 인증 티켓과 UE 5.8 AES-GCM 네트워크 암호화 핸드셰이크를 연결합니다. */
 UCLASS(Config=Game)
 class PROJECTPROJECT01_API UProjectProject01GameInstance final : public UGameInstance
@@ -332,6 +357,16 @@ public:
 	/** 데디케이티드 서버가 실행 중임을 백엔드에 알립니다. 서버 월드에서만 전송됩니다. */
 	void SendGameServerHeartbeat();
 
+	/** 현재 운영자가 활성화한 설문을 조회합니다. 활성 설문이 없으면 bHasSurvey=false입니다. */
+	void FetchActivePlayerSurvey(
+		TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)> Completion);
+
+	/** 동적 설문 답변을 백엔드에 저장합니다. 로그인 중이면 계정과 연결되고 아니면 익명으로 저장됩니다. */
+	void SubmitPlayerSurvey(
+		const FProjectProject01SurveyDefinition& Survey,
+		const TArray<FProjectProject01SurveyAnswer>& Answers,
+		TFunction<void(bool, const FString&)> Completion);
+
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
@@ -371,6 +406,8 @@ private:
 	FDelegateHandle ApplicationActivationHandle;
 	FDelegateHandle NetworkFailureHandle;
 	FDelegateHandle PostWorldInitializationHandle;
+	FTSTicker::FDelegateHandle CrashUploadRetryTickerHandle;
+	TSet<FString> CrashReportsInFlight;
 	FString CrashRunId;
 	FString CrashStartedAtUtc;
 	FString ActiveCrashMarkerPath;
