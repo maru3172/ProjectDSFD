@@ -15,6 +15,33 @@
 class UProjectProject01SettingsWidget;
 class UProjectProject01SessionMenuWidget;
 
+/** 체크포인트나 목표 갱신에 재사용할 수 있는 좌측 상단 일시 알림입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01TransientNoticeWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	void ShowNotice(const FString& Message, float HoldSeconds = 1.5f, float FadeSeconds = 1.5f);
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+private:
+	void BuildWidgetTree();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> NoticeBackground;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> NoticeText;
+
+	float ElapsedSeconds = 0.0f;
+	float HoldDurationSeconds = 1.5f;
+	float FadeDurationSeconds = 1.5f;
+};
+
 /** 역할별 목표와 조작키를 보여주는 전체 화면 클릭 종료 가이드입니다. */
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01GameGuideWidget final : public UUserWidget
@@ -78,6 +105,26 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> VoiceStatusText;
+};
+
+/** 마네킹 플레이어에게만 각 번호의 실시간 행동 상태를 표시합니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01MannequinStatusWidget final : public UUserWidget
+{
+	GENERATED_BODY()
+
+protected:
+	virtual bool Initialize() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+private:
+	void BuildWidgetTree();
+	void RefreshMannequinStates();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> StatusText;
+
+	float RefreshAccumulatorSeconds = 0.0f;
 };
 
 /** 멀티플레이 경기 중에도 서버 공지와 종료 예고를 보여주는 가벼운 상단 배너입니다. */

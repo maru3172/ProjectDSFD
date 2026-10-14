@@ -21,6 +21,7 @@ class UFootstepSynthComponent;
 class UProjectProject01SessionMenuWidget;
 class UProjectProject01DamageFeedbackWidget;
 class UProjectProject01DeathFeedbackWidget;
+class UProjectProject01TransientNoticeWidget;
 
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
@@ -157,9 +158,16 @@ private:
 	void InitializeLocalPlayerInput();
 	void RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem);
 	void ToggleSessionMenu();
+	void BindSinglePlayerSaveNotifications();
+
+	UFUNCTION()
+	void HandleCheckpointSaveCompleted(bool bSucceeded, const FString& Message);
 
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SessionMenuWidget> SessionMenuWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProjectProject01TransientNoticeWidget> CheckpointNoticeWidget;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01MatchResultWidget> SinglePlayerResultWidget;

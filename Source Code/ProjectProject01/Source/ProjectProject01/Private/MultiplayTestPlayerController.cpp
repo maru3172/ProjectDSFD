@@ -161,6 +161,11 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 			VoiceStatusWidget->RemoveFromParent();
 			VoiceStatusWidget = nullptr;
 		}
+		if (IsValid(MannequinStatusWidget))
+		{
+			MannequinStatusWidget->RemoveFromParent();
+			MannequinStatusWidget = nullptr;
+		}
 		if (UGameInstance* GameInstance = GetGameInstance())
 		{
 			if (UProjectProject01AuthSubsystem* Auth =
@@ -340,6 +345,7 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 {
 	const bool bAllowSurvivorVoice = ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
 	SetSurvivorVoiceStatusVisible(bAllowSurvivorVoice);
+	SetMannequinStatusVisible(InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase));
 	if (bAllowSurvivorVoice || InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
 	{
 		bLocalMultiplayerRoleKnown = true;
@@ -381,6 +387,32 @@ void AMultiplayTestPlayerController::SetSurvivorVoiceStatusVisible(const bool bV
 	if (IsValid(VoiceStatusWidget) && !VoiceStatusWidget->IsInViewport())
 	{
 		VoiceStatusWidget->AddToViewport(940);
+	}
+}
+
+void AMultiplayTestPlayerController::SetMannequinStatusVisible(const bool bVisible)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	if (!bVisible)
+	{
+		if (IsValid(MannequinStatusWidget))
+		{
+			MannequinStatusWidget->RemoveFromParent();
+			MannequinStatusWidget = nullptr;
+		}
+		return;
+	}
+	if (!IsValid(MannequinStatusWidget))
+	{
+		MannequinStatusWidget = CreateWidget<UProjectProject01MannequinStatusWidget>(
+			this, UProjectProject01MannequinStatusWidget::StaticClass());
+	}
+	if (IsValid(MannequinStatusWidget) && !MannequinStatusWidget->IsInViewport())
+	{
+		MannequinStatusWidget->AddToViewport(939);
 	}
 }
 
@@ -611,19 +643,25 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 		SessionMenuWidget->RemoveFromParent();
 		SessionMenuWidget = nullptr;
 	}
-	if (IsValid(MatchResultWidget))
+	SetSurvivorVoiceStatusVisible(false);
+	SetMannequinStatusVisible(false);
+	if (IsValid(MatchResultWidget) && MatchResultWidget->IsInViewport())
 	{
-		MatchResultWidget->RemoveFromParent();
+		// 백엔드 기록 검증이 끝난 최종 결과는 이미 열린 화면만 갱신한다.
+		// 화면을 다시 만들면 암전과 입력 포커스가 두 번 시작되어 보이는 문제를 막는다.
+		MatchResultWidget->ConfigureResult(Result);
 	}
-
-	MatchResultWidget = CreateWidget<UProjectProject01MatchResultWidget>(
-		this, UProjectProject01MatchResultWidget::StaticClass());
-	if (!ensureMsgf(IsValid(MatchResultWidget), TEXT("Unable to create the multiplayer match result widget.")))
+	else
 	{
-		return;
+		MatchResultWidget = CreateWidget<UProjectProject01MatchResultWidget>(
+			this, UProjectProject01MatchResultWidget::StaticClass());
+		if (!ensureMsgf(IsValid(MatchResultWidget), TEXT("Unable to create the multiplayer match result widget.")))
+		{
+			return;
+		}
+		MatchResultWidget->ConfigureResult(Result);
+		MatchResultWidget->AddToViewport(700);
 	}
-	MatchResultWidget->ConfigureResult(Result);
-	MatchResultWidget->AddToViewport(700);
 	bShowMouseCursor = true;
 	FInputModeGameAndUI InputMode;
 	InputMode.SetWidgetToFocus(MatchResultWidget->TakeWidget());

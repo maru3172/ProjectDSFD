@@ -6,6 +6,7 @@
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01SaveSubsystem.h"
 #include "PlayerFeedbackWidgets.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
@@ -396,6 +397,15 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01SaveSubsystem* Saves =
+			GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
+		{
+			Saves->OnSaveOperationCompleted.RemoveDynamic(
+				this, &APlayerCharacter::HandleCheckpointSaveCompleted);
+		}
+	}
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
@@ -530,6 +540,7 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 	{
 		return;
 	}
+	BindSinglePlayerSaveNotifications();
 
 	// Front-end maps use UI-only input. Explicitly restore gameplay focus whenever this
 	// locally controlled gameplay pawn starts or is restarted after level travel.
@@ -612,6 +623,54 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 			GuideInput.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 			GuideInput.SetHideCursorDuringCapture(false);
 			PlayerController->SetInputMode(GuideInput);
+		}
+	}
+}
+
+void APlayerCharacter::BindSinglePlayerSaveNotifications()
+{
+	if (!UsesSinglePlayerRules(GetWorld()))
+	{
+		return;
+	}
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UProjectProject01SaveSubsystem* Saves =
+			GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>())
+		{
+			Saves->OnSaveOperationCompleted.AddUniqueDynamic(
+				this, &APlayerCharacter::HandleCheckpointSaveCompleted);
+		}
+	}
+}
+
+void APlayerCharacter::HandleCheckpointSaveCompleted(
+	const bool bSucceeded,
+	const FString& Message)
+{
+	const bool bIsCheckpointSaveNotice =
+		Message == TEXT("체크포인트가 자동 저장되었습니다.") ||
+		Message == TEXT("체크포인트가 수동 저장되었습니다.");
+	if (!bSucceeded || !bIsCheckpointSaveNotice || !UsesSinglePlayerRules(GetWorld()))
+	{
+		return;
+	}
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!IsValid(PlayerController) || !PlayerController->IsLocalController())
+	{
+		return;
+	}
+	if (!IsValid(CheckpointNoticeWidget))
+	{
+		CheckpointNoticeWidget = CreateWidget<UProjectProject01TransientNoticeWidget>(
+			PlayerController, UProjectProject01TransientNoticeWidget::StaticClass());
+	}
+	if (IsValid(CheckpointNoticeWidget))
+	{
+		CheckpointNoticeWidget->ShowNotice(Message);
+		if (!CheckpointNoticeWidget->IsInViewport())
+		{
+			CheckpointNoticeWidget->AddToViewport(910);
 		}
 	}
 }

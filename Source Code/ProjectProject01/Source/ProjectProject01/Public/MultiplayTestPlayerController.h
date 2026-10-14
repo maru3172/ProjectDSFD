@@ -61,6 +61,10 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 	UPROPERTY(BlueprintReadOnly)
 	bool bLeaderboardVerificationReady = false;
 
+	/** 결과 화면은 먼저 표시됐지만 백엔드 기록 검증 응답은 아직 기다리는 중입니다. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bLeaderboardVerificationPending = false;
+
 	UPROPERTY(BlueprintReadOnly)
 	double MatchDurationSeconds = 0.0;
 
@@ -141,6 +145,8 @@ private:
 	void PollMultiplayerService();
 	/** 권위 서버가 생존자 역할을 확인한 로컬 플레이어에게만 음성 상태 UI를 표시한다. */
 	void SetSurvivorVoiceStatusVisible(bool bVisible);
+	/** 마네킹 역할의 로컬 플레이어에게만 번호별 현재 행동 HUD를 표시한다. */
+	void SetMannequinStatusVisible(bool bVisible);
 	/** 최초 멀티 경기 진입은 역할별 시점 대상이 준비된 뒤에만 검은 화면을 걷어낸다. */
 	void TryRevealInitialGameplayFade();
 
@@ -220,6 +226,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01VoiceStatusWidget> VoiceStatusWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01MannequinStatusWidget> MannequinStatusWidget;
 
 	UPROPERTY(VisibleAnywhere, Category="Feedback")
 	TObjectPtr<class UMannequinCaptureSynthComponent> MannequinCaptureSFXComponent;

@@ -795,8 +795,13 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 
 	for (AMannequinAICharacter* Mannequin : Mannequins)
 	{
-		if (!IsValid(Mannequin) || Mannequin->IsManualControlEnabled())
+		if (!IsValid(Mannequin))
 		{
+			continue;
+		}
+		if (Mannequin->IsManualControlEnabled())
+		{
+			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::ManualControl);
 			continue;
 		}
 		AAIController* AIController = Cast<AAIController>(Mannequin->GetController());
@@ -809,6 +814,7 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 			AIController = Cast<AAIController>(Mannequin->GetController());
 			if (!IsValid(AIController))
 			{
+				Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);
 				continue;
 			}
 		}
@@ -816,6 +822,9 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		const EMultiplayMannequinCommand Command = Mannequin->GetMultiplayCommand();
 		if (Mannequin->IsFrozenBySurvivorVision() || Command == EMultiplayMannequinCommand::HoldPosition)
 		{
+			Mannequin->SetMultiplayActivity(Mannequin->IsFrozenBySurvivorVision()
+				? EMultiplayMannequinActivity::FrozenByVision
+				: EMultiplayMannequinActivity::Holding);
 			StopMannequinAI(Mannequin);
 			continue;
 		}
@@ -837,6 +846,7 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 		if (IsValid(ChaseTarget))
 		{
+			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);
 			AIController->MoveToActor(ChaseTarget, MultiplayerAcceptanceRadius,
 				true, true, true, nullptr, true);
 			continue;
@@ -845,12 +855,14 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		switch (Command)
 		{
 		case EMultiplayMannequinCommand::Patrol:
+			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
 			MoveMannequinToPatrolTarget(Mannequin, AIController);
 			break;
 		case EMultiplayMannequinCommand::ChaseInDetectionRange:
 			// 추격 대상이 잡히거나 사망한 경우 다른 범위 내 생존자는 위에서 즉시 이어서 추격한다.
 			// 유효한 범위 내 생존자가 하나도 없으면 명령을 포기하고 연속 정찰로 복귀한다.
 			Mannequin->SetMultiplayCommand(ResolveCommandWithoutDetectedSurvivor(Command));
+			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
 			MultiplayerObservedChaseTargets.Remove(Mannequin);
 			MultiplayerPatrolTargets.Remove(Mannequin);
 			MoveMannequinToPatrolTarget(Mannequin, AIController);
@@ -858,15 +870,18 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		case EMultiplayMannequinCommand::FollowMannequinPlayer:
 			if (IsValid(Leader) && Leader != Mannequin)
 			{
+				Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Following);
 				MoveMannequinToFollowTarget(Mannequin, AIController, Leader, Followers);
 			}
 			else
 			{
+				Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);
 				StopMannequinAI(Mannequin);
 			}
 			break;
 		case EMultiplayMannequinCommand::HoldPosition:
 		default:
+			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);
 			StopMannequinAI(Mannequin);
 			break;
 		}
@@ -2117,6 +2132,18 @@ void AMultiplayTestGameMode::SubmitAuthoritativeResults()
 	{
 		PresentFinalResults();
 		return;
+	}
+
+	// 외부 백엔드 응답이 느리거나 실패해도 경기 종료 화면 자체는 즉시 보여준다.
+	// 제출이 모두 끝나면 PresentFinalResults가 동일한 위젯에 검증 결과를 갱신한다.
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+		{
+			FMultiplayTestMatchResult PendingResult = BuildFinalResult(Controller, Pair.Value);
+			PendingResult.bLeaderboardVerificationPending = true;
+			Controller->DeliverMatchResultToOwner(PendingResult);
+		}
 	}
 
 	for (const FPendingAuthoritativeSubmission& Submission : Submissions)

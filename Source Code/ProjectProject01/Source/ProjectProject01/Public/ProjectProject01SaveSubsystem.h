@@ -122,6 +122,7 @@ private:
 	TMap<FName, int32> RuntimeProgressState;
 
 	bool bSaveInProgress = false;
+	FString PendingSaveSuccessMessage;
 	int32 CurrentSlotIndex = 1;
 	int32 PreviousSlotIndexBeforeSave = 1;
 	FDelegateHandle PostLoadMapHandle;

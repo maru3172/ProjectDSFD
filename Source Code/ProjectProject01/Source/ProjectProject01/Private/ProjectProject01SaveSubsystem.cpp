@@ -147,6 +147,9 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 
 	PreviousSlotIndexBeforeSave = CurrentSlotIndex;
 	CurrentSlotIndex = SlotIndex;
+	PendingSaveSuccessMessage = CheckpointId == TEXT("ManualPauseMenu")
+		? TEXT("체크포인트가 수동 저장되었습니다.")
+		: TEXT("체크포인트가 자동 저장되었습니다.");
 	bSaveInProgress = true;
 	FAsyncSaveGameToSlotDelegate Delegate;
 	Delegate.BindUObject(this, &UProjectProject01SaveSubsystem::HandleAsyncSaveComplete);
@@ -379,8 +382,11 @@ void UProjectProject01SaveSubsystem::HandleAsyncSaveComplete(
 	{
 		CurrentSlotIndex = PreviousSlotIndexBeforeSave;
 	}
-	OnSaveOperationCompleted.Broadcast(bSucceeded,
-		bSucceeded ? TEXT("체크포인트를 저장했습니다.") : TEXT("체크포인트 저장에 실패했습니다."));
+	const FString CompletionMessage = bSucceeded && !PendingSaveSuccessMessage.IsEmpty()
+		? PendingSaveSuccessMessage
+		: TEXT("체크포인트 저장에 실패했습니다.");
+	PendingSaveSuccessMessage.Reset();
+	OnSaveOperationCompleted.Broadcast(bSucceeded, CompletionMessage);
 }
 
 void UProjectProject01SaveSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)

@@ -37,6 +37,7 @@
 #include "ProjectProject01SaveSubsystem.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "InputCoreTypes.h"
@@ -308,6 +309,171 @@ namespace ProjectProject01LoginUI
 	}
 }
 
+bool UProjectProject01TransientNoticeWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	BuildWidgetTree();
+	SetIsFocusable(false);
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	return true;
+}
+
+void UProjectProject01TransientNoticeWidget::ShowNotice(
+	const FString& Message,
+	const float HoldSeconds,
+	const float FadeSeconds)
+{
+	ElapsedSeconds = 0.0f;
+	HoldDurationSeconds = FMath::Max(0.0f, HoldSeconds);
+	FadeDurationSeconds = FMath::Max(0.01f, FadeSeconds);
+	SetRenderOpacity(1.0f);
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	if (IsValid(NoticeText))
+	{
+		NoticeText->SetText(FProjectProject01Localization::Text(Message));
+	}
+}
+
+void UProjectProject01TransientNoticeWidget::NativeTick(
+	const FGeometry& MyGeometry,
+	const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	ElapsedSeconds += FMath::Max(0.0f, InDeltaTime);
+	if (ElapsedSeconds <= HoldDurationSeconds)
+	{
+		SetRenderOpacity(1.0f);
+		return;
+	}
+	const float FadeAlpha = (ElapsedSeconds - HoldDurationSeconds) / FadeDurationSeconds;
+	SetRenderOpacity(1.0f - FMath::Clamp(FadeAlpha, 0.0f, 1.0f));
+	if (FadeAlpha >= 1.0f)
+	{
+		RemoveFromParent();
+	}
+}
+
+void UProjectProject01TransientNoticeWidget::BuildWidgetTree()
+{
+	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
+	{
+		return;
+	}
+	UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+	WidgetTree->RootWidget = Canvas;
+	NoticeBackground = WidgetTree->ConstructWidget<UBorder>();
+	NoticeBackground->SetBrushColor(FLinearColor(0.02f, 0.02f, 0.025f, 0.84f));
+	NoticeBackground->SetPadding(FMargin(14.0f, 9.0f));
+	if (UCanvasPanelSlot* CanvasSlot = Canvas->AddChildToCanvas(NoticeBackground))
+	{
+		CanvasSlot->SetAnchors(FAnchors(0.0f, 0.0f));
+		CanvasSlot->SetPosition(FVector2D(28.0f, 30.0f));
+		CanvasSlot->SetAutoSize(true);
+	}
+	NoticeText = WidgetTree->ConstructWidget<UTextBlock>();
+	NoticeText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	FSlateFontInfo Font = NoticeText->GetFont();
+	Font.Size = 18;
+	NoticeText->SetFont(Font);
+	NoticeBackground->AddChild(NoticeText);
+}
+
+bool UProjectProject01MannequinStatusWidget::Initialize()
+{
+	if (!Super::Initialize())
+	{
+		return false;
+	}
+	BuildWidgetTree();
+	SetIsFocusable(false);
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	RefreshMannequinStates();
+	return true;
+}
+
+void UProjectProject01MannequinStatusWidget::NativeTick(
+	const FGeometry& MyGeometry,
+	const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	RefreshAccumulatorSeconds += FMath::Max(0.0f, InDeltaTime);
+	if (RefreshAccumulatorSeconds >= 0.2f)
+	{
+		RefreshAccumulatorSeconds = 0.0f;
+		RefreshMannequinStates();
+	}
+}
+
+void UProjectProject01MannequinStatusWidget::BuildWidgetTree()
+{
+	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
+	{
+		return;
+	}
+	UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+	WidgetTree->RootWidget = Canvas;
+	UBorder* Background = WidgetTree->ConstructWidget<UBorder>();
+	Background->SetBrushColor(FLinearColor(0.08f, 0.015f, 0.015f, 0.84f));
+	Background->SetPadding(FMargin(14.0f, 10.0f));
+	if (UCanvasPanelSlot* CanvasSlot = Canvas->AddChildToCanvas(Background))
+	{
+		CanvasSlot->SetAnchors(FAnchors(0.0f, 0.0f));
+		CanvasSlot->SetPosition(FVector2D(24.0f, 92.0f));
+		CanvasSlot->SetAutoSize(true);
+	}
+	StatusText = WidgetTree->ConstructWidget<UTextBlock>();
+	StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	FSlateFontInfo Font = StatusText->GetFont();
+	Font.Size = 16;
+	StatusText->SetFont(Font);
+	Background->AddChild(StatusText);
+}
+
+void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
+{
+	if (!IsValid(StatusText) || !IsValid(GetWorld()))
+	{
+		return;
+	}
+	TArray<AMannequinAICharacter*> Mannequins;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		if (It->GetControlSlot() >= 0)
+		{
+			Mannequins.Add(*It);
+		}
+	}
+	Mannequins.Sort([](const AMannequinAICharacter& Left, const AMannequinAICharacter& Right)
+	{
+		return Left.GetControlSlot() < Right.GetControlSlot();
+	});
+
+	FString Lines(TEXT("마네킹 상태"));
+	for (const AMannequinAICharacter* Mannequin : Mannequins)
+	{
+		FString Activity;
+		switch (Mannequin->GetMultiplayActivity())
+		{
+		case EMultiplayMannequinActivity::Patrolling: Activity = TEXT("정찰"); break;
+		case EMultiplayMannequinActivity::Chasing: Activity = TEXT("생존자 추격"); break;
+		case EMultiplayMannequinActivity::Following: Activity = TEXT("마네킹 플레이어 추종"); break;
+		case EMultiplayMannequinActivity::Holding: Activity = TEXT("정지"); break;
+		case EMultiplayMannequinActivity::ManualControl: Activity = TEXT("직접 조작"); break;
+		case EMultiplayMannequinActivity::FrozenByVision: Activity = TEXT("생존자 시야로 정지"); break;
+		default: Activity = TEXT("확인 중"); break;
+		}
+		Lines += FString::Printf(TEXT("\n%d번: %s"), Mannequin->GetControlSlot(), *Activity);
+	}
+	if (Mannequins.IsEmpty())
+	{
+		Lines += TEXT("\n배치 정보를 기다리는 중");
+	}
+	StatusText->SetText(FProjectProject01Localization::Text(Lines));
+}
+
 bool UProjectProject01VoiceStatusWidget::Initialize()
 {
 	if (!Super::Initialize())
@@ -369,17 +535,23 @@ void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 	const UGameInstance* GameInstance = GetGameInstance();
 	const UProjectProject01VoiceChatSubsystem* Voice = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>() : nullptr;
-	const bool bVoiceActive = IsValid(Voice) && Voice->IsConfiguredForSurvivor() &&
-		Voice->IsVoiceReady() && Voice->IsTransmitting();
-	VoiceStatusText->SetText(FProjectProject01Localization::Text(
-		bVoiceActive ? TEXT("보이스: 활성") : TEXT("보이스: 비활성")));
-	VoiceStatusText->SetColorAndOpacity(FSlateColor(bVoiceActive
-		? FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)
+	const bool bConfigured = IsValid(Voice) && Voice->IsConfiguredForSurvivor();
+	const bool bRequestedActive = bConfigured &&
+		(Voice->IsOpenMicEnabled() || Voice->IsPushToTalkHeld());
+	const bool bReady = bConfigured && Voice->IsVoiceReady();
+	const FString Status = bRequestedActive
+		? (bReady ? TEXT("보이스: 활성") : TEXT("보이스: 활성 (연결 중)"))
+		: TEXT("보이스: 비활성");
+	VoiceStatusText->SetText(FProjectProject01Localization::Text(Status));
+	VoiceStatusText->SetColorAndOpacity(FSlateColor(
+		bRequestedActive && bReady ? FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)
+		: bRequestedActive ? FLinearColor(1.0f, 0.75f, 0.20f, 1.0f)
 		: FLinearColor(0.70f, 0.70f, 0.70f, 1.0f)));
 	if (IsValid(StatusBackground))
 	{
-		StatusBackground->SetBrushColor(bVoiceActive
-			? FLinearColor(0.03f, 0.20f, 0.07f, 0.90f)
+		StatusBackground->SetBrushColor(bRequestedActive
+			? (bReady ? FLinearColor(0.03f, 0.20f, 0.07f, 0.90f)
+				: FLinearColor(0.25f, 0.14f, 0.02f, 0.90f))
 			: FLinearColor(0.03f, 0.03f, 0.04f, 0.88f));
 	}
 }
@@ -2587,7 +2759,8 @@ void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMat
 	Result = InResult;
 	bSinglePlayer = false;
 	bConfigured = true;
-	if (Result.bSuccess && Result.bLeaderboardVerificationReady)
+	if (!Result.bLeaderboardVerificationPending &&
+		Result.bSuccess && Result.bLeaderboardVerificationReady)
 	{
 		if (UGameInstance* GameInstance = GetGameInstance())
 		{
@@ -3082,7 +3255,8 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	}
 	ResultText->SetText(FProjectProject01Localization::Text(Details));
 
-	const bool bCanRegister = !bSinglePlayer && Result.bSuccess && Result.bLeaderboardVerificationReady;
+	const bool bCanRegister = !bSinglePlayer && !Result.bLeaderboardVerificationPending &&
+		Result.bSuccess && Result.bLeaderboardVerificationReady;
 	if (IsValid(RegisterButton))
 	{
 		RegisterButton->SetVisibility(!bSinglePlayer && Result.bSuccess
@@ -3106,6 +3280,8 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	{
 		const FString Status = bSinglePlayer
 			? FString()
+			: Result.bLeaderboardVerificationPending
+			? TEXT("경기 결과를 표시했습니다. 서버 기록을 확인하는 중입니다.")
 			: !Result.bSuccess
 			? TEXT("실패 기록은 리더보드에 등록되지 않습니다.")
 			: Result.bLeaderboardVerificationReady
@@ -3113,7 +3289,8 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 				: TEXT("서버의 리더보드 검증 기록에 실패했습니다. 방 복귀만 가능합니다.");
 		StatusText->SetText(FProjectProject01Localization::Text(Status));
 		StatusText->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
-		StatusText->SetColorAndOpacity(Result.bSuccess && !Result.bLeaderboardVerificationReady
+		StatusText->SetColorAndOpacity(!Result.bLeaderboardVerificationPending &&
+			Result.bSuccess && !Result.bLeaderboardVerificationReady
 			? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::White));
 	}
 }

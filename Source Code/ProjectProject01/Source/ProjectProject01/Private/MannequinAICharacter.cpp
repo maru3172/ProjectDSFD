@@ -269,6 +269,7 @@ void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
 	bManualControlEnabled = bEnabled;
 	if (bManualControlEnabled)
 	{
+		SetMultiplayActivity(EMultiplayMannequinActivity::ManualControl);
 		bPostPossessionChaseCommandQueued = false;
 		ActivePostPossessionCommand = EPostPossessionCommand::None;
 	}
@@ -283,6 +284,16 @@ void AMannequinAICharacter::SetMultiplayCommand(const EMultiplayMannequinCommand
 	}
 
 	MultiplayCommand = NewCommand;
+	ForceNetUpdate();
+}
+
+void AMannequinAICharacter::SetMultiplayActivity(const EMultiplayMannequinActivity NewActivity)
+{
+	if (!HasAuthority() || MultiplayActivity == NewActivity)
+	{
+		return;
+	}
+	MultiplayActivity = NewActivity;
 	ForceNetUpdate();
 }
 
@@ -477,6 +488,7 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
 	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
 	DOREPLIFETIME(AMannequinAICharacter, MultiplayCommand);
+	DOREPLIFETIME(AMannequinAICharacter, MultiplayActivity);
 	DOREPLIFETIME(AMannequinAICharacter, ControlSlot);
 }
 

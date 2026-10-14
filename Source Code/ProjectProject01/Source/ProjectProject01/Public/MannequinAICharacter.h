@@ -72,6 +72,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinCommand GetMultiplayCommand() const { return MultiplayCommand; }
 
+	/** 마네킹 플레이어 HUD에 표시할 서버 권한 현재 행동입니다. */
+	void SetMultiplayActivity(EMultiplayMannequinActivity NewActivity);
+
+	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
+	EMultiplayMannequinActivity GetMultiplayActivity() const { return MultiplayActivity; }
+
 	/** 싱글플레이 직접 조작 중 E 입력으로 다음 빙의 해제 시 실행할 추격 명령을 기록합니다. */
 	bool QueuePostPossessionChaseCommand();
 
@@ -121,6 +127,9 @@ private:
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinCommand MultiplayCommand = EMultiplayMannequinCommand::Patrol;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
+	EMultiplayMannequinActivity MultiplayActivity = EMultiplayMannequinActivity::Patrolling;
 
 	enum class EPostPossessionCommand : uint8
 	{

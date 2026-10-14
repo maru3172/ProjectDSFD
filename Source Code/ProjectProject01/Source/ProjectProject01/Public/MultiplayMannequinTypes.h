@@ -18,3 +18,15 @@ enum class EMultiplayMannequinCommand : uint8
 	HoldPosition UMETA(DisplayName = "정지")
 };
 
+/** 서버가 판정한 각 마네킹의 실제 현재 행동입니다. */
+UENUM(BlueprintType)
+enum class EMultiplayMannequinActivity : uint8
+{
+	Patrolling UMETA(DisplayName = "정찰"),
+	Chasing UMETA(DisplayName = "생존자 추격"),
+	Following UMETA(DisplayName = "마네킹 플레이어 추종"),
+	Holding UMETA(DisplayName = "정지"),
+	ManualControl UMETA(DisplayName = "직접 조작"),
+	FrozenByVision UMETA(DisplayName = "생존자 시야로 정지")
+};
+
