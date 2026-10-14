@@ -225,6 +225,20 @@ void UProjectProject01LobbySubsystem::StartRoom()
 	SendRequest(EProjectProject01LobbyOperation::StartRoom, TEXT("POST"), TEXT("/api/rooms/current/start"), TEXT("{}"));
 }
 
+void UProjectProject01LobbySubsystem::CancelStartRoom()
+{
+	ClearGameJoinTicket();
+	SendRequest(EProjectProject01LobbyOperation::CancelStartRoom, TEXT("POST"),
+		TEXT("/api/rooms/current/cancel-start"), TEXT("{}"));
+}
+
+void UProjectProject01LobbySubsystem::ConfirmStartRoom()
+{
+	ClearGameJoinTicket();
+	SendRequest(EProjectProject01LobbyOperation::ConfirmStartRoom, TEXT("POST"),
+		TEXT("/api/rooms/current/confirm-start"), TEXT("{}"));
+}
+
 void UProjectProject01LobbySubsystem::SendChat(const FString& Message)
 {
 	const FString CleanMessage = Message.TrimStartAndEnd();
@@ -618,6 +632,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		!StateJson->TryGetBoolField(TEXT("isReady"), Parsed.bIsReady) ||
 		!StateJson->TryGetBoolField(TEXT("canStart"), Parsed.bCanStart) ||
 		!StateJson->TryGetBoolField(TEXT("gameServerOnline"), Parsed.bGameServerOnline) ||
+		!StateJson->TryGetBoolField(TEXT("starting"), Parsed.bStarting) ||
 		!StateJson->TryGetBoolField(TEXT("started"), Parsed.bStarted))
 	{
 		OutError = TEXT("방 상태의 필수 값이 올바르지 않습니다.");

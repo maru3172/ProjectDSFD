@@ -254,6 +254,8 @@ private:
 	bool bInitialGameplayFadePending = false;
 	bool bLocalMultiplayerRoleKnown = false;
 	bool bLocalMultiplayerMannequinRole = false;
+	/** PIE 다중 클라이언트 테스트에서 이 마네킹 플레이어에게 가이드를 한 번만 표시한다. */
+	bool bRoleGuideShownForThisController = false;
 	FTimerHandle ServiceStatusTimer;
 
 	friend class AMultiplayTestGameMode;

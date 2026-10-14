@@ -402,7 +402,7 @@ void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 
 	bInitialGameplayFadePending = false;
 	PlayerCameraManager->StartCameraFade(
-		1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+		1.0f, 0.0f, 1.5f, FLinearColor::Black, false, false);
 }
 
 void AMultiplayTestPlayerController::SetupInputComponent()
@@ -766,15 +766,33 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 		It->RefreshControlSlotLabelVisibility();
 	}
 
-	// 마네킹 역할 가이드는 생존자 가이드와 별도로 이 PC에서 최초 한 번만 자동 표시한다.
-	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
-	if (IsValid(Settings) && !Settings->HasSeenMannequinGuide())
+	// 마네킹 역할 가이드는 생존자 가이드와 별도로 최초 한 번만 자동 표시한다.
+	bool bShouldShowMannequinGuide = false;
+#if WITH_EDITOR
+	UProjectProject01GameUserSettings* EditorSettings = UProjectProject01GameUserSettings::Get();
+	// PIE만 로컬 테스트 상태를 사용하며, 패키징된 클라이언트는 아래 계정 상태만 사용한다.
+	bShouldShowMannequinGuide = IsValid(EditorSettings) &&
+		(!EditorSettings->HasSeenMannequinGuide() ||
+			(GetWorld() && GetWorld()->WorldType == EWorldType::PIE));
+#else
+	UProjectProject01AuthSubsystem* Auth = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()
+		: nullptr;
+	bShouldShowMannequinGuide = IsValid(Auth) && Auth->IsSignedIn() &&
+		!Auth->HasSeenMannequinGuideForAccount();
+#endif
+	if (bShouldShowMannequinGuide && !bRoleGuideShownForThisController)
 	{
 		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
 			this, UProjectProject01GameGuideWidget::StaticClass());
 		if (ensureMsgf(IsValid(Guide), TEXT("Could not create the first mannequin guide.")))
 		{
-			Settings->MarkMannequinGuideSeen();
+			bRoleGuideShownForThisController = true;
+#if WITH_EDITOR
+			EditorSettings->MarkMannequinGuideSeen();
+#else
+			Auth->MarkRoleGuideSeenForAccount(true);
+#endif
 			Guide->Configure(true, true, false);
 			Guide->AddToViewport(700);
 			bShowMouseCursor = true;

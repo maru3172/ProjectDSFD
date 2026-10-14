@@ -627,23 +627,160 @@ internal static class LobbyEndpoints
                         statusCode: StatusCodes.Status503ServiceUnavailable);
                 }
 
-                var mannequinIndex = RandomNumberGenerator.GetInt32(members.Count);
 				var requestTravelUrl = ResolveTravelUrlForRequest(request, travelUrl);
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE room_members SET assigned_role = NULL, returned_to_room = FALSE WHERE room_id = @roomId;",
+                    ("@roomId", membership.RoomId), ct);
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE game_rooms SET status = 'Starting', travel_url = @travelUrl, match_id = NULL, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId;",
+                    ("@travelUrl", requestTravelUrl), ("@roomId", membership.RoomId), ct);
+                await transaction.CommitAsync(ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
+                return Results.Ok(new { message = "게임 시작 카운트다운을 시작합니다.", room });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/rooms/current/cancel-start", async (
+            HttpRequest request, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
+                if (membership is null)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
+                }
+                if (!membership.IsHost)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Json(new LobbyFailure("방장만 게임 시작을 취소할 수 있습니다."), statusCode: 403);
+                }
+                if (!string.Equals(membership.Status, "Starting", StringComparison.Ordinal))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("게임 시작을 취소할 수 있는 시간이 지났습니다."));
+                }
+                await using (var cancelWindow = new MySqlCommand(
+                    "SELECT started_at_utc IS NOT NULL AND started_at_utc > UTC_TIMESTAMP(6) - INTERVAL 5 SECOND FROM game_rooms WHERE id = @roomId FOR UPDATE;",
+                    connection, transaction) { CommandTimeout = 5 })
+                {
+                    cancelWindow.Parameters.AddWithValue("@roomId", membership.RoomId);
+                    if (!Convert.ToBoolean(await cancelWindow.ExecuteScalarAsync(ct)))
+                    {
+                        await transaction.RollbackAsync(ct);
+                        return Results.Conflict(new LobbyFailure("게임 시작을 취소할 수 있는 5초가 지났습니다."));
+                    }
+                }
+
+                await ResetStartingRoomAsync(connection, transaction, membership.RoomId, ct);
+                await transaction.CommitAsync(ct);
+                var room = await LoadCurrentRoomAsync(
+                    connection, null, user.Id,
+                    gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
+                return Results.Ok(new { message = "게임 시작이 취소되었습니다.", room });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
+        app.MapPost("/api/rooms/current/confirm-start", async (
+            HttpRequest request, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
+                if (membership is null)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
+                }
+                if (!membership.IsHost)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Json(new LobbyFailure("방장만 게임 시작을 확정할 수 있습니다."), statusCode: 403);
+                }
+                if (!string.Equals(membership.Status, "Starting", StringComparison.Ordinal))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("확정할 게임 시작 카운트다운이 없습니다."));
+                }
+                await using (var confirmWindow = new MySqlCommand(
+                    "SELECT started_at_utc IS NOT NULL AND started_at_utc <= UTC_TIMESTAMP(6) - INTERVAL 5 SECOND FROM game_rooms WHERE id = @roomId FOR UPDATE;",
+                    connection, transaction) { CommandTimeout = 5 })
+                {
+                    confirmWindow.Parameters.AddWithValue("@roomId", membership.RoomId);
+                    if (!Convert.ToBoolean(await confirmWindow.ExecuteScalarAsync(ct)))
+                    {
+                        await transaction.RollbackAsync(ct);
+                        return Results.Conflict(new LobbyFailure("게임 시작 카운트다운이 아직 끝나지 않았습니다."));
+                    }
+                }
+                if (!gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge))
+                {
+                    await ResetStartingRoomAsync(connection, transaction, membership.RoomId, ct);
+                    await transaction.CommitAsync(ct);
+                    return Results.Json(
+                        new LobbyFailure("게임 서버 연결이 끊겼습니다. 게임 시작을 취소하고 준비 상태로 돌아갑니다."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+
+                var memberIds = new List<ulong>();
+                await using (var selectMembers = new MySqlCommand(
+                    "SELECT user_id FROM room_members WHERE room_id = @roomId ORDER BY joined_at_utc, user_id FOR UPDATE;",
+                    connection, transaction) { CommandTimeout = 5 })
+                {
+                    selectMembers.Parameters.AddWithValue("@roomId", membership.RoomId);
+                    await using var reader = await selectMembers.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
+                    {
+                        memberIds.Add(reader.GetUInt64(0));
+                    }
+                }
+                if (memberIds.Count != MaximumPlayers)
+                {
+                    await ResetStartingRoomAsync(connection, transaction, membership.RoomId, ct);
+                    await transaction.CommitAsync(ct);
+                    return Results.Conflict(new LobbyFailure("인원이 변경되어 게임 시작을 취소했습니다."));
+                }
+                var mannequinUserId = memberIds[RandomNumberGenerator.GetInt32(memberIds.Count)];
+                var matchId = Guid.NewGuid().ToString("D");
                 await ExecuteAsync(connection, transaction,
                     "UPDATE room_members SET assigned_role = 'Survivor', returned_to_room = FALSE WHERE room_id = @roomId;",
                     ("@roomId", membership.RoomId), ct);
                 await ExecuteAsync(connection, transaction,
                     "UPDATE room_members SET assigned_role = 'Mannequin' WHERE room_id = @roomId AND user_id = @userId;",
-                    ("@roomId", membership.RoomId), ("@userId", members[mannequinIndex].UserId), ct);
-                var matchId = Guid.NewGuid().ToString("D");
+                    ("@roomId", membership.RoomId), ("@userId", mannequinUserId), ct);
                 await ExecuteAsync(connection, transaction,
-                    "UPDATE game_rooms SET status = 'Started', travel_url = @travelUrl, match_id = @matchId, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId;",
-                    ("@travelUrl", requestTravelUrl), ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
+                    "UPDATE game_rooms SET status = 'Started', match_id = @matchId, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId AND status = 'Starting';",
+                    ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
                 await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(
                     connection, null, user.Id,
                     gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge), ct);
-                return Results.Ok(new { message = "게임을 시작합니다.", room });
+                return Results.Ok(new { message = "역할 배정을 완료했습니다. 게임 서버에 접속합니다.", room });
             }
             catch (MySqlException)
             {
@@ -659,6 +796,13 @@ internal static class LobbyEndpoints
             {
                 await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "Unauthorized", null, null, ct);
                 return Results.Unauthorized();
+            }
+            if (!gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge))
+            {
+                await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "GameServerOffline", user.Id, null, ct);
+                return Results.Json(
+                    new LobbyFailure("게임 서버 연결이 끊겼습니다. 접속 허가를 발급할 수 없습니다."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
             }
             if (!securityOptions.IsGameServerSecurityConfigured)
             {
@@ -1590,6 +1734,10 @@ internal static class LobbyEndpoints
 
         if (!roomDeleted)
         {
+            if (string.Equals(membership.Status, "Starting", StringComparison.Ordinal))
+            {
+                await ResetStartingRoomAsync(connection, transaction, membership.RoomId, ct);
+            }
             await ResetStartedRoomIfAllMembersReturnedAsync(connection, transaction, membership.RoomId, ct);
         }
         return new RoomExitResult(true, hostTransferred, roomDeleted);
@@ -1612,6 +1760,20 @@ internal static class LobbyEndpoints
     private static async Task CleanupStaleRoomsCoreAsync(
         MySqlConnection connection, MySqlTransaction transaction, CancellationToken ct)
     {
+        await ExecuteAsync(connection, transaction,
+            """
+            UPDATE game_rooms
+            SET status = 'Waiting', travel_url = NULL, match_id = NULL, started_at_utc = NULL
+            WHERE status = 'Starting'
+              AND started_at_utc < UTC_TIMESTAMP(6) - INTERVAL 30 SECOND;
+            """, ct);
+        await ExecuteAsync(connection, transaction,
+            """
+            UPDATE room_members m
+            INNER JOIN game_rooms r ON r.id = m.room_id
+            SET m.assigned_role = NULL, m.returned_to_room = FALSE
+            WHERE r.status = 'Waiting' AND m.assigned_role IS NOT NULL;
+            """, ct);
         await ExecuteAsync(connection, transaction,
             $"""
             DELETE m FROM room_members m
@@ -1801,6 +1963,22 @@ internal static class LobbyEndpoints
         return true;
     }
 
+    private static async Task ResetStartingRoomAsync(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string roomId,
+        CancellationToken ct)
+    {
+        await ExecuteAsync(connection, transaction,
+            "DELETE FROM game_join_tickets WHERE room_id = @roomId;", ("@roomId", roomId), ct);
+        await ExecuteAsync(connection, transaction,
+            "UPDATE room_members SET assigned_role = NULL, returned_to_room = FALSE WHERE room_id = @roomId;",
+            ("@roomId", roomId), ct);
+        await ExecuteAsync(connection, transaction,
+            "UPDATE game_rooms SET status = 'Waiting', travel_url = NULL, match_id = NULL, started_at_utc = NULL WHERE id = @roomId AND status = 'Starting';",
+            ("@roomId", roomId), ct);
+    }
+
     private static async Task<bool> IsMemberOfRoomAsync(
         MySqlConnection connection,
         MySqlTransaction transaction,
@@ -1914,6 +2092,7 @@ internal static class LobbyEndpoints
             gameServerOnline;
         return new RoomState(
             roomId, joinCode, name, isHost, isReady, canStart, gameServerOnline,
+            string.Equals(status, "Starting", StringComparison.Ordinal),
             string.Equals(status, "Started", StringComparison.Ordinal),
             returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages);
     }
@@ -2022,6 +2201,7 @@ internal sealed record RoomState(
     bool IsReady,
     bool CanStart,
     bool GameServerOnline,
+    bool Starting,
     bool Started,
     bool ReturnedToRoom,
     string TravelUrl,

@@ -111,6 +111,7 @@ protected:
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	enum class ESaveSlotConfirmationAction : uint8
@@ -118,6 +119,14 @@ private:
 		None,
 		StartNewGame,
 		Delete
+	};
+
+	enum class ESinglePlayerLaunchAction : uint8
+	{
+		None,
+		ContinueRecent,
+		PlaySlot,
+		NewGameSlot
 	};
 
 	UFUNCTION()
@@ -176,6 +185,9 @@ private:
 	void ShowSaveSlotConfirmation(ESaveSlotConfirmationAction Action, int32 SlotIndex);
 	void HideSaveSlotConfirmation();
 	void BeginSinglePlayerNavigation();
+	void QueueSinglePlayerLaunch(ESinglePlayerLaunchAction Action, int32 SlotIndex = INDEX_NONE);
+	void CompleteSinglePlayerLaunch();
+	void CancelSinglePlayerLaunch(const FString& ErrorMessage);
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UWidgetSwitcher> TitlePageSwitcher;
@@ -229,13 +241,22 @@ private:
 	TObjectPtr<class UTextBlock> StatusText;
 
 	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> SinglePlayerFadeOverlay;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
 	bool bNavigationRequested = false;
 	bool bMultiplayerServiceAvailable = false;
+	bool bSinglePlayerFadeActive = false;
+	float SinglePlayerFadeElapsedSeconds = 0.0f;
+	float SinglePlayerFadeDurationSeconds = 1.5f;
 	ESaveSlotConfirmationAction PendingSaveSlotConfirmationAction = ESaveSlotConfirmationAction::None;
 	int32 PendingSaveSlotConfirmationSlot = INDEX_NONE;
+	ESinglePlayerLaunchAction PendingSinglePlayerLaunchAction = ESinglePlayerLaunchAction::None;
+	int32 PendingSinglePlayerLaunchSlot = INDEX_NONE;
 	FTimerHandle ServiceStatusTimer;
+	FTimerHandle SinglePlayerLaunchTimer;
 };
 
 UCLASS()
@@ -788,6 +809,7 @@ protected:
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	UFUNCTION()
@@ -860,6 +882,11 @@ private:
 	void RefreshRoomListView();
 	void RefreshCurrentRoomView();
 	void BeginLogout();
+	void BeginGameStartCountdown();
+	void AdvanceGameStartCountdown();
+	void BeginGameStartFade(const FProjectProject01RoomState& RoomState);
+	void CompleteGameStartFade();
+	void CancelGameStartCountdown();
 	void TravelToStartedGame(const FProjectProject01RoomState& RoomState);
 	void ShowLobbyView(int32 ViewIndex);
 
@@ -947,13 +974,29 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> LobbyStatusText;
 
+	UPROPERTY(Transient)
+	TObjectPtr<class UBorder> StartCountdownPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> StartCountdownText;
+
 	TMap<FString, FString> JoinCodeByDisplayOption;
 	TMap<FString, FString> UserIdByTransferOption;
 	FTimerHandle LobbyRefreshTimer;
+	FTimerHandle GameStartCountdownTimer;
+	FTimerHandle GameStartFadeTimer;
+	int32 GameStartCountdownNumber = 0;
 	int32 ServiceStatusPollCounter = 0;
 	bool bLogoutAfterLeave = false;
 	bool bTravelRequested = false;
 	bool bShowingCreateRoom = false;
+	bool bGameStartCountdownActive = false;
+	bool bGameStartCountdownComplete = false;
+	bool bGameStartFadeActive = false;
+	bool bGameStartFadeComplete = false;
+	bool bStartConfirmationRequested = false;
+	float GameStartFadeElapsedSeconds = 0.0f;
+	float GameStartFadeDurationSeconds = 2.0f;
 };
 
 UCLASS()

@@ -102,6 +102,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Authentication")
 	FString GetSignedInDisplayName() const { return SignedInDisplayName; }
 
+	/** 패키징 클라이언트에서 현재 로그인 계정이 해당 역할의 최초 안내를 확인했는지 반환합니다. */
+	bool HasSeenSurvivorGuideForAccount() const { return bSeenSurvivorGuideForAccount; }
+	bool HasSeenMannequinGuideForAccount() const { return bSeenMannequinGuideForAccount; }
+	/** 안내가 실제로 표시된 직후 계정별 진행 상태를 백엔드에 저장합니다. */
+	void MarkRoleGuideSeenForAccount(bool bMannequinRole);
+
 	/** 인증된 로비 API 요청에만 사용하는 현재 액세스 토큰입니다. 로그나 UI에는 노출하지 않습니다. */
 	const FString& GetAccessTokenForAuthenticatedRequest() const { return AccessToken; }
 	const FString& GetApiBaseUrlForAuthenticatedRequest() const { return ApiBaseUrl; }
@@ -139,6 +145,10 @@ private:
 		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,
 		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,
 		bool bConnectedSuccessfully);
+	void HandleGuideProgressRequestComplete(
+		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,
+		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,
+		bool bConnectedSuccessfully);
 	void InvalidateSession(const FString& Message);
 	bool ValidateCommonInput(const FString& AccountId, const FString& Password, FString& OutError) const;
 	bool CanStartOperation(EAuthOperation Operation);
@@ -171,6 +181,12 @@ private:
 	FString SignedInDisplayName;
 
 	UPROPERTY(Transient)
+	bool bSeenSurvivorGuideForAccount = false;
+
+	UPROPERTY(Transient)
+	bool bSeenMannequinGuideForAccount = false;
+
+	UPROPERTY(Transient)
 	bool bMaintenanceEnabled = false;
 
 	UPROPERTY(Transient)
@@ -185,6 +201,7 @@ private:
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ServiceStatusRequest;
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> SessionValidationRequest;
+	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> GuideProgressRequest;
 	TFunction<void(bool)> ActiveRefreshCompletion;
 	FTSTicker::FDelegateHandle SessionMonitorTickerHandle;
 };

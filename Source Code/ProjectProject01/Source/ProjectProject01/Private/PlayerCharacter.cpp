@@ -5,6 +5,7 @@
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01AuthSubsystem.h"
 #include "PlayerFeedbackWidgets.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
@@ -555,7 +556,7 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 			if (IsValid(ReadyController) && IsValid(ReadyController->PlayerCameraManager))
 			{
 				ReadyController->PlayerCameraManager->StartCameraFade(
-					1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+					1.0f, 0.0f, 1.5f, FLinearColor::Black, false, false);
 			}
 		});
 	}
@@ -576,14 +577,33 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 	// 역할별 조작 가이드는 멀티플레이에서만 이 PC에 최초 한 번 자동 표시한다.
 	// 싱글플레이 진입이 멀티 생존자 가이드의 확인 기록을 소비해서도 안 된다.
 	const bool bIsMultiplayer = !UsesSinglePlayerRules(GetWorld());
-	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
-	if (bIsMultiplayer && IsValid(Settings) && !Settings->HasSeenSurvivorGuide())
+	bool bShouldShowSurvivorGuide = false;
+#if WITH_EDITOR
+	UProjectProject01GameUserSettings* EditorSettings = UProjectProject01GameUserSettings::Get();
+	// PIE만 로컬 테스트 상태를 사용한다. 세 클라이언트가 공용 설정을 공유해도 각 Pawn에서
+	// 한 번씩 보이며, 이 분기는 패키징된 클라이언트에 포함되지 않는다.
+	bShouldShowSurvivorGuide = IsValid(EditorSettings) &&
+		(!EditorSettings->HasSeenSurvivorGuide() ||
+			(GetWorld() && GetWorld()->WorldType == EWorldType::PIE));
+#else
+	UProjectProject01AuthSubsystem* Auth = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()
+		: nullptr;
+	bShouldShowSurvivorGuide = IsValid(Auth) && Auth->IsSignedIn() &&
+		!Auth->HasSeenSurvivorGuideForAccount();
+#endif
+	if (bIsMultiplayer && bShouldShowSurvivorGuide && !bRoleGuideShownForThisPawn)
 	{
 		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
 			PlayerController, UProjectProject01GameGuideWidget::StaticClass());
 		if (ensureMsgf(IsValid(Guide), TEXT("Could not create the first survivor guide.")))
 		{
-			Settings->MarkSurvivorGuideSeen();
+			bRoleGuideShownForThisPawn = true;
+#if WITH_EDITOR
+			EditorSettings->MarkSurvivorGuideSeen();
+#else
+			Auth->MarkRoleGuideSeenForAccount(false);
+#endif
 			Guide->Configure(false, true, false);
 			Guide->AddToViewport(700);
 			PlayerController->bShowMouseCursor = true;

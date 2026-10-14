@@ -158,14 +158,39 @@ internal sealed class SmokeRunner(SmokeOptions options)
             });
 
             string matchId = string.Empty;
-            await StepAsync("StartMatchAndAssignRoles", async ct =>
+            await StepAsync("StartCountdownWithoutRoles", async ct =>
             {
                 var json = await SendAsync(HttpMethod.Post, "api/rooms/current/start", clients[0].AccessToken, new { }, true, ct);
                 var room = RequiredObject(json, "room");
+                if (!RequiredBool(room, "starting") || RequiredBool(room, "started"))
+                    throw new InvalidOperationException("방이 취소 가능한 Starting 상태가 아닙니다.");
+                if (RequiredArray(room, "members").Any(item => !string.IsNullOrEmpty(OptionalString(item!, "assignedRole"))))
+                    throw new InvalidOperationException("카운트다운 중 역할이 너무 일찍 배정되었습니다.");
+            });
+
+            await StepAsync("CancelStartCountdown", async ct =>
+            {
+                var json = await SendAsync(HttpMethod.Post, "api/rooms/current/cancel-start", clients[0].AccessToken,
+                    new { }, true, ct);
+                var room = RequiredObject(json, "room");
+                if (RequiredBool(room, "starting") || RequiredBool(room, "started") ||
+                    RequiredArray(room, "members").Any(item => !string.IsNullOrEmpty(OptionalString(item!, "assignedRole"))))
+                    throw new InvalidOperationException("취소 후 대기 상태 또는 역할 초기화가 올바르지 않습니다.");
+            });
+
+            await StepAsync("RestartAndConfirmMatch", async ct =>
+            {
+                await SendAsync(HttpMethod.Post, "api/rooms/current/start", clients[0].AccessToken, new { }, true, ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(5200), ct);
+                var json = await SendAsync(HttpMethod.Post, "api/rooms/current/confirm-start", clients[0].AccessToken,
+                    new { }, true, ct);
+                var room = RequiredObject(json, "room");
+                if (RequiredBool(room, "starting") || !RequiredBool(room, "started"))
+                    throw new InvalidOperationException("카운트다운 확정 뒤 Started 상태가 아닙니다.");
                 var members = RequiredArray(room, "members");
                 if (members.Count(item => RequiredString(item!, "assignedRole") == "Mannequin") != 1 ||
                     members.Count(item => RequiredString(item!, "assignedRole") == "Survivor") != 2)
-                    throw new InvalidOperationException("역할 배정이 마네킹 1명/생존자 2명이 아닙니다.");
+                    throw new InvalidOperationException("확정 시 역할 배정이 마네킹 1명/생존자 2명이 아닙니다.");
             });
 
             for (var index = 0; index < clients.Count; index++)
@@ -427,6 +452,12 @@ internal sealed class SmokeRunner(SmokeOptions options)
     private static string RequiredString(JsonElement source, string name) =>
         source.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(value.GetString())
             ? value.GetString()! : throw new InvalidOperationException($"응답에 {name} 값이 없습니다.");
+    private static string OptionalString(JsonElement source, string name) =>
+        source.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty : string.Empty;
+    private static bool RequiredBool(JsonElement source, string name) =>
+        source.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean() : throw new InvalidOperationException($"응답에 {name} 불리언 값이 없습니다.");
     private static string ExtractMessage(string json)
     {
         try { return JsonNode.Parse(json)?["message"]?.GetValue<string>() ?? json; }

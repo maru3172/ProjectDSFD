@@ -256,7 +256,7 @@ app.MapPost("/api/auth/register", async (
 
     var accountId = request.AccountId.Trim();
     var displayName = request.DisplayName.Trim();
-    var user = new AuthUser(0, accountId, displayName, string.Empty, 0, null);
+    var user = new AuthUser(0, accountId, displayName, string.Empty, 0, null, false, false);
     var passwordHash = passwordHasher.HashPassword(user, request.Password);
 
     try
@@ -282,7 +282,7 @@ app.MapPost("/api/auth/register", async (
         await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "Success", userId, null, cancellationToken);
         return Results.Created("/api/auth/me", new AuthSuccess(
             "계정이 생성되었습니다.", displayName, tokens.AccessToken, tokens.RefreshToken,
-            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc));
+            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc, false, false));
     }
     catch (MySqlException exception) when (exception.Number == 1062)
     {
@@ -374,7 +374,8 @@ app.MapPost("/api/auth/login", async (
         await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "Success", user.Id, null, cancellationToken);
         return Results.Ok(new AuthSuccess(
             "로그인되었습니다.", user.DisplayName, tokens.AccessToken, tokens.RefreshToken,
-            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc));
+            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc,
+            user.SeenSurvivorGuide, user.SeenMannequinGuide));
     }
     catch (MySqlException)
     {
@@ -406,9 +407,12 @@ app.MapPost("/api/auth/refresh", async (
         ulong sessionId;
         ulong userId;
         string displayName;
+        bool seenSurvivorGuide;
+        bool seenMannequinGuide;
         await using (var select = new MySqlCommand(
             """
-            SELECT s.id, s.user_id, u.display_name
+            SELECT s.id, s.user_id, u.display_name,
+                   u.seen_survivor_guide, u.seen_mannequin_guide
             FROM auth_sessions s
             INNER JOIN users u ON u.id = s.user_id
             WHERE s.refresh_token_hash = @refreshHash
@@ -429,6 +433,8 @@ app.MapPost("/api/auth/refresh", async (
             sessionId = reader.GetUInt64(0);
             userId = reader.GetUInt64(1);
             displayName = reader.GetString(2);
+            seenSurvivorGuide = reader.GetBoolean(3);
+            seenMannequinGuide = reader.GetBoolean(4);
         }
 
         await RevokeSessionAsync(connection, transaction, sessionId, cancellationToken);
@@ -437,7 +443,8 @@ app.MapPost("/api/auth/refresh", async (
         await SecurityAudit.WriteAsync(database, httpRequest, "AuthRefresh", "Success", userId, null, cancellationToken);
         return Results.Ok(new AuthSuccess(
             "세션이 갱신되었습니다.", displayName, tokens.AccessToken, tokens.RefreshToken,
-            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc));
+            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc,
+            seenSurvivorGuide, seenMannequinGuide));
     }
     catch (MySqlException)
     {
@@ -458,6 +465,50 @@ app.MapGet("/api/auth/session", async (
         return user is null
             ? Results.Unauthorized()
             : Results.Ok(new { message = "로그인 세션이 유효합니다.", displayName = user.DisplayName });
+    }
+    catch (MySqlException)
+    {
+        return DatabaseUnavailable();
+    }
+}).RequireRateLimiting("lobby");
+
+// 역할 안내 확인 여부는 설치 PC가 아니라 로그인 계정에 귀속한다. 클라이언트는 안내를
+// 실제로 띄운 직후 해당 역할만 기록하며, 다른 역할의 최초 안내 상태는 변경하지 않는다.
+app.MapPost("/api/auth/guide-progress", async (
+    HttpRequest request,
+    GuideProgressRequest body,
+    AuthDatabase database,
+    CancellationToken cancellationToken) =>
+{
+    var normalizedRole = body.Role?.Trim();
+    if (!string.Equals(normalizedRole, "Survivor", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(normalizedRole, "Mannequin", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new AuthFailure("역할 안내 종류가 올바르지 않습니다."));
+    }
+    try
+    {
+        var user = await LobbyEndpoints.AuthenticateAsync(request, database, cancellationToken);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        var column = string.Equals(normalizedRole, "Mannequin", StringComparison.OrdinalIgnoreCase)
+            ? "seen_mannequin_guide"
+            : "seen_survivor_guide";
+        await using var update = new MySqlCommand(
+            $"UPDATE users SET {column} = TRUE WHERE id = @userId;", connection)
+        {
+            CommandTimeout = 5
+        };
+        update.Parameters.AddWithValue("@userId", user.Id);
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        return Results.Ok(new
+        {
+            message = "역할 안내 확인 상태를 저장했습니다.",
+            role = normalizedRole
+        });
     }
     catch (MySqlException)
     {
@@ -593,7 +644,8 @@ static async Task<AuthUser?> LoadUserAsync(
 {
     await using var command = new MySqlCommand(
         """
-        SELECT id, account_id, display_name, password_hash, failed_login_count, locked_until_utc
+        SELECT id, account_id, display_name, password_hash, failed_login_count, locked_until_utc,
+               seen_survivor_guide, seen_mannequin_guide
         FROM users
         WHERE account_id = @accountId
         LIMIT 1;
@@ -614,7 +666,9 @@ static async Task<AuthUser?> LoadUserAsync(
         reader.GetString(2),
         reader.GetString(3),
         reader.GetUInt32(4),
-        reader.IsDBNull(5) ? null : DateTime.SpecifyKind(reader.GetDateTime(5), DateTimeKind.Utc));
+        reader.IsDBNull(5) ? null : DateTime.SpecifyKind(reader.GetDateTime(5), DateTimeKind.Utc),
+        reader.GetBoolean(6),
+        reader.GetBoolean(7));
 }
 
 static async Task RecordFailedLoginAsync(
@@ -795,8 +849,30 @@ internal sealed class AuthDatabase
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
         await EnsureSecuritySchemaAsync(connection, cancellationToken);
+        await EnsureGuideProgressSchemaAsync(connection, cancellationToken);
         await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
+    }
+
+    private static async Task EnsureGuideProgressSchemaAsync(
+        MySqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await connection.ChangeDatabaseAsync("projectproject01", cancellationToken);
+        foreach (var columnName in new[] { "seen_survivor_guide", "seen_mannequin_guide" })
+        {
+            await using var columnCommand = new MySqlCommand(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'users' AND column_name = @columnName;",
+                connection) { CommandTimeout = 5 };
+            columnCommand.Parameters.AddWithValue("@columnName", columnName);
+            if (Convert.ToInt32(await columnCommand.ExecuteScalarAsync(cancellationToken)) == 0)
+            {
+                await using var addColumn = new MySqlCommand(
+                    $"ALTER TABLE users ADD COLUMN {columnName} BOOLEAN NOT NULL DEFAULT FALSE AFTER locked_until_utc;",
+                    connection) { CommandTimeout = 15 };
+                await addColumn.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
     }
 
     private static async Task EnsureLobbyJoinCodeSchemaAsync(
@@ -1027,6 +1103,7 @@ internal sealed class AuthDatabase
 internal sealed record RegisterRequest(string AccountId, string Password, string DisplayName);
 internal sealed record LoginRequest(string AccountId, string Password);
 internal sealed record RefreshRequest(string RefreshToken);
+internal sealed record GuideProgressRequest(string? Role);
 internal sealed record CrashReportRequest(
     string ReportId,
     DateTime DetectedAtUtc,
@@ -1047,14 +1124,18 @@ internal sealed record AuthSuccess(
     string AccessToken,
     string RefreshToken,
     DateTime AccessExpiresAtUtc,
-    DateTime RefreshExpiresAtUtc);
+    DateTime RefreshExpiresAtUtc,
+    bool SeenSurvivorGuide,
+    bool SeenMannequinGuide);
 internal sealed record AuthUser(
     ulong Id,
     string AccountId,
     string DisplayName,
     string PasswordHash,
     uint FailedLoginCount,
-    DateTime? LockedUntilUtc);
+    DateTime? LockedUntilUtc,
+    bool SeenSurvivorGuide,
+    bool SeenMannequinGuide);
 internal sealed record TokenPair(
     string AccessToken,
     string RefreshToken,

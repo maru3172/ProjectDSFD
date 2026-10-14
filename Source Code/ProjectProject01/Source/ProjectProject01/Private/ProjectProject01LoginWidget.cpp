@@ -25,6 +25,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
@@ -456,6 +457,15 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	Super::NativeConstruct();
 	bNavigationRequested = false;
 	bMultiplayerServiceAvailable = false;
+	bSinglePlayerFadeActive = false;
+	SinglePlayerFadeElapsedSeconds = 0.0f;
+	PendingSinglePlayerLaunchAction = ESinglePlayerLaunchAction::None;
+	PendingSinglePlayerLaunchSlot = INDEX_NONE;
+	if (IsValid(SinglePlayerFadeOverlay))
+	{
+		SinglePlayerFadeOverlay->SetRenderOpacity(0.0f);
+		SinglePlayerFadeOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 	if (IsValid(SinglePlayerButton))
 	{
@@ -535,6 +545,22 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	}
 }
 
+void UProjectProject01TitleWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (!bSinglePlayerFadeActive || !IsValid(SinglePlayerFadeOverlay))
+	{
+		return;
+	}
+
+	SinglePlayerFadeElapsedSeconds = FMath::Min(
+		SinglePlayerFadeElapsedSeconds + InDeltaTime, SinglePlayerFadeDurationSeconds);
+	const float FadeAlpha = SinglePlayerFadeDurationSeconds > UE_SMALL_NUMBER
+		? SinglePlayerFadeElapsedSeconds / SinglePlayerFadeDurationSeconds
+		: 1.0f;
+	SinglePlayerFadeOverlay->SetRenderOpacity(FMath::Clamp(FadeAlpha, 0.0f, 1.0f));
+}
+
 namespace ProjectProject01TitleRoutes
 {
 	const FName SinglePlayerLevel(TEXT("/Game/MyProject/Level/LevelTest01"));
@@ -547,6 +573,7 @@ void UProjectProject01TitleWidget::NativeDestruct()
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(ServiceStatusTimer);
+		World->GetTimerManager().ClearTimer(SinglePlayerLaunchTimer);
 	}
 	if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
 	{
@@ -674,12 +701,7 @@ void UProjectProject01TitleWidget::HandleContinueSinglePlayerClicked()
 	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
 	if (!IsValid(Saves) || !Saves->HasAnyRecoverableSave()) return;
-	BeginSinglePlayerNavigation();
-	if (!Saves->LoadMostRecentlyPlayedCheckpoint())
-	{
-		bNavigationRequested = false;
-		SetMenuEnabled(true);
-	}
+	QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::ContinueRecent);
 }
 
 void UProjectProject01TitleWidget::HandleSaveSlot1PlayClicked() { PlaySaveSlot(1); }
@@ -747,11 +769,112 @@ void UProjectProject01TitleWidget::RefreshSaveSlotPage()
 void UProjectProject01TitleWidget::BeginSinglePlayerNavigation()
 {
 	bNavigationRequested = true;
+	bSinglePlayerFadeActive = true;
+	SinglePlayerFadeElapsedSeconds = 0.0f;
 	SetMenuEnabled(false);
+	if (IsValid(SinglePlayerFadeOverlay))
+	{
+		SinglePlayerFadeOverlay->SetRenderOpacity(0.0f);
+		SinglePlayerFadeOverlay->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
 	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
 	{
 		PlayerController->bShowMouseCursor = false;
 		PlayerController->SetInputMode(FInputModeGameOnly());
+		if (IsValid(PlayerController->PlayerCameraManager))
+		{
+			PlayerController->PlayerCameraManager->StartCameraFade(
+				0.0f, 1.0f, 1.5f, FLinearColor::Black, false, true);
+		}
+	}
+}
+
+void UProjectProject01TitleWidget::QueueSinglePlayerLaunch(
+	const ESinglePlayerLaunchAction Action,
+	const int32 SlotIndex)
+{
+	if (bNavigationRequested || Action == ESinglePlayerLaunchAction::None || !IsValid(GetWorld()))
+	{
+		return;
+	}
+	PendingSinglePlayerLaunchAction = Action;
+	PendingSinglePlayerLaunchSlot = SlotIndex;
+	BeginSinglePlayerNavigation();
+	GetWorld()->GetTimerManager().SetTimer(
+		SinglePlayerLaunchTimer, this, &UProjectProject01TitleWidget::CompleteSinglePlayerLaunch,
+		SinglePlayerFadeDurationSeconds, false);
+}
+
+void UProjectProject01TitleWidget::CompleteSinglePlayerLaunch()
+{
+	SinglePlayerFadeElapsedSeconds = SinglePlayerFadeDurationSeconds;
+	if (IsValid(SinglePlayerFadeOverlay))
+	{
+		SinglePlayerFadeOverlay->SetRenderOpacity(1.0f);
+	}
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
+	if (!IsValid(Saves))
+	{
+		CancelSinglePlayerLaunch(TEXT("싱글플레이 저장 시스템을 찾지 못했습니다."));
+		return;
+	}
+
+	bool bStarted = false;
+	switch (PendingSinglePlayerLaunchAction)
+	{
+	case ESinglePlayerLaunchAction::ContinueRecent:
+		bStarted = Saves->LoadMostRecentlyPlayedCheckpoint();
+		break;
+	case ESinglePlayerLaunchAction::PlaySlot:
+		bStarted = Saves->LoadCheckpointFromSlot(PendingSinglePlayerLaunchSlot);
+		break;
+	case ESinglePlayerLaunchAction::NewGameSlot:
+		bStarted = Saves->StartNewGameInSlot(PendingSinglePlayerLaunchSlot);
+		if (bStarted)
+		{
+			// 싱글 새 게임은 백엔드·로비·데디케이티드 서버에 접속하지 않는다.
+			UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SinglePlayerLevel, true);
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (!bStarted)
+	{
+		CancelSinglePlayerLaunch(TEXT("선택한 싱글플레이를 시작하지 못했습니다."));
+	}
+}
+
+void UProjectProject01TitleWidget::CancelSinglePlayerLaunch(const FString& ErrorMessage)
+{
+	bSinglePlayerFadeActive = false;
+	SinglePlayerFadeElapsedSeconds = 0.0f;
+	PendingSinglePlayerLaunchAction = ESinglePlayerLaunchAction::None;
+	PendingSinglePlayerLaunchSlot = INDEX_NONE;
+	bNavigationRequested = false;
+	SetMenuEnabled(true);
+	RefreshSaveSlotPage();
+	if (IsValid(SaveSlotsMessageText))
+	{
+		SaveSlotsMessageText->SetText(FProjectProject01Localization::Text(ErrorMessage));
+		SaveSlotsMessageText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+	}
+	if (IsValid(SinglePlayerFadeOverlay))
+	{
+		SinglePlayerFadeOverlay->SetRenderOpacity(0.0f);
+		SinglePlayerFadeOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
+	{
+		if (IsValid(PlayerController->PlayerCameraManager))
+		{
+			PlayerController->PlayerCameraManager->StopCameraFade();
+		}
+		PlayerController->bShowMouseCursor = true;
+		PlayerController->SetInputMode(FInputModeUIOnly());
 	}
 }
 
@@ -762,13 +885,7 @@ void UProjectProject01TitleWidget::PlaySaveSlot(const int32 SlotIndex)
 	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
 	if (!IsValid(Saves) || !Saves->HasRecoverableSaveInSlot(SlotIndex)) return;
-	BeginSinglePlayerNavigation();
-	if (!Saves->LoadCheckpointFromSlot(SlotIndex))
-	{
-		bNavigationRequested = false;
-		SetMenuEnabled(true);
-		RefreshSaveSlotPage();
-	}
+	QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::PlaySlot, SlotIndex);
 }
 
 void UProjectProject01TitleWidget::RequestStartNewGameInSaveSlot(const int32 SlotIndex)
@@ -857,21 +974,7 @@ void UProjectProject01TitleWidget::HandleSaveSlotConfirmationNoClicked()
 void UProjectProject01TitleWidget::StartNewGameInSaveSlot(const int32 SlotIndex)
 {
 	if (bNavigationRequested || !IsValid(GetWorld())) return;
-	UGameInstance* GameInstance = GetGameInstance();
-	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
-		? GameInstance->GetSubsystem<UProjectProject01SaveSubsystem>() : nullptr;
-	if (!IsValid(Saves) || !Saves->StartNewGameInSlot(SlotIndex))
-	{
-		if (IsValid(SaveSlotsMessageText))
-		{
-			SaveSlotsMessageText->SetText(FProjectProject01Localization::Text(TEXT("저장소를 초기화하지 못했습니다.")));
-			SaveSlotsMessageText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
-		}
-		return;
-	}
-	BeginSinglePlayerNavigation();
-	// 싱글 새 게임은 백엔드·로비·데디케이티드 서버에 접속하지 않는다.
-	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SinglePlayerLevel, true);
+	QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::NewGameSlot, SlotIndex);
 }
 
 void UProjectProject01TitleWidget::DeleteSaveSlot(const int32 SlotIndex)
@@ -1097,6 +1200,16 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		WidgetTree, ConfirmationActions, TEXT("예"));
 	SaveSlotConfirmationNoButton = ProjectProject01LoginUI::AddTabButton(
 		WidgetTree, ConfirmationActions, TEXT("아니오"));
+
+	SinglePlayerFadeOverlay = WidgetTree->ConstructWidget<UBorder>();
+	SinglePlayerFadeOverlay->SetBrushColor(FLinearColor::Black);
+	SinglePlayerFadeOverlay->SetRenderOpacity(0.0f);
+	SinglePlayerFadeOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	if (UOverlaySlot* FadeSlot = Overlay->AddChildToOverlay(SinglePlayerFadeOverlay))
+	{
+		FadeSlot->SetHorizontalAlignment(HAlign_Fill);
+		FadeSlot->SetVerticalAlignment(VAlign_Fill);
+	}
 }
 
 void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
@@ -4032,6 +4145,23 @@ bool UProjectProject01LobbyWidget::Initialize()
 void UProjectProject01LobbyWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	bTravelRequested = false;
+	bGameStartCountdownActive = false;
+	bGameStartCountdownComplete = false;
+	bGameStartFadeActive = false;
+	bGameStartFadeComplete = false;
+	bStartConfirmationRequested = false;
+	GameStartCountdownNumber = 0;
+	GameStartFadeElapsedSeconds = 0.0f;
+	if (IsValid(StartCountdownPanel))
+	{
+		StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+		StartCountdownPanel->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (IsValid(StartCountdownText))
+	{
+		StartCountdownText->SetText(FText::GetEmpty());
+	}
 	if (IsValid(OpenCreateRoomButton)) OpenCreateRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked);
 	if (IsValid(CancelCreateRoomButton)) CancelCreateRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleCancelCreateRoomClicked);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleCreateRoomClicked);
@@ -4091,6 +4221,12 @@ void UProjectProject01LobbyWidget::NativeDestruct()
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(LobbyRefreshTimer);
+		World->GetTimerManager().ClearTimer(GameStartCountdownTimer);
+		World->GetTimerManager().ClearTimer(GameStartFadeTimer);
+	}
+	if (!bTravelRequested)
+	{
+		CancelGameStartCountdown();
 	}
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -4107,6 +4243,23 @@ void UProjectProject01LobbyWidget::NativeDestruct()
 		}
 	}
 	Super::NativeDestruct();
+}
+
+void UProjectProject01LobbyWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (!bGameStartFadeActive || !IsValid(StartCountdownPanel))
+	{
+		return;
+	}
+
+	GameStartFadeElapsedSeconds = FMath::Min(
+		GameStartFadeElapsedSeconds + InDeltaTime, GameStartFadeDurationSeconds);
+	const float FadeAlpha = GameStartFadeDurationSeconds > UE_SMALL_NUMBER
+		? GameStartFadeElapsedSeconds / GameStartFadeDurationSeconds
+		: 1.0f;
+	StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f,
+		FMath::Clamp(FadeAlpha, 0.0f, 1.0f)));
 }
 
 void UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked()
@@ -4186,6 +4339,15 @@ void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
+			if (Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bStarting)
+			{
+				if (Lobby->GetCurrentRoom().bIsHost && bGameStartCountdownActive &&
+					!bGameStartCountdownComplete && !bStartConfirmationRequested)
+				{
+					Lobby->CancelStartRoom();
+				}
+				return;
+			}
 			if (!Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().bGameServerOnline)
 			{
 				SetStatus(TEXT("게임 서버가 비활성 상태입니다. 서버가 켜지면 게임 시작 버튼이 자동으로 활성화됩니다."), true);
@@ -4198,6 +4360,7 @@ void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 
 void UProjectProject01LobbyWidget::HandleLeaveRoomClicked()
 {
+	CancelGameStartCountdown();
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
@@ -4371,14 +4534,55 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 		(Message.Contains(TEXT("게임 서버가 실행 중이 아닙니다")) ||
 			Message.Contains(TEXT("게임 서버 연결이 끊겼습니다"))))
 	{
+		CancelGameStartCountdown();
 		SetStatus(TEXT("게임 서버가 꺼져 있어 방과 로그인 세션을 정리했습니다. 로그인 화면으로 돌아갑니다..."), true);
 		BeginLogout();
 		return;
 	}
+	if (!bSuccess && Operation == EProjectProject01LobbyOperation::ConfirmStartRoom)
+	{
+		CancelGameStartCountdown();
+		SetStatus(Message.IsEmpty()
+			? TEXT("게임 시작을 확정하지 못했습니다. 준비 상태로 돌아갑니다.") : Message, true);
+		RefreshLobbyState();
+		return;
+	}
+	if (!bSuccess && Operation == EProjectProject01LobbyOperation::CancelStartRoom)
+	{
+		bGameStartCountdownActive = false;
+		bGameStartCountdownComplete = true;
+		bStartConfirmationRequested = false;
+		if (UWorld* World = GetWorld(); IsValid(World))
+		{
+			World->GetTimerManager().ClearTimer(GameStartCountdownTimer);
+		}
+		SetStatus(Message.IsEmpty() ? TEXT("게임 시작 취소 시간이 지났습니다.") : Message, true);
+		RefreshLobbyState();
+		return;
+	}
 	if (Operation != EProjectProject01LobbyOperation::RefreshRooms &&
-		Operation != EProjectProject01LobbyOperation::RefreshCurrentRoom)
+		Operation != EProjectProject01LobbyOperation::RefreshCurrentRoom &&
+		!(bGameStartCountdownActive &&
+			(Operation == EProjectProject01LobbyOperation::StartRoom ||
+				Operation == EProjectProject01LobbyOperation::CancelStartRoom ||
+				Operation == EProjectProject01LobbyOperation::ConfirmStartRoom ||
+				Operation == EProjectProject01LobbyOperation::RequestGameTicket)))
 	{
 		SetStatus(Message, !bSuccess);
+	}
+	if (!bSuccess && (Operation == EProjectProject01LobbyOperation::StartRoom ||
+		Operation == EProjectProject01LobbyOperation::RequestGameTicket))
+	{
+		CancelGameStartCountdown();
+	}
+	if (bSuccess && Operation == EProjectProject01LobbyOperation::CancelStartRoom)
+	{
+		CancelGameStartCountdown();
+		SetStatus(TEXT("게임 시작이 취소되었습니다."), false);
+	}
+	if (bSuccess && Operation == EProjectProject01LobbyOperation::ConfirmStartRoom)
+	{
+		RefreshLobbyState();
 	}
 	if (bSuccess && Operation == EProjectProject01LobbyOperation::SendChat && IsValid(ChatInput))
 	{
@@ -4503,6 +4707,10 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		return;
 	}
 	const bool bInRoom = Lobby->HasCurrentRoom();
+	if (!bInRoom)
+	{
+		CancelGameStartCountdown();
+	}
 	ShowLobbyView(bInRoom ? 2 : (bShowingCreateRoom ? 1 : 0));
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom);
@@ -4536,7 +4744,8 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	FString MembersText;
 	for (const FProjectProject01RoomMember& Member : Room.Members)
 	{
-		const FString RoleText = Member.AssignedRole.IsEmpty()
+		const bool bRevealRoles = bGameStartFadeActive || bGameStartFadeComplete;
+		const FString RoleText = !bRevealRoles || Member.AssignedRole.IsEmpty()
 			? FString()
 			: FString::Printf(TEXT(" [%s]"), *Member.AssignedRole);
 		const FString ReturnText = Member.bReturnedToRoom ? FString(TEXT(" [방 복귀]")) : FString();
@@ -4579,6 +4788,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
 	if (IsValid(ReadyButton))
 	{
+		ReadyButton->SetIsEnabled(!Room.bStarting && !Room.bStarted);
 		if (UTextBlock* ButtonText = Cast<UTextBlock>(ReadyButton->GetChildAt(0)))
 		{
 			ButtonText->SetText(FProjectProject01Localization::Text(Room.bIsReady ? TEXT("준비 취소") : TEXT("준비")));
@@ -4586,11 +4796,18 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
 	if (IsValid(StartRoomButton))
 	{
-		StartRoomButton->SetIsEnabled(Room.bCanStart && Room.bGameServerOnline);
+		const bool bCanCancelStart = Room.bStarting && Room.bIsHost &&
+			bGameStartCountdownActive && !bGameStartCountdownComplete &&
+			!bStartConfirmationRequested;
+		StartRoomButton->SetIsEnabled(bCanCancelStart ||
+			(Room.bCanStart && Room.bGameServerOnline && !bGameStartCountdownActive &&
+				!bGameStartCountdownComplete && !bGameStartFadeActive));
 		if (UTextBlock* ButtonText = Cast<UTextBlock>(StartRoomButton->GetChildAt(0)))
 		{
-			ButtonText->SetText(FProjectProject01Localization::Text(
-				Room.bGameServerOnline ? TEXT("게임 시작") : TEXT("게임 서버 대기 중")));
+			const TCHAR* ButtonLabel = Room.bStarting
+				? (bCanCancelStart ? TEXT("게임 시작 취소") : TEXT("게임 시작 확정 중"))
+				: (Room.bGameServerOnline ? TEXT("게임 시작") : TEXT("게임 서버 대기 중"));
+			ButtonText->SetText(FProjectProject01Localization::Text(ButtonLabel));
 		}
 	}
 
@@ -4600,21 +4817,43 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		ChatText += FString::Printf(TEXT("%s: %s\n"), *Chat.DisplayName, *Chat.Message);
 	}
 	if (IsValid(ChatLogText)) ChatLogText->SetText(FText::FromString(ChatText));
-	if (Room.bStarted && !Room.bReturnedToRoom)
+	if (Room.bStarting)
 	{
-		if (Lobby->HasPendingGameJoinTicket())
+		BeginGameStartCountdown();
+		if (bGameStartCountdownComplete && Room.bIsHost && !bStartConfirmationRequested &&
+			!Lobby->IsRequestInFlight())
 		{
-			TravelToStartedGame(Room);
+			bStartConfirmationRequested = true;
+			if (IsValid(StartRoomButton)) StartRoomButton->SetIsEnabled(false);
+			Lobby->ConfirmStartRoom();
 		}
-		else if (!Lobby->IsRequestInFlight())
+	}
+	else if (Room.bStarted && !Room.bReturnedToRoom)
+	{
+		if (!bGameStartCountdownActive && !bGameStartCountdownComplete)
 		{
-			SetStatus(TEXT("일회용 게임 접속 티켓을 발급받는 중입니다..."), false);
-			Lobby->RequestGameJoinTicket();
+			// UI가 늦게 만들어진 클라이언트도 확정된 시작 흐름에는 안전하게 합류한다.
+			bGameStartCountdownComplete = true;
+		}
+		if (bGameStartCountdownComplete)
+		{
+			BeginGameStartFade(Room);
 		}
 	}
 	else if (Room.bStarted && Room.bReturnedToRoom)
 	{
+		CancelGameStartCountdown();
 		SetStatus(TEXT("진행 중인 경기에서 방으로 복귀했습니다. 남은 플레이어를 기다립니다."), false);
+	}
+	else
+	{
+		const bool bWasPendingStart = bGameStartCountdownActive || bGameStartCountdownComplete ||
+			bGameStartFadeActive || bStartConfirmationRequested;
+		CancelGameStartCountdown();
+		if (bWasPendingStart)
+		{
+			SetStatus(TEXT("게임 시작이 취소되었습니다."), false);
+		}
 	}
 }
 
@@ -4637,12 +4876,12 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
-	if (bTravelRequested || !IsValid(Lobby) || !Lobby->HasPendingGameJoinTicket())
+	if (bTravelRequested || !IsValid(Lobby))
 	{
-		if (!bTravelRequested && RoomState.bStarted)
-		{
-			SetStatus(TEXT("검증된 게임 접속 티켓 또는 AES-GCM 키가 없습니다."), true);
-		}
+		return;
+	}
+	if (!bGameStartFadeComplete || !Lobby->HasPendingGameJoinTicket())
+	{
 		return;
 	}
 	APlayerController* PlayerController = GetOwningPlayer();
@@ -4660,6 +4899,182 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 	PlayerController->ClientTravel(TravelUrl, TRAVEL_Absolute);
 }
 
+void UProjectProject01LobbyWidget::BeginGameStartCountdown()
+{
+	if (bTravelRequested || bGameStartCountdownActive || bGameStartCountdownComplete)
+	{
+		return;
+	}
+	bGameStartCountdownActive = true;
+	GameStartFadeElapsedSeconds = 0.0f;
+	GameStartCountdownNumber = 5;
+	if (IsValid(StartCountdownPanel))
+	{
+		StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+		StartCountdownPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (IsValid(StartCountdownText))
+	{
+		StartCountdownText->SetText(FText::FromString(TEXT("게임을 시작합니다\n5...")));
+	}
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().SetTimer(
+			GameStartCountdownTimer, this,
+			&UProjectProject01LobbyWidget::AdvanceGameStartCountdown,
+			1.0f, true, 1.0f);
+	}
+}
+
+void UProjectProject01LobbyWidget::AdvanceGameStartCountdown()
+{
+	if (!bGameStartCountdownActive)
+	{
+		return;
+	}
+	if (GameStartCountdownNumber > 1)
+	{
+		--GameStartCountdownNumber;
+		if (IsValid(StartCountdownText))
+		{
+			StartCountdownText->SetText(FText::FromString(FString::Printf(
+				TEXT("게임을 시작합니다\n%d..."), GameStartCountdownNumber)));
+		}
+		return;
+	}
+
+	bGameStartCountdownActive = false;
+	bGameStartCountdownComplete = true;
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(GameStartCountdownTimer);
+	}
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>()
+		: nullptr;
+	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom())
+	{
+		CancelGameStartCountdown();
+		return;
+	}
+	const FProjectProject01RoomState& Room = Lobby->GetCurrentRoom();
+	if (Room.bStarted)
+	{
+		BeginGameStartFade(Room);
+	}
+	else if (Room.bStarting && Room.bIsHost && !bStartConfirmationRequested && !Lobby->IsRequestInFlight())
+	{
+		bStartConfirmationRequested = true;
+		if (IsValid(StartRoomButton))
+		{
+			StartRoomButton->SetIsEnabled(false);
+		}
+		Lobby->ConfirmStartRoom();
+	}
+}
+
+void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01RoomState& RoomState)
+{
+	if (bTravelRequested || bGameStartFadeActive || bGameStartFadeComplete ||
+		!bGameStartCountdownComplete || !RoomState.bStarted)
+	{
+		return;
+	}
+	bGameStartFadeActive = true;
+	GameStartFadeElapsedSeconds = 0.0f;
+	bStartConfirmationRequested = true;
+	const FString RoleText = RoomState.AssignedRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
+		? TEXT("마네킹") : TEXT("생존자");
+	if (IsValid(StartCountdownPanel))
+	{
+		StartCountdownPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (IsValid(StartCountdownText))
+	{
+		StartCountdownText->SetText(FText::FromString(FString::Printf(
+			TEXT("역할: %s\n게임 서버에 접속합니다."), *RoleText)));
+	}
+	if (IsValid(StartRoomButton))
+	{
+		StartRoomButton->SetIsEnabled(false);
+	}
+	if (APlayerController* PlayerController = GetOwningPlayer();
+		IsValid(PlayerController) && IsValid(PlayerController->PlayerCameraManager))
+	{
+		PlayerController->PlayerCameraManager->StartCameraFade(
+			0.0f, 1.0f, GameStartFadeDurationSeconds, FLinearColor::Black, false, true);
+	}
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().SetTimer(
+			GameStartFadeTimer, this, &UProjectProject01LobbyWidget::CompleteGameStartFade,
+			GameStartFadeDurationSeconds, false);
+	}
+}
+
+void UProjectProject01LobbyWidget::CompleteGameStartFade()
+{
+	bGameStartFadeActive = false;
+	bGameStartFadeComplete = true;
+	GameStartFadeElapsedSeconds = GameStartFadeDurationSeconds;
+	if (IsValid(StartCountdownPanel))
+	{
+		StartCountdownPanel->SetBrushColor(FLinearColor::Black);
+	}
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().bStarted)
+	{
+		CancelGameStartCountdown();
+		return;
+	}
+	if (Lobby->HasPendingGameJoinTicket())
+	{
+		TravelToStartedGame(Lobby->GetCurrentRoom());
+	}
+	else if (!Lobby->IsRequestInFlight())
+	{
+		Lobby->RequestGameJoinTicket();
+	}
+}
+
+void UProjectProject01LobbyWidget::CancelGameStartCountdown()
+{
+	const bool bHadCountdown = bGameStartCountdownActive || bGameStartCountdownComplete ||
+		bGameStartFadeActive || bGameStartFadeComplete;
+	bGameStartCountdownActive = false;
+	bGameStartCountdownComplete = false;
+	bGameStartFadeActive = false;
+	bGameStartFadeComplete = false;
+	bStartConfirmationRequested = false;
+	GameStartFadeElapsedSeconds = 0.0f;
+	GameStartCountdownNumber = 0;
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(GameStartCountdownTimer);
+		World->GetTimerManager().ClearTimer(GameStartFadeTimer);
+	}
+	if (IsValid(StartCountdownPanel))
+	{
+		StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+		StartCountdownPanel->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (IsValid(StartCountdownText))
+	{
+		StartCountdownText->SetText(FText::GetEmpty());
+	}
+	if (bHadCountdown && !bTravelRequested)
+	{
+		if (APlayerController* PlayerController = GetOwningPlayer();
+			IsValid(PlayerController) && IsValid(PlayerController->PlayerCameraManager))
+		{
+			PlayerController->PlayerCameraManager->StopCameraFade();
+		}
+	}
+}
+
 void UProjectProject01LobbyWidget::BuildWidgetTree()
 {
 	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
@@ -4667,8 +5082,14 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 		return;
 	}
 
+	UOverlay* RootOverlay = WidgetTree->ConstructWidget<UOverlay>();
+	WidgetTree->RootWidget = RootOverlay;
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
-	WidgetTree->RootWidget = Root;
+	if (UOverlaySlot* RootSlot = RootOverlay->AddChildToOverlay(Root))
+	{
+		RootSlot->SetHorizontalAlignment(HAlign_Fill);
+		RootSlot->SetVerticalAlignment(VAlign_Fill);
+	}
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 Lobby"), 30.0f);
 	LobbyStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("세션 확인 중..."), 14.0f);
 	LobbyViewSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
@@ -4772,6 +5193,26 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	RoomPanel->AddChildToVerticalBox(ChatInput)->SetPadding(FMargin(6.0f));
 	SendChatButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("채팅 보내기"));
 	SendChatButton->SetIsEnabled(false);
+
+	StartCountdownPanel = WidgetTree->ConstructWidget<UBorder>();
+	StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+	StartCountdownPanel->SetPadding(FMargin(36.0f, 24.0f));
+	StartCountdownPanel->SetHorizontalAlignment(HAlign_Center);
+	StartCountdownPanel->SetVerticalAlignment(VAlign_Center);
+	StartCountdownPanel->SetVisibility(ESlateVisibility::Collapsed);
+	StartCountdownText = WidgetTree->ConstructWidget<UTextBlock>();
+	StartCountdownText->SetText(FText::FromString(TEXT("게임을 시작합니다\n5...")));
+	StartCountdownText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	StartCountdownText->SetJustification(ETextJustify::Center);
+	FSlateFontInfo CountdownFont = StartCountdownText->GetFont();
+	CountdownFont.Size = 42;
+	StartCountdownText->SetFont(CountdownFont);
+	StartCountdownPanel->AddChild(StartCountdownText);
+	if (UOverlaySlot* CountdownSlot = RootOverlay->AddChildToOverlay(StartCountdownPanel))
+	{
+		CountdownSlot->SetHorizontalAlignment(HAlign_Fill);
+		CountdownSlot->SetVerticalAlignment(VAlign_Fill);
+	}
 	ShowLobbyView(0);
 }
 

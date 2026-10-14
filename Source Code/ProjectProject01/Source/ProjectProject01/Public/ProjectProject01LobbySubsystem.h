@@ -20,6 +20,8 @@ enum class EProjectProject01LobbyOperation : uint8
 	DeleteRoom,
 	SetReady,
 	StartRoom,
+	CancelStartRoom,
+	ConfirmStartRoom,
 	SendChat,
 	RequestGameTicket,
 	RefreshLeaderboard,
@@ -215,6 +217,9 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 	bool bGameServerOnline = false;
 
 	UPROPERTY(BlueprintReadOnly)
+	bool bStarting = false;
+
+	UPROPERTY(BlueprintReadOnly)
 	bool bStarted = false;
 
 	/** 현재 로컬 사용자가 진행 중인 경기 연결을 끝내고 방 화면으로 복귀했는지 표시합니다. */
@@ -295,6 +300,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void StartRoom();
+
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
+	void CancelStartRoom();
+
+	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
+	void ConfirmStartRoom();
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void SendChat(const FString& Message);

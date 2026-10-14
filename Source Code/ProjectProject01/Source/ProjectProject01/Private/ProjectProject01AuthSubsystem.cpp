@@ -81,6 +81,12 @@ void UProjectProject01AuthSubsystem::Deinitialize()
 		ServiceStatusRequest->CancelRequest();
 		ServiceStatusRequest.Reset();
 	}
+	if (GuideProgressRequest.IsValid())
+	{
+		GuideProgressRequest->OnProcessRequestComplete().Unbind();
+		GuideProgressRequest->CancelRequest();
+		GuideProgressRequest.Reset();
+	}
 	if (ActiveRequest.IsValid())
 	{
 		ActiveRequest->OnProcessRequestComplete().Unbind();
@@ -228,6 +234,72 @@ void UProjectProject01AuthSubsystem::CheckMultiplayerServiceStatus()
 		bServiceReachable = false;
 		OnServiceStatusChanged.Broadcast(false, FString(), FString(),
 			TEXT("서버가 꺼져 있습니다."));
+	}
+}
+
+void UProjectProject01AuthSubsystem::MarkRoleGuideSeenForAccount(const bool bMannequinRole)
+{
+	if (!IsSignedIn())
+	{
+		return;
+	}
+
+	bool& bSeenFlag = bMannequinRole
+		? bSeenMannequinGuideForAccount
+		: bSeenSurvivorGuideForAccount;
+	if (bSeenFlag)
+	{
+		return;
+	}
+	bSeenFlag = true;
+
+	// 한 클라이언트는 한 경기에서 하나의 역할만 확인한다. 이전 기록 요청이 아직 끝나지
+	// 않았다면 다음 로그인에서 서버 상태가 다시 내려오므로 중복 요청하지 않는다.
+	if (GuideProgressRequest.IsValid() || ApiBaseUrl.IsEmpty() || !IsApiBaseUrlAllowed())
+	{
+		return;
+	}
+
+	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("role"), bMannequinRole ? TEXT("Mannequin") : TEXT("Survivor"));
+	FString Body;
+	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(ApiBaseUrl + TEXT("/api/auth/guide-progress"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
+	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + AccessToken);
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetTimeout(RequestTimeoutSeconds);
+	Request->SetContentAsString(Body);
+	Request->OnProcessRequestComplete().BindUObject(
+		this, &UProjectProject01AuthSubsystem::HandleGuideProgressRequestComplete);
+	GuideProgressRequest = Request;
+	if (!Request->ProcessRequest())
+	{
+		GuideProgressRequest.Reset();
+		UE_LOG(LogProjectProject01Auth, Warning,
+			TEXT("Could not start the account role-guide progress request."));
+	}
+}
+
+void UProjectProject01AuthSubsystem::HandleGuideProgressRequestComplete(
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request,
+	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> Response,
+	const bool bConnectedSuccessfully)
+{
+	if (GuideProgressRequest != Request)
+	{
+		return;
+	}
+	GuideProgressRequest.Reset();
+	if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() < 200 ||
+		Response->GetResponseCode() >= 300)
+	{
+		UE_LOG(LogProjectProject01Auth, Warning,
+			TEXT("Account role-guide progress was not stored; it will be retried after a later login."));
 	}
 }
 
@@ -404,6 +476,10 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 		AccessToken = MoveTemp(NewAccessToken);
 		RefreshToken = MoveTemp(NewRefreshToken);
 		SignedInDisplayName = DisplayName;
+		bSeenSurvivorGuideForAccount = false;
+		bSeenMannequinGuideForAccount = false;
+		Json->TryGetBoolField(TEXT("seenSurvivorGuide"), bSeenSurvivorGuideForAccount);
+		Json->TryGetBoolField(TEXT("seenMannequinGuide"), bSeenMannequinGuideForAccount);
 	}
 	else if (Operation == EAuthOperation::Logout)
 	{
@@ -514,9 +590,17 @@ bool UProjectProject01AuthSubsystem::CanStartOperation(const EAuthOperation Oper
 
 void UProjectProject01AuthSubsystem::ClearSession()
 {
+	if (GuideProgressRequest.IsValid())
+	{
+		GuideProgressRequest->OnProcessRequestComplete().Unbind();
+		GuideProgressRequest->CancelRequest();
+		GuideProgressRequest.Reset();
+	}
 	AccessToken.Reset();
 	RefreshToken.Reset();
 	SignedInDisplayName.Reset();
+	bSeenSurvivorGuideForAccount = false;
+	bSeenMannequinGuideForAccount = false;
 	AuthState = EProjectProject01AuthState::SignedOut;
 }
 
