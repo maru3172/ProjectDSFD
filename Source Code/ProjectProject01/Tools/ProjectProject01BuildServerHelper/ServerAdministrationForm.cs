@@ -10,6 +10,7 @@ namespace ProjectProject01BuildServerHelper;
 /// </summary>
 internal sealed class ServerAdministrationForm : Form
 {
+    public event Action<int>? CapacityChanged;
     private readonly string projectRoot;
     private readonly Action<string> mainLog;
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(8) };
@@ -132,7 +133,7 @@ internal sealed class ServerAdministrationForm : Form
         this.mainLog = mainLog;
         Text = "ProjectProject01 서버 운영";
         Width = 840;
-        Height = 690;
+        Height = 850;
         MinimumSize = new Size(740, 590);
         StartPosition = FormStartPosition.CenterParent;
         BuildUi();
@@ -153,8 +154,10 @@ internal sealed class ServerAdministrationForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 9,
-            Padding = new Padding(12)
+            Padding = new Padding(12),
+            AutoScroll = true
         };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -182,6 +185,7 @@ internal sealed class ServerAdministrationForm : Form
 
         var noticeGroup = new GroupBox { Text = "전체 공지", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
         var noticeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, AutoSize = true };
+        noticeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         noticeLayout.Controls.Add(announcement, 0, 0);
         var schedulePanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
         schedulePanel.Controls.Add(new Label { Text = "새 점검 예약", AutoSize = true, Padding = new Padding(0, 7, 5, 0) });
@@ -206,6 +210,8 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(serviceButtons, "공지 지우기", ClearAnnouncementAsync);
         AddButton(serviceButtons, "크래시 보고서 보기", LoadCrashReportsAsync);
         AddButton(serviceButtons, "피드백/설문조사 관리", OpenSurveyAdministrationAsync);
+        AddButton(serviceButtons, "계정 이용 제한", () => {using var dialog=new AccountRestrictionForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
+        AddButton(serviceButtons, "최대 방 수", () => {using var dialog=new RoomCapacityForm(CreateAdminRequest, value=>CapacityChanged?.Invoke(value));dialog.ShowDialog(this);return Task.CompletedTask;});
         root.Controls.Add(serviceButtons);
 
         var explanation = new Label
@@ -228,6 +234,16 @@ internal sealed class ServerAdministrationForm : Form
         root.Controls.Add(operationLog);
         root.Controls.Add(operationStatus);
         Controls.Add(root);
+        void ConstrainWidths()
+        {
+            int width=Math.Max(250,root.ClientSize.Width-root.Padding.Horizontal-SystemInformation.VerticalScrollBarWidth);
+            foreach(Control control in root.Controls)control.MaximumSize=new Size(width,0);
+            schedulePanel.MaximumSize=new Size(Math.Max(200,width-20),0);
+            logoutPanel.MaximumSize=new Size(Math.Max(200,width-20),0);
+            operationLog.MinimumSize=new Size(0,70);
+        }
+        root.SizeChanged+=(_,_)=>ConstrainWidths();
+        ConstrainWidths();
     }
 
     private static void AddButton(FlowLayoutPanel panel, string text, Func<Task> action)
@@ -284,6 +300,11 @@ internal sealed class ServerAdministrationForm : Form
                 }
             }
             maintenanceSchedules.EndUpdate();
+            using var capacityRequest=CreateAdminRequest(HttpMethod.Get,"/api/admin/room-capacity");
+            using var capacityResponse=await http.SendAsync(capacityRequest);
+            capacityResponse.EnsureSuccessStatusCode();
+            using var capacity=JsonDocument.Parse(await capacityResponse.Content.ReadAsStringAsync());
+            CapacityChanged?.Invoke(capacity.RootElement.GetProperty("maximumRooms").GetInt32());
             Append("[OK] 서버 운영 상태를 불러왔습니다.");
             SetOperationStatus("상태 확인 완료");
         }
@@ -465,7 +486,9 @@ internal sealed class ServerAdministrationForm : Form
                     using var downloadRequest = CreateAdminRequest(HttpMethod.Get, $"/api/admin/crash-reports/{id}/artifacts");
                     using var artifactHttp = new HttpClient { Timeout=TimeSpan.FromMinutes(3) };
                     using var download = await artifactHttp.SendAsync(downloadRequest);
-                    if (!download.IsSuccessStatusCode) throw new InvalidOperationException("해당 보고서에 업로드된 덤프/로그가 없습니다.");
+                    if (!download.IsSuccessStatusCode) throw new InvalidOperationException(
+                        download.StatusCode==System.Net.HttpStatusCode.NotFound ? "해당 보고서에 업로드된 덤프/로그가 없습니다. JSON 보고서만 수집된 경우입니다." :
+                        $"첨부파일 다운로드 실패: HTTP {(int)download.StatusCode} {download.ReasonPhrase}");
                     return await download.Content.ReadAsByteArrayAsync();
                 });
             viewer.ShowDialog(this);

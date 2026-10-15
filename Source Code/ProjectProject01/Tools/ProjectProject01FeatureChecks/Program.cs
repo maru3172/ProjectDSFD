@@ -64,7 +64,58 @@ internal static class FeatureChecks
     private static void CheckLayouts(string output)
     {
         Directory.CreateDirectory(output);
+        HttpRequestMessage MockRequest(HttpMethod method,string endpoint,object? body)=>new(method,"http://127.0.0.1:1"+endpoint);
+        using(var helper=new MainForm())
+        {
+            PrepareRender(helper);
+            foreach(string caption in new[]{"동시 경기 수 적용","방 한도 설정·적용"})
+            {
+                var button=Children(helper).OfType<Button>().Single(b=>b.Text==caption);
+                Check(helper.ClientRectangle.Contains(helper.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),caption+" 버튼이 메인 창에 표시됨");
+            }
+            using var bitmap=new Bitmap(helper.Width,helper.Height);helper.DrawToBitmap(bitmap,new Rectangle(Point.Empty,helper.Size));bitmap.Save(Path.Combine(output,"helper-capacity-buttons.png"));
+        }
+        using(var administration=new ServerAdministrationForm(Path.GetFullPath(Path.Combine(output,"empty-fixture")),_=>{}))
+        {
+            PrepareRender(administration);
+            using var bitmap=new Bitmap(administration.Width,administration.Height);administration.DrawToBitmap(bitmap,new Rectangle(Point.Empty,administration.Size));bitmap.Save(Path.Combine(output,"server-administration.png"));
+            Check(Children(administration).OfType<Button>().Any(b=>b.Text=="최대 방 수")&&Children(administration).OfType<Button>().Any(b=>b.Text=="계정 이용 제한"),"서버 운영에서 방 한도·계정 제한 접근");
+            foreach(var button in Children(administration).OfType<Button>().Where(b=>b.Text is "최대 방 수" or "계정 이용 제한"))
+                Check(administration.ClientRectangle.Contains(administration.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),button.Text+" 버튼이 창 밖으로 잘리지 않음");
+        }
+        using(var capacity=new RoomCapacityForm(MockRequest,_=>{}))
+        {
+            PrepareRender(capacity);
+            using var bitmap=new Bitmap(capacity.Width,capacity.Height);capacity.DrawToBitmap(bitmap,new Rectangle(Point.Empty,capacity.Size));bitmap.Save(Path.Combine(output,"room-capacity.png"));
+            Check(Children(capacity).OfType<NumericUpDown>().Single().Maximum==100,"방 한도 설정 UI 8개 제한 제거");
+        }
+        using(var restrictions=new AccountRestrictionForm(MockRequest))
+        {
+            PrepareRender(restrictions);
+            var history=Children(restrictions).OfType<DataGridView>().Single();
+            history.Rows.Add("test-account","운영 검증","오늘","영구","","제한 중");
+            using var bitmap=new Bitmap(restrictions.Width,restrictions.Height);restrictions.DrawToBitmap(bitmap,new Rectangle(Point.Empty,restrictions.Size));bitmap.Save(Path.Combine(output,"account-restrictions.png"));
+            Check(history.Height>200&&history.Columns.Count==6,"이용 제한 이력 UI 가시 영역");
+        }
+        using(var crashes=new CrashReportDownloadForm([("test","ZIP 다운로드 위치 안내")],_=>Task.FromResult(Array.Empty<byte>())))
+        {
+            PrepareRender(crashes);
+            using var bitmap=new Bitmap(crashes.Width,crashes.Height);crashes.DrawToBitmap(bitmap,new Rectangle(Point.Empty,crashes.Size));bitmap.Save(Path.Combine(output,"crash-download.png"));
+            Check(Children(crashes).OfType<Label>().Any(l=>l.Text.Contains("선택한 PC 경로")),"ZIP 저장 위치 UI 안내");
+        }
+        using(var recovery=new DatabaseRecoveryForm(Path.GetFullPath(Path.Combine(output,"empty-fixture")),()=>false,(_,_)=>Task.CompletedTask))
+        {
+            PrepareRender(recovery);
+            using var bitmap=new Bitmap(recovery.Width,recovery.Height);recovery.DrawToBitmap(bitmap,new Rectangle(Point.Empty,recovery.Size));bitmap.Save(Path.Combine(output,"database-recovery.png"));
+            Check(Children(recovery).OfType<ListBox>().Single().Height>200,"DB 백업 목록 UI 가시 영역");
+        }
         using var form=new SurveyAdministrationForm("http://127.0.0.1:1","test",_=>{});
+        var loadDraft=typeof(SurveyAdministrationForm).GetMethod("LoadSelectedDraftAsync",BindingFlags.Instance|BindingFlags.NonPublic)!;
+        ((Task)loadDraft.Invoke(form,null)!).GetAwaiter().GetResult();
+        Check(Children(form).OfType<Label>().Any(l=>l.Text.Contains("불러올 설문")),"선택 없는 설문 불러오기는 예외 대신 안내");
+        var savedList=(ListBox)typeof(SurveyAdministrationForm).GetField("surveyList",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(form)!;
+        typeof(Control).GetMethod("OnDoubleClick",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(savedList,[EventArgs.Empty]);
+        Check(true,"빈 설문 목록 더블클릭 이벤트 예외 방지");
         PrepareRender(form);
         var field=typeof(SurveyAdministrationForm).GetField("questions",BindingFlags.Instance|BindingFlags.NonPublic)!;
         ((List<SurveyQuestionDraft>)field.GetValue(form)!).Add(new SurveyQuestionDraft {Prompt="추가한 문항이 목록에 표시됩니다",Options=["선택지 1","선택지 2"]});

@@ -58,6 +58,10 @@ builder.Services.AddSingleton(administratorOptions);
 builder.Services.AddSingleton<ServiceControlState>();
 builder.Services.AddHostedService<ServiceControlScheduleWorker>();
 builder.Services.AddSingleton<GameServerPresenceState>();
+builder.Services.AddSingleton<IGameServerProcessFactory,GameServerProcessFactory>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<GameServerDemandManager>();
+builder.Services.AddHostedService(services=>services.GetRequiredService<GameServerDemandManager>());
 builder.Services.AddSingleton<EosVoiceTokenService>();
 builder.Services.AddHostedService(services => services.GetRequiredService<EosVoiceTokenService>());
 
@@ -123,7 +127,10 @@ builder.Services.AddRateLimiter(options =>
             }));
     options.AddPolicy("game-server", context =>
         RateLimitPartition.GetFixedWindowLimiter(
-            RequestSecurity.GetClientAddress(context),
+            RequestSecurity.GetClientAddress(context) + (
+                securityOptions.IsAuthorizedGameServer(context.Request.Headers["X-ProjectProject01-Server-Secret"].ToString()) &&
+                int.TryParse(context.Request.Headers["X-ProjectProject01-Server-Port"],out int serverPort) && serverPort is >=1024 and <=65535
+                    ? $":{serverPort}" : ":unassigned"),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 600,
@@ -357,6 +364,11 @@ app.MapPost("/api/auth/login", async (
             connection,
             transaction))
         {
+            await using var userLock = new MySqlCommand("SELECT id FROM users WHERE id=@id FOR UPDATE;", connection, transaction);
+            userLock.Parameters.AddWithValue("@id",user.Id);
+            await userLock.ExecuteScalarAsync(cancellationToken);
+            string? restriction = await AccountRestrictions.GetMessageAsync(connection,transaction,user.Id,cancellationToken);
+            if(restriction is not null) return Results.Json(new {code="AccountRestricted",message=restriction},statusCode:403);
             resetFailure.CommandTimeout = 5;
             resetFailure.Parameters.AddWithValue("@userId", user.Id);
             await resetFailure.ExecuteNonQueryAsync(cancellationToken);
@@ -432,6 +444,8 @@ app.MapPost("/api/auth/refresh", async (
             WHERE s.refresh_token_hash = @refreshHash
               AND s.revoked_at_utc IS NULL
               AND s.refresh_expires_at_utc > UTC_TIMESTAMP(6)
+              AND NOT EXISTS (SELECT 1 FROM account_restrictions r WHERE r.user_id=u.id AND r.lifted_at_utc IS NULL
+                  AND (r.expires_at_utc IS NULL OR r.expires_at_utc>UTC_TIMESTAMP(6)))
             FOR UPDATE;
             """, connection, transaction))
         {
@@ -594,7 +608,8 @@ app.MapProjectProject01Lobby(
     builder.Configuration["Lobby:GameServerTravelUrl"] ?? "127.0.0.1:7777",
     securityOptions,
     versionCompatibility,
-    app.Services.GetRequiredService<GameServerPresenceState>());
+    app.Services.GetRequiredService<GameServerPresenceState>(),
+    app.Services.GetRequiredService<GameServerDemandManager>());
 
 app.MapPost("/api/crash-reports", async (
     CrashReportRequest report,
@@ -644,6 +659,9 @@ app.MapPost("/api/crash-reports", async (
 }).RequireRateLimiting("crash-report");
 
 app.MapProjectProject01CrashArtifacts();
+app.MapAccountRestrictions();
+app.MapRoomCapacity();
+app.MapGameServerDemand();
 app.Run();
 
 static IResult DatabaseUnavailable() =>

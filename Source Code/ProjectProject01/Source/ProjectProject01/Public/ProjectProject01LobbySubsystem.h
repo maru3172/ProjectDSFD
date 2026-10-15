@@ -212,12 +212,16 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 	UPROPERTY(BlueprintReadOnly)
 	bool bCanStart = false;
 
-	/** 백엔드가 최근 전용 게임 서버 heartbeat를 확인했는지 표시합니다. */
+	/** 경기 세션 운영이 활성화되었거나 기존 전용 서버가 응답하는지 표시합니다. */
 	UPROPERTY(BlueprintReadOnly)
 	bool bGameServerOnline = false;
 
 	UPROPERTY(BlueprintReadOnly)
 	bool bStarting = false;
+
+	/** 카운트다운 종료 후 빈 경기 세션을 기다리거나 서버 준비를 기다리는 상태입니다. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bServerPreparing = false;
 
 	UPROPERTY(BlueprintReadOnly)
 	bool bStarted = false;
@@ -376,6 +380,7 @@ public:
 	const FString& GetGameTicketRole() const { return GameTicketRole; }
 
 private:
+	friend class FProjectRoomPreparationStateTest;
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
 		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0);
 	void HandleRequestComplete(

@@ -18,6 +18,8 @@
 #include "Dom/JsonObject.h"
 #include "eos_connect.h"
 #include "eos_sdk.h"
+#include "AudioCaptureCore.h"
+#include "Misc/ConfigCacheIni.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01Voice, Log, All);
 
@@ -42,6 +44,10 @@ namespace ProjectProject01Voice
 void UProjectProject01VoiceChatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	GConfig->GetString(TEXT("ProjectProject01.VoicePreferences"), TEXT("Input"), PreferredInput, GGameUserSettingsIni);
+	GConfig->GetString(TEXT("ProjectProject01.VoicePreferences"), TEXT("Output"), PreferredOutput, GGameUserSettingsIni);
+	GConfig->GetFloat(TEXT("ProjectProject01.VoicePreferences"), TEXT("Volume"), ReceiveVolume, GGameUserSettingsIni);
+	ReceiveVolume = FMath::IsFinite(ReceiveVolume) ? FMath::Clamp(ReceiveVolume,0.0f,1.0f) : 1.0f;
 }
 
 void UProjectProject01VoiceChatSubsystem::Deinitialize()
@@ -103,6 +109,8 @@ void UProjectProject01VoiceChatSubsystem::ConfigureForMatch(
 
 void UProjectProject01VoiceChatSubsystem::LeaveMatch()
 {
+	StopMicrophoneTest();
+	MutedParticipants.Reset();
 	bConfiguredForSurvivor = false;
 	bPushToTalkHeld = false;
 	bOpenMic = false;
@@ -152,6 +160,7 @@ void UProjectProject01VoiceChatSubsystem::ToggleOpenMic()
 
 void UProjectProject01VoiceChatSubsystem::Tick(float DeltaTime)
 {
+	UpdateReceiveVolume();
 	if (RejoinDelaySeconds > 0.0f)
 	{
 		RejoinDelaySeconds = FMath::Max(0.0f, RejoinDelaySeconds - DeltaTime);
@@ -330,6 +339,7 @@ void UProjectProject01VoiceChatSubsystem::BeginLogin()
 {
 	if (!bConfiguredForSurvivor || VoiceChat == nullptr) return;
 	if (VoiceUser == nullptr) VoiceUser = VoiceChat->CreateUser();
+	ApplyAudioPreferences();
 	if (VoiceUser == nullptr)
 	{
 		UE_LOG(LogProjectProject01Voice, Error, TEXT("VoiceChat provider could not create a local user."));
@@ -434,7 +444,7 @@ void UProjectProject01VoiceChatSubsystem::HandleJoinCredentialResponse(
 void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 {
 	if (VoiceUser == nullptr || !bJoinedChannel) return;
-	if (bOpenMic || bPushToTalkHeld)
+	if (!IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld))
 	{
 		TSet<FString> Channels;
 		Channels.Add(ChannelName);
@@ -448,8 +458,10 @@ void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 
 void UProjectProject01VoiceChatSubsystem::HandleInitialized(const FVoiceChatResult& Result)
 {
+	bDeviceInitializationPending = false;
 	if (!Result.IsSuccess()) { ReportFailure(TEXT("Initialize"), Result); return; }
-	BeginProductUserLogin();
+	if (bConfiguredForSurvivor) BeginProductUserLogin();
+	else PrepareAudioDevices();
 }
 
 void UProjectProject01VoiceChatSubsystem::HandleConnected(const FVoiceChatResult& Result)
@@ -468,6 +480,7 @@ void UProjectProject01VoiceChatSubsystem::HandleJoined(const FString& JoinedChan
 {
 	if (!Result.IsSuccess()) { ReportFailure(TEXT("JoinChannel"), Result); return; }
 	bJoinedChannel = bConfiguredForSurvivor && JoinedChannel == ChannelName;
+	ApplyAudioPreferences();
 	ApplyTransmitMode();
 	UE_LOG(LogProjectProject01Voice, Log, TEXT("Joined survivor-only positional voice channel %s."), *JoinedChannel);
 }

@@ -19,7 +19,7 @@ internal static class Program
     }
 }
 
-internal sealed class MainForm : Form
+internal sealed partial class MainForm : Form
 {
     private const int ClientDeltaBlockSize = 4 * 1024 * 1024;
     private const long ClientDeltaMinimumFileSize = 8L * 1024 * 1024;
@@ -35,6 +35,10 @@ internal sealed class MainForm : Form
         "ProjectProject01", "BuildServerHelper.json");
     private Process? backendProcess;
     private Process? serverProcess;
+    private bool closingInProgress,closeReady;
+    private readonly List<Process> ownedServerPool = [];
+    private readonly NumericUpDown serverCount = new() {Minimum=1,Maximum=100,Value=1,Width=100};
+    private readonly Label serverCapacityLabel = new() { AutoSize=true, Text="방 한도: 서버 운영에서 조회/변경 · 시작한 경기만 세션 실행" };
 
     public MainForm()
     {
@@ -47,12 +51,21 @@ internal sealed class MainForm : Form
         archiveRoot.Text = Path.Combine(Path.GetDirectoryName(projectFile.Text) ?? Environment.CurrentDirectory, "Builds");
         LoadHelperSettings();
         BuildUi();
-        FormClosing += (_, _) =>
+        FormClosing += async (_, eventArgs) =>
         {
+            if(closeReady)return;
+            eventArgs.Cancel=true;
+            if(closingInProgress)return;
+            closingInProgress=true;Enabled=false;
+            try{await StopBackendAsync();}
+            finally
+            {
             SaveHelperSettings();
             lifetime.Cancel();
-            StopProcess(backendProcess, "백엔드");
             StopProcess(serverProcess, "게임 서버");
+            foreach(var process in ownedServerPool.Where(p=>p!=serverProcess)) StopProcess(process,"게임 서버 풀");
+            closeReady=true;Close();
+            }
         };
     }
 
@@ -71,6 +84,12 @@ internal sealed class MainForm : Form
         AddField(fields, ".uproject", projectFile);
         AddField(fields, "패키징 출력", archiveRoot);
         AddField(fields, "서버 실행 인자", serverArgs);
+        var poolControls = new FlowLayoutPanel {AutoSize=true,Dock=DockStyle.Fill};
+        poolControls.Controls.Add(serverCount);
+        AddButton(poolControls, "동시 경기 수 적용", ApplyConcurrentCapacityAsync);
+        AddButton(poolControls, "방 한도 설정·적용", OpenRoomCapacityAsync);
+        poolControls.Controls.Add(serverCapacityLabel);
+        AddField(fields, "최대 동시 경기 수", poolControls);
         root.Controls.Add(fields);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Padding = new Padding(0, 8, 0, 8) };
@@ -80,14 +99,15 @@ internal sealed class MainForm : Form
         AddButton(buttons, "데디케이티드 서버 패키징", async () => await PackageAsync(true));
         AddButton(buttons, "MySQL 초기화/시작", async () => await RunMySqlAsync("Initialize"));
         AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
+        AddButton(buttons, "DB 백업·복원", OpenDatabaseRecoveryAsync);
         AddButton(buttons, "백엔드 시작", StartBackend);
-        AddButton(buttons, "백엔드 중지", () => { StopProcess(backendProcess, "백엔드"); return Task.CompletedTask; });
+        AddButton(buttons, "백엔드 중지", StopBackendAsync);
         AddButton(buttons, "EOS 보이스 자격 증명", OpenEosVoiceSetupAsync);
         AddButton(buttons, "IP 직접 연결 방화벽 설정", ConfigureDirectIpFirewallAsync);
         AddButton(buttons, "IP 직접 연결 검사", () => ValidateDirectIpConnectivityAsync(false));
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
-        AddButton(buttons, "게임 서버 시작", StartServer);
-        AddButton(buttons, "게임 서버 중지", StopAllGameServersAsync);
+        AddButton(buttons, "게임 서버 운영 시작", StartServer);
+        AddButton(buttons, "게임 서버 운영 중지", StopAllGameServersAsync);
         AddButton(buttons, "전체 흐름 스모크 테스트", RunSmokeTestAsync);
         AddButton(buttons, "로그 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Logs"); return Task.CompletedTask; });
         AddButton(buttons, "진단 결과 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Diagnostics"); return Task.CompletedTask; });
@@ -101,6 +121,7 @@ internal sealed class MainForm : Form
     private Task OpenServerAdministrationAsync()
     {
         using var dialog = new ServerAdministrationForm(ProjectRoot(), Append);
+        dialog.CapacityChanged += ApplyRoomCapacity;
         dialog.ShowDialog(this);
         return Task.CompletedTask;
     }
@@ -663,6 +684,7 @@ internal sealed class MainForm : Form
 
     private async Task ConfigureDirectIpFirewallAsync()
     {
+        string serverPortRange=GetServerPortRange();
         string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
         var addresses = GetDirectConnectionAddresses(backend);
         if (addresses.Count == 0)
@@ -689,7 +711,9 @@ internal sealed class MainForm : Form
             if (serverExecutable is not null)
             {
                 script.Append($"Get-NetFirewallRule -DisplayName '{serverName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
-                script.Append($"New-NetFirewallRule -DisplayName '{serverName}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777 -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Program '{serverExecutable.Replace("'", "''")}' -Profile Any | Out-Null;");
+                // The packaged bootstrapper starts an internal executable. Scope by address,
+                // interface, trusted network and the configured port range rather than the bootstrap path.
+                script.Append($"New-NetFirewallRule -DisplayName '{serverName}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort '{serverPortRange}' -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Profile Any | Out-Null;");
             }
         }
         string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script.ToString()));
@@ -712,7 +736,7 @@ internal sealed class MainForm : Form
             Append($"[OK] IP 직접 연결용 백엔드 TCP 5080을 허용했습니다: {string.Join(", ", addresses.Select(item => item.Address))}");
             Append(serverExecutable is null
                 ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 다시 실행하세요."
-                : "[OK] IP 직접 연결용 게임 서버 UDP 7777을 해당 연결 대역에 허용했습니다.");
+                : $"[OK] IP 직접 연결용 게임 서버 UDP {serverPortRange}을 해당 연결 대역에 허용했습니다.");
         }
         catch (System.ComponentModel.Win32Exception)
         {
@@ -770,52 +794,50 @@ internal sealed class MainForm : Form
 
     private async Task StartServer()
     {
+        int maximumRooms=await ReadRoomCapacityAsync();
+        if(serverCount.Value>maximumRooms)
+        {
+            ApplyRoomCapacity(maximumRooms);
+            throw new InvalidOperationException($"최대 방 수는 {maximumRooms}개입니다. 서버 수를 확인한 후 다시 시작하세요.");
+        }
+        ApplyRoomCapacity(maximumRooms);
         IReadOnlyList<Process> existingServers = FindPackagedGameServerProcesses();
         if (existingServers.Count > 0)
         {
             Append($"[차단] 패키징된 게임 서버가 이미 {existingServers.Count}개 실행 중입니다. PID: {string.Join(", ", existingServers.Select(process => process.Id))}");
-            Append("[안내] '게임 서버 중지'를 눌러 예전 서버를 모두 종료한 뒤 하나만 다시 시작하세요.");
+            Append("[안내] '게임 서버 운영 중지' 후 원하는 동시 경기 상한으로 다시 활성화하세요.");
             foreach (Process process in existingServers) process.Dispose();
             return;
         }
-        if (IsUdpPortBound(7777))
+        int firstPort=GetServerFirstPort();
+        if (Enumerable.Range(firstPort,(int)serverCount.Value).Any(IsUdpPortBound))
         {
-            Append("[차단] 다른 프로세스가 UDP 7777 포트를 사용 중입니다. 해당 프로세스를 종료한 뒤 다시 시작하세요.");
+            Append("[차단] 선택한 게임 서버 포트 범위가 사용 중입니다. 실행 인자와 서버 수를 확인하세요.");
             return;
         }
         string[] candidates = Directory.Exists(archiveRoot.Text.Trim())
             ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories) : [];
         if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectProject01Server.exe가 없습니다."); return; }
         if (!ValidatePackagedNetworkCompatibility()) return;
-        string? serverSecret = LoadGameServerSharedSecret();
-        if (serverSecret is not { Length: >= 32 })
-        {
-            Append("[차단] 게임 서버 서명 비밀키가 없습니다. 'MySQL 초기화/시작'을 먼저 실행하세요.");
-            return;
-        }
         string arguments = serverArgs.Text.Trim();
+        int requestedCount=(int)serverCount.Value;
+        serverProcess=null;
+        foreach(var oldProcess in ownedServerPool)oldProcess.Dispose();
+        ownedServerPool.Clear();
         if (arguments.Contains("-MULTIHOME=", StringComparison.OrdinalIgnoreCase))
         {
             Append("[주의] -MULTIHOME이 지정되어 있으면 그 주소만 수신합니다. 여러 IP 경로를 함께 쓰려면 해당 인자를 지우세요.");
         }
-        serverProcess = StartStreamingProcess(candidates[0], arguments, Path.GetDirectoryName(candidates[0])!, "SERVER",
-            new Dictionary<string, string>
-            {
-                ["PROJECTPROJECT01_GAME_SERVER_SECRET"] = serverSecret
-            });
-        await Task.Delay(1200);
-        if (serverProcess is { HasExited: false })
-        {
-            Append("[OK] 데디케이티드 서버 시작: 활성 네트워크의 UDP 7777 수신");
-        }
-        else
-        {
-            Append("[실패] 서버가 즉시 종료되었습니다. 위 로그를 확인하세요.");
-        }
+        await ConfigureDemandAsync(new {enabled=true,executable=candidates.OrderBy(p=>p.Length).First(),arguments,firstPort,maximumConcurrent=requestedCount,projectRoot=ProjectRoot()});
+        Append($"[OK] 경기 세션 운영 활성화: 최대 {requestedCount}경기, UDP {firstPort}~{firstPort+requestedCount-1}");
+        Append("[안내] 방에서 시작하면 5초 카운트다운 뒤 세션을 찾습니다. 빈자리가 생기면 자동 준비하고, 준비 완료 뒤 역할 배정·암전·접속합니다. 자리 대기는 최대 120초, 서버 준비는 최대 90초입니다. 전원 복귀하면 세션을 정리합니다.");
     }
 
     private async Task StopAllGameServersAsync()
     {
+        try{await ConfigureDemandAsync(new {enabled=false});await WaitForDemandShutdownAsync();}
+        catch(HttpRequestException ex){Append("[주의] 백엔드에 운영 중지를 전달하지 못했습니다. 이 PC의 경기 프로세스는 중지합니다. "+ex.Message);}
+        catch(OperationCanceledException) when(!lifetime.IsCancellationRequested){Append("[주의] 운영 중지 응답 대기 시간 초과. 로컬 경기 프로세스 중지를 계속합니다.");}
         IReadOnlyList<Process> servers = FindPackagedGameServerProcesses();
         if (servers.Count == 0)
         {
@@ -847,6 +869,7 @@ internal sealed class MainForm : Form
             }
         }
         serverProcess = null;
+        ownedServerPool.Clear();
         Append($"[OK] 패키징 게임 서버 프로세스 {stopped}개를 종료했습니다.");
         await NotifyGameServerOfflineAsync();
     }
@@ -1065,6 +1088,7 @@ internal sealed class MainForm : Form
             if (!string.IsNullOrWhiteSpace(settings?.ProjectFile)) projectFile.Text = settings.ProjectFile;
             if (!string.IsNullOrWhiteSpace(settings?.ArchiveRoot)) archiveRoot.Text = settings.ArchiveRoot;
             if (!string.IsNullOrWhiteSpace(settings?.ServerArguments)) serverArgs.Text = settings.ServerArguments;
+            serverCount.Value=Math.Clamp(settings?.ServerCount??1,1,100);
         }
         catch
         {
@@ -1082,7 +1106,7 @@ internal sealed class MainForm : Form
                     engineRoot.Text.Trim(),
                     projectFile.Text.Trim(),
                     archiveRoot.Text.Trim(),
-                    serverArgs.Text.Trim()),
+                    serverArgs.Text.Trim(),(int)serverCount.Value),
                 new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
         }
         catch (Exception exception)
@@ -1135,7 +1159,7 @@ internal sealed record BuildServerHelperSettings(
     string EngineRoot,
     string ProjectFile,
     string ArchiveRoot,
-    string ServerArguments);
+    string ServerArguments,int ServerCount=1);
 internal sealed record PublishedClientUpdateManifest(
     string ReleaseId,
     string ClientVersion,

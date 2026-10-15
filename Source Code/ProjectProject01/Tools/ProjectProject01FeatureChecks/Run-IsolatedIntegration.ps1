@@ -28,6 +28,7 @@ try {
     if([string]::IsNullOrWhiteSpace($ChecksAssembly)){$ChecksAssembly=Join-Path $PSScriptRoot 'bin\Debug\net9.0-windows\ProjectProject01FeatureChecks.dll'}
     & dotnet $ChecksAssembly --integration $projectRoot 23307
     if($LASTEXITCODE -ne 0){throw 'Integration checks failed.'}
+    & (Join-Path $PSScriptRoot 'RecoveryChecks.ps1') -ProjectRoot $projectRoot
 }
 finally {
     if(-not $mysqlProcess.HasExited){

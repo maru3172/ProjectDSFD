@@ -2,6 +2,7 @@
 // Build target: ProjectProject01 / ProjectProject01Server, Unreal Engine 5.8.2
 
 #include "ProjectProject01GameInstance.h"
+#include "MultiplayTestGameMode.h"
 #include "ProjectProject01CrashFiles.h"
 
 #include "Containers/Ticker.h"
@@ -1378,6 +1379,15 @@ void UProjectProject01GameInstance::ReturnToLoginAndClearMultiplayerState()
 void UProjectProject01GameInstance::SendGameServerHeartbeat()
 {
 	const UWorld* World = GetWorld();
+	FString ManagedStopFile;
+	if (IsRunningDedicatedServer() &&
+		FParse::Value(FCommandLine::Get(), TEXT("ProjectProject01ManagedStopFile="), ManagedStopFile) &&
+		IFileManager::Get().FileExists(*ManagedStopFile))
+	{
+		// Normal session completion must run Shutdown, including removal of crash activity markers.
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
 	if (!IsRunningDedicatedServer() || !IsValid(World) || !IsBackendUrlAllowed())
 	{
 		return;
@@ -1395,8 +1405,22 @@ void UProjectProject01GameInstance::SendGameServerHeartbeat()
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	Request->SetHeader(TEXT("X-ProjectProject01-Server-Port"), FString::FromInt(World->URL.Port));
 	FProjectProject01VersionContract::ApplyToRequest(Request);
-	Request->SetContentAsString(TEXT("{}"));
+	if (ServerBootId.IsEmpty()) ServerBootId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+	AMultiplayTestGameMode* ServerMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
+	TSharedRef<FJsonObject> Heartbeat = MakeShared<FJsonObject>();
+	Heartbeat->SetNumberField(TEXT("port"), World->URL.Port);
+	Heartbeat->SetStringField(TEXT("bootId"), ServerBootId);
+	FString ManagedId;
+	if (FParse::Value(FCommandLine::Get(), TEXT("ProjectProject01ManagedId="), ManagedId))
+		Heartbeat->SetStringField(TEXT("managedId"), ManagedId);
+	Heartbeat->SetBoolField(TEXT("ready"), IsValid(ServerMode) && ServerMode->IsReadyForServerAllocation());
+	if (IsValid(ServerMode) && !ServerMode->GetServerMatchId().IsEmpty())
+		Heartbeat->SetStringField(TEXT("matchId"), ServerMode->GetServerMatchId());
+	FString HeartbeatBody;
+	FJsonSerializer::Serialize(Heartbeat, TJsonWriterFactory<>::Create(&HeartbeatBody));
+	Request->SetContentAsString(HeartbeatBody);
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	Request->OnProcessRequestComplete().BindWeakLambda(this,
 		[this](const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& CompletedRequest,
@@ -1410,7 +1434,16 @@ void UProjectProject01GameInstance::SendGameServerHeartbeat()
 				UE_LOG(LogProjectProject01NetworkSecurity, Warning,
 					TEXT("Game server heartbeat failed with status %d."),
 					Response.IsValid() ? Response->GetResponseCode() : 0);
+				FString ManagedInstance;
+				if (FParse::Value(FCommandLine::Get(), TEXT("ProjectProject01ManagedId="), ManagedInstance))
+				{
+					const double Now = FPlatformTime::Seconds();
+					if (ManagedHeartbeatFailureSince <= 0.0) ManagedHeartbeatFailureSince = Now;
+					// Do not leave orphaned match processes after the operating backend disappears.
+					if (Now - ManagedHeartbeatFailureSince >= 30.0) FPlatformMisc::RequestExit(false);
+				}
 			}
+			else ManagedHeartbeatFailureSince = 0.0;
 		});
 	PendingSecurityRequests.Add(Request);
 	if (!Request->ProcessRequest())
@@ -1493,6 +1526,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
 	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
+	Request->SetHeader(TEXT("X-ProjectProject01-Server-Port"), FString::FromInt(GetWorld()->URL.Port));
 	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetContentAsString(Body);
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);

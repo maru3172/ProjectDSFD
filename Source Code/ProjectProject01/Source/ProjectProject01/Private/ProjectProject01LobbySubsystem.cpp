@@ -639,6 +639,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		return false;
 	}
 	StateJson->TryGetBoolField(TEXT("returnedToRoom"), Parsed.bReturnedToRoom);
+	StateJson->TryGetBoolField(TEXT("serverPreparing"), Parsed.bServerPreparing);
 	StateJson->TryGetStringField(TEXT("travelUrl"), Parsed.TravelUrl);
 	StateJson->TryGetStringField(TEXT("assignedRole"), Parsed.AssignedRole);
 

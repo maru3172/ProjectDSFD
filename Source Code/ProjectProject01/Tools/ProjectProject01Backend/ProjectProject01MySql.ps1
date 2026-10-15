@@ -4,8 +4,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Initialize', 'Start', 'Stop', 'Status', 'SyncLocalConfiguration', 'Backup', 'InstallBackupTask')]
-    [string]$Action
+    [ValidateSet('Initialize', 'Start', 'Stop', 'Status', 'SyncLocalConfiguration', 'Backup', 'Restore', 'ValidateBackup', 'InstallBackupTask')]
+    [string]$Action,
+    [string]$BackupFile,
+    [switch]$ConfirmRestore
 )
 
 $ErrorActionPreference = 'Stop'
@@ -163,6 +165,9 @@ function Invoke-MySqlInput {
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.RedirectStandardInput = -not [string]::IsNullOrEmpty($StandardInput)
+    $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    if ($startInfo.RedirectStandardInput) { $startInfo.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
     Set-ProcessArguments -StartInfo $startInfo -Arguments $Arguments
     if (-not [string]::IsNullOrEmpty($Password)) {
         Set-ProcessEnvironmentValue -StartInfo $startInfo -Name 'MYSQL_PWD' -Value $Password
@@ -364,16 +369,18 @@ function Backup-ProjectProject01Database {
     $adminPassword = Read-AdminPassword
     $backupDirectory = Join-Path $instanceDirectory 'Backups'
     New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
-    $backupPath = Join-Path $backupDirectory ("ProjectProject01_{0}.sql" -f [DateTime]::UtcNow.ToString('yyyyMMdd_HHmmss'))
+    $backupPath = Join-Path $backupDirectory ("ProjectProject01_{0}_{1}.sql" -f [DateTime]::UtcNow.ToString('yyyyMMdd_HHmmssfff'),[Guid]::NewGuid().ToString('N').Substring(0,8))
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $mysqlDumpPath
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     Set-ProcessArguments -StartInfo $startInfo -Arguments @(
         '--protocol=TCP', "--host=$bindAddress", "--port=$port", '--user=projectproject01_admin',
-        '--single-transaction', '--quick', '--routines', '--events', '--no-tablespaces', 'projectproject01'
+        '--single-transaction', '--quick', '--routines', '--events', '--no-tablespaces', '--default-character-set=utf8mb4', 'projectproject01'
     )
     Set-ProcessEnvironmentValue -StartInfo $startInfo -Name 'MYSQL_PWD' -Value $adminPassword
     $process = [System.Diagnostics.Process]::new()
@@ -388,7 +395,51 @@ function Backup-ProjectProject01Database {
         throw "mysqldump failed with exit code $($process.ExitCode): $standardError"
     }
     [System.IO.File]::WriteAllText($backupPath, $sql, [System.Text.UTF8Encoding]::new($false))
+    $manifest=@{database='projectproject01';createdAtUtc=[DateTime]::UtcNow.ToString('O');sha256=(Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash}
+    [System.IO.File]::WriteAllText($backupPath+'.manifest.json',($manifest|ConvertTo-Json),[System.Text.UTF8Encoding]::new($false))
     Write-Host "ProjectProject01 database backup created: $backupPath"
+    return $backupPath
+}
+
+function Test-ProjectBackupFile {
+    param([string]$File)
+    if([string]::IsNullOrWhiteSpace($File)){throw 'Select a backup file.'}
+    $resolved=[IO.Path]::GetFullPath($File)
+    $allowed=[IO.Path]::GetFullPath((Join-Path $instanceDirectory 'Backups'))+[IO.Path]::DirectorySeparatorChar
+    if(-not $resolved.StartsWith($allowed,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetExtension($resolved) -ne '.sql'){throw 'Only SQL backups in this project backup directory can be restored.'}
+    $manifest=Get-Content -LiteralPath ($resolved+'.manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if($manifest.database -ne 'projectproject01' -or (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash -ne $manifest.sha256){throw 'Backup manifest or SHA-256 verification failed.'}
+    $sql=[IO.File]::ReadAllText($resolved,[Text.UTF8Encoding]::new($false,$true))
+    if($sql -match '(?im)^\s*(USE\s|(?:CREATE|DROP)\s+DATABASE\b|GRANT\s|REVOKE\s|SOURCE\s|SYSTEM\s|\\)'){throw 'Backup contains a database switch or unsupported client command.'}
+    Write-Host "Verified projectproject01 backup: $([IO.Path]::GetFileName($resolved))"
+    return $sql
+}
+
+function Assert-RecoveryServicesStopped {
+    if([Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object Port -eq 5080){throw 'Stop the backend before restoring.'}
+    if(Get-Process -Name 'ProjectProject01Server*' -ErrorAction SilentlyContinue){throw 'Stop all dedicated game servers before restoring.'}
+}
+
+function Import-ProjectDatabase {
+    param([string]$Sql)
+    # Replace only this fixed database. Tables added after an older backup must not survive restoration.
+    $replace="DROP DATABASE IF EXISTS projectproject01; CREATE DATABASE projectproject01 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE projectproject01;`n"
+    Invoke-MySqlInput -Executable $mysqlPath -Arguments @('--protocol=TCP',"--host=$bindAddress","--port=$port",'--user=projectproject01_admin','--default-character-set=utf8mb4') -Password (Read-AdminPassword) -StandardInput ($replace+$Sql)
+}
+
+function Restore-ProjectDatabase {
+    if(-not $ConfirmRestore){throw 'Restore requires -ConfirmRestore after reviewing the selected backup.'}
+    $sql=Test-ProjectBackupFile -File $BackupFile
+    Assert-RecoveryServicesStopped
+    $preRestore=Backup-ProjectProject01Database
+    try { Import-ProjectDatabase -Sql $sql }
+    catch {
+        $originalFailure=$_.Exception.Message
+        try { Import-ProjectDatabase -Sql (Test-ProjectBackupFile -File $preRestore) }
+        catch { throw "Restore AND rollback failed. Keep the backend stopped. Pre-restore backup: $preRestore. $($_.Exception.Message)" }
+        throw "Restore failed; the pre-restore backup was recovered. $originalFailure"
+    }
+    Write-Host 'Database restored. A pre-restore backup is available in Backups. Restart the backend.'
 }
 
 function Install-ProjectProject01BackupTask {
@@ -480,6 +531,8 @@ switch ($Action) {
     'Stop' { Stop-ProjectProject01Server }
     'SyncLocalConfiguration' { Sync-LocalConfiguration }
     'Backup' { Backup-ProjectProject01Database }
+    'Restore' { Restore-ProjectDatabase }
+    'ValidateBackup' { $null=Test-ProjectBackupFile -File $BackupFile }
     'InstallBackupTask' { Install-ProjectProject01BackupTask }
     'Status' {
         if (Test-ProjectProject01Port) {

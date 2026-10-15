@@ -37,6 +37,7 @@
 #include "ProjectProject01Localization.h"
 #include "ProjectProject01SaveSubsystem.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
+#include "ProjectProject01VoiceSettingsWidget.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -665,7 +666,7 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 				UCheckBox* Check = WidgetTree->ConstructWidget<UCheckBox>();
 				UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
 				Label->SetText(FText::FromString(Question.Options[OptionIndex]));
-				Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+				Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 				Check->AddChild(Label);
 				QuestionPanel->AddChildToVerticalBox(Check)->SetPadding(FMargin(6.0f));
 				UProjectProject01SurveyOptionBinding* Binding = NewObject<UProjectProject01SurveyOptionBinding>(this);
@@ -680,7 +681,13 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 		{
 			UMultiLineEditableTextBox* TextInput = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
 			TextInput->SetHintText(FProjectProject01Localization::Text(TEXT("답변을 입력해주세요.")));
-			ProjectProject01LoginUI::SetEditableTextBoxTextBlack(TextInput);
+			// Survey answers use white text on a dark field, including the focused state.
+			TextInput->WidgetStyle.SetForegroundColor(FLinearColor::White);
+			TextInput->WidgetStyle.SetFocusedForegroundColor(FLinearColor::White);
+			TextInput->WidgetStyle.SetReadOnlyForegroundColor(FLinearColor::White);
+			TextInput->WidgetStyle.TextStyle.SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			TextInput->WidgetStyle.SetBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f, 1.0f));
+			TextInput->SetForegroundColor(FLinearColor::White);
 			QuestionPanel->AddChildToVerticalBox(TextInput)->SetPadding(FMargin(6.0f));
 			TextInputs.Add(TextInput);
 		}
@@ -3793,6 +3800,7 @@ bool UProjectProject01SettingsWidget::Initialize()
 
 void UProjectProject01SettingsWidget::NativeConstruct()
 {
+	if (IsValid(VoiceSettingsButton)) VoiceSettingsButton->OnClicked.AddUniqueDynamic(this,&UProjectProject01SettingsWidget::HandleVoiceSettingsClicked);
 	Super::NativeConstruct();
 	LoadPendingFromSettings();
 	RefreshAllControls();
@@ -3851,6 +3859,8 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 
 void UProjectProject01SettingsWidget::NativeDestruct()
 {
+	if (IsValid(VoiceSettingsWidget)) VoiceSettingsWidget->RemoveFromParent();
+	if (IsValid(VoiceSettingsButton)) VoiceSettingsButton->OnClicked.RemoveDynamic(this,&UProjectProject01SettingsWidget::HandleVoiceSettingsClicked);
 	if (IsValid(MasterVolumeSlider)) MasterVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
 	if (IsValid(SFXVolumeSlider)) SFXVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSFXVolumeChanged);
 	if (IsValid(MusicVolumeSlider)) MusicVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMusicVolumeChanged);
@@ -4020,6 +4030,8 @@ void UProjectProject01SettingsWidget::HandleCancelClicked()
 
 void UProjectProject01SettingsWidget::HandleDefaultsClicked()
 {
+	if (GetGameInstance()) if (auto* Voice = GetGameInstance()->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
+		Voice->SetAudioPreferences(TEXT(""),TEXT(""),1.0f);
 	SetPendingDefaults();
 	RefreshAllControls();
 	ApplyPendingSettings();
@@ -4028,6 +4040,15 @@ void UProjectProject01SettingsWidget::HandleDefaultsClicked()
 void UProjectProject01SettingsWidget::HandleRevertVideoClicked() { RevertPendingVideoMode(); }
 void UProjectProject01SettingsWidget::HandleServerSettingsTabClicked() { SetActiveSettingsPage(0); }
 void UProjectProject01SettingsWidget::HandleAudioSettingsTabClicked() { SetActiveSettingsPage(1); }
+
+void UProjectProject01SettingsWidget::HandleVoiceSettingsClicked()
+{
+	if (!IsValid(GetOwningPlayer()) || (IsValid(VoiceSettingsWidget) && VoiceSettingsWidget->IsInViewport())) return;
+	VoiceSettingsWidget=CreateWidget<UProjectProject01VoiceSettingsWidget>(GetOwningPlayer());
+	if (!IsValid(VoiceSettingsWidget)) return;
+	VoiceSettingsWidget->ConfigureReturn(this);SetVisibility(ESlateVisibility::Collapsed);
+	VoiceSettingsWidget->AddToViewport(650);
+}
 void UProjectProject01SettingsWidget::HandleVideoSettingsTabClicked() { SetActiveSettingsPage(2); }
 void UProjectProject01SettingsWidget::HandleAccessibilitySettingsTabClicked() { SetActiveSettingsPage(3); }
 void UProjectProject01SettingsWidget::HandleControlsSettingsTabClicked() { SetActiveSettingsPage(4); }
@@ -4578,6 +4599,7 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	SFXVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("효과음 음량"), 0.0f, 1.0f, 0.01f, SFXVolumeValueText);
 	MusicVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("배경음악 음량"), 0.0f, 1.0f, 0.01f, MusicVolumeValueText);
 	UIVolumeSlider = ProjectProject01LoginUI::AddSliderRow(WidgetTree, AudioPage, TEXT("UI 음량"), 0.0f, 1.0f, 0.01f, UIVolumeValueText);
+	VoiceSettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, AudioPage, TEXT("음성 채팅 장치·음량·마이크 테스트"));
 	MuteAllCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, AudioPage, TEXT("전체 음소거"));
 	MuteWhenUnfocusedCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, AudioPage, TEXT("게임이 백그라운드일 때 음소거"));
 
@@ -5011,6 +5033,11 @@ void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
+			if (Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bServerPreparing)
+			{
+				if (Lobby->GetCurrentRoom().bIsHost) Lobby->CancelStartRoom();
+				return;
+			}
 			if (Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bStarting)
 			{
 				if (Lobby->GetCurrentRoom().bIsHost && bGameStartCountdownActive &&
@@ -5022,7 +5049,7 @@ void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 			}
 			if (!Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().bGameServerOnline)
 			{
-				SetStatus(TEXT("게임 서버가 비활성 상태입니다. 서버가 켜지면 게임 시작 버튼이 자동으로 활성화됩니다."), true);
+				SetStatus(TEXT("경기 세션 운영이 비활성 상태입니다. 운영자가 활성화하면 게임 시작 버튼이 자동으로 활성화됩니다."), true);
 				return;
 			}
 			Lobby->StartRoom();
@@ -5384,6 +5411,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	const bool bInRoom = Lobby->HasCurrentRoom();
 	if (!bInRoom)
 	{
+		bServerPreparationPending = false;
 		CancelGameStartCountdown();
 	}
 	ShowLobbyView(bInRoom ? 2 : (bShowingCreateRoom ? 1 : 0));
@@ -5412,9 +5440,9 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(CurrentRoomText))
 	{
 		CurrentRoomText->SetText(FText::FromString(FString::Printf(
-			TEXT("방: %s\n참가 코드: %s\n인원: %d/3\n게임 서버: %s"),
+			TEXT("방: %s\n참가 코드: %s\n인원: %d/3\n경기 세션: %s"),
 			*Room.Name, *Room.JoinCode, Room.Members.Num(),
-			Room.bGameServerOnline ? TEXT("활성") : TEXT("비활성"))));
+			Room.bServerPreparing ? TEXT("세션 찾는 중…") : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"))));
 	}
 	FString MembersText;
 	for (const FProjectProject01RoomMember& Member : Room.Members)
@@ -5463,7 +5491,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
 	if (IsValid(ReadyButton))
 	{
-		ReadyButton->SetIsEnabled(!Room.bStarting && !Room.bStarted);
+		ReadyButton->SetIsEnabled(!Room.bServerPreparing && !Room.bStarting && !Room.bStarted);
 		if (UTextBlock* ButtonText = Cast<UTextBlock>(ReadyButton->GetChildAt(0)))
 		{
 			ButtonText->SetText(FProjectProject01Localization::Text(Room.bIsReady ? TEXT("준비 취소") : TEXT("준비")));
@@ -5474,12 +5502,12 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		const bool bCanCancelStart = Room.bStarting && Room.bIsHost &&
 			bGameStartCountdownActive && !bGameStartCountdownComplete &&
 			!bStartConfirmationRequested;
-		StartRoomButton->SetIsEnabled(bCanCancelStart ||
+		StartRoomButton->SetIsEnabled((Room.bServerPreparing && Room.bIsHost) || bCanCancelStart ||
 			(Room.bCanStart && Room.bGameServerOnline && !bGameStartCountdownActive &&
 				!bGameStartCountdownComplete && !bGameStartFadeActive));
 		if (UTextBlock* ButtonText = Cast<UTextBlock>(StartRoomButton->GetChildAt(0)))
 		{
-			const TCHAR* ButtonLabel = Room.bStarting
+			const TCHAR* ButtonLabel = Room.bServerPreparing ? TEXT("세션 대기 취소") : Room.bStarting
 				? (bCanCancelStart ? TEXT("게임 시작 취소") : TEXT("게임 시작 확정 중"))
 				: (Room.bGameServerOnline ? TEXT("게임 시작") : TEXT("게임 서버 대기 중"));
 			ButtonText->SetText(FProjectProject01Localization::Text(ButtonLabel));
@@ -5492,8 +5520,15 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		ChatText += FString::Printf(TEXT("%s: %s\n"), *Chat.DisplayName, *Chat.Message);
 	}
 	if (IsValid(ChatLogText)) ChatLogText->SetText(FText::FromString(ChatText));
-	if (Room.bStarting)
+	if (Room.bServerPreparing)
 	{
+		CancelGameStartCountdown();
+		bServerPreparationPending = true;
+		ShowGameSessionSearch();
+	}
+	else if (Room.bStarting)
+	{
+		bServerPreparationPending = false;
 		BeginGameStartCountdown();
 		if (bGameStartCountdownComplete && Room.bIsHost && !bStartConfirmationRequested &&
 			!Lobby->IsRequestInFlight())
@@ -5505,6 +5540,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
 	else if (Room.bStarted && !Room.bReturnedToRoom)
 	{
+		bServerPreparationPending = false;
 		if (!bGameStartCountdownActive && !bGameStartCountdownComplete)
 		{
 			// UI가 늦게 만들어진 클라이언트도 확정된 시작 흐름에는 안전하게 합류한다.
@@ -5522,12 +5558,14 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
 	else
 	{
-		const bool bWasPendingStart = bGameStartCountdownActive || bGameStartCountdownComplete ||
+		const bool bWasPreparing = bServerPreparationPending;
+		bServerPreparationPending = false;
+		const bool bWasPendingStart = bWasPreparing || bGameStartCountdownActive || bGameStartCountdownComplete ||
 			bGameStartFadeActive || bStartConfirmationRequested;
 		CancelGameStartCountdown();
 		if (bWasPendingStart)
 		{
-			SetStatus(TEXT("게임 시작이 취소되었습니다."), false);
+			SetStatus(bWasPreparing ? TEXT("세션 대기 시간이 초과되었거나 시작이 취소되었습니다. 방을 유지합니다. 다시 준비해 시작하세요.") : TEXT("게임 시작이 취소되었습니다."), false);
 		}
 	}
 }
@@ -5579,6 +5617,17 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 	PlayerController->ClientTravel(TravelUrl, TRAVEL_Absolute);
 }
 
+void UProjectProject01LobbyWidget::ShowGameSessionSearch()
+{
+	if (IsValid(StartCountdownPanel))
+	{
+		StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+		StartCountdownPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (IsValid(StartCountdownText)) StartCountdownText->SetText(FText::FromString(TEXT("세션 찾는 중…")));
+	SetStatus(TEXT("세션 찾는 중… 빈 세션이 준비되면 자동으로 시작합니다. 대기 취소도 가능합니다."), false);
+}
+
 void UProjectProject01LobbyWidget::BeginGameStartCountdown()
 {
 	if (bTravelRequested || bGameStartCountdownActive || bGameStartCountdownComplete)
@@ -5595,7 +5644,7 @@ void UProjectProject01LobbyWidget::BeginGameStartCountdown()
 	}
 	if (IsValid(StartCountdownText))
 	{
-		StartCountdownText->SetText(FText::FromString(TEXT("게임을 시작합니다\n5...")));
+		StartCountdownText->SetText(FText::FromString(TEXT("게임 시작 준비\n5...")));
 	}
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
@@ -5618,13 +5667,14 @@ void UProjectProject01LobbyWidget::AdvanceGameStartCountdown()
 		if (IsValid(StartCountdownText))
 		{
 			StartCountdownText->SetText(FText::FromString(FString::Printf(
-				TEXT("게임을 시작합니다\n%d..."), GameStartCountdownNumber)));
+				TEXT("게임 시작 준비\n%d..."), GameStartCountdownNumber)));
 		}
 		return;
 	}
 
 	bGameStartCountdownActive = false;
 	bGameStartCountdownComplete = true;
+	ShowGameSessionSearch();
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(GameStartCountdownTimer);
@@ -5673,7 +5723,7 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 	if (IsValid(StartCountdownText))
 	{
 		StartCountdownText->SetText(FText::FromString(FString::Printf(
-			TEXT("역할: %s\n게임 서버에 접속합니다."), *RoleText)));
+			TEXT("게임을 시작합니다\n역할: %s"), *RoleText)));
 	}
 	if (IsValid(StartRoomButton))
 	{
@@ -5940,7 +5990,7 @@ void UProjectProject01LobbyWidget::RefreshLobbySurvey()
 			Widget->LobbySurvey = bCanParticipate && bSuccess && bHasSurvey
 				? Survey : FProjectProject01SurveyDefinition();
 			if (IsValid(Widget->LobbySurveyButton)) Widget->LobbySurveyButton->SetIsEnabled(
-				Widget->LobbySurvey.IsValid() && !Widget->bGameStartCountdownActive && !Widget->bGameStartFadeActive);
+				Widget->LobbySurvey.IsValid() && !Widget->bServerPreparationPending && !Widget->bGameStartCountdownActive && !Widget->bGameStartFadeActive);
 			if (Widget->bOpenTitleSurveyOnRefresh)
 			{
 				Widget->bOpenTitleSurveyOnRefresh = false;
@@ -5976,7 +6026,7 @@ void UProjectProject01LobbyWidget::OpenLobbySurvey(const bool bFromTitle)
 	const UGameInstance* GameInstance = GetGameInstance();
 	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
-	if (bTravelRequested || bLogoutAfterLeave || bGameStartCountdownActive || bGameStartFadeActive ||
+	if (bTravelRequested || bLogoutAfterLeave || bServerPreparationPending || bGameStartCountdownActive || bGameStartFadeActive ||
 		(!LobbySurvey.IsValid() && !bFromTitle) || !IsValid(Auth) || !Auth->IsSignedIn() || !IsValid(GetOwningPlayer()) ||
 		(IsValid(LobbySurveyWidget) && LobbySurveyWidget->IsInViewport())) return;
 	LobbySurveyWidget = CreateWidget<UProjectProject01SurveyWidget>(GetOwningPlayer(), UProjectProject01SurveyWidget::StaticClass());

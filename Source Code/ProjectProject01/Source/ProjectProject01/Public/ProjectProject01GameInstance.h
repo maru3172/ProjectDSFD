@@ -406,6 +406,8 @@ private:
 	void BeginSafeLogoutAfterGameServerFailure();
 	bool bPendingSinglePlayerLevelTransitionFade = false;
 	bool bSurveyLoginRequested = false;
+	FString ServerBootId;
+	double ManagedHeartbeatFailureSince = 0.0;
 	void EnsureEntireScreenFadeOverlay();
 	void ApplyEntireScreenFadeOpacity();
 	bool TickEntireScreenFade(float DeltaSeconds);

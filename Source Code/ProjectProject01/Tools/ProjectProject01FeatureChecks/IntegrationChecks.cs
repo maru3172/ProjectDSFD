@@ -38,16 +38,27 @@ internal static class IntegrationChecks
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(database);
         builder.Services.AddSingleton<ServiceControlState>();
+        builder.Services.AddSingleton<Microsoft.AspNetCore.Identity.IPasswordHasher<RoomPasswordRecord>,Microsoft.AspNetCore.Identity.PasswordHasher<RoomPasswordRecord>>();
         builder.Services.AddSingleton(AdministratorOptions.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string,string?>{{"Administrator:ApiKey",new string('a',48)}}).Build()));
         builder.Services.AddRateLimiter(options=>{
-            foreach(string policy in new[]{"admin","survey","survey-read","crash-report"})
+            foreach(string policy in new[]{"admin","survey","survey-read","crash-report","lobby","game-server","game-ticket"})
                 options.AddFixedWindowLimiter(policy,limit=>{limit.PermitLimit=1000;limit.Window=TimeSpan.FromMinutes(1);});
         });
+        var testConfig=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
+            ["GameServer:SharedSecret"]=new string('s',48),["GameServer:TicketKey"]=Convert.ToBase64String(new byte[32])}).Build();
+        var demandFactory=new DemandSessionChecks.FakeFactory();
+        var demandClock=new DemandSessionChecks.FakeClock();
+        var demand=new GameServerDemandManager(database,ProjectSecurityOptions.FromConfiguration(testConfig),demandFactory,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GameServerDemandManager>.Instance,demandClock);
+        builder.Services.AddSingleton(demand);
         await using var app=builder.Build();
         app.Urls.Add("http://127.0.0.1:0");app.UseRateLimiter();
         app.MapProjectProject01Surveys();app.MapProjectProject01CrashArtifacts();
         app.MapProjectProject01ServiceAdministration();
+        app.MapAccountRestrictions();app.MapRoomCapacity();
+        app.MapGameServerDemand();
+        app.MapProjectProject01Lobby("127.0.0.1:24477",ProjectSecurityOptions.FromConfiguration(testConfig),VersionCompatibilityOptions.FromConfiguration(testConfig),new GameServerPresenceState(),demand);
         await app.StartAsync();
         try
         {
@@ -128,7 +139,13 @@ internal static class IntegrationChecks
             using var reader=new StreamReader(archive.GetEntry("Game.log")!.Open());
             string log=await reader.ReadToEndAsync();
             Check(!log.Contains("secret-fixture")&&!log.Contains("token-fixture"),"서버 저장 로그 비밀값 제거");
-            await File.WriteAllBytesAsync(Path.Combine(output,"crash-fixture.zip"),zip);
+            string zipPath=Path.Combine(output,"crash-fixture.zip");
+            await ProjectProject01BuildServerHelper.CrashReportDownloadForm.SaveZipAsync(zipPath,zip);
+            Check(File.Exists(zipPath)&&new FileInfo(zipPath).Length==zip.Length,"도우미 ZIP 실제 파일 저장");
+            try{await ProjectProject01BuildServerHelper.CrashReportDownloadForm.SaveZipAsync(zipPath,[1,2,3]);throw new Exception("Invalid ZIP accepted");}
+            catch(InvalidDataException){Check((await File.ReadAllBytesAsync(zipPath)).SequenceEqual(zip),"손상 ZIP은 기존 저장본 보존");}
+            await OperationsIntegration.RunAsync(database,admin);
+            await DemandSessionChecks.RunAsync(database,admin,demand,demandFactory,demandClock,output);
             Console.WriteLine($"PASS: {passed} isolated API/database checks");
         }
         finally{await app.StopAsync();}

@@ -730,6 +730,9 @@ protected:
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
+	UFUNCTION() void HandleVoiceSettingsClicked();
+	UPROPERTY(Transient) TObjectPtr<class UButton> VoiceSettingsButton;
+	UPROPERTY(Transient) TObjectPtr<class UProjectProject01VoiceSettingsWidget> VoiceSettingsWidget;
 	enum class EBindingTarget : uint8
 	{
 		None,
@@ -932,6 +935,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01LobbyWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectLobbySessionPresentationTest;
 
 public:
 	void PrepareTitleSurveyLogout();
@@ -1024,6 +1028,7 @@ private:
 	void RefreshCurrentRoomView();
 	void BeginLogout();
 	void BeginGameStartCountdown();
+	void ShowGameSessionSearch();
 	void AdvanceGameStartCountdown();
 	void BeginGameStartFade(const FProjectProject01RoomState& RoomState);
 	void CompleteGameStartFade();
@@ -1132,6 +1137,7 @@ private:
 	bool bTravelRequested = false;
 	bool bShowingCreateRoom = false;
 	bool bGameStartCountdownActive = false;
+	bool bServerPreparationPending = false;
 	bool bGameStartCountdownComplete = false;
 	bool bGameStartFadeActive = false;
 	bool bGameStartFadeComplete = false;

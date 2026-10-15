@@ -152,9 +152,12 @@ internal sealed class SmokeRunner(SmokeOptions options)
             var serverSecret = LoadServerSecret(options.ProjectRoot);
             if (serverSecret.Length < 32)
                 throw new InvalidOperationException("PROJECTPROJECT01_GAME_SERVER_SECRET 또는 로컬 백엔드 설정의 서버 비밀키가 필요합니다.");
-            await StepAsync("RegisterGameServerHeartbeat", async ct =>
+            await StepAsync("RequireGameSessionOperation", async ct =>
             {
-                await SendAsync(HttpMethod.Post, "api/server/heartbeat", null, new { }, true, ct, serverSecret);
+                // Do not impersonate a server: that can clear a live process's room reservation.
+                var current=await SendAsync(HttpMethod.Get,"api/rooms/current",clients[0].AccessToken,null,true,ct);
+                if(!RequiredBool(RequiredObject(current,"room"),"gameServerOnline"))
+                    throw new InvalidOperationException("도우미에서 게임 서버 운영을 먼저 활성화하세요. 스모크 테스트는 서버 heartbeat를 위조하지 않습니다.");
             });
 
             string matchId = string.Empty;
@@ -166,7 +169,7 @@ internal sealed class SmokeRunner(SmokeOptions options)
                     throw new InvalidOperationException("방이 취소 가능한 Starting 상태가 아닙니다.");
                 if (RequiredArray(room, "members").Any(item => !string.IsNullOrEmpty(OptionalString(item!, "assignedRole"))))
                     throw new InvalidOperationException("카운트다운 중 역할이 너무 일찍 배정되었습니다.");
-            });
+            },TimeSpan.FromSeconds(100));
 
             await StepAsync("CancelStartCountdown", async ct =>
             {
@@ -180,18 +183,22 @@ internal sealed class SmokeRunner(SmokeOptions options)
 
             await StepAsync("RestartAndConfirmMatch", async ct =>
             {
-                await SendAsync(HttpMethod.Post, "api/rooms/current/start", clients[0].AccessToken, new { }, true, ct);
+                // Give the operating backend time to finish closing the cancelled session.
+                await Task.Delay(1500,ct);
+                var start=await SendAsync(HttpMethod.Post, "api/rooms/current/start", clients[0].AccessToken, new { }, true, ct);
+                if(!RequiredBool(RequiredObject(start,"room"),"starting"))throw new InvalidOperationException("게임 시작 카운트다운이 없습니다.");
                 await Task.Delay(TimeSpan.FromMilliseconds(5200), ct);
                 var json = await SendAsync(HttpMethod.Post, "api/rooms/current/confirm-start", clients[0].AccessToken,
                     new { }, true, ct);
                 var room = RequiredObject(json, "room");
+                room=await WaitForReadySessionAsync(room,clients,ct);
                 if (RequiredBool(room, "starting") || !RequiredBool(room, "started"))
                     throw new InvalidOperationException("카운트다운 확정 뒤 Started 상태가 아닙니다.");
                 var members = RequiredArray(room, "members");
                 if (members.Count(item => RequiredString(item!, "assignedRole") == "Mannequin") != 1 ||
                     members.Count(item => RequiredString(item!, "assignedRole") == "Survivor") != 2)
                     throw new InvalidOperationException("확정 시 역할 배정이 마네킹 1명/생존자 2명이 아닙니다.");
-            });
+            },TimeSpan.FromSeconds(230));
 
             for (var index = 0; index < clients.Count; index++)
             {
@@ -203,8 +210,9 @@ internal sealed class SmokeRunner(SmokeOptions options)
                     var ticket = RequiredString(ticketJson, "ticket");
                     matchId = RequiredString(ticketJson, "matchId");
                     clients[playerIndex].Role = RequiredString(ticketJson, "role");
+                    int assignedPort=new Uri("http://"+RequiredString(ticketJson,"travelUrl")).Port;
                     var consumed = await SendAsync(HttpMethod.Post, "api/server/game-tickets/consume", null,
-                        new { ticket }, true, ct, serverSecret);
+                        new { ticket }, true, ct, serverSecret,assignedPort);
                     clients[playerIndex].UserId = RequiredString(consumed, "userId");
                     if (RequiredString(consumed, "matchId") != matchId || RequiredString(consumed, "roomId") != roomId ||
                         RequiredString(consumed, "role") != clients[playerIndex].Role)
@@ -321,11 +329,26 @@ internal sealed class SmokeRunner(SmokeOptions options)
         return failure is null ? 0 : 1;
     }
 
-    private async Task StepAsync(string name, Func<CancellationToken, Task> action)
+    private async Task<JsonElement> WaitForReadySessionAsync(JsonElement room,IReadOnlyList<SmokeClient> clients,CancellationToken ct)
+    {
+        while(room.TryGetProperty("serverPreparing",out var preparing)&&preparing.GetBoolean())
+        {
+            await Task.Delay(750,ct);
+            foreach(var client in clients)
+            {
+                var current=await SendAsync(HttpMethod.Get,"api/rooms/current",client.AccessToken,null,true,ct);
+                if(client==clients[0])room=RequiredObject(current,"room");
+            }
+        }
+        if(!RequiredBool(room,"started"))throw new InvalidOperationException("세션 대기가 취소되었거나 제한 시간 안에 준비되지 않았습니다.");
+        return room;
+    }
+    private async Task StepAsync(string name, Func<CancellationToken, Task> action,TimeSpan? timeout=null)
     {
         currentStep = name;
         var stopwatch = Stopwatch.StartNew();
-        using var cts = new CancellationTokenSource(options.StepTimeout);
+        TimeSpan effectiveTimeout=timeout??options.StepTimeout;
+        using var cts = new CancellationTokenSource(effectiveTimeout);
         try
         {
             await action(cts.Token);
@@ -334,18 +357,19 @@ internal sealed class SmokeRunner(SmokeOptions options)
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            throw new TimeoutException($"단계 제한 시간 {options.StepTimeout.TotalSeconds:F0}초를 초과했습니다.");
+            throw new TimeoutException($"단계 제한 시간 {effectiveTimeout.TotalSeconds:F0}초를 초과했습니다.");
         }
     }
 
     private async Task<JsonElement> SendAsync(
         HttpMethod method, string path, string? token, object? body, bool requireSuccess,
-        CancellationToken cancellationToken, string? serverSecret = null)
+        CancellationToken cancellationToken, string? serverSecret = null,int? serverPort=null)
     {
         using var request = NewRequest(method, path, token, body);
         ApplyVersionHeaders(request, contract);
         if (!string.IsNullOrEmpty(serverSecret))
             request.Headers.TryAddWithoutValidation("X-ProjectProject01-Server-Secret", serverSecret);
+        if(serverPort.HasValue)request.Headers.TryAddWithoutValidation("X-ProjectProject01-Server-Port",serverPort.Value.ToString());
         using var response = await http.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         LogResponse(request, response, responseBody);

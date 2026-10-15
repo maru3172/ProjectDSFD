@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS auth_sessions
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS account_restrictions
+(
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  reason VARCHAR(512) NOT NULL,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  expires_at_utc DATETIME(6) NULL,
+  lifted_at_utc DATETIME(6) NULL,
+  KEY ix_restrictions_user(user_id, lifted_at_utc, expires_at_utc),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS lobby_state
 (
   id TINYINT UNSIGNED NOT NULL,
@@ -96,6 +108,21 @@ CREATE TABLE IF NOT EXISTS game_rooms
   KEY ix_game_rooms_status_created (status, created_at_utc),
   CONSTRAINT fk_game_rooms_host
     FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS game_server_slots
+(
+  port INT NOT NULL PRIMARY KEY,
+  boot_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  ready BOOLEAN NOT NULL DEFAULT FALSE,
+  reported_match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  last_heartbeat_utc DATETIME(6) NOT NULL,
+  assigned_room_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  assigned_match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  reserved_at_utc DATETIME(6) NULL,
+  has_started BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE KEY uq_slot_room(assigned_room_id),
+  FOREIGN KEY(assigned_room_id) REFERENCES game_rooms(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS game_join_tickets

@@ -2512,6 +2512,17 @@ void AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty()
 	{
 		return;
 	}
+	// 재접속 유예 중에는 서버 슬롯을 새 경기에 넘기거나 월드를 초기화하지 않습니다.
+	for (const auto& Pair : DisconnectedMatchRecords)
+	{
+		const FMultiplayTestServerPlayerRecord& Record = Pair.Value;
+		if (Record.bDisconnected && !Record.bForfeited && Record.ReconnectDeadlineWorldSeconds > World->GetTimeSeconds())
+		{
+			World->GetTimerManager().SetTimer(EmptyDedicatedServerResetTimer, this,
+				&AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty, 1.0f, false);
+			return;
+		}
+	}
 
 	static const FString MultiplayTestMap = TEXT("/Game/MyProject/Level/MultiplayTest");
 	UE_LOG(LogProjectProject01Multiplayer, Log,
@@ -2521,6 +2532,12 @@ void AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty()
 		UE_LOG(LogProjectProject01Multiplayer, Error,
 			TEXT("Failed to reset the dedicated server world to %s."), *MultiplayTestMap);
 	}
+}
+
+bool AMultiplayTestGameMode::IsReadyForServerAllocation()
+{
+	return AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Waiting && AuthoritativeMatchId.IsEmpty() &&
+		GetNumPlayers() == 0 && IsValid(GetWorld()) && GetWorld()->GetTimeSeconds() >= 10.0f;
 }
 
 void AMultiplayTestGameMode::SetPlayerDefaults(APawn* PlayerPawn)

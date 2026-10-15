@@ -79,7 +79,11 @@ internal sealed class SurveyAdministrationForm : Form
         BackColor = SystemColors.Control;
         BuildUi();
         Shown += async (_, _) => { try { await RefreshSurveysAsync(); } catch (Exception ex) { SetStatus(ex.Message); } };
-        surveyList.DoubleClick += async (_, _) => await LoadSelectedDraftAsync();
+        surveyList.DoubleClick += async (_, _) =>
+        {
+            try { await LoadSelectedDraftAsync(); }
+            catch (Exception ex) { SetStatus(ex.Message); }
+        };
     }
 
     protected override void Dispose(bool disposing)
@@ -288,7 +292,11 @@ internal sealed class SurveyAdministrationForm : Form
 
     private Task LoadSelectedDraftAsync()
     {
-        SurveySummary survey = SelectedSurvey();
+        if (surveyList.SelectedItem is not SurveySummary survey)
+        {
+            SetStatus("불러올 설문을 목록에서 선택하세요.");
+            return Task.CompletedTask;
+        }
         editingSurveyId = !survey.IsActive && survey.ResponseCount == 0 ? survey.SurveyId : null;
         title.Text = survey.Title;
         description.Text = survey.Description;

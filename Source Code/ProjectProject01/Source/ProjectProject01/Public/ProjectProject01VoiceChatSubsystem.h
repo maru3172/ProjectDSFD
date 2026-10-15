@@ -9,6 +9,9 @@
 class IVoiceChat;
 class IVoiceChatUser;
 struct FVoiceChatResult;
+namespace Audio { class FAudioCapture; }
+
+struct FProjectVoiceDevice { FString Id; FString Name; };
 
 UCLASS(Config=Game)
 class PROJECTPROJECT01_API UProjectProject01VoiceChatSubsystem final
@@ -29,6 +32,20 @@ public:
 	void LeaveMatch();
 	void SetPushToTalkHeld(bool bHeld);
 	void ToggleOpenMic();
+	bool PrepareAudioDevices();
+	TArray<FProjectVoiceDevice> GetInputDevices() const;
+	TArray<FProjectVoiceDevice> GetOutputDevices() const;
+	const FString& GetPreferredInput() const { return PreferredInput; }
+	const FString& GetPreferredOutput() const { return PreferredOutput; }
+	float GetReceiveVolume() const { return ReceiveVolume; }
+	void SetAudioPreferences(const FString& Input, const FString& Output, float Volume);
+	TArray<FString> GetVoiceParticipants() const;
+	void SetParticipantMuted(const FString& Id, bool bMuted);
+	bool IsParticipantMuted(const FString& Id) const { return MutedParticipants.Contains(Id); }
+	bool StartMicrophoneTest(const FString& InputId, FString& Error);
+	void StopMicrophoneTest();
+	bool IsMicrophoneTestActive() const { return MicrophoneCapture.IsValid(); }
+	float GetMicrophoneLevel() const { return MicrophoneLevel->Load(); }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
 	bool IsVoiceReady() const { return bJoinedChannel; }
@@ -43,9 +60,17 @@ public:
 	bool IsPushToTalkHeld() const { return bPushToTalkHeld; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
-	bool IsTransmitting() const { return bJoinedChannel && (bOpenMic || bPushToTalkHeld); }
+	bool IsTransmitting() const { return bJoinedChannel && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
 
 private:
+	void ApplyAudioPreferences();
+	FString PreferredInput;
+	FString PreferredOutput;
+	float ReceiveVolume = 1.0f;
+	bool bDeviceInitializationPending = false;
+	TSet<FString> MutedParticipants;
+	TSharedPtr<Audio::FAudioCapture> MicrophoneCapture;
+	TSharedRef<TAtomic<float>, ESPMode::ThreadSafe> MicrophoneLevel = MakeShared<TAtomic<float>, ESPMode::ThreadSafe>(0.0f);
 	void ApplyRuntimeEosConfiguration();
 	void BeginProductUserLogin();
 	void LoginWithDeviceId();
@@ -103,5 +128,7 @@ private:
 	bool bOpenMic = false;
 	float PositionUpdateAccumulatorSeconds = 0.0f;
 	float RejoinDelaySeconds = 0.0f;
+	float AppliedReceiveVolume = -1.0f;
+	void UpdateReceiveVolume();
 	FDelegateHandle ChannelExitedDelegateHandle;
 };

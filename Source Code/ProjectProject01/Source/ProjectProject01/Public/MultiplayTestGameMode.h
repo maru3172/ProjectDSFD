@@ -45,6 +45,8 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode final : public AGameModeBase
 	GENERATED_BODY()
 
 public:
+	const FString& GetServerMatchId() const { return AuthoritativeMatchId; }
+	bool IsReadyForServerAllocation();
 	AMultiplayTestGameMode();
 	virtual void BeginPlay() override;
 
