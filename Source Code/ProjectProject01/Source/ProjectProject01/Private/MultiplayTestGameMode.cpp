@@ -444,10 +444,18 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		}
 		Mannequin->SetControlSlotForGameMode(Index);
 		Mannequin->SetManualControlEnabled(false);
+		Mannequin->SetCatchDamageEnabled(true);
 		// Blueprint instances created before the multiplayer command enum was added can
 		// retain a serialized HoldPosition value. Force every match spawn into patrol.
 		Mannequin->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);
 		MultiplayerPatrolTargets.Remove(Mannequin);
+		MultiplayerPatrolNextTargets.Remove(Mannequin);
+		MultiplayerPatrolLastLocations.Remove(Mannequin);
+		MultiplayerPatrolLastDistances.Remove(Mannequin);
+		MultiplayerPatrolStalledSeconds.Remove(Mannequin);
+		MultiplayerObservationRemainingSeconds.Remove(Mannequin);
+		MultiplayerObservationElapsedSeconds.Remove(Mannequin);
+		MultiplayerObservationBaseYaw.Remove(Mannequin);
 		MultiplayerPatrolTargetHistory.Remove(Mannequin);
 		if (!IsValid(Mannequin->GetController()))
 		{
@@ -593,47 +601,28 @@ void AMultiplayTestGameMode::StopAllMannequinsForMatchEnd()
 		}
 	}
 	MultiplayerPatrolTargets.Reset();
+	MultiplayerPatrolNextTargets.Reset();
+	MultiplayerPatrolLastLocations.Reset();
+	MultiplayerPatrolLastDistances.Reset();
+	MultiplayerPatrolStalledSeconds.Reset();
+	MultiplayerObservationRemainingSeconds.Reset();
+	MultiplayerObservationElapsedSeconds.Reset();
+	MultiplayerObservationBaseYaw.Reset();
 	MultiplayerPatrolTargetHistory.Reset();
 	MultiplayerObservedChaseTargets.Reset();
 }
 
-void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
+bool AMultiplayTestGameMode::SelectNextPatrolTarget(
 	AMannequinAICharacter* Mannequin,
-	AAIController* AIController)
+	const FVector& SearchOrigin,
+	FVector& OutTarget)
 {
-	if (!IsValid(Mannequin) || !IsValid(AIController) || MultiplayerPatrolRadius <= KINDA_SMALL_NUMBER)
-	{
-		return;
-	}
-
-	FVector* ExistingTarget = MultiplayerPatrolTargets.Find(Mannequin);
-	if (ExistingTarget && FVector::DistSquared2D(Mannequin->GetActorLocation(), *ExistingTarget) >
-		FMath::Square(static_cast<double>(MultiplayerAcceptanceRadius)))
-	{
-		// 생존자 시야로 StopMovement가 호출됐더라도 시야가 풀리면 같은 목적지로
-		// A* 요청을 다시 넣어 정찰이 한 번만 수행되고 멈추는 현상을 막는다.
-		const EPathFollowingRequestResult::Type ResumeResult = AIController->MoveToLocation(
-			*ExistingTarget, MultiplayerAcceptanceRadius, true, true, true, true, nullptr, true);
-		if (ResumeResult == EPathFollowingRequestResult::RequestSuccessful)
-		{
-			return;
-		}
-		// MoveToLocation may report AlreadyAtGoal while the actor's center is still
-		// outside our smaller acceptance test because the pawn/goal radii overlap.
-		// Treat that as completion and choose another point instead of resubmitting
-		// the same completed request forever.
-		MultiplayerPatrolTargets.Remove(Mannequin);
-	}
-	else if (ExistingTarget)
-	{
-		MultiplayerPatrolTargets.Remove(Mannequin);
-	}
-
 	UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld());
-	if (!IsValid(Navigation))
+	if (!IsValid(Mannequin) || !IsValid(Navigation))
 	{
-		return;
+		return false;
 	}
+
 	const TArray<FVector>* RecentTargets = MultiplayerPatrolTargetHistory.Find(Mannequin);
 	const int32 SafeHistorySize = FMath::Max(1, MultiplayerPatrolHistorySize);
 	const bool bExpandExploration = RecentTargets != nullptr && RecentTargets->Num() >= SafeHistorySize;
@@ -649,21 +638,16 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 	for (int32 Attempt = 0; Attempt < CandidateAttempts; ++Attempt)
 	{
 		FNavLocation CandidateLocation;
-		// 최근 세 목적지가 쌓인 뒤에는 검색 반경도 넓힌다. 이 방식으로 현재 구역만
-		// 왕복하지 않고 연결된 NavMesh의 다른 구역을 향해 정찰 범위를 확장한다.
-		if (!Navigation->GetRandomReachablePointInRadius(
-			Mannequin->GetActorLocation(), SearchRadius, CandidateLocation) ||
-			FVector::DistSquared2D(Mannequin->GetActorLocation(), CandidateLocation.Location) <=
+		if (!Navigation->GetRandomReachablePointInRadius(SearchOrigin, SearchRadius, CandidateLocation) ||
+			FVector::DistSquared2D(SearchOrigin, CandidateLocation.Location) <=
 			FMath::Square(static_cast<double>(FMath::Max(MultiplayerAcceptanceRadius * 2.0f, 100.0f))))
 		{
 			continue;
 		}
 
-		// ReachablePoint 결과에 더해 현재 NavMesh에서 시작점부터 목적지까지의
-		// 완전한 경로를 직접 확인한다. 막힌 방이나 끊긴 섬으로 끝나는 부분 경로는
-		// 정찰 후보로 사용하지 않는다.
+		// 다음 행동을 미리 계산할 때도 현재 목표 지점을 시작점으로 완전한 A* 경로를 검증한다.
 		UNavigationPath* CandidatePath = Navigation->FindPathToLocationSynchronously(
-			GetWorld(), Mannequin->GetActorLocation(), CandidateLocation.Location, Mannequin);
+			GetWorld(), SearchOrigin, CandidateLocation.Location, Mannequin);
 		if (!IsValid(CandidatePath) || !CandidatePath->IsValid() || CandidatePath->IsPartial())
 		{
 			continue;
@@ -672,7 +656,7 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 		const TArray<FVector> EmptyHistory;
 		const TArray<FVector>& History = RecentTargets != nullptr ? *RecentTargets : EmptyHistory;
 		const float NoveltyScoreSquared = CalculatePatrolNoveltyScoreSquared(
-			CandidateLocation.Location, History, Mannequin->GetActorLocation());
+			CandidateLocation.Location, History, SearchOrigin);
 		const bool bOutsideRecentAreas = History.IsEmpty() || NoveltyScoreSquared > AvoidanceRadiusSquared;
 		if (!bFoundUsefulLocation ||
 			(bOutsideRecentAreas && !bFoundLocationOutsideRecentAreas) ||
@@ -687,29 +671,196 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 	}
 	if (!bFoundUsefulLocation)
 	{
-		return;
+		return false;
 	}
 
-	MultiplayerPatrolTargets.FindOrAdd(Mannequin) = BestLocation.Location;
-	const EPathFollowingRequestResult::Type MoveResult = AIController->MoveToLocation(
-		BestLocation.Location, MultiplayerAcceptanceRadius,
-		true, true, true, true, nullptr, true);
-	if (MoveResult == EPathFollowingRequestResult::Failed)
-	{
-		MultiplayerPatrolTargets.Remove(Mannequin);
-		return;
-	}
-
+	OutTarget = BestLocation.Location;
 	TArray<FVector>& History = MultiplayerPatrolTargetHistory.FindOrAdd(Mannequin);
-	History.Add(BestLocation.Location);
+	History.Add(OutTarget);
 	while (History.Num() > SafeHistorySize)
 	{
 		History.RemoveAt(0);
 	}
 	UE_LOG(LogProjectProject01Multiplayer, Verbose,
-		TEXT("Mannequin %s selected patrol point %s (recent history %d/%d, search radius %.0f)."),
-		*GetNameSafe(Mannequin), *BestLocation.Location.ToCompactString(),
-		History.Num(), SafeHistorySize, SearchRadius);
+		TEXT("Mannequin %s precomputed patrol point %s (recent history %d/%d, search radius %.0f)."),
+		*GetNameSafe(Mannequin), *OutTarget.ToCompactString(), History.Num(), SafeHistorySize, SearchRadius);
+	return true;
+}
+
+void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
+	AMannequinAICharacter* Mannequin,
+	AAIController* AIController)
+{
+	if (!IsValid(Mannequin) || !IsValid(AIController) || MultiplayerPatrolRadius <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	auto ClearPatrolProgress = [this, Mannequin]()
+	{
+		MultiplayerPatrolLastLocations.Remove(Mannequin);
+		MultiplayerPatrolLastDistances.Remove(Mannequin);
+		MultiplayerPatrolStalledSeconds.Remove(Mannequin);
+	};
+	auto StartMovingTo = [this, Mannequin, AIController, &ClearPatrolProgress](const FVector& Target)
+	{
+		MultiplayerPatrolTargets.FindOrAdd(Mannequin) = Target;
+		MultiplayerPatrolLastLocations.FindOrAdd(Mannequin) = Mannequin->GetActorLocation();
+		MultiplayerPatrolLastDistances.FindOrAdd(Mannequin) =
+			FVector::Dist2D(Mannequin->GetActorLocation(), Target);
+		MultiplayerPatrolStalledSeconds.FindOrAdd(Mannequin) = 0.0f;
+		const EPathFollowingRequestResult::Type MoveResult = AIController->MoveToLocation(
+			Target, MultiplayerAcceptanceRadius, true, true, true, true, nullptr, true);
+		if (MoveResult == EPathFollowingRequestResult::Failed)
+		{
+			MultiplayerPatrolTargets.Remove(Mannequin);
+			ClearPatrolProgress();
+			return false;
+		}
+		return true;
+	};
+
+	// 정찰 중 가끔 멈춰 좌우를 살핀다. 정지하기 전에 다음 목적지를 계산해 두므로
+	// 관찰 시간이 끝나는 프레임에 별도 탐색 지연 없이 곧바로 이동한다.
+	if (float* RemainingSeconds = MultiplayerObservationRemainingSeconds.Find(Mannequin))
+	{
+		StopMannequinAI(Mannequin);
+		Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Observing);
+		float& ElapsedSeconds = MultiplayerObservationElapsedSeconds.FindOrAdd(Mannequin);
+		const float BaseYaw = MultiplayerObservationBaseYaw.FindRef(Mannequin);
+		ElapsedSeconds += FMath::Max(0.01f, MultiplayerRepathInterval);
+		*RemainingSeconds -= FMath::Max(0.01f, MultiplayerRepathInterval);
+		const float YawOffset = FMath::Sin(ElapsedSeconds * UE_PI * 1.15f) *
+			FMath::Max(0.0f, MultiplayerObservationYawDegrees);
+		Mannequin->SetActorRotation(FRotator(0.0f, BaseYaw + YawOffset, 0.0f));
+		if (*RemainingSeconds > 0.0f)
+		{
+			return;
+		}
+
+		MultiplayerObservationRemainingSeconds.Remove(Mannequin);
+		MultiplayerObservationElapsedSeconds.Remove(Mannequin);
+		MultiplayerObservationBaseYaw.Remove(Mannequin);
+		Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
+		if (FVector* PreparedTarget = MultiplayerPatrolNextTargets.Find(Mannequin))
+		{
+			const FVector Target = *PreparedTarget;
+			MultiplayerPatrolNextTargets.Remove(Mannequin);
+			if (StartMovingTo(Target))
+			{
+				return;
+			}
+		}
+	}
+
+	FVector* ExistingTarget = MultiplayerPatrolTargets.Find(Mannequin);
+	const float PatrolHandoffDistance = FMath::Max(
+		MultiplayerAcceptanceRadius, MultiplayerPatrolHandoffDistance);
+	if (ExistingTarget && FVector::DistSquared2D(Mannequin->GetActorLocation(), *ExistingTarget) >
+		FMath::Square(static_cast<double>(PatrolHandoffDistance)))
+	{
+		const FVector CurrentLocation = Mannequin->GetActorLocation();
+		const float CurrentDistance = FVector::Dist2D(CurrentLocation, *ExistingTarget);
+		if (CurrentDistance <= FMath::Max(MultiplayerAcceptanceRadius * 2.0f,
+			MultiplayerPatrolPrecomputeDistance) && !MultiplayerPatrolNextTargets.Contains(Mannequin))
+		{
+			FVector PreparedTarget;
+			if (SelectNextPatrolTarget(Mannequin, *ExistingTarget, PreparedTarget))
+			{
+				MultiplayerPatrolNextTargets.Add(Mannequin, PreparedTarget);
+			}
+		}
+		const FVector* PreviousLocation = MultiplayerPatrolLastLocations.Find(Mannequin);
+		const float* PreviousDistance = MultiplayerPatrolLastDistances.Find(Mannequin);
+		float& StalledSeconds = MultiplayerPatrolStalledSeconds.FindOrAdd(Mannequin);
+		if (PreviousLocation && PreviousDistance)
+		{
+			const float Translation = FVector::Dist2D(CurrentLocation, *PreviousLocation);
+			const float DistanceProgress = *PreviousDistance - CurrentDistance;
+			const float RequiredProgress = FMath::Max(1.0f, MultiplayerPatrolMinimumProgressDistance);
+			if (Translation >= RequiredProgress || DistanceProgress >= RequiredProgress)
+			{
+				StalledSeconds = 0.0f;
+			}
+			else
+			{
+				StalledSeconds += FMath::Max(0.01f, MultiplayerRepathInterval);
+			}
+		}
+		MultiplayerPatrolLastLocations.FindOrAdd(Mannequin) = CurrentLocation;
+		MultiplayerPatrolLastDistances.FindOrAdd(Mannequin) = CurrentDistance;
+
+		if (StalledSeconds >= FMath::Max(0.5f, MultiplayerPatrolStuckTimeoutSeconds))
+		{
+			UE_LOG(LogProjectProject01Multiplayer, Verbose,
+				TEXT("Mannequin %s made no patrol progress for %.1f seconds; selecting another A* target."),
+				*GetNameSafe(Mannequin), StalledSeconds);
+			AIController->StopMovement();
+			MultiplayerPatrolTargets.Remove(Mannequin);
+			MultiplayerPatrolNextTargets.Remove(Mannequin);
+			ClearPatrolProgress();
+		}
+		else
+		{
+			// 이미 이동 중인 동일 경로를 0.2초마다 다시 요청하면 경로 추종이 재시작되어
+			// 순간 정지할 수 있다. 이동 중에는 기존 A* 요청을 그대로 유지한다.
+			if (AIController->GetMoveStatus() == EPathFollowingStatus::Moving)
+			{
+				return;
+			}
+			// 생존자 시야 등으로 StopMovement가 호출된 경우에만 같은 목적지로 재개한다.
+			const EPathFollowingRequestResult::Type ResumeResult = AIController->MoveToLocation(
+				*ExistingTarget, MultiplayerAcceptanceRadius, true, true, true, true, nullptr, true);
+			if (ResumeResult == EPathFollowingRequestResult::RequestSuccessful)
+			{
+				return;
+			}
+			// MoveToLocation may report AlreadyAtGoal while the actor's center is still
+			// outside our smaller acceptance test because the pawn/goal radii overlap.
+			// Treat that as completion and choose another point instead of resubmitting
+			// the same completed request forever.
+			MultiplayerPatrolTargets.Remove(Mannequin);
+			ClearPatrolProgress();
+		}
+	}
+	else if (ExistingTarget)
+	{
+		MultiplayerPatrolTargets.Remove(Mannequin);
+		ClearPatrolProgress();
+
+		if (!MultiplayerPatrolNextTargets.Contains(Mannequin))
+		{
+			FVector PreparedTarget;
+			if (SelectNextPatrolTarget(Mannequin, Mannequin->GetActorLocation(), PreparedTarget))
+			{
+				MultiplayerPatrolNextTargets.Add(Mannequin, PreparedTarget);
+			}
+		}
+		if (MultiplayerPatrolNextTargets.Contains(Mannequin) &&
+			FMath::FRand() < FMath::Clamp(MultiplayerObservationChance, 0.0f, 1.0f))
+		{
+			const float MinSeconds = FMath::Max(0.1f, MultiplayerObservationMinSeconds);
+			const float MaxSeconds = FMath::Max(MinSeconds, MultiplayerObservationMaxSeconds);
+			MultiplayerObservationRemainingSeconds.Add(Mannequin, FMath::FRandRange(MinSeconds, MaxSeconds));
+			MultiplayerObservationElapsedSeconds.Add(Mannequin, 0.0f);
+			MultiplayerObservationBaseYaw.Add(Mannequin, Mannequin->GetActorRotation().Yaw);
+			StopMannequinAI(Mannequin);
+			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Observing);
+			return;
+		}
+	}
+
+	FVector NextTarget;
+	if (FVector* PreparedTarget = MultiplayerPatrolNextTargets.Find(Mannequin))
+	{
+		NextTarget = *PreparedTarget;
+		MultiplayerPatrolNextTargets.Remove(Mannequin);
+	}
+	else if (!SelectNextPatrolTarget(Mannequin, Mannequin->GetActorLocation(), NextTarget))
+	{
+		return;
+	}
+	StartMovingTo(NextTarget);
 }
 
 void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
@@ -873,6 +1024,10 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 		if (IsValid(ChaseTarget))
 		{
+			MultiplayerObservationRemainingSeconds.Remove(Mannequin);
+			MultiplayerObservationElapsedSeconds.Remove(Mannequin);
+			MultiplayerObservationBaseYaw.Remove(Mannequin);
+			MultiplayerPatrolNextTargets.Remove(Mannequin);
 			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);
 			AIController->MoveToActor(ChaseTarget, MultiplayerAcceptanceRadius,
 				true, true, true, nullptr, true);
@@ -927,6 +1082,34 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		{
 			It.RemoveCurrent();
 		}
+	}
+	for (auto It = MultiplayerPatrolNextTargets.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerPatrolLastLocations.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerPatrolLastDistances.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerPatrolStalledSeconds.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerObservationRemainingSeconds.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerObservationElapsedSeconds.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerObservationBaseYaw.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
 	}
 	for (auto It = MultiplayerObservedChaseTargets.CreateIterator(); It; ++It)
 	{
@@ -2363,6 +2546,7 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 			MultiplayerPatrolTargets.Remove(PreviousManuallyControlledMannequin);
 		}
 		RequestingController->bManualMannequinCommandIssued = false;
+		RequestingController->ForceNetUpdate();
 		PreviousManuallyControlledMannequin->SetManualControlEnabled(false);
 		RequestingController->UnPossess();
 		UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
@@ -2413,6 +2597,7 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 		if (!TargetMannequin->IsManualControlEnabled())
 		{
 			RequestingController->bManualMannequinCommandIssued = false;
+			RequestingController->ForceNetUpdate();
 		}
 		TargetMannequin->SetManualControlEnabled(true);
 		return true;
@@ -2434,6 +2619,7 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 
 	TargetMannequin->SetManualControlEnabled(true);
 	RequestingController->bManualMannequinCommandIssued = false;
+	RequestingController->ForceNetUpdate();
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 		TEXT("MannequinPlayerPossess"), FString::Printf(TEXT("Controller=%s; Slot=%d"), *GetNameSafe(RequestingController), TargetMannequin->GetControlSlot()), TargetMannequin);
 	TargetMannequin->ForceNetUpdate();
@@ -2465,8 +2651,13 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 	// 직접 조작은 계속 유지하고, 빙의 해제 뒤 AI가 이어서 수행할 명령만 저장한다.
 	Target->SetMultiplayCommand(Command);
 	MultiplayerPatrolTargets.Remove(Target);
+	MultiplayerPatrolNextTargets.Remove(Target);
+	MultiplayerObservationRemainingSeconds.Remove(Target);
+	MultiplayerObservationElapsedSeconds.Remove(Target);
+	MultiplayerObservationBaseYaw.Remove(Target);
 	MultiplayerObservedChaseTargets.Remove(Target);
 	RequestingController->bManualMannequinCommandIssued = true;
+	RequestingController->ForceNetUpdate();
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 		TEXT("MultiplayerMannequinCommand"),
 		FString::Printf(TEXT("Controller=%s; Slot=%d; Command=%s"),
@@ -2501,17 +2692,18 @@ bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerCon
 
 bool AMultiplayTestGameMode::ToggleMannequinCatchDamage(AMultiplayTestPlayerController* RequestingController)
 {
-	const AMannequinAICharacter* Controlled = IsValid(RequestingController)
+	AMannequinAICharacter* Controlled = IsValid(RequestingController)
 		? Cast<AMannequinAICharacter>(RequestingController->GetPawn()) : nullptr;
 	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
 		!IsValid(Controlled) || !Controlled->IsManualControlEnabled())
 	{
-		return bMannequinCatchDamageEnabled;
+		return IsValid(Controlled) && Controlled->IsCatchDamageEnabled();
 	}
-	bMannequinCatchDamageEnabled = !bMannequinCatchDamageEnabled;
-	UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("Mannequin catch damage is now %s."),
-		bMannequinCatchDamageEnabled ? TEXT("enabled") : TEXT("disabled"));
-	return bMannequinCatchDamageEnabled;
+	const bool bEnabled = Controlled->ToggleCatchDamageEnabled();
+	UE_LOG(LogProjectProject01Multiplayer, Log,
+		TEXT("Mannequin slot %d catch damage is now %s."), Controlled->GetControlSlot(),
+		bEnabled ? TEXT("enabled") : TEXT("disabled"));
+	return bEnabled;
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const

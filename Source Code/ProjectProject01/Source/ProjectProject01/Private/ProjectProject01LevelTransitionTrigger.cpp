@@ -5,6 +5,7 @@
 #include "MultiplayTestGameMode.h"
 #include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
+#include "ProjectProject01GameInstance.h"
 #include "Components/BoxComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
@@ -261,13 +262,16 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 	{
 		if (World->GetNetMode() == NM_Standalone)
 		{
+			if (UProjectProject01GameInstance* GameInstance =
+				Cast<UProjectProject01GameInstance>(GetGameInstance()))
+			{
+				GameInstance->FadeEntireScreenToBlack(0.6f);
+			}
 			if (APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
-				IsValid(PlayerController) && IsValid(PlayerController->PlayerCameraManager))
+				IsValid(PlayerController))
 			{
 				PlayerController->SetIgnoreMoveInput(true);
 				PlayerController->SetIgnoreLookInput(true);
-				PlayerController->PlayerCameraManager->StartCameraFade(
-					0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
 			}
 		}
 		else if (AMultiplayTestGameMode* GameMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
@@ -316,6 +320,11 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 
 	if (World->GetNetMode() == NM_Standalone)
 	{
+		if (UProjectProject01GameInstance* GameInstance =
+			Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		{
+			GameInstance->MarkPendingSinglePlayerLevelTransitionFade();
+		}
 		UGameplayStatics::OpenLevel(this, FName(*DestinationPackage), true);
 		return;
 	}

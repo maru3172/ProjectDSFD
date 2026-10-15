@@ -20,6 +20,7 @@
 #include "Components/PanelWidget.h"
 #include "Components/ScrollBox.h"
 #include "Components/Slider.h"
+#include "Components/SizeBox.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
@@ -444,7 +445,7 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	if (!IsValid(Mannequin))
 	{
 		StatusText->SetText(FProjectProject01Localization::Text(
-			TEXT("마네킹 시점을 준비하는 중")));
+			TEXT("현재 빙의한 마네킹: 준비 중\n현재 상태: 확인 중\n데스카운트 소모: 확인 중")));
 		return;
 	}
 
@@ -452,6 +453,7 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	switch (Mannequin->GetMultiplayActivity())
 	{
 	case EMultiplayMannequinActivity::Patrolling: Activity = TEXT("정찰"); break;
+	case EMultiplayMannequinActivity::Observing: Activity = TEXT("주변 동향 관찰"); break;
 	case EMultiplayMannequinActivity::Chasing: Activity = TEXT("생존자 추격"); break;
 	case EMultiplayMannequinActivity::Following: Activity = TEXT("마네킹 플레이어 추종"); break;
 	case EMultiplayMannequinActivity::Holding: Activity = TEXT("정지"); break;
@@ -459,8 +461,33 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	case EMultiplayMannequinActivity::FrozenByVision: Activity = TEXT("생존자 시야로 정지"); break;
 	default: Activity = TEXT("확인 중"); break;
 	}
+	if (Mannequin->IsManualControlEnabled() && IsValid(Controller) &&
+		Controller->HasQueuedManualMannequinCommand())
+	{
+		switch (Mannequin->GetMultiplayCommand())
+		{
+		case EMultiplayMannequinCommand::Patrol:
+			Activity = TEXT("직접 조작 해제 후 정찰");
+			break;
+		case EMultiplayMannequinCommand::ChaseInDetectionRange:
+			Activity = TEXT("직접 조작 해제 후 범위 내 추격");
+			break;
+		case EMultiplayMannequinCommand::FollowMannequinPlayer:
+			Activity = TEXT("직접 조작 해제 후 마네킹 플레이어 추종");
+			break;
+		case EMultiplayMannequinCommand::HoldPosition:
+		default:
+			Activity = TEXT("직접 조작 해제 후 정지");
+			break;
+		}
+	}
+	const bool bCatchDamageEnabled = Mannequin->IsCatchDamageEnabled();
+	const FString CatchDamageState = bCatchDamageEnabled ? TEXT("활성") : TEXT("비활성");
 	StatusText->SetText(FProjectProject01Localization::Text(FString::Printf(
-		TEXT("%d번 마네킹: %s"), Mannequin->GetControlSlot(), *Activity)));
+		TEXT("현재 빙의한 마네킹: %d번\n")
+		TEXT("현재 상태: %s\n")
+		TEXT("데스카운트 소모: %s"),
+		Mannequin->GetControlSlot(), *Activity, *CatchDamageState)));
 }
 
 bool UProjectProject01VoiceStatusWidget::Initialize()
@@ -619,7 +646,7 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 		const FString RequiredMark = Question.bRequired ? TEXT(" *") : TEXT("");
 		ProjectProject01LoginUI::AddLabel(WidgetTree, QuestionPanel,
 			FString::Printf(TEXT("%d. %s%s"), Index + 1, *Question.Prompt, *RequiredMark), 16.0f);
-		if (Question.Type == TEXT("Choice"))
+		if (Question.Type == TEXT("Choice") || Question.Type == TEXT("OX"))
 		{
 			UComboBoxString* Combo = WidgetTree->ConstructWidget<UComboBoxString>();
 			if (!Question.bRequired) Combo->AddOption(TEXT("응답하지 않음"));
@@ -685,7 +712,8 @@ void UProjectProject01SurveyWidget::HandleSubmitClicked()
 	{
 		const FProjectProject01SurveyQuestion& Question = Survey.Questions[Index];
 		FString Value;
-		if (Question.Type == TEXT("Choice") && ChoiceInputs.IsValidIndex(Index) && IsValid(ChoiceInputs[Index]))
+		if ((Question.Type == TEXT("Choice") || Question.Type == TEXT("OX")) &&
+			ChoiceInputs.IsValidIndex(Index) && IsValid(ChoiceInputs[Index]))
 		{
 			Value = ChoiceInputs[Index]->GetSelectedOption();
 			if (Value == TEXT("응답하지 않음")) Value.Reset();
@@ -767,13 +795,17 @@ void UProjectProject01SurveyWidget::BuildWidgetTree()
 		DimSlot->SetHorizontalAlignment(HAlign_Fill);
 		DimSlot->SetVerticalAlignment(VAlign_Fill);
 	}
-	UVerticalBox* Panel = WidgetTree->ConstructWidget<UVerticalBox>();
-	if (UOverlaySlot* PanelSlot = Overlay->AddChildToOverlay(Panel))
+	USizeBox* PanelFrame = WidgetTree->ConstructWidget<USizeBox>();
+	PanelFrame->SetWidthOverride(760.0f);
+	PanelFrame->SetHeightOverride(720.0f);
+	if (UOverlaySlot* PanelSlot = Overlay->AddChildToOverlay(PanelFrame))
 	{
 		PanelSlot->SetHorizontalAlignment(HAlign_Center);
 		PanelSlot->SetVerticalAlignment(VAlign_Center);
 		PanelSlot->SetPadding(FMargin(48.0f));
 	}
+	UVerticalBox* Panel = WidgetTree->ConstructWidget<UVerticalBox>();
+	PanelFrame->AddChild(Panel);
 	SurveyTitleText = ProjectProject01LoginUI::AddLabel(WidgetTree, Panel, TEXT("피드백/설문조사"), 30.0f);
 	SurveyDescriptionText = ProjectProject01LoginUI::AddLabel(WidgetTree, Panel, TEXT(""), 14.0f);
 	UScrollBox* QuestionScroll = WidgetTree->ConstructWidget<UScrollBox>();
@@ -1165,11 +1197,6 @@ void UProjectProject01TitleWidget::BeginSinglePlayerNavigation()
 	{
 		PlayerController->bShowMouseCursor = false;
 		PlayerController->SetInputMode(FInputModeGameOnly());
-		if (IsValid(PlayerController->PlayerCameraManager))
-		{
-			PlayerController->PlayerCameraManager->StartCameraFade(
-				0.0f, 1.0f, 1.5f, FLinearColor::Black, false, true);
-		}
 	}
 }
 
@@ -1195,6 +1222,11 @@ void UProjectProject01TitleWidget::CompleteSinglePlayerLaunch()
 	if (IsValid(SinglePlayerFadeOverlay))
 	{
 		SinglePlayerFadeOverlay->SetRenderOpacity(1.0f);
+	}
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->HoldEntireScreenBlack();
 	}
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01SaveSubsystem* Saves = IsValid(GameInstance)
@@ -1250,6 +1282,11 @@ void UProjectProject01TitleWidget::CancelSinglePlayerLaunch(const FString& Error
 	{
 		SinglePlayerFadeOverlay->SetRenderOpacity(0.0f);
 		SinglePlayerFadeOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->ClearEntireScreenFade();
 	}
 	if (APlayerController* PlayerController = GetOwningPlayer(); IsValid(PlayerController))
 	{
@@ -1538,7 +1575,7 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 	ContinueSinglePlayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("이어하기"));
 	MultiplayerButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("멀티플레이"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
-	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("설문조사"));
+	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("피드백/설문조사"));
 	QuitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 
 	UVerticalBox* SaveSlotMenu = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -2964,7 +3001,7 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("방으로 돌아가기"));
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	GameRulesButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 규칙"));
-	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("설문조사"));
+	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("피드백/설문조사"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 
@@ -5337,6 +5374,11 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 		return;
 	}
 	bTravelRequested = true;
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GameInstance))
+	{
+		ProjectGameInstance->HoldEntireScreenBlack();
+	}
 	const FString TravelUrl = FString::Printf(TEXT("%s?EncryptionToken=%s?GameTicket=%s?LobbyRoomId=%s?MatchId=%s"),
 		*Lobby->GetGameTicketTravelUrl(), *Lobby->GetGameJoinTicket(), *Lobby->GetGameJoinTicket(),
 		*Lobby->GetGameTicketRoomId(), *Lobby->GetGameTicketMatchId());
@@ -5445,12 +5487,6 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 	{
 		StartRoomButton->SetIsEnabled(false);
 	}
-	if (APlayerController* PlayerController = GetOwningPlayer();
-		IsValid(PlayerController) && IsValid(PlayerController->PlayerCameraManager))
-	{
-		PlayerController->PlayerCameraManager->StartCameraFade(
-			0.0f, 1.0f, GameStartFadeDurationSeconds, FLinearColor::Black, false, true);
-	}
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().SetTimer(
@@ -5464,6 +5500,11 @@ void UProjectProject01LobbyWidget::CompleteGameStartFade()
 	bGameStartFadeActive = false;
 	bGameStartFadeComplete = true;
 	GameStartFadeElapsedSeconds = GameStartFadeDurationSeconds;
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->HoldEntireScreenBlack();
+	}
 	if (IsValid(StartCountdownPanel))
 	{
 		StartCountdownPanel->SetBrushColor(FLinearColor::Black);
@@ -5513,6 +5554,11 @@ void UProjectProject01LobbyWidget::CancelGameStartCountdown()
 	}
 	if (bHadCountdown && !bTravelRequested)
 	{
+		if (UProjectProject01GameInstance* ProjectGameInstance =
+			Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		{
+			ProjectGameInstance->ClearEntireScreenFade();
+		}
 		if (APlayerController* PlayerController = GetOwningPlayer();
 			IsValid(PlayerController) && IsValid(PlayerController->PlayerCameraManager))
 		{

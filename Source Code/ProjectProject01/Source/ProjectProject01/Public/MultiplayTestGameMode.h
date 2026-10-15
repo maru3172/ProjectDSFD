@@ -62,7 +62,6 @@ public:
 		EMultiplayMannequinCommand Command);
 	bool TryResetFollowingMannequins(class AMultiplayTestPlayerController* RequestingController);
 	bool ToggleMannequinCatchDamage(class AMultiplayTestPlayerController* RequestingController);
-	bool IsMannequinCatchDamageEnabled() const { return bMannequinCatchDamageEnabled; }
 	void DeclareVoluntaryExit(class AMultiplayTestPlayerController* RequestingController);
 	void CycleSurvivorSpectator(class AMultiplayTestPlayerController* RequestingController, int32 Direction);
 	bool TryBroadcastSurvivorPing(class AMultiplayTestPlayerController* RequestingController,
@@ -111,6 +110,8 @@ private:
 	bool CanMannequinDetectSurvivor(const class AMannequinAICharacter* Mannequin,
 		const class APlayerCharacter* Survivor) const;
 	class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
+	bool SelectNextPatrolTarget(class AMannequinAICharacter* Mannequin,
+		const FVector& SearchOrigin, FVector& OutTarget);
 	void MoveMannequinToPatrolTarget(class AMannequinAICharacter* Mannequin, class AAIController* AIController);
 	void MoveMannequinToFollowTarget(class AMannequinAICharacter* Mannequin, class AAIController* AIController,
 		class AMannequinAICharacter* Leader, const TArray<class AMannequinAICharacter*>& Followers);
@@ -170,18 +171,64 @@ private:
 	float MultiplayerAIUpdateAccumulatorSeconds = 0.0f;
 	float GameServerHeartbeatAccumulatorSeconds = 0.0f;
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerPatrolTargets;
+	/** 현재 목적지에 도착하기 전에 A* 검증까지 끝낸 다음 정찰 목적지입니다. */
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerPatrolNextTargets;
+	/** 이동 요청은 살아 있지만 실제로 벽 등에 막힌 정찰 마네킹을 감지하기 위한 진행 상태입니다. */
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerPatrolLastLocations;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, float> MultiplayerPatrolLastDistances;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, float> MultiplayerPatrolStalledSeconds;
+	/** 정찰 도착 후 가끔 주변을 살피는 정지 행동의 서버 권한 상태입니다. */
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, float> MultiplayerObservationRemainingSeconds;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, float> MultiplayerObservationElapsedSeconds;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, float> MultiplayerObservationBaseYaw;
 	/** 각 마네킹이 최근 방문한 정찰 목적지입니다. 같은 구역을 짧게 반복하는 것을 막습니다. */
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, TArray<FVector>> MultiplayerPatrolTargetHistory;
 	/** 정찰 중 생존자 시야에 노출된 뒤, 시야가 풀리면 추격할 대상을 기억합니다. */
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, TWeakObjectPtr<class APlayerCharacter>> MultiplayerObservedChaseTargets;
-	bool bMannequinCatchDamageEnabled = true;
-
 	float MultiplayerDetectionRadius = 500.0f;
 	float MultiplayerPatrolRadius = 1200.0f;
 	float MultiplayerFollowDistance = 300.0f;
 	float MultiplayerFollowSeparation = 175.0f;
 	float MultiplayerRepathInterval = 0.2f;
 	float MultiplayerAcceptanceRadius = 60.0f;
+
+	/** 현재 목적지에 이 거리만큼 접근하면 다음 정찰 경로를 미리 계산합니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "100.0", UIMin = "100.0", Units = "cm"))
+	float MultiplayerPatrolPrecomputeDistance = 350.0f;
+
+	/** 이 거리 안에서는 도착으로 보고 준비된 다음 목적지로 끊김 없이 넘깁니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "60.0", UIMin = "60.0", Units = "cm"))
+	float MultiplayerPatrolHandoffDistance = 90.0f;
+
+	/** 정찰 목적지 도착 시 주변을 살펴보는 정지 행동에 들어갈 확률입니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float MultiplayerObservationChance = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "0.1", UIMin = "0.1", Units = "s"))
+	float MultiplayerObservationMinSeconds = 1.5f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "0.1", UIMin = "0.1", Units = "s"))
+	float MultiplayerObservationMaxSeconds = 3.0f;
+
+	/** 주변을 살필 때 기준 방향 좌우로 회전할 최대 각도입니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "0.0", ClampMax = "120.0", UIMin = "0.0", UIMax = "120.0", Units = "deg"))
+	float MultiplayerObservationYawDegrees = 55.0f;
+
+	/** 이 시간 동안 위치/목적지 거리가 거의 변하지 않으면 막힌 경로를 버리고 새 정찰점을 찾습니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "0.5", UIMin = "0.5", Units = "s"))
+	float MultiplayerPatrolStuckTimeoutSeconds = 1.5f;
+
+	/** 정찰 진행으로 인정할 최소 이동 거리입니다. 작은 충돌 떨림은 이동으로 보지 않습니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
+		meta = (ClampMin = "1.0", UIMin = "1.0", Units = "cm"))
+	float MultiplayerPatrolMinimumProgressDistance = 12.0f;
 
 	/** 최근 몇 개의 정찰 구역을 재방문 금지 대상으로 기억할지 결정합니다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",

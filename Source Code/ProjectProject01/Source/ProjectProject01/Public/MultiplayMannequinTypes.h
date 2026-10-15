@@ -23,6 +23,7 @@ UENUM(BlueprintType)
 enum class EMultiplayMannequinActivity : uint8
 {
 	Patrolling UMETA(DisplayName = "정찰"),
+	Observing UMETA(DisplayName = "주변 동향 관찰"),
 	Chasing UMETA(DisplayName = "생존자 추격"),
 	Following UMETA(DisplayName = "마네킹 플레이어 추종"),
 	Holding UMETA(DisplayName = "정지"),

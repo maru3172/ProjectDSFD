@@ -8,6 +8,7 @@
 #include "Dom/JsonObject.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/GameStateBase.h"
@@ -44,7 +45,9 @@
 #include "Serialization/JsonWriter.h"
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
+#include "Styling/CoreStyle.h"
 #include "TimerManager.h"
+#include "Widgets/Layout/SBorder.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01NetworkSecurity, Log, All);
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01UserSettings, Log, All);
@@ -589,10 +592,30 @@ void UProjectProject01GameInstance::Init()
 			TEXT("Security API must use HTTPS except for loopback development: %s"), *SecurityApiBaseUrl);
 	}
 	InitializeCrashReportCollection();
+	if (!IsRunningDedicatedServer())
+	{
+		EntireScreenFadeTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+			FTickerDelegate::CreateUObject(this, &UProjectProject01GameInstance::TickEntireScreenFade));
+	}
 }
 
 void UProjectProject01GameInstance::Shutdown()
 {
+	if (EntireScreenFadeTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(EntireScreenFadeTickerHandle);
+		EntireScreenFadeTickerHandle.Reset();
+	}
+	if (bEntireScreenFadeAttached && EntireScreenFadeOverlay.IsValid())
+	{
+		if (UGameViewportClient* FadeViewport = EntireScreenFadeViewport.Get(); IsValid(FadeViewport))
+		{
+			FadeViewport->RemoveViewportWidgetContent(EntireScreenFadeOverlay.ToSharedRef());
+		}
+	}
+	bEntireScreenFadeAttached = false;
+	EntireScreenFadeViewport.Reset();
+	EntireScreenFadeOverlay.Reset();
 	if (CrashUploadRetryTickerHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(CrashUploadRetryTickerHandle);
@@ -963,6 +986,148 @@ void UProjectProject01GameInstance::SubmitPlayerSurvey(
 		PendingSecurityRequests.Remove(Request);
 		(*CompletionRef)(false, TEXT("설문 전송 요청을 시작하지 못했습니다."));
 	}
+}
+
+void UProjectProject01GameInstance::MarkPendingSinglePlayerLevelTransitionFade()
+{
+	bPendingSinglePlayerLevelTransitionFade = true;
+}
+
+bool UProjectProject01GameInstance::ConsumePendingSinglePlayerLevelTransitionFade()
+{
+	const bool bWasPending = bPendingSinglePlayerLevelTransitionFade;
+	bPendingSinglePlayerLevelTransitionFade = false;
+	return bWasPending;
+}
+
+void UProjectProject01GameInstance::EnsureEntireScreenFadeOverlay()
+{
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+	if (!EntireScreenFadeOverlay.IsValid())
+	{
+		SAssignNew(EntireScreenFadeOverlay, SBorder)
+			.Visibility(EVisibility::Collapsed)
+			.BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")))
+			.BorderBackgroundColor(FLinearColor::Transparent);
+	}
+	UGameViewportClient* CurrentViewport = GetGameViewportClient();
+	if (bEntireScreenFadeAttached && EntireScreenFadeViewport.Get() != CurrentViewport)
+	{
+		if (UGameViewportClient* PreviousViewport = EntireScreenFadeViewport.Get();
+			IsValid(PreviousViewport))
+		{
+			PreviousViewport->RemoveViewportWidgetContent(EntireScreenFadeOverlay.ToSharedRef());
+		}
+		bEntireScreenFadeAttached = false;
+		EntireScreenFadeViewport.Reset();
+	}
+	if (!bEntireScreenFadeAttached && IsValid(CurrentViewport))
+	{
+		// 일반 AddToViewport 위젯보다 높은 계층에 붙여 메뉴와 안내 UI까지 한 화면처럼 덮는다.
+		CurrentViewport->AddViewportWidgetContent(EntireScreenFadeOverlay.ToSharedRef(), 1000000);
+		EntireScreenFadeViewport = CurrentViewport;
+		bEntireScreenFadeAttached = true;
+	}
+}
+
+void UProjectProject01GameInstance::ApplyEntireScreenFadeOpacity()
+{
+	EnsureEntireScreenFadeOverlay();
+	if (!EntireScreenFadeOverlay.IsValid())
+	{
+		return;
+	}
+	EntireScreenFadeOpacity = FMath::Clamp(EntireScreenFadeOpacity, 0.0f, 1.0f);
+	EntireScreenFadeOverlay->SetBorderBackgroundColor(
+		FLinearColor(0.0f, 0.0f, 0.0f, EntireScreenFadeOpacity));
+	EntireScreenFadeOverlay->SetVisibility(EntireScreenFadeOpacity > UE_KINDA_SMALL_NUMBER
+		? EVisibility::HitTestInvisible : EVisibility::Collapsed);
+}
+
+bool UProjectProject01GameInstance::TickEntireScreenFade(const float DeltaSeconds)
+{
+	if (bEntireScreenFadeAnimating || EntireScreenFadeOpacity > 0.0f)
+	{
+		// 트래블 중 GameViewportClient가 교체되면 기존 attached 플래그만 믿지 말고
+		// 새 뷰포트에 즉시 다시 붙여 밝은 로딩 프레임이 노출되지 않게 한다.
+		EnsureEntireScreenFadeOverlay();
+		ApplyEntireScreenFadeOpacity();
+	}
+	if (!bEntireScreenFadeAnimating)
+	{
+		return true;
+	}
+	EntireScreenFadeElapsedSeconds = FMath::Min(
+		EntireScreenFadeDurationSeconds,
+		EntireScreenFadeElapsedSeconds + FMath::Max(0.0f, DeltaSeconds));
+	const float Progress = EntireScreenFadeDurationSeconds > UE_KINDA_SMALL_NUMBER
+		? EntireScreenFadeElapsedSeconds / EntireScreenFadeDurationSeconds : 1.0f;
+	const float SmoothedProgress = FMath::InterpEaseInOut(0.0f, 1.0f,
+		FMath::Clamp(Progress, 0.0f, 1.0f), 2.0f);
+	EntireScreenFadeOpacity = FMath::Lerp(
+		EntireScreenFadeStartOpacity, EntireScreenFadeTargetOpacity,
+		SmoothedProgress);
+	if (Progress >= 1.0f)
+	{
+		bEntireScreenFadeAnimating = false;
+		EntireScreenFadeOpacity = EntireScreenFadeTargetOpacity;
+	}
+	ApplyEntireScreenFadeOpacity();
+	return true;
+}
+
+void UProjectProject01GameInstance::FadeEntireScreenToBlack(const float DurationSeconds)
+{
+	EnsureEntireScreenFadeOverlay();
+	EntireScreenFadeStartOpacity = EntireScreenFadeOpacity;
+	EntireScreenFadeTargetOpacity = 1.0f;
+	EntireScreenFadeElapsedSeconds = 0.0f;
+	EntireScreenFadeDurationSeconds = FMath::Max(0.0f, DurationSeconds);
+	bEntireScreenFadeAnimating = EntireScreenFadeDurationSeconds > UE_KINDA_SMALL_NUMBER;
+	if (!bEntireScreenFadeAnimating)
+	{
+		EntireScreenFadeOpacity = 1.0f;
+	}
+	ApplyEntireScreenFadeOpacity();
+}
+
+void UProjectProject01GameInstance::HoldEntireScreenBlack()
+{
+	EnsureEntireScreenFadeOverlay();
+	bEntireScreenFadeAnimating = false;
+	EntireScreenFadeOpacity = 1.0f;
+	EntireScreenFadeStartOpacity = 1.0f;
+	EntireScreenFadeTargetOpacity = 1.0f;
+	ApplyEntireScreenFadeOpacity();
+}
+
+void UProjectProject01GameInstance::FadeEntireScreenFromBlack(const float DurationSeconds)
+{
+	EnsureEntireScreenFadeOverlay();
+	// 새 월드 첫 프레임이 밝게 비치는 일을 막기 위해 해제는 언제나 완전한 검정에서 시작한다.
+	EntireScreenFadeOpacity = 1.0f;
+	EntireScreenFadeStartOpacity = 1.0f;
+	EntireScreenFadeTargetOpacity = 0.0f;
+	EntireScreenFadeElapsedSeconds = 0.0f;
+	EntireScreenFadeDurationSeconds = FMath::Max(0.0f, DurationSeconds);
+	bEntireScreenFadeAnimating = EntireScreenFadeDurationSeconds > UE_KINDA_SMALL_NUMBER;
+	if (!bEntireScreenFadeAnimating)
+	{
+		EntireScreenFadeOpacity = 0.0f;
+	}
+	ApplyEntireScreenFadeOpacity();
+}
+
+void UProjectProject01GameInstance::ClearEntireScreenFade()
+{
+	bEntireScreenFadeAnimating = false;
+	EntireScreenFadeOpacity = 0.0f;
+	EntireScreenFadeStartOpacity = 0.0f;
+	EntireScreenFadeTargetOpacity = 0.0f;
+	ApplyEntireScreenFadeOpacity();
 }
 
 void UProjectProject01GameInstance::HandleNetworkFailure(

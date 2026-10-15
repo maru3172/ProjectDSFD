@@ -78,6 +78,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinActivity GetMultiplayActivity() const { return MultiplayActivity; }
 
+	/** 이 마네킹과 접촉했을 때 생존자의 데스카운트를 소모할지 여부입니다. 마네킹마다 따로 복제됩니다. */
+	void SetCatchDamageEnabled(bool bEnabled);
+	bool ToggleCatchDamageEnabled();
+
+	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
+	bool IsCatchDamageEnabled() const { return bCatchDamageEnabled; }
+
 	/** 싱글플레이 직접 조작 중 E 입력으로 다음 빙의 해제 시 실행할 추격 명령을 기록합니다. */
 	bool QueuePostPossessionChaseCommand();
 
@@ -130,6 +137,9 @@ private:
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinActivity MultiplayActivity = EMultiplayMannequinActivity::Patrolling;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
+	bool bCatchDamageEnabled = true;
 
 	enum class EPostPossessionCommand : uint8
 	{

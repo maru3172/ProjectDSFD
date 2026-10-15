@@ -126,7 +126,7 @@ internal static class SurveyEndpoints
             {
                 surveys.Add(new
                 {
-                    surveyId = reader.GetString(0),
+                    surveyId = ReadIdentifier(reader, 0),
                     title = reader.GetString(1),
                     description = reader.GetString(2),
                     questions = JsonSerializer.Deserialize<JsonElement>(reader.GetString(3)),
@@ -265,7 +265,7 @@ internal static class SurveyEndpoints
             while (await reader.ReadAsync(ct))
             {
                 responses.Add(new SurveyResponseRow(
-                    reader.GetString(0), AsUtc(reader.GetDateTime(1)), reader.GetString(2),
+                    ReadIdentifier(reader, 0), AsUtc(reader.GetDateTime(1)), reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.IsDBNull(6) ? null : reader.GetString(6),
                     reader.IsDBNull(7) ? null : reader.GetString(7),
@@ -294,7 +294,7 @@ internal static class SurveyEndpoints
             answers = JsonSerializer.Deserialize<List<SurveyAnswerRequest>>(response.AnswersJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []
         }).ToArray();
-        var choiceStatistics = questions.Where(question => question.Type == "Choice").Select(question => new
+        var choiceStatistics = questions.Where(question => question.Type is "Choice" or "OX").Select(question => new
         {
             questionId = question.Id,
             prompt = question.Prompt,
@@ -357,7 +357,7 @@ internal static class SurveyEndpoints
         foreach (SurveyQuestionDefinition question in body.Questions)
         {
             if (!Guid.TryParse(question.Id, out _) || !ids.Add(question.Id) ||
-                question.Type is not ("Choice" or "Text") ||
+                question.Type is not ("Choice" or "Text" or "OX") ||
                 string.IsNullOrWhiteSpace(question.Prompt) || question.Prompt.Trim().Length > 256)
                 return false;
             if (question.Type == "Choice")
@@ -366,6 +366,11 @@ internal static class SurveyEndpoints
                 var options = question.Options.Select(option => option.Trim()).ToArray();
                 if (options.Any(option => option.Length is < 1 or > 128) ||
                     options.Distinct(StringComparer.Ordinal).Count() != options.Length) return false;
+            }
+            else if (question.Type == "OX")
+            {
+                if (question.Options is null || question.Options.Count != 2 ||
+                    question.Options[0] != "O" || question.Options[1] != "X") return false;
             }
             else if (question.Options is { Count: > 0 }) return false;
         }
@@ -395,7 +400,7 @@ internal static class SurveyEndpoints
                 error = $"필수 문항 '{question.Prompt}'에 응답해주세요.";
                 return false;
             }
-            if (question.Type == "Choice" && value.Length > 0 && !question.Options.Contains(value)) return false;
+            if (question.Type is "Choice" or "OX" && value.Length > 0 && !question.Options.Contains(value)) return false;
             if (question.Type == "Text" && value.Length > 2000) return false;
         }
         if (answerMap.Keys.Any(id => questions.All(question => question.Id != id))) return false;
@@ -436,7 +441,7 @@ internal static class SurveyEndpoints
     {
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
-        return new SurveyRow(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+        return new SurveyRow(ReadIdentifier(reader, 0), reader.GetString(1), reader.GetString(2),
             reader.GetString(3), reader.GetBoolean(4));
     }
 
@@ -470,6 +475,14 @@ internal static class SurveyEndpoints
         options.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"].ToString());
 
     private static DateTime AsUtc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
+    private static string ReadIdentifier(MySqlDataReader reader, int ordinal)
+    {
+        object value = reader.GetValue(ordinal);
+        return value is Guid guid
+            ? guid.ToString("D")
+            : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+    }
 
     private sealed record SurveyRow(string Id, string Title, string Description, string QuestionsJson, bool IsActive);
     private sealed record SurveyResponseRow(

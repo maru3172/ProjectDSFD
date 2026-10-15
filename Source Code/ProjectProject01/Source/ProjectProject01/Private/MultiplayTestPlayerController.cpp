@@ -12,15 +12,19 @@
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01PingMarker.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
+#include "PlayerCharacter.h"
 #include "PlayerFeedbackWidgets.h"
 #include "PlayerHeartbeatComponent.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/SynthComponent.h"
 #include "InputKeyEventArgs.h"
 #include "EngineUtils.h"
+#include "Engine/LevelStreaming.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+#include "UObject/UObjectGlobals.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -73,8 +77,12 @@ void AMultiplayTestPlayerController::BeginPlay()
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
 	bInitialGameplayFadePending = true;
-	bLocalMultiplayerRoleKnown = false;
-	bLocalMultiplayerMannequinRole = false;
+	InitialGameplayReadyStableSeconds = 0.0f;
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->HoldEntireScreenBlack();
+	}
 	if (IsValid(PlayerCameraManager))
 	{
 		// 새 경기의 첫 프레임부터 완전한 검은 화면을 유지한다. 생존자 Pawn 또는
@@ -113,6 +121,12 @@ void AMultiplayTestPlayerController::BeginPlay()
 		World->GetTimerManager().SetTimer(
 			ServiceStatusTimer, this, &AMultiplayTestPlayerController::PollMultiplayerService,
 			5.0f, true, 5.0f);
+		// 역할 RPC, Pawn 복제, 마네킹 시점 복제는 도착 순서가 보장되지 않는다.
+		// 어느 알림이 먼저 와도 영구 암전에 빠지지 않도록 준비 완료까지 짧게 재확인한다.
+		World->GetTimerManager().SetTimer(
+			InitialGameplayReadinessTimer, this,
+			&AMultiplayTestPlayerController::TryRevealInitialGameplayFade,
+			0.1f, true, 0.1f);
 	}
 }
 
@@ -140,6 +154,14 @@ void AMultiplayTestPlayerController::SeamlessTravelFrom(APlayerController* OldPC
 void AMultiplayTestPlayerController::PostSeamlessTravel()
 {
 	Super::PostSeamlessTravel();
+	if (IsLocalController() && bLocalLevelTransitionFadeHeld)
+	{
+		if (UProjectProject01GameInstance* ProjectGameInstance =
+			Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		{
+			ProjectGameInstance->HoldEntireScreenBlack();
+		}
+	}
 	if (IsLocalController() && bLocalLevelTransitionFadeHeld && IsValid(PlayerCameraManager))
 	{
 		// 새 맵의 첫 프레임이 노출되지 않도록 카메라가 만들어지는 즉시 완전 암전을 다시 고정한다.
@@ -156,6 +178,8 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 		{
 			World->GetTimerManager().ClearTimer(ServiceStatusTimer);
 			World->GetTimerManager().ClearTimer(InitialGameplayRevealTimer);
+			World->GetTimerManager().ClearTimer(InitialGameplayReadinessTimer);
+			World->GetTimerManager().ClearTimer(MatchGameplayAudioStopTimer);
 		}
 		if (IsValid(VoiceStatusWidget))
 		{
@@ -419,9 +443,25 @@ void AMultiplayTestPlayerController::SetMannequinStatusVisible(const bool bVisib
 
 void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 {
+	// Client RPC가 BeginPlay보다 먼저 처리되거나 역할 RPC보다 시점/Pawn이 먼저 복제되는 경우도
+	// 실제 준비된 액터 종류를 통해 역할을 복구할 수 있다.
+	if (!bLocalMultiplayerRoleKnown)
+	{
+		if (IsValid(GetViewedMannequin()))
+		{
+			bLocalMultiplayerRoleKnown = true;
+			bLocalMultiplayerMannequinRole = true;
+		}
+		else if (IsValid(Cast<APlayerCharacter>(GetPawn())))
+		{
+			bLocalMultiplayerRoleKnown = true;
+			bLocalMultiplayerMannequinRole = false;
+		}
+	}
+	UWorld* World = GetWorld();
 	if (!IsLocalController() || !bInitialGameplayFadePending || bLocalLevelTransitionFadeHeld ||
 		bInitialGameplayFadeScheduled || !bLocalMultiplayerRoleKnown ||
-		!IsValid(PlayerCameraManager) || !IsValid(GetWorld()))
+		!IsValid(PlayerCameraManager) || !IsValid(World))
 	{
 		return;
 	}
@@ -431,6 +471,38 @@ void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 		: IsValid(GetPawn());
 	if (!bViewReady)
 	{
+		InitialGameplayReadyStableSeconds = 0.0f;
+		return;
+	}
+
+	// Pawn이 생긴 것만으로는 텍스처/서브 레벨/비동기 오브젝트 로딩까지 끝났다고 볼 수 없다.
+	// 화면을 검게 유지한 채 실제 플레이 월드가 안정적으로 준비된 뒤에만 페이드 인한다.
+	bool bStreamingReady = World->HasBegunPlay() && !IsAsyncLoading();
+	if (bStreamingReady)
+	{
+		for (const ULevelStreaming* StreamingLevel : World->GetStreamingLevels())
+		{
+			if (!IsValid(StreamingLevel))
+			{
+				continue;
+			}
+			if ((StreamingLevel->ShouldBeLoaded() && !StreamingLevel->IsLevelLoaded()) ||
+				(StreamingLevel->ShouldBeVisible() && !StreamingLevel->IsLevelVisible()))
+			{
+				bStreamingReady = false;
+				break;
+			}
+		}
+	}
+	if (!bStreamingReady)
+	{
+		InitialGameplayReadyStableSeconds = 0.0f;
+		return;
+	}
+
+	InitialGameplayReadyStableSeconds += 0.1f;
+	if (InitialGameplayReadyStableSeconds < 0.5f)
+	{
 		return;
 	}
 
@@ -438,12 +510,18 @@ void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 	// 로딩 중에 페이드 시간이 소모되므로 짧은 검은 화면 고정 뒤 해제를 시작한다.
 	PlayerCameraManager->StartCameraFade(
 		1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->HoldEntireScreenBlack();
+	}
 	bInitialGameplayFadeScheduled = true;
-	GetWorld()->GetTimerManager().SetTimer(
+	World->GetTimerManager().ClearTimer(InitialGameplayReadinessTimer);
+	World->GetTimerManager().SetTimer(
 		InitialGameplayRevealTimer,
 		this,
 		&AMultiplayTestPlayerController::CompleteInitialGameplayFade,
-		0.25f,
+		0.15f,
 		false);
 }
 
@@ -455,8 +533,18 @@ void AMultiplayTestPlayerController::CompleteInitialGameplayFade()
 		return;
 	}
 	bInitialGameplayFadePending = false;
-	PlayerCameraManager->StartCameraFade(
-		1.0f, 0.0f, 1.5f, FLinearColor::Black, false, false);
+	InitialGameplayReadyStableSeconds = 0.0f;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(InitialGameplayReadinessTimer);
+	}
+	// 전역 오버레이가 완전히 검은 동안 카메라 페이드를 먼저 제거해 중복 알파 합성을 막는다.
+	PlayerCameraManager->StopCameraFade();
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->FadeEntireScreenFromBlack(1.5f);
+	}
 }
 
 void AMultiplayTestPlayerController::SetupInputComponent()
@@ -658,7 +746,16 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 	SetIgnoreLookInput(true);
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 	{
-		Settings->FadeGameplaySFX(0.12f, 1.5f);
+		// 결과 화면에서는 UI 음량은 유지하되 심박·발소리·신음 등 게임플레이 SFX만 완전히 내린다.
+		Settings->FadeGameplaySFX(0.0f, 1.5f);
+	}
+	if (UWorld* World = GetWorld(); IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(MatchGameplayAudioStopTimer);
+		World->GetTimerManager().SetTimer(
+			MatchGameplayAudioStopTimer, this,
+			&AMultiplayTestPlayerController::StopMatchGameplayAudio,
+			1.5f, false);
 	}
 	if (IsValid(SessionMenuWidget))
 	{
@@ -695,6 +792,55 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	InputMode.SetHideCursorDuringCapture(false);
 	SetInputMode(InputMode);
+}
+
+void AMultiplayTestPlayerController::StopMatchGameplayAudio()
+{
+	if (!IsLocalController() || !IsValid(GetWorld()))
+	{
+		return;
+	}
+
+	auto StopActorSynths = [](AActor* Actor)
+	{
+		if (!IsValid(Actor))
+		{
+			return;
+		}
+		TInlineComponentArray<USynthComponent*> SynthComponents;
+		Actor->GetComponents(SynthComponents);
+		for (USynthComponent* Synth : SynthComponents)
+		{
+			if (IsValid(Synth) && Synth->IsPlaying())
+			{
+				Synth->Stop();
+			}
+		}
+	};
+
+	for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
+	{
+		APlayerCharacter* Survivor = *It;
+		if (!IsValid(Survivor))
+		{
+			continue;
+		}
+		if (UPlayerHeartbeatComponent* Heartbeat =
+			Survivor->FindComponentByClass<UPlayerHeartbeatComponent>(); IsValid(Heartbeat))
+		{
+			Heartbeat->ResetHeartbeatState();
+			Heartbeat->SetComponentTickEnabled(false);
+		}
+		StopActorSynths(Survivor);
+	}
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		StopActorSynths(*It);
+	}
+	if (IsValid(MannequinCaptureSFXComponent) && MannequinCaptureSFXComponent->IsPlaying())
+	{
+		MannequinCaptureSFXComponent->Stop();
+	}
 }
 
 void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation(
@@ -776,10 +922,10 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 		SessionMenuWidget->RemoveFromParent();
 		SessionMenuWidget = nullptr;
 	}
-	if (IsValid(PlayerCameraManager))
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
 	{
-		PlayerCameraManager->StartCameraFade(
-			0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
+		ProjectGameInstance->FadeEntireScreenToBlack(0.6f);
 	}
 }
 
@@ -804,9 +950,13 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 	bLocalLevelTransitionFadeHeld = false;
 	if (IsValid(PlayerCameraManager))
 	{
-		// 새 맵에서 Pawn과 관전 대상이 준비된 다음에만 검은 화면을 걷어낸다.
-		PlayerCameraManager->StartCameraFade(
-			1.0f, 0.0f, 0.6f, FLinearColor::Black, false, false);
+		// 전역 오버레이가 새 맵을 가린 상태에서 기존 카메라 검정만 먼저 제거한다.
+		PlayerCameraManager->StopCameraFade();
+	}
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->FadeEntireScreenFromBlack(0.6f);
 	}
 }
 
@@ -1056,8 +1206,8 @@ bool AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Validate()
 void AMultiplayTestPlayerController::ClientNotifyMannequinCatchDamage_Implementation(const bool bEnabled)
 {
 	ClientMessage(bEnabled
-		? TEXT("Mannequin catch damage: ON")
-		: TEXT("Mannequin catch damage: OFF"));
+		? TEXT("현재 마네킹의 데스카운트 소모: 활성")
+		: TEXT("현재 마네킹의 데스카운트 소모: 비활성"));
 }
 
 void AMultiplayTestPlayerController::ClientPlayMannequinCaptureFeedback_Implementation(
@@ -1198,4 +1348,5 @@ void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetime
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, ViewedMannequin, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, MatchPhase, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorState, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bManualMannequinCommandIssued, COND_OwnerOnly);
 }

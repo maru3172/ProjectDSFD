@@ -363,9 +363,7 @@ void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)
 	{
 		return;
 	}
-	if (const AMultiplayTestGameMode* MultiplayerGameMode = GetWorld()
-		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr;
-		IsValid(MultiplayerGameMode) && !MultiplayerGameMode->IsMannequinCatchDamageEnabled())
+	if (!bCatchDamageEnabled)
 	{
 		return;
 	}
@@ -385,6 +383,25 @@ void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)
 	{
 		CaughtSurvivorsInCurrentContact.RemoveSingleSwap(PlayerCharacter);
 	}
+}
+
+void AMannequinAICharacter::SetCatchDamageEnabled(const bool bEnabled)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	bCatchDamageEnabled = bEnabled;
+	ForceNetUpdate();
+}
+
+bool AMannequinAICharacter::ToggleCatchDamageEnabled()
+{
+	if (HasAuthority())
+	{
+		SetCatchDamageEnabled(!bCatchDamageEnabled);
+	}
+	return bCatchDamageEnabled;
 }
 
 void AMannequinAICharacter::RemoveSeparatedCatchContacts()
@@ -489,6 +506,7 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
 	DOREPLIFETIME(AMannequinAICharacter, MultiplayCommand);
 	DOREPLIFETIME(AMannequinAICharacter, MultiplayActivity);
+	DOREPLIFETIME(AMannequinAICharacter, bCatchDamageEnabled);
 	DOREPLIFETIME(AMannequinAICharacter, ControlSlot);
 }
 

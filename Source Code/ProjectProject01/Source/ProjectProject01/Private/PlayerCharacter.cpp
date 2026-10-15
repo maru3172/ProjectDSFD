@@ -21,6 +21,7 @@
 #include "InputMappingContext.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/LevelStreaming.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -34,6 +35,7 @@
 #include "InputCoreTypes.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
+#include "UObject/UObjectGlobals.h"
 #include "SceneView.h"
 #include "SceneViewExtension.h"
 #include "PlayerHeartbeatComponent.h"
@@ -558,19 +560,24 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 		IsValid(PlayerController->PlayerCameraManager))
 	{
 		bInitialStandaloneSpawnFadePlayed = true;
+		const bool bFromLevelTransition = IsValid(GetGameInstance()) &&
+			Cast<UProjectProject01GameInstance>(GetGameInstance()) &&
+			Cast<UProjectProject01GameInstance>(GetGameInstance())->ConsumePendingSinglePlayerLevelTransitionFade();
+		InitialStandaloneRevealFadeSeconds = bFromLevelTransition ? 0.6f : 1.5f;
+		InitialStandaloneReadyStableSeconds = 0.0f;
+		UProjectProject01GameInstance* ProjectGameInstance =
+			Cast<UProjectProject01GameInstance>(GetGameInstance());
+		if (IsValid(ProjectGameInstance))
+		{
+			ProjectGameInstance->HoldEntireScreenBlack();
+		}
 		// 첫 렌더 프레임부터 검은 화면을 확실히 고정하고 짧게 유지한 다음 플레이 화면을 드러낸다.
 		PlayerController->PlayerCameraManager->StartCameraFade(
 			1.0f, 1.0f, 0.0f, FLinearColor::Black, false, true);
-		const TWeakObjectPtr<APlayerController> WeakPlayerController(PlayerController);
-		GetWorldTimerManager().SetTimer(InitialStandaloneRevealTimer, [WeakPlayerController]()
-		{
-			APlayerController* ReadyController = WeakPlayerController.Get();
-			if (IsValid(ReadyController) && IsValid(ReadyController->PlayerCameraManager))
-			{
-				ReadyController->PlayerCameraManager->StartCameraFade(
-					1.0f, 0.0f, 1.5f, FLinearColor::Black, false, false);
-			}
-		}, 0.25f, false);
+		GetWorldTimerManager().SetTimer(
+			InitialStandaloneRevealTimer, this,
+			&APlayerCharacter::TryRevealInitialStandaloneFade,
+			0.1f, true, 0.1f);
 	}
 
 	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
@@ -625,6 +632,56 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 			GuideInput.SetHideCursorDuringCapture(false);
 			PlayerController->SetInputMode(GuideInput);
 		}
+	}
+}
+
+void APlayerCharacter::TryRevealInitialStandaloneFade()
+{
+	UWorld* World = GetWorld();
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!IsValid(World) || !IsValid(PlayerController) || !PlayerController->IsLocalController() ||
+		!IsValid(PlayerController->PlayerCameraManager))
+	{
+		InitialStandaloneReadyStableSeconds = 0.0f;
+		return;
+	}
+
+	bool bStreamingReady = World->HasBegunPlay() && !IsAsyncLoading();
+	if (bStreamingReady)
+	{
+		for (const ULevelStreaming* StreamingLevel : World->GetStreamingLevels())
+		{
+			if (!IsValid(StreamingLevel))
+			{
+				continue;
+			}
+			if ((StreamingLevel->ShouldBeLoaded() && !StreamingLevel->IsLevelLoaded()) ||
+				(StreamingLevel->ShouldBeVisible() && !StreamingLevel->IsLevelVisible()))
+			{
+				bStreamingReady = false;
+				break;
+			}
+		}
+	}
+	if (!bStreamingReady)
+	{
+		InitialStandaloneReadyStableSeconds = 0.0f;
+		return;
+	}
+
+	InitialStandaloneReadyStableSeconds += 0.1f;
+	if (InitialStandaloneReadyStableSeconds < 0.5f)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(InitialStandaloneRevealTimer);
+	InitialStandaloneReadyStableSeconds = 0.0f;
+	PlayerController->PlayerCameraManager->StopCameraFade();
+	if (UProjectProject01GameInstance* ProjectGameInstance =
+		Cast<UProjectProject01GameInstance>(GetGameInstance()))
+	{
+		ProjectGameInstance->FadeEntireScreenFromBlack(InitialStandaloneRevealFadeSeconds);
 	}
 }
 

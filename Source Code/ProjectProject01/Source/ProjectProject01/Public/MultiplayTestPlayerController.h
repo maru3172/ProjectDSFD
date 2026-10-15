@@ -109,6 +109,7 @@ public:
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
 	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
+	bool HasQueuedManualMannequinCommand() const { return bManualMannequinCommandIssued; }
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 	virtual void SeamlessTravelFrom(APlayerController* OldPC) override;
@@ -147,6 +148,8 @@ private:
 	void SetSurvivorVoiceStatusVisible(bool bVisible);
 	/** 마네킹 역할의 로컬 플레이어에게만 번호별 현재 행동 HUD를 표시한다. */
 	void SetMannequinStatusVisible(bool bVisible);
+	/** 결과 화면의 감쇄가 끝난 뒤 심박·신음·발소리 합성기를 완전히 정지합니다. */
+	void StopMatchGameplayAudio();
 	/** 최초 멀티 경기 진입은 역할별 시점 대상이 준비된 뒤에만 검은 화면을 걷어낸다. */
 	void TryRevealInitialGameplayFade();
 	void CompleteInitialGameplayFade();
@@ -253,7 +256,8 @@ private:
 	int32 RpcWindowCallCount[9] = {};
 	bool bVoluntaryExitDeclared = false;
 	bool bHadAuthenticatedSession = false;
-	/** V로 직접 조작한 현재 마네킹에 빙의 해제 후 적용할 명령(Z/X/C)이 지정되었는지 서버에서만 추적한다. */
+	/** 직접 조작 해제 후 적용할 명령이 지정됐는지 소유 클라이언트 HUD에도 복제한다. */
+	UPROPERTY(Replicated)
 	bool bManualMannequinCommandIssued = false;
 	/** 서버에서 seamless travel 동안만 유지되는 다음 맵 진입 정보입니다. */
 	bool bLevelTransitionCarryover = false;
@@ -263,12 +267,16 @@ private:
 	/** 새 경기 첫 화면이 Pawn/마네킹 시점 준비 전에 노출되는 것을 막는다. */
 	bool bInitialGameplayFadePending = false;
 	bool bInitialGameplayFadeScheduled = false;
+	/** 월드/시점/스트리밍 준비가 연속으로 유지된 시간입니다. 로딩 중 화면 노출을 막습니다. */
+	float InitialGameplayReadyStableSeconds = 0.0f;
 	bool bLocalMultiplayerRoleKnown = false;
 	bool bLocalMultiplayerMannequinRole = false;
 	/** PIE 다중 클라이언트 테스트에서 이 마네킹 플레이어에게 가이드를 한 번만 표시한다. */
 	bool bRoleGuideShownForThisController = false;
 	FTimerHandle ServiceStatusTimer;
 	FTimerHandle InitialGameplayRevealTimer;
+	FTimerHandle InitialGameplayReadinessTimer;
+	FTimerHandle MatchGameplayAudioStopTimer;
 
 	friend class AMultiplayTestGameMode;
 };

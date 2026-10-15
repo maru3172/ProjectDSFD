@@ -12,6 +12,8 @@
 #include "InputCoreTypes.h"
 #include "ProjectProject01GameInstance.generated.h"
 
+class SBorder;
+
 UENUM(BlueprintType)
 enum class EProjectProject01VFXIntensity : uint8
 {
@@ -367,11 +369,25 @@ public:
 		const TArray<FProjectProject01SurveyAnswer>& Answers,
 		TFunction<void(bool, const FString&)> Completion);
 
+	/** 싱글 레벨 전환 트리거가 다음 월드의 짧은 0.6초 암전 해제를 예약합니다. */
+	void MarkPendingSinglePlayerLevelTransitionFade();
+	bool ConsumePendingSinglePlayerLevelTransitionFade();
+
+	/** 카메라뿐 아니라 UMG까지 덮는 최상단 화면 전체 페이드입니다. GameInstance와 함께 맵 이동을 통과합니다. */
+	void FadeEntireScreenToBlack(float DurationSeconds);
+	void HoldEntireScreenBlack();
+	void FadeEntireScreenFromBlack(float DurationSeconds);
+	void ClearEntireScreenFade();
+
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
 		ENetworkFailure::Type FailureType, const FString& ErrorString);
 	void BeginSafeLogoutAfterGameServerFailure();
+	bool bPendingSinglePlayerLevelTransitionFade = false;
+	void EnsureEntireScreenFadeOverlay();
+	void ApplyEntireScreenFadeOpacity();
+	bool TickEntireScreenFade(float DeltaSeconds);
 
 	UFUNCTION()
 	void HandleSafeLogoutCompleted(bool bSuccess, const FString& Message, const FString& DisplayName);
@@ -407,6 +423,16 @@ private:
 	FDelegateHandle NetworkFailureHandle;
 	FDelegateHandle PostWorldInitializationHandle;
 	FTSTicker::FDelegateHandle CrashUploadRetryTickerHandle;
+	FTSTicker::FDelegateHandle EntireScreenFadeTickerHandle;
+	TSharedPtr<SBorder> EntireScreenFadeOverlay;
+	TWeakObjectPtr<class UGameViewportClient> EntireScreenFadeViewport;
+	float EntireScreenFadeOpacity = 0.0f;
+	float EntireScreenFadeStartOpacity = 0.0f;
+	float EntireScreenFadeTargetOpacity = 0.0f;
+	float EntireScreenFadeElapsedSeconds = 0.0f;
+	float EntireScreenFadeDurationSeconds = 0.0f;
+	bool bEntireScreenFadeAnimating = false;
+	bool bEntireScreenFadeAttached = false;
 	TSet<FString> CrashReportsInFlight;
 	FString CrashRunId;
 	FString CrashStartedAtUtc;
