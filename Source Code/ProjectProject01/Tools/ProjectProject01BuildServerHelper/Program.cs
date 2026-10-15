@@ -224,7 +224,7 @@ internal sealed class MainForm : Form
         }
         string args = $"BuildCookRun -project=\"{projectFile.Text.Trim()}\" -noP4 -platform=Win64 " +
             (server ? "-server -serverconfig=Development -noclient " : "-clientconfig=Shipping ") +
-            $"-build -cook -stage -pak -archive -archivedirectory=\"{Path.Combine(archiveRoot.Text.Trim(), role)}\" -utf8output";
+            $"-build -cook -stage -pak -crashreporter -archive -archivedirectory=\"{Path.Combine(archiveRoot.Text.Trim(), role)}\" -utf8output";
         SetStatus($"{role} 패키징 중...");
         int code;
         if (server)

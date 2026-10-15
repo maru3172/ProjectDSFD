@@ -153,7 +153,8 @@ namespace ProjectProject01TuningEditor
 			TEXT("MultiplayerFollowDistance"),
 			TEXT("MultiplayerFollowSeparation"),
 			TEXT("MultiplayerRepathInterval"),
-			TEXT("MultiplayerAcceptanceRadius")
+			TEXT("MultiplayerAcceptanceRadius"),
+			TEXT("MultiplayerManualAttackRange")
 		};
 		return FieldNames;
 	}

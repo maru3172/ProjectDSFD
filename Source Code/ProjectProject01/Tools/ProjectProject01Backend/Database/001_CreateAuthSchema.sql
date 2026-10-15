@@ -277,6 +277,8 @@ CREATE TABLE IF NOT EXISTS player_survey_responses
   user_id BIGINT UNSIGNED NULL,
   submitted_at_utc DATETIME(6) NOT NULL,
   answers_json JSON NOT NULL,
+  review_status VARCHAR(16) NOT NULL DEFAULT 'Accepted',
+  review_reason TEXT NOT NULL,
   build_version VARCHAR(128) NOT NULL,
   map_name VARCHAR(128) NOT NULL,
   process_role VARCHAR(32) NOT NULL,

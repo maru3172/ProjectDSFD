@@ -375,6 +375,7 @@ internal static class ServiceAdministration
                        build_version, map_name, game_mode, process_role, player_role,
                        last_log_path, diagnostic_run_id, match_id
                 FROM crash_reports
+                WHERE LEFT(map_name, 7) <> 'UEDPIE_'
                 ORDER BY detected_at_utc DESC, id DESC
                 LIMIT @limit;
                 """, connection) { CommandTimeout = 5 };
@@ -384,7 +385,7 @@ internal static class ServiceAdministration
             {
                 reports.Add(new
                 {
-                    reportId = reader.GetString(0),
+                    reportId = ReadIdentifier(reader, 0),
                     detectedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
                     startedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
                     lastUpdatedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc),
@@ -395,7 +396,7 @@ internal static class ServiceAdministration
                     playerRole = reader.IsDBNull(8) ? null : reader.GetString(8),
                     lastLogPath = reader.GetString(9),
                     diagnosticRunId = reader.GetString(10),
-                    matchId = reader.IsDBNull(11) ? null : reader.GetString(11)
+                    matchId = reader.IsDBNull(11) ? null : ReadIdentifier(reader, 11)
                 });
             }
             return Results.Ok(new { crashReports = reports, count = reports.Count });
@@ -562,6 +563,14 @@ internal static class ServiceAdministration
 
     private static bool IsAuthorized(HttpRequest request, AdministratorOptions options) =>
         options.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"].ToString());
+
+    private static string ReadIdentifier(MySqlDataReader reader, int ordinal)
+    {
+        // MySqlConnector recognizes CHAR(36) as Guid, including report_id and match_id.
+        object value = reader.GetValue(ordinal);
+        return value is Guid id ? id.ToString("D")
+            : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+    }
 
     private static int ReadLimit(HttpRequest request) =>
         int.TryParse(request.Query["limit"], out var requested)

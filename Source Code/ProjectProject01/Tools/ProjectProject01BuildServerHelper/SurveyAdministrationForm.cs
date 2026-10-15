@@ -11,6 +11,10 @@ internal sealed class SurveyQuestionDraft
     public string Prompt { get; set; } = string.Empty;
     public List<string> Options { get; set; } = [];
     public bool Required { get; set; } = true;
+    public bool AllowMultiple { get; set; }
+    public int MaxSelections { get; set; }
+    public bool IsTrap { get; set; }
+    public List<string> ExpectedAnswers { get; set; } = [];
 
     public override string ToString()
     {
@@ -35,6 +39,7 @@ internal sealed class SurveyAdministrationForm : Form
     private readonly ListBox surveyList = new() { Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly Label status = new() { Dock = DockStyle.Fill, AutoSize = true, Text = "준비" };
     private readonly List<SurveyQuestionDraft> questions = [];
+    private string? editingSurveyId;
 
     private sealed class SurveySummary
     {
@@ -70,8 +75,11 @@ internal sealed class SurveyAdministrationForm : Form
         Height = 760;
         MinimumSize = new Size(850, 650);
         StartPosition = FormStartPosition.CenterParent;
+        ForeColor = Color.Black;
+        BackColor = SystemColors.Control;
         BuildUi();
-        Shown += async (_, _) => await RefreshSurveysAsync();
+        Shown += async (_, _) => { try { await RefreshSurveysAsync(); } catch (Exception ex) { SetStatus(ex.Message); } };
+        surveyList.DoubleClick += async (_, _) => await LoadSelectedDraftAsync();
     }
 
     protected override void Dispose(bool disposing)
@@ -103,8 +111,8 @@ internal sealed class SurveyAdministrationForm : Form
         var editorLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4 };
         editorLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         editorLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        editorLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        editorLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        editorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        editorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
         editorLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         editorLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         editorLayout.Controls.Add(new Label { Text = "제목", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, 0, 0);
@@ -126,8 +134,9 @@ internal sealed class SurveyAdministrationForm : Form
         root.Controls.Add(editor);
 
         var createButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
-        AddButton(createButtons, "설문 초안 저장", CreateSurveyAsync);
+        AddButton(createButtons, "설문 저장 / 수정 적용", CreateSurveyAsync);
         AddButton(createButtons, "작성 내용 초기화", ResetDraftAsync);
+        AddButton(createButtons, "전체 설문 통계", ViewOverallStatisticsAsync);
         root.Controls.Add(createButtons);
 
         var existing = new GroupBox { Text = "저장된 설문", Dock = DockStyle.Fill, Padding = new Padding(8) };
@@ -137,6 +146,7 @@ internal sealed class SurveyAdministrationForm : Form
         existingLayout.Controls.Add(surveyList);
         var existingButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
         AddButton(existingButtons, "새로고침", RefreshSurveysAsync);
+        AddButton(existingButtons, "선택 설문 불러오기 / 수정", LoadSelectedDraftAsync);
         AddButton(existingButtons, "선택 설문 활성화", ActivateSelectedAsync);
         AddButton(existingButtons, "선택 설문 종료", CloseSelectedAsync);
         AddButton(existingButtons, "선택 설문 삭제", DeleteSelectedSurveyAsync);
@@ -145,6 +155,16 @@ internal sealed class SurveyAdministrationForm : Form
         existing.Controls.Add(existingLayout);
         root.Controls.Add(existing);
         root.Controls.Add(status);
+        // Explicit rows and readable list colours keep added questions visible at all DPI settings.
+        root.SetRow(addressRow, 0);
+        root.SetRow(editor, 1);
+        root.SetRow(createButtons, 2);
+        root.SetRow(existing, 3);
+        root.SetRow(status, 4);
+        questionList.BackColor = surveyList.BackColor = Color.White;
+        questionList.ForeColor = surveyList.ForeColor = Color.Black;
+        questionList.HorizontalScrollbar = surveyList.HorizontalScrollbar = true;
+        questionList.MinimumSize = new Size(100, 65);
         Controls.Add(root);
     }
 
@@ -227,10 +247,12 @@ internal sealed class SurveyAdministrationForm : Form
             {
                 id = q.Id, type = q.Type, prompt = q.Prompt,
                 options = q.Type == "OX" ? new[] { "O", "X" } : q.Options.ToArray(),
-                required = q.Required
+                required = q.Required, allowMultiple=q.AllowMultiple, maxSelections=q.MaxSelections,
+                isTrap=q.IsTrap, expectedAnswers=q.ExpectedAnswers
             }).ToArray()
         };
-        using HttpResponseMessage response = await SendAdminAsync(HttpMethod.Post, "/api/admin/surveys", body);
+        using HttpResponseMessage response = await SendAdminAsync(editingSurveyId is null ? HttpMethod.Post : HttpMethod.Put,
+            editingSurveyId is null ? "/api/admin/surveys" : $"/api/admin/surveys/{editingSurveyId}", body);
         await EnsureSuccessAsync(response);
         log($"[설문] '{surveyTitle}' 초안을 저장했습니다. 활성화 전에는 클라이언트 버튼이 비활성입니다.");
         await ResetDraftAsync();
@@ -240,6 +262,7 @@ internal sealed class SurveyAdministrationForm : Form
 
     private Task ResetDraftAsync()
     {
+        editingSurveyId = null;
         title.Clear();
         description.Clear();
         questions.Clear();
@@ -256,11 +279,49 @@ internal sealed class SurveyAdministrationForm : Form
         surveyList.Items.Clear();
         foreach (SurveySummary survey in result.Surveys) surveyList.Items.Add(survey);
         surveyList.EndUpdate();
+        if (surveyList.Items.Count > 0) surveyList.SelectedIndex = 0;
         SetStatus($"설문 {result.Surveys.Count}개 확인 완료");
     }
 
     private SurveySummary SelectedSurvey() => surveyList.SelectedItem as SurveySummary ??
         throw new InvalidOperationException("처리할 설문을 선택하세요.");
+
+    private Task LoadSelectedDraftAsync()
+    {
+        SurveySummary survey = SelectedSurvey();
+        editingSurveyId = !survey.IsActive && survey.ResponseCount == 0 ? survey.SurveyId : null;
+        title.Text = survey.Title;
+        description.Text = survey.Description;
+        questions.Clear();
+        questions.AddRange(JsonSerializer.Deserialize<List<SurveyQuestionDraft>>(JsonSerializer.Serialize(survey.Questions)) ?? []);
+        if (editingSurveyId is null)
+            foreach (var question in questions) question.Id = Guid.NewGuid().ToString("D");
+        RefreshQuestionList(0);
+        SetStatus(editingSurveyId is null ? "선택 설문을 새 초안으로 복사했습니다. 기존 응답은 유지됩니다." : "선택 설문 편집 중 — 저장을 누르면 수정됩니다.");
+        return Task.CompletedTask;
+    }
+
+    private async Task ViewOverallStatisticsAsync()
+    {
+        using var response = await SendAdminAsync(HttpMethod.Get, "/api/admin/surveys/statistics");
+        using var viewer = new SurveyOverviewForm(await ReadTextEnsuringSuccessAsync(response), async id =>
+        {
+            using var detail = await SendAdminAsync(HttpMethod.Get, $"/api/admin/surveys/{id}/results");
+            using var results = new SurveyResultsForm("상세 결과", await ReadTextEnsuringSuccessAsync(detail),
+                (responseId, accept) => ReviewResponseAsync(id, responseId, accept));
+            results.ShowDialog(this);
+        });
+        viewer.ShowDialog(this);
+    }
+
+    private async Task<string> ReviewResponseAsync(string surveyId, string responseId, bool accept)
+    {
+        using var response = await SendAdminAsync(accept ? HttpMethod.Post : HttpMethod.Delete,
+            $"/api/admin/surveys/{surveyId}/responses/{responseId}" + (accept ? "/accept" : ""));
+        await EnsureSuccessAsync(response);
+        using var updated = await SendAdminAsync(HttpMethod.Get, $"/api/admin/surveys/{surveyId}/results");
+        return await ReadTextEnsuringSuccessAsync(updated);
+    }
 
     private async Task ActivateSelectedAsync()
     {
@@ -300,7 +361,8 @@ internal sealed class SurveyAdministrationForm : Form
         using HttpResponseMessage response = await SendAdminAsync(HttpMethod.Get,
             $"/api/admin/surveys/{Uri.EscapeDataString(survey.SurveyId)}/results");
         string json = await ReadTextEnsuringSuccessAsync(response);
-        using var viewer = new SurveyResultsForm(survey.Title, json);
+        using var viewer = new SurveyResultsForm(survey.Title, json,
+            (id, accept) => ReviewResponseAsync(survey.SurveyId, id, accept));
         viewer.ShowDialog(this);
     }
 
@@ -350,6 +412,11 @@ internal sealed class SurveyQuestionEditorForm : Form
     private readonly TextBox prompt = new() { Dock = DockStyle.Fill, MaxLength = 256 };
     private readonly ComboBox type = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
     private readonly CheckBox required = new() { Text = "필수 응답", AutoSize = true, Checked = true };
+    private readonly CheckBox multiple = new() { Text = "복수 응답 가능", AutoSize = true };
+    private readonly NumericUpDown maximum = new() { Minimum=0, Maximum=10, Width=60 };
+    private readonly CheckBox trap = new() { Text="함정문항 (오답은 보류)", AutoSize=true };
+    private readonly TextBox expected = new() { Dock=DockStyle.Fill, Multiline=true, Height=60,
+        PlaceholderText="정답을 한 줄에 하나씩. 객관식은 정답 선택지, 주관식은 허용할 답변." };
     private readonly TextBox options = new()
     {
         Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical,
@@ -364,13 +431,19 @@ internal sealed class SurveyQuestionEditorForm : Form
         Question = source;
         Text = "설문 문항 편집";
         Width = 560;
-        Height = 430;
-        MinimumSize = new Size(500, 380);
+        Height = 620;
+        MinimumSize = new Size(540, 560);
         StartPosition = FormStartPosition.CenterParent;
         type.Items.AddRange(["객관식", "주관식", "OX"]);
         type.SelectedIndex = source.Type switch { "Text" => 1, "OX" => 2, _ => 0 };
         prompt.Text = source.Prompt;
         required.Checked = source.Required;
+        multiple.Checked = source.AllowMultiple;
+        maximum.Value = Math.Clamp(source.MaxSelections, 0, 10);
+        trap.Checked = source.IsTrap;
+        expected.Lines = source.ExpectedAnswers.ToArray();
+        multiple.CheckedChanged += (_, _) => UpdateTypeUi();
+        trap.CheckedChanged += (_, _) => UpdateTypeUi();
         options.Lines = source.Options.ToArray();
         type.SelectedIndexChanged += (_, _) => UpdateTypeUi();
         BuildUi();
@@ -381,13 +454,16 @@ internal sealed class SurveyQuestionEditorForm : Form
     {
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Padding = new Padding(12)
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 7, Padding = new Padding(12)
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 75));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.Controls.Add(new Label { Text = "질문", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, 0, 0);
         root.Controls.Add(prompt, 1, 0);
@@ -398,13 +474,18 @@ internal sealed class SurveyQuestionEditorForm : Form
         root.Controls.Add(typeRow, 1, 1);
         root.Controls.Add(new Label { Text = "선택지", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, 0, 2);
         root.Controls.Add(options, 1, 2);
+        var selectionRow = new FlowLayoutPanel { Dock=DockStyle.Fill, AutoSize=true };
+        selectionRow.Controls.AddRange([multiple, new Label { Text="최대 개수 (0=전체)", AutoSize=true }, maximum]);
+        root.Controls.Add(selectionRow,1,3);
+        root.Controls.Add(trap,1,4);
+        root.Controls.Add(expected,1,5);
         var actions = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true };
         var save = new Button { Text = "확인", AutoSize = true };
         var cancel = new Button { Text = "취소", AutoSize = true, DialogResult = DialogResult.Cancel };
         save.Click += (_, _) => SaveQuestion();
         actions.Controls.Add(save);
         actions.Controls.Add(cancel);
-        root.Controls.Add(actions, 1, 3);
+        root.Controls.Add(actions, 1, 6);
         Controls.Add(root);
         CancelButton = cancel;
     }
@@ -415,6 +496,9 @@ internal sealed class SurveyQuestionEditorForm : Form
         bool isOx = type.SelectedIndex == 2;
         options.Enabled = isChoice;
         options.Text = isOx ? "O\r\nX" : isChoice ? options.Text : string.Empty;
+        multiple.Enabled = isChoice;
+        maximum.Enabled = isChoice && multiple.Checked;
+        expected.Enabled = trap.Checked;
     }
 
     private void SaveQuestion()
@@ -439,10 +523,22 @@ internal sealed class SurveyQuestionEditorForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+        var correct = expected.Lines.Select(line=>line.Trim()).Where(line=>line.Length>0).Distinct().ToList();
+        int limit = questionType == "Choice" && multiple.Checked
+            ? maximum.Value == 0 ? choices.Count : (int)maximum.Value : 1;
+        if (limit > Math.Max(1, choices.Count) || (trap.Checked && (correct.Count == 0 ||
+            (questionType != "Text" && (correct.Count > limit || correct.Any(value=>!choices.Contains(value)))))))
+        {
+            MessageBox.Show("최대 선택 개수와 함정문항 정답을 확인하세요.", "문항 확인");
+            return;
+        }
         Question = new SurveyQuestionDraft
         {
             Id = questionId, Type = questionType, Prompt = questionPrompt,
-            Options = choices, Required = required.Checked
+            Options = choices, Required = required.Checked || trap.Checked,
+            AllowMultiple=questionType=="Choice" && multiple.Checked,
+            MaxSelections=questionType=="Choice" && multiple.Checked ? (int)maximum.Value : 0,
+            IsTrap=trap.Checked, ExpectedAnswers=trap.Checked ? correct : []
         };
         DialogResult = DialogResult.OK;
         Close();
@@ -451,19 +547,65 @@ internal sealed class SurveyQuestionEditorForm : Form
 
 internal sealed class SurveyResultsForm : Form
 {
-    public SurveyResultsForm(string title, string json)
+    private readonly Func<string,bool,Task<string>> review;
+    public SurveyResultsForm(string title, string json, Func<string,bool,Task<string>> review)
     {
+        this.review=review;
         Text = $"설문 결과 - {title}";
         Width = 900;
         Height = 700;
         StartPosition = FormStartPosition.CenterParent;
+        Render(json);
+    }
+
+    private void Render(string json)
+    {
+        foreach(Control control in Controls.Cast<Control>().ToArray()) control.Dispose();
         var tabs = new TabControl { Dock = DockStyle.Fill };
         using JsonDocument document = JsonDocument.Parse(json);
         JsonElement root = document.RootElement;
         int responseCount = root.GetProperty("responseCount").GetInt32();
         tabs.TabPages.Add(CreatePage("전체 통계", FormatStatistics(root, responseCount)));
+        var graph = new TabPage("문항별 그래프");
+        var rows = new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, AutoScroll=true };
+        foreach(var question in root.GetProperty("choiceStatistics").EnumerateArray())
+        {
+            int answered=question.GetProperty("answeredCount").GetInt32();
+            rows.Controls.Add(new SurveyBarChart(question.GetProperty("prompt").GetString() ?? "",
+                question.GetProperty("options").EnumerateArray().Select(o=>(o.GetProperty("option").GetString() ?? "",o.GetProperty("count").GetInt32())).ToArray(),answered));
+        }
+        graph.Controls.Add(rows);
+        tabs.TabPages.Add(graph);
         tabs.TabPages.Add(CreatePage("주관식 답변", FormatTextAnswers(root)));
         tabs.TabPages.Add(CreatePage("개별 응답", FormatIndividuals(root)));
+        var pendingPage = new TabPage($"보류함 ({root.GetProperty("pendingCount").GetInt32()})");
+        var pending = root.GetProperty("individualResponses").EnumerateArray()
+            .Where(r=>r.GetProperty("reviewStatus").GetString()=="Pending").Select(r=>r.Clone()).ToArray();
+        var list = new ListBox { Dock=DockStyle.Top, Height=120 };
+        foreach(var item in pending) list.Items.Add($"{DisplayName(item)} · {item.GetProperty("reviewReason").GetString()}");
+        var detail = new RichTextBox { Dock=DockStyle.Fill, ReadOnly=true, BackColor=Color.White, ForeColor=Color.Black };
+        list.SelectedIndexChanged += (_,_) => {
+            if(list.SelectedIndex<0) return;
+            var item=pending[list.SelectedIndex];
+            detail.Text=$"보류 사유: {item.GetProperty("reviewReason").GetString()}\n"+
+                string.Join("\n",item.GetProperty("answers").EnumerateArray().Select(a=>$"{a.GetProperty("prompt").GetString()}: {a.GetProperty("value").GetString()}"));
+        };
+        var actions=new FlowLayoutPanel { Dock=DockStyle.Bottom, AutoSize=true };
+        foreach(bool accept in new[]{true,false})
+        {
+            var button=new Button {Text=accept ? "선택 응답 반영" : "선택 응답 삭제", AutoSize=true};
+            button.Click += async (_,_) => {
+                if(list.SelectedIndex<0) return;
+                if(!accept && MessageBox.Show("보류 응답을 삭제하시겠습니까?","응답 삭제",MessageBoxButtons.YesNo)!=DialogResult.Yes) return;
+                button.Enabled=false;
+                try { Render(await review(pending[list.SelectedIndex].GetProperty("responseId").GetString()!, accept)); }
+                catch(Exception ex){MessageBox.Show(ex.Message);if(!button.IsDisposed)button.Enabled=true;}
+            };
+            actions.Controls.Add(button);
+        }
+        pendingPage.Controls.Add(detail); pendingPage.Controls.Add(list); pendingPage.Controls.Add(actions);
+        if(pending.Length>0)list.SelectedIndex=0;
+        tabs.TabPages.Add(pendingPage);
         Controls.Add(tabs);
     }
 
@@ -480,18 +622,19 @@ internal sealed class SurveyResultsForm : Form
 
     private static string FormatStatistics(JsonElement root, int responseCount)
     {
-        var text = new StringBuilder($"전체 응답: {responseCount}명\r\n\r\n");
+        int accepted=root.GetProperty("acceptedCount").GetInt32();
+        var text = new StringBuilder($"전체 응답: {responseCount}명 · 반영: {accepted}명 · 보류: {root.GetProperty("pendingCount").GetInt32()}명\r\n보류 응답은 아래 통계에서 제외됩니다.\r\n\r\n");
         foreach (JsonElement question in root.GetProperty("choiceStatistics").EnumerateArray())
         {
             text.AppendLine(question.GetProperty("prompt").GetString()).AppendLine();
-            int answered = question.GetProperty("options").EnumerateArray().Sum(option => option.GetProperty("count").GetInt32());
+            int answered = question.GetProperty("answeredCount").GetInt32();
             foreach (JsonElement option in question.GetProperty("options").EnumerateArray())
             {
                 int count = option.GetProperty("count").GetInt32();
                 double percent = answered == 0 ? 0 : count * 100.0 / answered;
                 text.AppendLine($"  {option.GetProperty("option").GetString()}: {count}명 ({percent:0.0}%)");
             }
-            text.AppendLine($"  무응답: {Math.Max(0, responseCount - answered)}명").AppendLine();
+            text.AppendLine($"  응답자: {answered}명 / 무응답: {Math.Max(0, accepted - answered)}명 (복수 응답은 합계 100% 초과 가능)").AppendLine();
         }
         return text.ToString();
     }
@@ -521,7 +664,7 @@ internal sealed class SurveyResultsForm : Form
         foreach (JsonElement response in root.GetProperty("individualResponses").EnumerateArray())
         {
             text.AppendLine($"응답 #{index++} · {DisplayName(response)} · " +
-                            $"{response.GetProperty("submittedAtUtc").GetDateTime().ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+                            $"{response.GetProperty("submittedAtUtc").GetDateTime().ToLocalTime():yyyy-MM-dd HH:mm:ss} · {response.GetProperty("reviewStatus").GetString()}");
             text.AppendLine($"빌드 {response.GetProperty("buildVersion").GetString()} · " +
                             $"{response.GetProperty("mapName").GetString()} · " +
                             $"{response.GetProperty("processRole").GetString()}/{NullableString(response, "playerRole")}");

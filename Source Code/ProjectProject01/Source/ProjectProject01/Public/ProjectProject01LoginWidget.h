@@ -150,14 +150,29 @@ private:
 	TObjectPtr<class UTextBlock> NoticeText;
 };
 
-/** 타이틀과 ESC 메뉴에서 열 수 있는 간단한 플레이어 설문입니다. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01SurveyOptionBinding final : public UObject
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY(Transient) TObjectPtr<UProjectProject01SurveyWidget> Owner;
+	int32 QuestionIndex = 0;
+	int32 OptionIndex = 0;
+	UFUNCTION() void HandleChanged(bool bChecked);
+};
+
+/** 로그인한 플레이어가 응답할 수 있는 설문입니다. */
 UCLASS()
 class PROJECTPROJECT01_API UProjectProject01SurveyWidget final : public UUserWidget
 {
 	GENERATED_BODY()
 
 public:
-	void ConfigureSurvey(const FProjectProject01SurveyDefinition& InSurvey, UUserWidget* InReturnWidget);
+	void ConfigureSurvey(const FProjectProject01SurveyDefinition& InSurvey, UUserWidget* InReturnWidget,
+		bool bInReturnToTitleAfterSurvey = false);
+	void ShowSurveyNotice(const FString& Message, bool bSubmissionSucceeded);
+	bool ShouldReturnToTitleAfterSurvey() const { return bReturnToTitleAfterSurvey; }
+	void HandleOptionChanged(int32 QuestionIndex, int32 OptionIndex, bool bChecked);
 
 protected:
 	virtual bool Initialize() override;
@@ -168,20 +183,33 @@ protected:
 private:
 	UFUNCTION() void HandleSubmitClicked();
 	UFUNCTION() void HandleBackClicked();
+	UFUNCTION() void HandleAcknowledgementClicked();
+	UFUNCTION() void HandleSurveyLogoutCompleted(bool bSuccess, const FString& Message, const FString& DisplayName);
+	void CloseSurvey();
+	void FinishSurveyLogout();
 	void BuildWidgetTree();
 	void SetBusy(bool bInBusy, const FString& Message = FString(), bool bIsError = false);
 
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SurveyTitleText;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SurveyDescriptionText;
 	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> QuestionPanel;
-	UPROPERTY(Transient) TArray<TObjectPtr<class UComboBoxString>> ChoiceInputs;
+	UPROPERTY(Transient) TArray<TObjectPtr<class UCheckBox>> ChoiceInputs;
+	UPROPERTY(Transient) TArray<TObjectPtr<UProjectProject01SurveyOptionBinding>> OptionBindings;
+	TArray<TArray<int32>> SelectedOptions;
+	bool bUpdatingChoices = false;
 	UPROPERTY(Transient) TArray<TObjectPtr<class UMultiLineEditableTextBox>> TextInputs;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> StatusText;
 	UPROPERTY(Transient) TObjectPtr<class UButton> SubmitButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> BackButton;
+	UPROPERTY(Transient) TObjectPtr<class UBorder> AcknowledgementPanel;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> AcknowledgementText;
+	UPROPERTY(Transient) TObjectPtr<class UButton> AcknowledgementButton;
 	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
 	FProjectProject01SurveyDefinition Survey;
 	bool bBusy = false;
+	bool bSubmitted = false;
+	bool bAcknowledgementVisible = false;
+	bool bReturnToTitleAfterSurvey = false;
 };
 
 UCLASS()
@@ -244,12 +272,12 @@ private:
 
 	UFUNCTION()
 	void HandleMultiplayerClicked();
+	UFUNCTION()
+	void HandleSurveyClicked();
+	void NavigateToMultiplayer(bool bForSurvey);
 
 	UFUNCTION()
 	void HandleSettingsClicked();
-
-	UFUNCTION()
-	void HandleSurveyClicked();
 
 	UFUNCTION()
 	void HandleQuitClicked();
@@ -261,7 +289,6 @@ private:
 	void BuildWidgetTree();
 	void SetMenuEnabled(bool bEnabled);
 	void PollMultiplayerService();
-	void RefreshActiveSurvey();
 	void RefreshSaveSlotPage();
 	void PlaySaveSlot(int32 SlotIndex);
 	void RequestStartNewGameInSaveSlot(int32 SlotIndex);
@@ -335,13 +362,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectProject01SettingsWidget> SettingsWidget;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UProjectProject01SurveyWidget> SurveyWidget;
-
 	bool bNavigationRequested = false;
 	bool bMultiplayerServiceAvailable = false;
-	bool bActiveSurveyAvailable = false;
-	FProjectProject01SurveyDefinition ActiveSurvey;
 	bool bSinglePlayerFadeActive = false;
 	float SinglePlayerFadeElapsedSeconds = 0.0f;
 	float SinglePlayerFadeDurationSeconds = 1.5f;
@@ -911,6 +933,9 @@ class PROJECTPROJECT01_API UProjectProject01LobbyWidget final : public UUserWidg
 {
 	GENERATED_BODY()
 
+public:
+	void PrepareTitleSurveyLogout();
+
 protected:
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
@@ -918,6 +943,16 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	UFUNCTION() void HandleLobbySurveyClicked();
+	void RefreshLobbySurvey();
+	void OpenLobbySurvey(bool bFromTitle = false);
+	UPROPERTY(Transient) TObjectPtr<class UButton> LobbySurveyButton;
+	UPROPERTY(Transient) TObjectPtr<UProjectProject01SurveyWidget> LobbySurveyWidget;
+	FProjectProject01SurveyDefinition LobbySurvey;
+	int32 LobbySurveyPollCounter = 0;
+	bool bLobbySurveyRequestPending = false;
+	bool bOpenTitleSurveyOnRefresh = false;
+
 	UFUNCTION()
 	void HandleOpenCreateRoomClicked();
 

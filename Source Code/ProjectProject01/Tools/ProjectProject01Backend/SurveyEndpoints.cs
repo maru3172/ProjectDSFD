@@ -8,14 +8,18 @@ internal sealed record SurveyQuestionDefinition(
     string Type,
     string Prompt,
     IReadOnlyList<string> Options,
-    bool Required);
+    bool Required,
+    bool AllowMultiple = false,
+    int MaxSelections = 0,
+    bool IsTrap = false,
+    IReadOnlyList<string>? ExpectedAnswers = null);
 
 internal sealed record CreateSurveyRequest(
     string Title,
     string Description,
     IReadOnlyList<SurveyQuestionDefinition> Questions);
 
-internal sealed record SurveyAnswerRequest(string QuestionId, string Value);
+internal sealed record SurveyAnswerRequest(string QuestionId, string Value, IReadOnlyList<string>? Values = null);
 
 internal sealed record SubmitSurveyResponseRequest(
     string ResponseId,
@@ -30,19 +34,22 @@ internal static class SurveyEndpoints
 {
     public static void MapProjectProject01Surveys(this WebApplication app)
     {
-        app.MapGet("/api/surveys/active", async (AuthDatabase database, CancellationToken ct) =>
+        app.MapGet("/api/surveys/active", async (HttpRequest request, AuthDatabase database, CancellationToken ct) =>
         {
+            if (!request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return Results.Unauthorized();
             await using var connection = await database.OpenConnectionAsync(ct);
+            if (await ResolveOptionalUserIdAsync(connection, request, ct) is null) return Results.Unauthorized();
             SurveyRow? survey = await LoadActiveSurveyAsync(connection, ct);
             return survey is null
                 ? Results.NotFound(new { code = "NoActiveSurvey", message = "현재 진행 중인 설문이 없습니다." })
                 : Results.Ok(ToPublicResponse(survey));
-        }).RequireRateLimiting("survey");
+        }).RequireRateLimiting("survey-read");
 
         app.MapPost("/api/surveys/{surveyId}/responses", async (
             string surveyId, HttpRequest request, SubmitSurveyResponseRequest body,
             AuthDatabase database, CancellationToken ct) =>
         {
+            if (!request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return Results.Unauthorized();
             if (!Guid.TryParse(surveyId, out _) || !Guid.TryParse(body.ResponseId, out _) ||
                 body.SubmittedAtUtc == default || body.Answers is null ||
                 !ValidShort(body.BuildVersion, 128) || !ValidShort(body.MapName, 128) ||
@@ -53,6 +60,8 @@ internal static class SurveyEndpoints
             }
 
             await using var connection = await database.OpenConnectionAsync(ct);
+            ulong? userId = await ResolveOptionalUserIdAsync(connection, request, ct);
+            if (userId is null) return Results.Unauthorized();
             SurveyRow? survey = await LoadSurveyAsync(connection, surveyId, ct);
             if (survey is null || !survey.IsActive)
                 return Results.Conflict(new { message = "이 설문은 현재 응답을 받지 않습니다." });
@@ -61,14 +70,14 @@ internal static class SurveyEndpoints
             if (!ValidateAnswers(questions, body.Answers, out string answerError))
                 return Results.BadRequest(new { message = answerError });
 
-            ulong? userId = await ResolveOptionalUserIdAsync(connection, request, ct);
-            if (request.Headers.ContainsKey("Authorization") && userId is null)
-                return Results.Unauthorized();
+            string[] failedTraps = questions.Where(q => q.IsTrap && !TrapMatches(q,
+                body.Answers.FirstOrDefault(a => a.QuestionId == q.Id))).Select(q => q.Prompt).ToArray();
 
             string answersJson = JsonSerializer.Serialize(body.Answers.Select(answer => new
             {
                 questionId = answer.QuestionId.Trim(),
-                value = answer.Value.Trim()
+                value = answer.Value?.Trim() ?? string.Empty,
+                values = answer.Values?.Select(value => value.Trim()).ToArray()
             }));
             try
             {
@@ -76,12 +85,14 @@ internal static class SurveyEndpoints
                     """
                     INSERT INTO player_survey_responses
                         (response_id, survey_id, user_id, submitted_at_utc, answers_json,
-                         build_version, map_name, process_role, player_role)
+                         build_version, map_name, process_role, player_role, review_status, review_reason)
                     VALUES
                         (@responseId, @surveyId, @userId, @submittedAt, @answers,
-                         @buildVersion, @mapName, @processRole, @playerRole);
+                         @buildVersion, @mapName, @processRole, @playerRole, @reviewStatus, @reviewReason);
                     """, connection) { CommandTimeout = 5 };
                 command.Parameters.AddWithValue("@responseId", body.ResponseId);
+                command.Parameters.AddWithValue("@reviewStatus", failedTraps.Length > 0 ? "Pending" : "Accepted");
+                command.Parameters.AddWithValue("@reviewReason", string.Join(" / ", failedTraps));
                 command.Parameters.AddWithValue("@surveyId", surveyId);
                 command.Parameters.AddWithValue("@userId", (object?)userId ?? DBNull.Value);
                 command.Parameters.AddWithValue("@submittedAt", body.SubmittedAtUtc.ToUniversalTime());
@@ -154,7 +165,11 @@ internal static class SurveyEndpoints
                 type = question.Type.Trim(),
                 prompt = question.Prompt.Trim(),
                 options = question.Options.Select(option => option.Trim()).ToArray(),
-                required = question.Required
+                required = question.Required,
+                allowMultiple = question.AllowMultiple,
+                maxSelections = question.MaxSelections,
+                isTrap = question.IsTrap,
+                expectedAnswers = question.ExpectedAnswers ?? []
             }));
             await using var connection = await database.OpenConnectionAsync(ct);
             await using var command = new MySqlCommand(
@@ -172,6 +187,95 @@ internal static class SurveyEndpoints
                 surveyId,
                 message = "설문 초안을 저장했습니다. 활성화해야 클라이언트에 표시됩니다."
             });
+        }).RequireRateLimiting("admin");
+
+        app.MapPut("/api/admin/surveys/{surveyId}", async (
+            string surveyId, HttpRequest request, CreateSurveyRequest body, AuthDatabase database,
+            AdministratorOptions admin, CancellationToken ct) =>
+        {
+            if (!IsAdmin(request, admin)) return Results.Unauthorized();
+            if (!ValidateDefinition(body, out string error)) return Results.BadRequest(new { message = error });
+            await using var connection = await database.OpenConnectionAsync(ct);
+            // Keep existing responses interpretable: editing an already answered survey creates a new draft in the helper.
+            await using var command = new MySqlCommand("""
+                UPDATE player_surveys s SET title=@title, description=@description, questions_json=@questions
+                WHERE s.id=@id AND s.is_active=FALSE
+                  AND NOT EXISTS (SELECT 1 FROM player_survey_responses r WHERE r.survey_id=s.id);
+                """, connection);
+            command.Parameters.AddWithValue("@id", surveyId);
+            command.Parameters.AddWithValue("@title", body.Title.Trim());
+            command.Parameters.AddWithValue("@description", body.Description?.Trim() ?? "");
+            command.Parameters.AddWithValue("@questions", JsonSerializer.Serialize(body.Questions));
+            int changed = await command.ExecuteNonQueryAsync(ct);
+            return changed > 0 ? Results.Ok(new { surveyId, message = "설문을 수정했습니다." })
+                : Results.Conflict(new { message = "진행 중이거나 응답이 있는 설문은 새 초안으로 복사하여 수정하세요." });
+        }).RequireRateLimiting("admin");
+
+        app.MapGet("/api/admin/surveys/statistics", async (
+            HttpRequest request, AuthDatabase database, AdministratorOptions admin, CancellationToken ct) =>
+        {
+            if (!IsAdmin(request, admin)) return Results.Unauthorized();
+            await using var connection = await database.OpenConnectionAsync(ct);
+            var surveys = new List<object>();
+            await using (var command = new MySqlCommand("""
+                SELECT s.id,s.title,s.is_active,COUNT(r.id),
+                  COALESCE(SUM(r.review_status='Accepted'),0),COALESCE(SUM(r.review_status='Pending'),0)
+                FROM player_surveys s LEFT JOIN player_survey_responses r ON r.survey_id=s.id
+                GROUP BY s.id,s.title,s.is_active ORDER BY s.created_at_utc DESC;
+                """, connection))
+            await using (var reader = await command.ExecuteReaderAsync(ct))
+                while (await reader.ReadAsync(ct)) surveys.Add(new { surveyId=ReadIdentifier(reader,0),
+                    title=reader.GetString(1), isActive=reader.GetBoolean(2), responseCount=reader.GetInt32(3),
+                    acceptedCount=reader.GetInt32(4), pendingCount=reader.GetInt32(5) });
+            var daily = new List<SurveyDailyStatistics>();
+            await using (var trend = new MySqlCommand("""
+                SELECT DATE(DATE_ADD(submitted_at_utc, INTERVAL 9 HOUR)),COUNT(*),
+                  COALESCE(SUM(review_status='Accepted'),0),COALESCE(SUM(review_status='Pending'),0)
+                FROM player_survey_responses GROUP BY 1 ORDER BY 1;
+                """, connection))
+            await using (var reader = await trend.ExecuteReaderAsync(ct))
+                while (await reader.ReadAsync(ct)) daily.Add(new(reader.GetDateTime(0).ToString("yyyy-MM-dd"),
+                    reader.GetInt32(1),reader.GetInt32(2),reader.GetInt32(3)));
+            await using var totals = new MySqlCommand("""
+                SELECT COUNT(*),COUNT(DISTINCT user_id),COALESCE(SUM(review_status='Accepted'),0),
+                  COALESCE(SUM(review_status='Pending'),0) FROM player_survey_responses;
+                """, connection);
+            await using var totalReader = await totals.ExecuteReaderAsync(ct);
+            await totalReader.ReadAsync(ct);
+            return Results.Ok(new { surveyCount=surveys.Count, responseCount=totalReader.GetInt32(0),
+                participantCount=totalReader.GetInt32(1), acceptedCount=totalReader.GetInt32(2),
+                pendingCount=totalReader.GetInt32(3), surveys,
+                responseTrend=FillDailyGaps(daily), trendTimeZone="Asia/Seoul" });
+        }).RequireRateLimiting("admin");
+
+        app.MapPost("/api/admin/surveys/{surveyId}/responses/{responseId}/accept", async (
+            string surveyId, string responseId, HttpRequest request, AuthDatabase database,
+            AdministratorOptions admin, CancellationToken ct) =>
+        {
+            if (!IsAdmin(request, admin)) return Results.Unauthorized();
+            await using var connection = await database.OpenConnectionAsync(ct);
+            await using var command = new MySqlCommand("""
+                UPDATE player_survey_responses SET review_status='Accepted'
+                WHERE survey_id=@survey AND response_id=@response AND review_status='Pending';
+                """, connection);
+            command.Parameters.AddWithValue("@survey", surveyId);
+            command.Parameters.AddWithValue("@response", responseId);
+            return await command.ExecuteNonQueryAsync(ct) > 0 ? Results.Ok(new { message="응답을 통계에 반영했습니다." })
+                : Results.NotFound();
+        }).RequireRateLimiting("admin");
+
+        app.MapDelete("/api/admin/surveys/{surveyId}/responses/{responseId}", async (
+            string surveyId, string responseId, HttpRequest request, AuthDatabase database,
+            AdministratorOptions admin, CancellationToken ct) =>
+        {
+            if (!IsAdmin(request, admin)) return Results.Unauthorized();
+            await using var connection = await database.OpenConnectionAsync(ct);
+            await using var command = new MySqlCommand(
+                "DELETE FROM player_survey_responses WHERE survey_id=@survey AND response_id=@response AND review_status='Pending';", connection);
+            command.Parameters.AddWithValue("@survey", surveyId);
+            command.Parameters.AddWithValue("@response", responseId);
+            return await command.ExecuteNonQueryAsync(ct) > 0 ? Results.Ok(new { message="보류 응답을 삭제했습니다." })
+                : Results.NotFound();
         }).RequireRateLimiting("admin");
 
         app.MapPost("/api/admin/surveys/{surveyId}/activate", async (
@@ -254,7 +358,7 @@ internal static class SurveyEndpoints
                 """
                 SELECT r.response_id, r.submitted_at_utc, r.answers_json,
                        r.build_version, r.map_name, r.process_role, r.player_role,
-                       u.account_id, u.display_name
+                       u.account_id, u.display_name, r.review_status, r.review_reason
                 FROM player_survey_responses r
                 LEFT JOIN users u ON u.id = r.user_id
                 WHERE r.survey_id = @surveyId
@@ -269,7 +373,7 @@ internal static class SurveyEndpoints
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.IsDBNull(6) ? null : reader.GetString(6),
                     reader.IsDBNull(7) ? null : reader.GetString(7),
-                    reader.IsDBNull(8) ? null : reader.GetString(8)));
+                    reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetString(9), reader.GetString(10)));
             }
             return Results.Ok(BuildResultsResponse(survey, questions, responses));
         }).RequireRateLimiting("admin");
@@ -280,7 +384,10 @@ internal static class SurveyEndpoints
         surveyId = survey.Id,
         title = survey.Title,
         description = survey.Description,
-        questions = JsonSerializer.Deserialize<JsonElement>(survey.QuestionsJson)
+        // Never disclose attention-check answers to the game client; always use camelCase.
+        questions = ParseQuestions(survey.QuestionsJson).Select(q => new {
+            id=q.Id, type=q.Type, prompt=q.Prompt, options=q.Options, required=q.Required || q.IsTrap,
+            allowMultiple=q.AllowMultiple, maxSelections=SelectionLimit(q) })
     };
 
     private static object BuildResultsResponse(
@@ -294,22 +401,24 @@ internal static class SurveyEndpoints
             answers = JsonSerializer.Deserialize<List<SurveyAnswerRequest>>(response.AnswersJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []
         }).ToArray();
+        var accepted = parsed.Where(item => item.response.ReviewStatus == "Accepted").ToArray();
         var choiceStatistics = questions.Where(question => question.Type is "Choice" or "OX").Select(question => new
         {
             questionId = question.Id,
             prompt = question.Prompt,
+            answeredCount = accepted.Count(item => item.answers.Any(a => a.QuestionId == question.Id && SelectedValues(a).Count > 0)),
             options = question.Options.Select(option => new
             {
                 option,
-                count = parsed.Count(item => item.answers.Any(answer =>
-                    answer.QuestionId == question.Id && answer.Value == option))
+                count = accepted.Count(item => item.answers.Any(answer =>
+                    answer.QuestionId == question.Id && SelectedValues(answer).Contains(option)))
             }).ToArray()
         }).ToArray();
         var textAnswers = questions.Where(question => question.Type == "Text").Select(question => new
         {
             questionId = question.Id,
             prompt = question.Prompt,
-            answers = parsed.Select(item => new
+            answers = accepted.Select(item => new
             {
                 item.response.ResponseId,
                 item.response.SubmittedAtUtc,
@@ -328,25 +437,29 @@ internal static class SurveyEndpoints
             item.response.MapName,
             item.response.ProcessRole,
             item.response.PlayerRole,
+            item.response.ReviewStatus,
+            item.response.ReviewReason,
             answers = questions.Select(question => new
             {
                 questionId = question.Id,
                 prompt = question.Prompt,
                 type = question.Type,
-                value = item.answers.FirstOrDefault(answer => answer.QuestionId == question.Id)?.Value ?? string.Empty
+                value = FormatAnswer(item.answers.FirstOrDefault(answer => answer.QuestionId == question.Id))
             }).ToArray()
         }).ToArray();
         return new
         {
             survey = ToPublicResponse(survey),
             responseCount = responses.Count,
+            acceptedCount = accepted.Length,
+            pendingCount = parsed.Length - accepted.Length,
             choiceStatistics,
             textAnswers,
             individualResponses
         };
     }
 
-    private static bool ValidateDefinition(CreateSurveyRequest body, out string error)
+    internal static bool ValidateDefinition(CreateSurveyRequest body, out string error)
     {
         error = "설문 형식이 올바르지 않습니다.";
         if (string.IsNullOrWhiteSpace(body.Title) || body.Title.Trim().Length > 128 ||
@@ -356,13 +469,14 @@ internal static class SurveyEndpoints
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (SurveyQuestionDefinition question in body.Questions)
         {
-            if (!Guid.TryParse(question.Id, out _) || !ids.Add(question.Id) ||
+            if (question is null || question.Options is null || !Guid.TryParse(question.Id, out _) || !ids.Add(question.Id) ||
                 question.Type is not ("Choice" or "Text" or "OX") ||
                 string.IsNullOrWhiteSpace(question.Prompt) || question.Prompt.Trim().Length > 256)
                 return false;
             if (question.Type == "Choice")
             {
                 if (question.Options is null || question.Options.Count is < 2 or > 10) return false;
+                if (question.Options.Any(option => option is null)) return false;
                 var options = question.Options.Select(option => option.Trim()).ToArray();
                 if (options.Any(option => option.Length is < 1 or > 128) ||
                     options.Distinct(StringComparer.Ordinal).Count() != options.Length) return false;
@@ -373,40 +487,76 @@ internal static class SurveyEndpoints
                     question.Options[0] != "O" || question.Options[1] != "X") return false;
             }
             else if (question.Options is { Count: > 0 }) return false;
+            if (question.MaxSelections < 0 || question.MaxSelections > question.Options.Count ||
+                (question.AllowMultiple && question.Type != "Choice")) return false;
+            if (question.IsTrap && (question.ExpectedAnswers is not { Count: > 0 } ||
+                question.ExpectedAnswers.Any(value => string.IsNullOrWhiteSpace(value) || value.Length > 2000) ||
+                (question.Type != "Text" && (question.ExpectedAnswers.Count > SelectionLimit(question) ||
+                  question.ExpectedAnswers.Any(value => !question.Options.Contains(value)))))) return false;
         }
         error = string.Empty;
         return true;
     }
 
-    private static bool ValidateAnswers(
+    internal static bool ValidateAnswers(
         IReadOnlyList<SurveyQuestionDefinition> questions,
         IReadOnlyList<SurveyAnswerRequest> answers,
         out string error)
     {
         error = "설문 답변이 올바르지 않습니다.";
         if (answers.Count > questions.Count) return false;
-        var answerMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var answerMap = new Dictionary<string, SurveyAnswerRequest>(StringComparer.Ordinal);
         foreach (SurveyAnswerRequest answer in answers)
         {
-            if (!answerMap.TryAdd(answer.QuestionId?.Trim() ?? string.Empty, answer.Value?.Trim() ?? string.Empty))
+            if (answer is null || answer.Values?.Any(value => value is null) == true) return false;
+            if (!answerMap.TryAdd(answer.QuestionId?.Trim() ?? string.Empty, answer))
                 return false;
         }
         foreach (SurveyQuestionDefinition question in questions)
         {
-            answerMap.TryGetValue(question.Id, out string? value);
-            value ??= string.Empty;
-            if (question.Required && string.IsNullOrWhiteSpace(value))
+            answerMap.TryGetValue(question.Id, out var answer);
+            string value = answer?.Value?.Trim() ?? string.Empty;
+            var selected = answer is null ? [] : SelectedValues(answer);
+            if ((question.Required || question.IsTrap) && (question.Type == "Text" ? value.Length == 0 : selected.Count == 0))
             {
                 error = $"필수 문항 '{question.Prompt}'에 응답해주세요.";
                 return false;
             }
-            if (question.Type is "Choice" or "OX" && value.Length > 0 && !question.Options.Contains(value)) return false;
-            if (question.Type == "Text" && value.Length > 2000) return false;
+            if (question.Type is "Choice" or "OX" && (selected.Count > SelectionLimit(question) ||
+                selected.Distinct(StringComparer.Ordinal).Count() != selected.Count ||
+                selected.Any(option => !question.Options.Contains(option)))) return false;
+            if (question.Type == "Text" && (value.Length > 2000 || answer?.Values is { Count: > 0 })) return false;
         }
         if (answerMap.Keys.Any(id => questions.All(question => question.Id != id))) return false;
         error = string.Empty;
         return true;
     }
+
+    internal static int SelectionLimit(SurveyQuestionDefinition q) => q.Type == "Choice" && q.AllowMultiple
+        ? q.MaxSelections > 0 ? q.MaxSelections : q.Options.Count : 1;
+
+    internal static IReadOnlyList<SurveyDailyStatistics> FillDailyGaps(IReadOnlyList<SurveyDailyStatistics> daily)
+    {
+        if(daily.Count==0)return [];
+        var byDate=daily.ToDictionary(point=>DateOnly.ParseExact(point.Date,"yyyy-MM-dd"));
+        var result=new List<SurveyDailyStatistics>();
+        DateOnly last=byDate.Keys.Max();
+        for(DateOnly date=byDate.Keys.Min();date<=last;date=date.AddDays(1))
+            result.Add(byDate.TryGetValue(date,out var point) ? point : new(date.ToString("yyyy-MM-dd"),0,0,0));
+        return result;
+    }
+
+    internal static IReadOnlyList<string> SelectedValues(SurveyAnswerRequest answer) => answer.Values is { Count: > 0 }
+        ? answer.Values.Select(value => value.Trim()).ToArray()
+        : string.IsNullOrWhiteSpace(answer.Value) ? [] : new[] { answer.Value.Trim() };
+
+    internal static bool TrapMatches(SurveyQuestionDefinition question, SurveyAnswerRequest? answer) =>
+        answer is not null && question.ExpectedAnswers is not null && (question.Type == "Text"
+            ? question.ExpectedAnswers.Any(expected => string.Equals(expected.Trim(), answer.Value?.Trim(), StringComparison.OrdinalIgnoreCase))
+            : new HashSet<string>(question.ExpectedAnswers, StringComparer.Ordinal).SetEquals(SelectedValues(answer)));
+
+    private static string FormatAnswer(SurveyAnswerRequest? answer) => answer is null ? ""
+        : answer.Values is { Count: > 0 } ? string.Join(", ", answer.Values) : answer.Value;
 
     private static IReadOnlyList<SurveyQuestionDefinition> ParseQuestions(string json) =>
         JsonSerializer.Deserialize<List<SurveyQuestionDefinition>>(json,
@@ -488,5 +638,5 @@ internal static class SurveyEndpoints
     private sealed record SurveyResponseRow(
         string ResponseId, DateTime SubmittedAtUtc, string AnswersJson,
         string BuildVersion, string MapName, string ProcessRole, string? PlayerRole,
-        string? AccountId, string? DisplayName);
+        string? AccountId, string? DisplayName, string ReviewStatus, string ReviewReason);
 }

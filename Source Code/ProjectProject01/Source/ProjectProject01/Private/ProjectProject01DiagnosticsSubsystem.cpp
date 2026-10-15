@@ -1009,6 +1009,14 @@ bool FProjectProject01DiagnosticsContractTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("AITuning.csv must import into every FMannequinAITuningRow field."), ProjectProject01Diagnostics::LoadVerticalCsvIntoStruct(
 		FPaths::Combine(FPaths::ProjectContentDir(), TEXT("MyProject/Data/AITuning.csv")), FMannequinAITuningRow::StaticStruct(), &MannequinCsv, CsvError));
 	if (!CsvError.IsEmpty()) AddError(CsvError);
+	const UDataTable* AITable = LoadObject<UDataTable>(nullptr, TEXT("/Game/MyProject/Data/DT_AITuning.DT_AITuning"));
+	const FMannequinAITuningRow* AITableRow = IsValid(AITable)
+		? AITable->FindRow<FMannequinAITuningRow>(TEXT("Default"), TEXT("ManualAttackRangeCheck")) : nullptr;
+	if (TestNotNull(TEXT("Cooked AI tuning source contains a Default row"), AITableRow))
+	{
+		TestEqual(TEXT("Manual attack range in the asset matches the CSV source"),
+			AITableRow->MultiplayerManualAttackRange, MannequinCsv.MultiplayerManualAttackRange);
+	}
 	CsvError.Reset();
 	TestTrue(TEXT("HelperTuning.csv must import into every FHelperTuningRow field."), ProjectProject01Diagnostics::LoadVerticalCsvIntoStruct(
 		FPaths::Combine(FPaths::ProjectContentDir(), TEXT("MyProject/Data/HelperTuning.csv")), FHelperTuningRow::StaticStruct(), &HelperCsv, CsvError));

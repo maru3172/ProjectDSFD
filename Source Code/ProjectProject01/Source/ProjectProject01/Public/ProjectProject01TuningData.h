@@ -261,6 +261,10 @@ struct PROJECTPROJECT01_API FMannequinAITuningRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.0", Units = "cm"))
 	float MultiplayerAcceptanceRadius = 60.0f;
 
+	/** 직접 조작 중인 마네킹의 좌클릭 공격 거리입니다. 두 캐릭터 중심 사이의 거리이며 0이면 수동 공격만 끕니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mannequin AI|Multiplayer", meta = (ClampMin = "0.0", Units = "cm"))
+	float MultiplayerManualAttackRange = 180.0f;
+
 	bool IsValidForApplication(FString& OutError) const;
 };
 

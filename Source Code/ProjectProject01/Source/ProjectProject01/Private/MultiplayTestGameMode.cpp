@@ -38,6 +38,12 @@ DEFINE_LOG_CATEGORY(LogProjectProject01Multiplayer);
 
 namespace
 {
+	bool IsWithinMannequinManualAttackRange(const FVector& Offset, const float Range)
+	{
+		return FMath::IsFinite(Range) && Range > 0.0f && !Offset.ContainsNaN() &&
+			Offset.SizeSquared() <= FMath::Square(static_cast<double>(Range));
+	}
+
 	struct FMatchResolutionSummary
 	{
 		int32 SurvivorCount = 0;
@@ -153,6 +159,24 @@ namespace
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FProjectProject01ManualAttackRangeTest,
+	"ProjectProject01.Multiplayer.ManualAttackRange",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01ManualAttackRangeTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("Inside attack range is accepted"), IsWithinMannequinManualAttackRange(FVector(179.9, 0, 0), 180.0f));
+	TestTrue(TEXT("Exact range boundary is accepted"), IsWithinMannequinManualAttackRange(FVector(180, 0, 0), 180.0f));
+	TestFalse(TEXT("Outside attack range is rejected"), IsWithinMannequinManualAttackRange(FVector(180.1, 0, 0), 180.0f));
+	TestTrue(TEXT("A larger tuning value changes the boundary"), IsWithinMannequinManualAttackRange(FVector(250, 0, 0), 300.0f));
+	TestFalse(TEXT("A smaller tuning value changes the boundary"), IsWithinMannequinManualAttackRange(FVector(150, 0, 0), 100.0f));
+	TestFalse(TEXT("Vertical distance is included"), IsWithinMannequinManualAttackRange(FVector(0, 0, 181), 180.0f));
+	TestFalse(TEXT("Zero range disables manual attacks"), IsWithinMannequinManualAttackRange(FVector::ZeroVector, 0.0f));
+	TestFalse(TEXT("Negative range never allows attacks"), IsWithinMannequinManualAttackRange(FVector(1, 0, 0), -180.0f));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FProjectProject01SurvivorVisionConeTest,
 	"ProjectProject01.Multiplayer.SurvivorVisionCone",
@@ -444,7 +468,7 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		}
 		Mannequin->SetControlSlotForGameMode(Index);
 		Mannequin->SetManualControlEnabled(false);
-		Mannequin->SetCatchDamageEnabled(true);
+		Mannequin->SetCatchDamageEnabled(bGlobalMannequinCatchDamageEnabled);
 		// Blueprint instances created before the multiplayer command enum was added can
 		// retain a serialized HoldPosition value. Force every match spawn into patrol.
 		Mannequin->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);
@@ -481,6 +505,8 @@ void AMultiplayTestGameMode::ApplyMannequinTuning(const FMannequinAITuningRow& T
 	MultiplayerFollowSeparation = FMath::Max(0.0f, Tuning.MultiplayerFollowSeparation);
 	MultiplayerRepathInterval = FMath::Max(0.01f, Tuning.MultiplayerRepathInterval);
 	MultiplayerAcceptanceRadius = FMath::Max(0.0f, Tuning.MultiplayerAcceptanceRadius);
+	MultiplayerManualAttackRange = FMath::IsFinite(Tuning.MultiplayerManualAttackRange)
+		? FMath::Max(0.0f, Tuning.MultiplayerManualAttackRange) : 180.0f;
 }
 
 bool AMultiplayTestGameMode::CanMannequinDetectSurvivor(
@@ -1814,6 +1840,9 @@ void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
 	bFinishCommitted = false;
 	bMatchEndedByForfeit = false;
 	bSurvivorVictoryByMannequinForfeit = false;
+	bGlobalMannequinCatchDamageEnabled = true;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+		if (IsValid(*It)) It->SetCatchDamageEnabled(true);
 	DisconnectedMatchRecords.Reset();
 	CompletedResultsByUserId.Reset();
 	ResultVerificationStatus.Reset();
@@ -2692,18 +2721,36 @@ bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerCon
 
 bool AMultiplayTestGameMode::ToggleMannequinCatchDamage(AMultiplayTestPlayerController* RequestingController)
 {
-	AMannequinAICharacter* Controlled = IsValid(RequestingController)
-		? Cast<AMannequinAICharacter>(RequestingController->GetPawn()) : nullptr;
 	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
-		!IsValid(Controlled) || !Controlled->IsManualControlEnabled())
+		AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return bGlobalMannequinCatchDamageEnabled;
+	bGlobalMannequinCatchDamageEnabled = !bGlobalMannequinCatchDamageEnabled;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+		if (IsValid(*It)) It->SetCatchDamageEnabled(bGlobalMannequinCatchDamageEnabled);
+	return bGlobalMannequinCatchDamageEnabled;
+}
+
+bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* RequestingController)
+{
+	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
+		AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return false;
+	AMannequinAICharacter* Controlled = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
+	if (!IsValid(Controlled) || !Controlled->IsManualControlEnabled() ||
+		Controlled != RequestingController->GetViewedMannequin()) return false;
+	APlayerCharacter* Target = nullptr;
+	double BestDistance = FMath::Square(static_cast<double>(MultiplayerManualAttackRange));
+	for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
 	{
-		return IsValid(Controlled) && Controlled->IsCatchDamageEnabled();
+		APlayerCharacter* Survivor = *It;
+		const AMultiplayTestPlayerController* SurvivorController = Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+		if (!IsValid(SurvivorController) || SurvivorController->GetSurvivorState() != EMultiplayTestSurvivorState::Active ||
+			Survivor->IsGameOver()) continue;
+		const FVector Offset = Survivor->GetActorLocation() - Controlled->GetActorLocation();
+		const double Distance = Offset.SizeSquared();
+		if (IsWithinMannequinManualAttackRange(Offset, MultiplayerManualAttackRange) && Distance <= BestDistance &&
+			FVector::DotProduct(Controlled->GetActorForwardVector(), Offset.GetSafeNormal()) >= 0.25f &&
+			RequestingController->LineOfSightTo(Survivor)) { Target=Survivor; BestDistance=Distance; }
 	}
-	const bool bEnabled = Controlled->ToggleCatchDamageEnabled();
-	UE_LOG(LogProjectProject01Multiplayer, Log,
-		TEXT("Mannequin slot %d catch damage is now %s."), Controlled->GetControlSlot(),
-		bEnabled ? TEXT("enabled") : TEXT("disabled"));
-	return bEnabled;
+	return IsValid(Target) && Target->HandleMannequinCatch(Controlled);
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const

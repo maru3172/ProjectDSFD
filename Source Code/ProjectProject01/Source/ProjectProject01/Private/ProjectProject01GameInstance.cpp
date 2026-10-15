@@ -2,6 +2,7 @@
 // Build target: ProjectProject01 / ProjectProject01Server, Unreal Engine 5.8.2
 
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01CrashFiles.h"
 
 #include "Containers/Ticker.h"
 
@@ -660,6 +661,8 @@ void UProjectProject01GameInstance::Shutdown()
 
 void UProjectProject01GameInstance::InitializeCrashReportCollection()
 {
+	// PIE game instances share one Saved directory and are not independent game processes.
+	if (GIsEditor) { ProjectProject01CrashFiles::ExcludeEditorReports(); return; }
 	CrashRunId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
 	CrashStartedAtUtc = FDateTime::UtcNow().ToIso8601();
 	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CrashReports"));
@@ -743,6 +746,7 @@ FString UProjectProject01GameInstance::BuildSafeCrashReportJson(UWorld* World) c
 	const FString Now = FDateTime::UtcNow().ToIso8601();
 	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetStringField(TEXT("reportId"), CrashRunId);
+	Json->SetNumberField(TEXT("processId"), FPlatformProcess::GetCurrentProcessId());
 	Json->SetStringField(TEXT("startedAtUtc"), CrashStartedAtUtc.IsEmpty() ? Now : CrashStartedAtUtc);
 	Json->SetStringField(TEXT("lastUpdatedAtUtc"), Now);
 	Json->SetStringField(TEXT("buildVersion"), ProjectProject01CrashReports::GetBuildVersion());
@@ -781,6 +785,27 @@ void UProjectProject01GameInstance::RecoverPendingCrashReports()
 		{
 			continue;
 		}
+		FString Stored;
+		TSharedPtr<FJsonObject> Marker;
+		if (!FFileHelper::LoadFileToString(Stored, *Source) ||
+			!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Stored), Marker) || !Marker.IsValid()) continue;
+		int32 ProcessId = 0;
+		Marker->TryGetNumberField(TEXT("processId"), ProcessId);
+		if (ProcessId == 0)
+		{
+			TArray<FString> Parts; FileName.ParseIntoArray(Parts, TEXT("-"));
+			if (Parts.Num() > 1) ProcessId = FCString::Atoi(*Parts[1]);
+		}
+		if (ProcessId > 0 && FPlatformProcess::IsApplicationRunning(static_cast<uint32>(ProcessId))) continue;
+		FString ReportId; Marker->TryGetStringField(TEXT("reportId"), ReportId);
+		FString MapName; Marker->TryGetStringField(TEXT("mapName"), MapName);
+		if (MapName.StartsWith(TEXT("UEDPIE_"))) { ProjectProject01CrashFiles::ExcludeReport(Source); continue; }
+		if (ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId).IsEmpty())
+		{
+			// Preserve excluded records for inspection without presenting them as confirmed crashes.
+			ProjectProject01CrashFiles::ExcludeReport(Source);
+			continue;
+		}
 		const FString Destination = FPaths::Combine(Directory, TEXT("Pending-") + FileName.RightChop(7));
 		FileManager.Move(*Destination, *Source, true, true, false, true);
 	}
@@ -789,7 +814,16 @@ void UProjectProject01GameInstance::RecoverPendingCrashReports()
 	FileManager.FindFiles(PendingFiles, *FPaths::Combine(Directory, TEXT("Pending-*.json")), true, false);
 	for (const FString& FileName : PendingFiles)
 	{
-		UploadPendingCrashReport(FPaths::Combine(Directory, FileName));
+		const FString Path = FPaths::Combine(Directory, FileName);
+		FString Stored; TSharedPtr<FJsonObject> Marker; FString ReportId;
+		if (FFileHelper::LoadFileToString(Stored, *Path) &&
+			FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Stored), Marker) && Marker.IsValid())
+			Marker->TryGetStringField(TEXT("reportId"), ReportId);
+		FString MapName;
+		if (Marker.IsValid()) Marker->TryGetStringField(TEXT("mapName"), MapName);
+		if (MapName.StartsWith(TEXT("UEDPIE_")) || ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId).IsEmpty())
+			ProjectProject01CrashFiles::ExcludeReport(Path);
+		else if (CrashReportsInFlight.Num() < 2) UploadPendingCrashReport(Path);
 	}
 }
 
@@ -800,6 +834,13 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 	if (!FFileHelper::LoadFileToString(Stored, *ReportPath)) return;
 	const FString Body = ProjectProject01CrashReports::SanitizeStoredReport(Stored);
 	if (Body.IsEmpty()) return;
+	TSharedPtr<FJsonObject> Marker; FString ReportId;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Stored), Marker) || !Marker.IsValid() ||
+		!Marker->TryGetStringField(TEXT("reportId"), ReportId)) return;
+	const FString CrashDirectory = ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId);
+	// The crash reporter may still be copying the dump/log after the game process exits.
+	if (CrashDirectory.IsEmpty() || (FDateTime::UtcNow() - IFileManager::Get().GetTimeStamp(
+		*FPaths::Combine(CrashDirectory, TEXT("CrashContext.runtime-xml")))).GetTotalSeconds() < 15.0) return;
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/crash-reports"));
@@ -817,12 +858,76 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 			{
 				Instance->RemovePendingRequest(WeakRequest.Pin());
 				Instance->CrashReportsInFlight.Remove(ReportPath);
-			}
-			if (bSucceeded && Response.IsValid() && Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300)
-			{
-				IFileManager::Get().Delete(*ReportPath, false, true, true);
+				if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+				{
+					FString Stored; TSharedPtr<FJsonObject> Marker; FString ReportId;
+					if (FFileHelper::LoadFileToString(Stored, *ReportPath) &&
+						FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Stored), Marker) && Marker.IsValid() &&
+						Marker->TryGetStringField(TEXT("reportId"), ReportId))
+					{
+						Instance->CrashReportsInFlight.Add(ReportPath);
+						Instance->UploadCrashAttachment(ReportPath, ReportId,
+							ProjectProject01CrashFiles::FindAttachments(ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId)), 0);
+					}
+				}
 			}
 		});
+	PendingSecurityRequests.Add(Request);
+	if (!Request->ProcessRequest())
+	{
+		PendingSecurityRequests.Remove(Request);
+		CrashReportsInFlight.Remove(ReportPath);
+	}
+}
+
+void UProjectProject01GameInstance::UploadCrashAttachment(const FString& ReportPath, const FString& ReportId,
+	const TArray<FString>& Files, const int32 Index)
+{
+	if (!Files.IsValidIndex(Index))
+	{
+		CrashReportsInFlight.Remove(ReportPath);
+		if (!Files.IsEmpty())
+		{
+			IFileManager::Get().Delete(*ReportPath, false, true, true);
+			UE_LOG(LogProjectProject01NetworkSecurity, Log, TEXT("Crash report %s and %d attachments uploaded."), *ReportId, Files.Num());
+		}
+		return;
+	}
+	const FString& Path = Files[Index];
+	TArray<uint8> Content;
+	if (ProjectProject01CrashFiles::AttachmentName(Path) == TEXT("Crash.dmp"))
+		FFileHelper::LoadFileToArray(Content, *Path);
+	else
+	{
+		FString Log; FFileHelper::LoadFileToString(Log, *Path);
+		const FTCHARToUTF8 Utf8(*ProjectProject01CrashFiles::ScrubText(MoveTemp(Log)));
+		Content.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+	}
+	if (Content.IsEmpty()) { CrashReportsInFlight.Remove(ReportPath); return; }
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/crash-reports/") + ReportId + TEXT("/artifacts/") + ProjectProject01CrashFiles::AttachmentName(Path));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/octet-stream"));
+	Request->SetTimeout(60.0f);
+	Request->SetContent(MoveTemp(Content));
+	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
+	const TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> WeakRequest(Request);
+	Request->OnProcessRequestComplete().BindLambda([WeakThis, WeakRequest, ReportPath, ReportId, Files, Index]
+		(FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+	{
+		if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
+		{
+			Instance->RemovePendingRequest(WeakRequest.Pin());
+			if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+				Instance->UploadCrashAttachment(ReportPath, ReportId, Files, Index + 1);
+			else
+			{
+				Instance->CrashReportsInFlight.Remove(ReportPath);
+				UE_LOG(LogProjectProject01NetworkSecurity, Warning, TEXT("Crash attachment upload failed (HTTP %d); kept for retry."),
+					Response.IsValid() ? Response->GetResponseCode() : 0);
+			}
+		}
+	});
 	PendingSecurityRequests.Add(Request);
 	if (!Request->ProcessRequest())
 	{
@@ -834,6 +939,12 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 void UProjectProject01GameInstance::FetchActivePlayerSurvey(
 	TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)> Completion)
 {
+	const UProjectProject01AuthSubsystem* SurveyAuth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	if (!IsValid(SurveyAuth) || !SurveyAuth->IsSignedIn())
+	{
+		Completion(true, false, FProjectProject01SurveyDefinition(), TEXT("로그인 후 설문에 참여할 수 있습니다."));
+		return;
+	}
 	if (!IsBackendUrlAllowed())
 	{
 		Completion(false, false, FProjectProject01SurveyDefinition(), TEXT("설문 서버 주소가 허용되지 않습니다."));
@@ -841,6 +952,7 @@ void UProjectProject01GameInstance::FetchActivePlayerSurvey(
 	}
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/surveys/active"));
+	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + SurveyAuth->GetAccessTokenForAuthenticatedRequest());
 	Request->SetVerb(TEXT("GET"));
 	Request->SetTimeout(SecurityRequestTimeoutSeconds);
 	const TWeakObjectPtr<UProjectProject01GameInstance> WeakThis(this);
@@ -889,6 +1001,8 @@ void UProjectProject01GameInstance::FetchActivePlayerSurvey(
 					!QuestionJson->TryGetStringField(TEXT("type"), Question.Type) ||
 					!QuestionJson->TryGetStringField(TEXT("prompt"), Question.Prompt)) continue;
 				QuestionJson->TryGetBoolField(TEXT("required"), Question.bRequired);
+				QuestionJson->TryGetBoolField(TEXT("allowMultiple"), Question.bAllowMultiple);
+				QuestionJson->TryGetNumberField(TEXT("maxSelections"), Question.MaxSelections);
 				const TArray<TSharedPtr<FJsonValue>>* OptionValues = nullptr;
 				if (QuestionJson->TryGetArrayField(TEXT("options"), OptionValues) && OptionValues)
 				{
@@ -916,6 +1030,12 @@ void UProjectProject01GameInstance::SubmitPlayerSurvey(
 	const TArray<FProjectProject01SurveyAnswer>& Answers,
 	TFunction<void(bool, const FString&)> Completion)
 {
+	const UProjectProject01AuthSubsystem* SurveyAuth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	if (!IsValid(SurveyAuth) || !SurveyAuth->IsSignedIn())
+	{
+		Completion(false, TEXT("로그인 후 설문에 참여해주세요."));
+		return;
+	}
 	if (!IsBackendUrlAllowed() || !Survey.IsValid() || Answers.IsEmpty())
 	{
 		Completion(false, TEXT("설문 답변을 확인해주세요."));
@@ -931,6 +1051,9 @@ void UProjectProject01GameInstance::SubmitPlayerSurvey(
 		TSharedRef<FJsonObject> AnswerJson = MakeShared<FJsonObject>();
 		AnswerJson->SetStringField(TEXT("questionId"), Answer.QuestionId);
 		AnswerJson->SetStringField(TEXT("value"), Answer.Value.TrimStartAndEnd());
+		TArray<TSharedPtr<FJsonValue>> Selected;
+		for (const FString& Value : Answer.Values) Selected.Add(MakeShared<FJsonValueString>(Value));
+		AnswerJson->SetArrayField(TEXT("values"), MoveTemp(Selected));
 		AnswerValues.Add(MakeShared<FJsonValueObject>(AnswerJson));
 	}
 	Json->SetArrayField(TEXT("answers"), MoveTemp(AnswerValues));
@@ -1232,6 +1355,7 @@ void UProjectProject01GameInstance::HandleAuthenticationSessionInvalidated(const
 
 void UProjectProject01GameInstance::ReturnToLoginAndClearMultiplayerState()
 {
+	SetSurveyLoginRequested(false);
 	ClearPendingGameConnection();
 	if (UProjectProject01VoiceChatSubsystem* Voice = GetSubsystem<UProjectProject01VoiceChatSubsystem>();
 		IsValid(Voice))

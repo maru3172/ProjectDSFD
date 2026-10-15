@@ -139,6 +139,7 @@ private:
 	void RequestMannequinFollowCommand();
 	void RequestResetFollowingMannequins();
 	void RequestToggleMannequinCatchDamage();
+	void RequestMannequinAttack();
 	void ToggleSessionMenu();
 	void SelectPreviousSpectatorTarget();
 	void SelectNextSpectatorTarget();
@@ -172,6 +173,9 @@ private:
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerToggleMannequinCatchDamage();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerRequestMannequinAttack();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDeclareVoluntaryExit();
@@ -252,8 +256,8 @@ private:
 	FString AuthenticatedUserId;
 	FString AuthenticatedMatchId;
 	FString AuthenticatedRole;
-	float RpcWindowStartSeconds[9] = {};
-	int32 RpcWindowCallCount[9] = {};
+	float RpcWindowStartSeconds[10] = {};
+	int32 RpcWindowCallCount[10] = {};
 	bool bVoluntaryExitDeclared = false;
 	bool bHadAuthenticatedSession = false;
 	/** 직접 조작 해제 후 적용할 명령이 지정됐는지 소유 클라이언트 HUD에도 복제한다. */

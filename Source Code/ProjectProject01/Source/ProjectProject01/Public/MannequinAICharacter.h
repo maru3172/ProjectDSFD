@@ -78,7 +78,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinActivity GetMultiplayActivity() const { return MultiplayActivity; }
 
-	/** 이 마네킹과 접촉했을 때 생존자의 데스카운트를 소모할지 여부입니다. 마네킹마다 따로 복제됩니다. */
+	/** 멀티 전체 AI의 접촉 피해 설정입니다. 직접 조작 중인 마네킹은 이 설정과 무관하게 피해를 줍니다. */
 	void SetCatchDamageEnabled(bool bEnabled);
 	bool ToggleCatchDamageEnabled();
 

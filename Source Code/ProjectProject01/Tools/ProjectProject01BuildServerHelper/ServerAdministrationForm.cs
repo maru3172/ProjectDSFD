@@ -456,6 +456,20 @@ internal sealed class ServerAdministrationForm : Form
                    $"  Report={report.ReportId} Match={report.MatchId ?? "없음"} TestRun={report.DiagnosticRunId}\n" +
                    $"  GameMode={report.GameMode} Log={report.LastLogPath}");
         }
+        if (result.CrashReports.Count > 0)
+        {
+            using var viewer = new CrashReportDownloadForm(result.CrashReports.Select(r =>
+                (r.ReportId, $"{r.DetectedAtUtc.ToLocalTime():MM-dd HH:mm:ss} · {r.MapName} · {r.ProcessRole}")).ToArray(),
+                async id =>
+                {
+                    using var downloadRequest = CreateAdminRequest(HttpMethod.Get, $"/api/admin/crash-reports/{id}/artifacts");
+                    using var artifactHttp = new HttpClient { Timeout=TimeSpan.FromMinutes(3) };
+                    using var download = await artifactHttp.SendAsync(downloadRequest);
+                    if (!download.IsSuccessStatusCode) throw new InvalidOperationException("해당 보고서에 업로드된 덤프/로그가 없습니다.");
+                    return await download.Content.ReadAsByteArrayAsync();
+                });
+            viewer.ShowDialog(this);
+        }
         SetOperationStatus("크래시 보고서 확인 완료");
     }
 

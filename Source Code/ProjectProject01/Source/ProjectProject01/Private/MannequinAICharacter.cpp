@@ -363,7 +363,9 @@ void AMannequinAICharacter::TryCatchSurvivor(AActor* OtherActor)
 	{
 		return;
 	}
-	if (!bCatchDamageEnabled)
+	const bool bDirectMultiplayerControl = bManualControlEnabled &&
+		IsValid(Cast<AMultiplayTestPlayerController>(GetController()));
+	if (!bCatchDamageEnabled && !bDirectMultiplayerControl)
 	{
 		return;
 	}

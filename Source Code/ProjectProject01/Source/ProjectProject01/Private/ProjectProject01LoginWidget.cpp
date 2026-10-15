@@ -486,7 +486,7 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	StatusText->SetText(FProjectProject01Localization::Text(FString::Printf(
 		TEXT("현재 빙의한 마네킹: %d번\n")
 		TEXT("현재 상태: %s\n")
-		TEXT("데스카운트 소모: %s"),
+		TEXT("전체 AI 데스카운트 소모: %s"),
 		Mannequin->GetControlSlot(), *Activity, *CatchDamageState)));
 }
 
@@ -630,15 +630,24 @@ void UProjectProject01ServiceNoticeWidget::BuildWidgetTree()
 
 void UProjectProject01SurveyWidget::ConfigureSurvey(
 	const FProjectProject01SurveyDefinition& InSurvey,
-	UUserWidget* InReturnWidget)
+	UUserWidget* InReturnWidget,
+	const bool bInReturnToTitleAfterSurvey)
 {
 	Survey = InSurvey;
 	ReturnWidget = InReturnWidget;
-	if (IsValid(SurveyTitleText)) SurveyTitleText->SetText(FProjectProject01Localization::Text(Survey.Title));
+	bReturnToTitleAfterSurvey = bInReturnToTitleAfterSurvey;
+	bSubmitted = false;
+	bAcknowledgementVisible = false;
+	if (IsValid(AcknowledgementPanel)) AcknowledgementPanel->SetVisibility(ESlateVisibility::Collapsed);
+	if (IsValid(SurveyTitleText)) SurveyTitleText->SetText(FProjectProject01Localization::Text(
+		Survey.Title.IsEmpty() ? TEXT("피드백/설문조사") : Survey.Title));
 	if (IsValid(SurveyDescriptionText)) SurveyDescriptionText->SetText(FProjectProject01Localization::Text(Survey.Description));
 	if (!IsValid(QuestionPanel)) return;
 	QuestionPanel->ClearChildren();
 	ChoiceInputs.Reset();
+	OptionBindings.Reset();
+	SelectedOptions.SetNum(Survey.Questions.Num());
+	for (TArray<int32>& Selected : SelectedOptions) Selected.Reset();
 	TextInputs.Reset();
 	for (int32 Index = 0; Index < Survey.Questions.Num(); ++Index)
 	{
@@ -648,12 +657,23 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 			FString::Printf(TEXT("%d. %s%s"), Index + 1, *Question.Prompt, *RequiredMark), 16.0f);
 		if (Question.Type == TEXT("Choice") || Question.Type == TEXT("OX"))
 		{
-			UComboBoxString* Combo = WidgetTree->ConstructWidget<UComboBoxString>();
-			if (!Question.bRequired) Combo->AddOption(TEXT("응답하지 않음"));
-			for (const FString& Option : Question.Options) Combo->AddOption(Option);
-			if (Combo->GetOptionCount() > 0) Combo->SetSelectedIndex(0);
-			QuestionPanel->AddChildToVerticalBox(Combo)->SetPadding(FMargin(6.0f));
-			ChoiceInputs.Add(Combo);
+			if (Question.bAllowMultiple)
+				ProjectProject01LoginUI::AddLabel(WidgetTree, QuestionPanel,
+					FString::Printf(TEXT("최대 %d개 선택 가능 · 초과 시 오래된 선택이 해제됩니다."), Question.MaxSelections), 14.0f);
+			for (int32 OptionIndex = 0; OptionIndex < Question.Options.Num(); ++OptionIndex)
+			{
+				UCheckBox* Check = WidgetTree->ConstructWidget<UCheckBox>();
+				UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
+				Label->SetText(FText::FromString(Question.Options[OptionIndex]));
+				Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+				Check->AddChild(Label);
+				QuestionPanel->AddChildToVerticalBox(Check)->SetPadding(FMargin(6.0f));
+				UProjectProject01SurveyOptionBinding* Binding = NewObject<UProjectProject01SurveyOptionBinding>(this);
+				Binding->Owner = this; Binding->QuestionIndex = Index; Binding->OptionIndex = OptionIndex;
+				Check->OnCheckStateChanged.AddDynamic(Binding, &UProjectProject01SurveyOptionBinding::HandleChanged);
+				ChoiceInputs.Add(Check);
+				OptionBindings.Add(Binding);
+			}
 			TextInputs.Add(nullptr);
 		}
 		else
@@ -662,10 +682,30 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 			TextInput->SetHintText(FProjectProject01Localization::Text(TEXT("답변을 입력해주세요.")));
 			ProjectProject01LoginUI::SetEditableTextBoxTextBlack(TextInput);
 			QuestionPanel->AddChildToVerticalBox(TextInput)->SetPadding(FMargin(6.0f));
-			ChoiceInputs.Add(nullptr);
 			TextInputs.Add(TextInput);
 		}
 	}
+}
+
+void UProjectProject01SurveyOptionBinding::HandleChanged(const bool bChecked)
+{
+	if (IsValid(Owner)) Owner->HandleOptionChanged(QuestionIndex, OptionIndex, bChecked);
+}
+
+void UProjectProject01SurveyWidget::HandleOptionChanged(const int32 QuestionIndex, const int32 OptionIndex, const bool bChecked)
+{
+	if (bUpdatingChoices || !Survey.Questions.IsValidIndex(QuestionIndex)) return;
+	TArray<int32>& Selected = SelectedOptions[QuestionIndex];
+	const FProjectProject01SurveyQuestion& Question = Survey.Questions[QuestionIndex];
+	Question.ApplySelection(Selected, OptionIndex, bChecked);
+	bUpdatingChoices = true;
+	for (int32 Index = 0; Index < OptionBindings.Num(); ++Index)
+	{
+		const UProjectProject01SurveyOptionBinding* Binding = OptionBindings[Index];
+		if (Binding->QuestionIndex == QuestionIndex)
+			ChoiceInputs[Index]->SetIsChecked(Selected.Contains(Binding->OptionIndex));
+	}
+	bUpdatingChoices = false;
 }
 
 bool UProjectProject01SurveyWidget::Initialize()
@@ -681,6 +721,7 @@ void UProjectProject01SurveyWidget::NativeConstruct()
 	Super::NativeConstruct();
 	if (IsValid(SubmitButton)) SubmitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SurveyWidget::HandleSubmitClicked);
 	if (IsValid(BackButton)) BackButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SurveyWidget::HandleBackClicked);
+	if (IsValid(AcknowledgementButton)) AcknowledgementButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SurveyWidget::HandleAcknowledgementClicked);
 	SetBusy(false);
 	SetKeyboardFocus();
 }
@@ -689,6 +730,10 @@ void UProjectProject01SurveyWidget::NativeDestruct()
 {
 	if (IsValid(SubmitButton)) SubmitButton->OnClicked.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleSubmitClicked);
 	if (IsValid(BackButton)) BackButton->OnClicked.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleBackClicked);
+	if (IsValid(AcknowledgementButton)) AcknowledgementButton->OnClicked.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleAcknowledgementClicked);
+	if (const UGameInstance* Instance = GetGameInstance(); IsValid(Instance))
+		if (UProjectProject01AuthSubsystem* Auth = Instance->GetSubsystem<UProjectProject01AuthSubsystem>())
+			Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleSurveyLogoutCompleted);
 	Super::NativeDestruct();
 }
 
@@ -698,7 +743,7 @@ FReply UProjectProject01SurveyWidget::NativeOnKeyDown(
 {
 	if (InKeyEvent.GetKey() == EKeys::Escape && !bBusy)
 	{
-		HandleBackClicked();
+		if (!bAcknowledgementVisible) HandleBackClicked();
 		return FReply::Handled();
 	}
 	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
@@ -706,17 +751,18 @@ FReply UProjectProject01SurveyWidget::NativeOnKeyDown(
 
 void UProjectProject01SurveyWidget::HandleSubmitClicked()
 {
-	if (bBusy || !Survey.IsValid()) return;
+	if (bBusy || bSubmitted || bAcknowledgementVisible || !Survey.IsValid()) return;
 	TArray<FProjectProject01SurveyAnswer> Answers;
 	for (int32 Index = 0; Index < Survey.Questions.Num(); ++Index)
 	{
 		const FProjectProject01SurveyQuestion& Question = Survey.Questions[Index];
 		FString Value;
-		if ((Question.Type == TEXT("Choice") || Question.Type == TEXT("OX")) &&
-			ChoiceInputs.IsValidIndex(Index) && IsValid(ChoiceInputs[Index]))
+		TArray<FString> Values;
+		if (Question.Type == TEXT("Choice") || Question.Type == TEXT("OX"))
 		{
-			Value = ChoiceInputs[Index]->GetSelectedOption();
-			if (Value == TEXT("응답하지 않음")) Value.Reset();
+			for (int32 OptionIndex : SelectedOptions[Index])
+				if (Question.Options.IsValidIndex(OptionIndex)) Values.Add(Question.Options[OptionIndex]);
+			Value = FString::Join(Values, TEXT(", "));
 		}
 		else if (TextInputs.IsValidIndex(Index) && IsValid(TextInputs[Index]))
 		{
@@ -735,6 +781,7 @@ void UProjectProject01SurveyWidget::HandleSubmitClicked()
 		FProjectProject01SurveyAnswer& Answer = Answers.AddDefaulted_GetRef();
 		Answer.QuestionId = Question.Id;
 		Answer.Value = MoveTemp(Value);
+		Answer.Values = MoveTemp(Values);
 	}
 	UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
 	if (!IsValid(GameInstance))
@@ -747,16 +794,52 @@ void UProjectProject01SurveyWidget::HandleSubmitClicked()
 	GameInstance->SubmitPlayerSurvey(Survey, Answers,
 		[WeakThis](const bool bSucceeded, const FString& ResponseMessage)
 		{
-			if (UProjectProject01SurveyWidget* Widget = WeakThis.Get(); IsValid(Widget))
+			if (UProjectProject01SurveyWidget* Widget = WeakThis.Get(); IsValid(Widget) && Widget->IsInViewport())
 			{
-				Widget->SetBusy(false, ResponseMessage, !bSucceeded);
+				if (bSucceeded) Widget->ShowSurveyNotice(TEXT("설문에 감사드립니다."), true);
+				else Widget->SetBusy(false, ResponseMessage, true);
 			}
 		});
 }
 
 void UProjectProject01SurveyWidget::HandleBackClicked()
 {
-	if (bBusy) return;
+	if (bBusy || bAcknowledgementVisible) return;
+	CloseSurvey();
+}
+
+void UProjectProject01SurveyWidget::ShowSurveyNotice(const FString& Message, const bool bSubmissionSucceeded)
+{
+	bSubmitted = bSubmissionSucceeded;
+	bAcknowledgementVisible = true;
+	if (IsValid(AcknowledgementText)) AcknowledgementText->SetText(FProjectProject01Localization::Text(Message));
+	if (IsValid(AcknowledgementPanel)) AcknowledgementPanel->SetVisibility(ESlateVisibility::Visible);
+	SetBusy(false);
+	if (IsInViewport() && IsValid(AcknowledgementButton)) AcknowledgementButton->SetKeyboardFocus();
+}
+
+void UProjectProject01SurveyWidget::HandleAcknowledgementClicked()
+{
+	if (bBusy || !bAcknowledgementVisible) return;
+	bAcknowledgementVisible = false;
+	if (IsValid(AcknowledgementPanel)) AcknowledgementPanel->SetVisibility(ESlateVisibility::Collapsed);
+	CloseSurvey();
+}
+
+void UProjectProject01SurveyWidget::CloseSurvey()
+{
+	if (bReturnToTitleAfterSurvey)
+	{
+		SetBusy(true, TEXT("로그아웃 후 타이틀로 돌아가는 중..."));
+		if (UProjectProject01LobbyWidget* LobbyWidget = Cast<UProjectProject01LobbyWidget>(ReturnWidget))
+			LobbyWidget->PrepareTitleSurveyLogout();
+		UGameInstance* Instance = GetGameInstance();
+		UProjectProject01AuthSubsystem* Auth = IsValid(Instance) ? Instance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+		if (!IsValid(Auth)) { FinishSurveyLogout(); return; }
+		Auth->OnLogoutCompleted.AddUniqueDynamic(this, &UProjectProject01SurveyWidget::HandleSurveyLogoutCompleted);
+		Auth->Logout();
+		return;
+	}
 	if (IsValid(ReturnWidget))
 	{
 		ReturnWidget->SetVisibility(ESlateVisibility::Visible);
@@ -765,16 +848,38 @@ void UProjectProject01SurveyWidget::HandleBackClicked()
 	RemoveFromParent();
 }
 
+void UProjectProject01SurveyWidget::HandleSurveyLogoutCompleted(bool, const FString&, const FString&)
+{
+	FinishSurveyLogout();
+}
+
+void UProjectProject01SurveyWidget::FinishSurveyLogout()
+{
+	UGameInstance* Instance = GetGameInstance();
+	if (IsValid(Instance))
+	{
+		if (UProjectProject01AuthSubsystem* Auth = Instance->GetSubsystem<UProjectProject01AuthSubsystem>())
+		{
+			Auth->OnLogoutCompleted.RemoveDynamic(this, &UProjectProject01SurveyWidget::HandleSurveyLogoutCompleted);
+			Auth->ForceClearLocalSession();
+		}
+		if (UProjectProject01LobbySubsystem* Lobby = Instance->GetSubsystem<UProjectProject01LobbySubsystem>()) Lobby->ForceClearLocalSession();
+		if (UProjectProject01GameInstance* ProjectInstance = Cast<UProjectProject01GameInstance>(Instance)) ProjectInstance->SetSurveyLoginRequested(false);
+	}
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/TitleLevel")), true);
+}
+
 void UProjectProject01SurveyWidget::SetBusy(
 	const bool bInBusy,
 	const FString& Message,
 	const bool bIsError)
 {
 	bBusy = bInBusy;
-	if (IsValid(SubmitButton)) SubmitButton->SetIsEnabled(!bBusy);
-	if (IsValid(BackButton)) BackButton->SetIsEnabled(!bBusy);
-	for (UComboBoxString* Input : ChoiceInputs) if (IsValid(Input)) Input->SetIsEnabled(!bBusy);
-	for (UMultiLineEditableTextBox* Input : TextInputs) if (IsValid(Input)) Input->SetIsReadOnly(bBusy);
+	if (IsValid(SubmitButton)) SubmitButton->SetIsEnabled(!bBusy && !bSubmitted && !bAcknowledgementVisible && Survey.IsValid());
+	if (IsValid(BackButton)) BackButton->SetIsEnabled(!bBusy && !bAcknowledgementVisible);
+	if (IsValid(AcknowledgementButton)) AcknowledgementButton->SetIsEnabled(!bBusy);
+	for (UCheckBox* Input : ChoiceInputs) if (IsValid(Input)) Input->SetIsEnabled(!bBusy && !bSubmitted && !bAcknowledgementVisible);
+	for (UMultiLineEditableTextBox* Input : TextInputs) if (IsValid(Input)) Input->SetIsReadOnly(bBusy || bSubmitted || bAcknowledgementVisible);
 	if (IsValid(StatusText))
 	{
 		StatusText->SetText(FProjectProject01Localization::Text(Message));
@@ -819,6 +924,20 @@ void UProjectProject01SurveyWidget::BuildWidgetTree()
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Panel, TEXT(""), 14.0f);
 	SubmitButton = ProjectProject01LoginUI::AddButton(WidgetTree, Panel, TEXT("설문 제출"));
 	BackButton = ProjectProject01LoginUI::AddButton(WidgetTree, Panel, TEXT("돌아가기"));
+	AcknowledgementPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("SurveyAcknowledgement"));
+	AcknowledgementPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.85f));
+	AcknowledgementPanel->SetHorizontalAlignment(HAlign_Center);
+	AcknowledgementPanel->SetVerticalAlignment(VAlign_Center);
+	if (UOverlaySlot* NoticeSlot = Overlay->AddChildToOverlay(AcknowledgementPanel))
+	{
+		NoticeSlot->SetHorizontalAlignment(HAlign_Fill);
+		NoticeSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+	UVerticalBox* Notice = WidgetTree->ConstructWidget<UVerticalBox>();
+	AcknowledgementPanel->AddChild(Notice);
+	AcknowledgementText = ProjectProject01LoginUI::AddLabel(WidgetTree, Notice, TEXT("설문에 감사드립니다."), 24.0f);
+	AcknowledgementButton = ProjectProject01LoginUI::AddButton(WidgetTree, Notice, TEXT("확인"));
+	AcknowledgementPanel->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 bool UProjectProject01TitleWidget::Initialize()
@@ -836,10 +955,10 @@ bool UProjectProject01TitleWidget::Initialize()
 void UProjectProject01TitleWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	if (UProjectProject01GameInstance* Instance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		Instance->SetSurveyLoginRequested(false);
 	bNavigationRequested = false;
 	bMultiplayerServiceAvailable = false;
-	bActiveSurveyAvailable = false;
-	ActiveSurvey = FProjectProject01SurveyDefinition();
 	bSinglePlayerFadeActive = false;
 	SinglePlayerFadeElapsedSeconds = 0.0f;
 	PendingSinglePlayerLaunchAction = ESinglePlayerLaunchAction::None;
@@ -899,10 +1018,7 @@ void UProjectProject01TitleWidget::NativeConstruct()
 	{
 		SettingsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSettingsClicked);
 	}
-	if (IsValid(SurveyButton))
-	{
-		SurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSurveyClicked);
-	}
+	if (IsValid(SurveyButton)) SurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSurveyClicked);
 	if (IsValid(QuitButton))
 	{
 		QuitButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
@@ -1013,10 +1129,7 @@ void UProjectProject01TitleWidget::NativeDestruct()
 	{
 		SettingsButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSettingsClicked);
 	}
-	if (IsValid(SurveyButton))
-	{
-		SurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSurveyClicked);
-	}
+	if (IsValid(SurveyButton)) SurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleSurveyClicked);
 	if (IsValid(QuitButton))
 	{
 		QuitButton->OnClicked.RemoveDynamic(this, &UProjectProject01TitleWidget::HandleQuitClicked);
@@ -1034,30 +1147,6 @@ void UProjectProject01TitleWidget::PollMultiplayerService()
 			Auth->CheckMultiplayerServiceStatus();
 		}
 	}
-	RefreshActiveSurvey();
-}
-
-void UProjectProject01TitleWidget::RefreshActiveSurvey()
-{
-	UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
-	if (!IsValid(GameInstance)) return;
-	const TWeakObjectPtr<UProjectProject01TitleWidget> WeakThis(this);
-	GameInstance->FetchActivePlayerSurvey(
-		[WeakThis](const bool bRequestSucceeded, const bool bHasSurvey,
-			const FProjectProject01SurveyDefinition& Survey, const FString&)
-		{
-			if (UProjectProject01TitleWidget* Widget = WeakThis.Get(); IsValid(Widget))
-			{
-				Widget->bActiveSurveyAvailable = bRequestSucceeded && bHasSurvey;
-				Widget->ActiveSurvey = Widget->bActiveSurveyAvailable
-					? Survey : FProjectProject01SurveyDefinition();
-				if (IsValid(Widget->SurveyButton))
-				{
-					Widget->SurveyButton->SetIsEnabled(
-						!Widget->bNavigationRequested && Widget->bActiveSurveyAvailable);
-				}
-			}
-		});
 }
 
 void UProjectProject01TitleWidget::HandleServiceStatusChanged(
@@ -1075,6 +1164,7 @@ void UProjectProject01TitleWidget::HandleServiceStatusChanged(
 	{
 		MultiplayerButton->SetIsEnabled(!bNavigationRequested && bMultiplayerServiceAvailable);
 	}
+	if (IsValid(SurveyButton)) SurveyButton->SetIsEnabled(!bNavigationRequested && bMultiplayerServiceAvailable);
 	if (!IsValid(StatusText)) return;
 	if (!bReachable)
 	{
@@ -1422,6 +1512,16 @@ void UProjectProject01TitleWidget::DeleteSaveSlot(const int32 SlotIndex)
 
 void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 {
+	NavigateToMultiplayer(false);
+}
+
+void UProjectProject01TitleWidget::HandleSurveyClicked()
+{
+	NavigateToMultiplayer(true);
+}
+
+void UProjectProject01TitleWidget::NavigateToMultiplayer(const bool bForSurvey)
+{
 	if (bNavigationRequested || !IsValid(GetWorld()))
 	{
 		return;
@@ -1442,6 +1542,8 @@ void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 	}
 	if (IsValid(Auth) && Auth->IsSignedIn())
 	{
+		if (UProjectProject01GameInstance* Instance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+			Instance->SetSurveyLoginRequested(bForSurvey);
 		bNavigationRequested = true;
 		SetMenuEnabled(false);
 		UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/MyProject/Level/LobbyLevel")), true);
@@ -1486,6 +1588,8 @@ void UProjectProject01TitleWidget::HandleMultiplayerClicked()
 
 	bNavigationRequested = true;
 	SetMenuEnabled(false);
+	if (UProjectProject01GameInstance* Instance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		Instance->SetSurveyLoginRequested(bForSurvey);
 	UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::MultiplayerLoginLevel, true);
 }
 
@@ -1504,17 +1608,6 @@ void UProjectProject01TitleWidget::HandleSettingsClicked()
 	SettingsWidget->ConfigureReturnWidget(this);
 	SetVisibility(ESlateVisibility::Collapsed);
 	SettingsWidget->AddToViewport(600);
-}
-
-void UProjectProject01TitleWidget::HandleSurveyClicked()
-{
-	if (bNavigationRequested || !bActiveSurveyAvailable || !ActiveSurvey.IsValid() || !IsValid(GetOwningPlayer())) return;
-	SurveyWidget = CreateWidget<UProjectProject01SurveyWidget>(
-		GetOwningPlayer(), UProjectProject01SurveyWidget::StaticClass());
-	if (!ensureMsgf(IsValid(SurveyWidget), TEXT("Title menu could not create survey widget."))) return;
-	SurveyWidget->ConfigureSurvey(ActiveSurvey, this);
-	SetVisibility(ESlateVisibility::Collapsed);
-	SurveyWidget->AddToViewport(600);
 }
 
 void UProjectProject01TitleWidget::HandleQuitClicked()
@@ -1668,10 +1761,7 @@ void UProjectProject01TitleWidget::SetMenuEnabled(const bool bEnabled)
 	{
 		SettingsButton->SetIsEnabled(bEnabled);
 	}
-	if (IsValid(SurveyButton))
-	{
-		SurveyButton->SetIsEnabled(bEnabled && bActiveSurveyAvailable);
-	}
+	if (IsValid(SurveyButton)) SurveyButton->SetIsEnabled(bEnabled && bMultiplayerServiceAvailable);
 	if (IsValid(QuitButton))
 	{
 		QuitButton->SetIsEnabled(bEnabled);
@@ -1756,7 +1846,10 @@ void UProjectProject01LoginWidget::NativeConstruct()
 		}
 	}
 	SetRequestControlsEnabled(false);
-	SetStatus(TEXT("멀티플레이 서버 상태 확인 중..."), false);
+	const UProjectProject01GameInstance* Instance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	SetStatus(IsValid(Instance) && Instance->IsSurveyLoginRequested()
+		? TEXT("설문 참여를 위해 로그인해주세요. 로그인 후 설문이 열립니다.")
+		: TEXT("멀티플레이 서버 상태 확인 중..."), false);
 	PollMultiplayerService();
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
@@ -1811,6 +1904,8 @@ void UProjectProject01LoginWidget::PollMultiplayerService()
 
 void UProjectProject01LoginWidget::HandleReturnToTitleClicked()
 {
+	if (UProjectProject01GameInstance* Instance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+		Instance->SetSurveyLoginRequested(false);
 	if (!IsValid(GetWorld()))
 	{
 		SetStatus(TEXT("타이틀 화면을 열 수 없습니다."), true);
@@ -2135,7 +2230,8 @@ void UProjectProject01GameGuideWidget::RefreshGuideText()
 				"X : 직접 조작 중 감지 범위 추격 명령 저장\n"
 				"C : 직접 조작 중 마네킹 플레이어 추종 명령 저장\n"
 				"Q : 추종 중인 마네킹을 정찰 상태로 초기화\n"
-				"B : 접촉 시 생존자 데스카운트 소모 켜기/끄기\n"
+				"B : 전체 AI 마네킹 접촉 데스카운트 소모 켜기/끄기\n"
+				"마우스 좌클릭 : 직접 조작 중 공격 (직접 조작 공격·접촉은 항상 피해 적용)\n"
 				"W/A/S/D : 직접 조작 이동 | 마우스 : 시점\n"
 				"ESC : 게임 메뉴")));
 	}
@@ -4570,6 +4666,85 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectSurveyEntryPointsTest, "ProjectProject01.Surveys.AuthenticatedLobbyEntry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProjectSurveyEntryPointsTest::RunTest(const FString&)
+{
+	auto CountSurveyButtons = [](UUserWidget* Widget)
+	{
+		TArray<UWidget*> Widgets;
+		Widget->WidgetTree->GetAllWidgets(Widgets);
+		int32 Count = 0;
+		for (UWidget* Child : Widgets)
+		{
+			const UButton* Button = Cast<UButton>(Child);
+			const UTextBlock* Text = IsValid(Button) ? Cast<UTextBlock>(Button->GetChildAt(0)) : nullptr;
+			if (IsValid(Text) && Text->GetText().EqualTo(FProjectProject01Localization::Text(TEXT("피드백/설문조사")))) ++Count;
+		}
+		return Count;
+	};
+	UUserWidget* Title = NewObject<UProjectProject01TitleWidget>();
+	UUserWidget* Lobby = NewObject<UProjectProject01LobbyWidget>();
+	if (!TestTrue(TEXT("Title widget initializes"), Title->Initialize()) ||
+		!TestTrue(TEXT("Lobby widget initializes"), Lobby->Initialize())) return false;
+	TestEqual(TEXT("Title has one login-gated survey entry"), CountSurveyButtons(Title), 1);
+	TestEqual(TEXT("Lobby has one survey entry"), CountSurveyButtons(Lobby), 1);
+	TArray<UWidget*> Widgets;
+	Lobby->WidgetTree->GetAllWidgets(Widgets);
+	for (UWidget* Child : Widgets)
+	{
+		const UButton* Button = Cast<UButton>(Child);
+		const UTextBlock* Text = IsValid(Button) ? Cast<UTextBlock>(Button->GetChildAt(0)) : nullptr;
+		if (IsValid(Text) && Text->GetText().EqualTo(FProjectProject01Localization::Text(TEXT("피드백/설문조사"))))
+			TestFalse(TEXT("Survey starts disabled until authenticated active-survey lookup"), Button->GetIsEnabled());
+	}
+	UProjectProject01GameInstance* Instance = NewObject<UProjectProject01GameInstance>();
+	TestFalse(TEXT("Normal login does not auto-open a survey"), Instance->IsSurveyLoginRequested());
+	Instance->SetSurveyLoginRequested(true);
+	TestTrue(TEXT("Title intent survives login navigation"), Instance->ConsumeSurveyLoginRequest());
+	TestFalse(TEXT("Title survey intent is consumed exactly once"), Instance->ConsumeSurveyLoginRequest());
+	Instance->SetSurveyLoginRequested(true);
+	Instance->SetSurveyLoginRequested(false);
+	TestFalse(TEXT("Cancelling login clears title survey intent"), Instance->ConsumeSurveyLoginRequest());
+	UUserWidget* SurveyBase = NewObject<UProjectProject01SurveyWidget>();
+	if (!TestTrue(TEXT("Survey widget initializes"), SurveyBase->Initialize())) return false;
+	UProjectProject01SurveyWidget* SurveyWidget = CastChecked<UProjectProject01SurveyWidget>(SurveyBase);
+	SurveyWidget->ConfigureSurvey(FProjectProject01SurveyDefinition(), Lobby, true);
+	TestTrue(TEXT("Title entry logs out on completion or cancellation"), SurveyWidget->ShouldReturnToTitleAfterSurvey());
+	SurveyWidget->ConfigureSurvey(FProjectProject01SurveyDefinition(), Lobby);
+	TestFalse(TEXT("Lobby entry preserves login"), SurveyWidget->ShouldReturnToTitleAfterSurvey());
+	UWidget* Popup = SurveyWidget->GetWidgetFromName(TEXT("SurveyAcknowledgement"));
+	if (TestNotNull(TEXT("Submission confirmation popup exists"), Popup))
+	{
+		TestEqual(TEXT("Popup is hidden before submission"), Popup->GetVisibility(), ESlateVisibility::Collapsed);
+		SurveyWidget->ShowSurveyNotice(TEXT("설문에 감사드립니다."), true);
+		TestEqual(TEXT("Successful submission shows acknowledgement"), Popup->GetVisibility(), ESlateVisibility::Visible);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectSurveySelectionTest, "ProjectProject01.Surveys.SelectionReplacement",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProjectSurveySelectionTest::RunTest(const FString&)
+{
+	FProjectProject01SurveyQuestion Question;
+	Question.Options = { TEXT("A"), TEXT("B"), TEXT("C") };
+	TArray<int32> Selected;
+	Question.ApplySelection(Selected, 0, true);
+	Question.ApplySelection(Selected, 1, true);
+	TestTrue(TEXT("Single choice keeps only the newest option"), Selected == TArray<int32>({ 1 }));
+	Question.bAllowMultiple = true; Question.MaxSelections = 2;
+	Selected.Reset();
+	Question.ApplySelection(Selected, 0, true); Question.ApplySelection(Selected, 1, true); Question.ApplySelection(Selected, 2, true);
+	TestTrue(TEXT("Overflow removes the oldest option"), Selected == TArray<int32>({ 1, 2 }));
+	Question.ApplySelection(Selected, 2, false);
+	TestTrue(TEXT("Checked options can be unchecked"), Selected == TArray<int32>({ 1 }));
+	Question.MaxSelections = 0; Selected.Reset();
+	for (int32 Index = 0; Index < 3; ++Index) Question.ApplySelection(Selected, Index, true);
+	TestEqual(TEXT("Unset limit allows all choices"), Selected.Num(), 3);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FProjectProject01UserSettingsValidationTest,
 	"ProjectProject01.Settings.ValidationAndSafeBindings",
@@ -4628,6 +4803,13 @@ bool UProjectProject01LobbyWidget::Initialize()
 void UProjectProject01LobbyWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
+	LobbySurvey = FProjectProject01SurveyDefinition();
+	LobbySurveyPollCounter = 0;
+	bLobbySurveyRequestPending = false;
+	UProjectProject01GameInstance* SurveyInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	bOpenTitleSurveyOnRefresh = IsValid(SurveyInstance) && SurveyInstance->ConsumeSurveyLoginRequest();
+	if (IsValid(LobbySurveyButton)) LobbySurveyButton->SetIsEnabled(false);
 	bTravelRequested = false;
 	bGameStartCountdownActive = false;
 	bGameStartCountdownComplete = false;
@@ -4688,6 +4870,7 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 		}
 	}
 
+	RefreshLobbySurvey();
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().SetTimer(
@@ -4697,6 +4880,12 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 
 void UProjectProject01LobbyWidget::NativeDestruct()
 {
+	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
+	if (IsValid(LobbySurveyWidget)) LobbySurveyWidget->RemoveFromParent();
+	LobbySurveyWidget = nullptr;
+	bOpenTitleSurveyOnRefresh = false;
+	LobbySurvey = FProjectProject01SurveyDefinition();
+	if (IsValid(LobbySurveyButton)) LobbySurveyButton->SetIsEnabled(false);
 	if (IsValid(OpenCreateRoomButton)) OpenCreateRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked);
 	if (IsValid(CancelCreateRoomButton)) CancelCreateRoomButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleCancelCreateRoomClicked);
 	if (IsValid(RoomSearchInput)) RoomSearchInput->OnTextChanged.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleRoomSearchChanged);
@@ -4977,6 +5166,8 @@ void UProjectProject01LobbyWidget::HandleLogoutResult(
 	const FString& Message,
 	const FString& DisplayName)
 {
+	// 타이틀에서 시작한 설문은 설문 위젯이 로그아웃 완료 후 타이틀 이동을 소유합니다.
+	if (IsValid(LobbySurveyWidget) && LobbySurveyWidget->ShouldReturnToTitleAfterSurvey()) return;
 	SetStatus(Message, !bSuccess);
 	if (bSuccess)
 	{
@@ -5125,6 +5316,7 @@ void UProjectProject01LobbyWidget::HandleCurrentRoomChanged()
 
 void UProjectProject01LobbyWidget::RefreshLobbyState()
 {
+	if (++LobbySurveyPollCounter >= 10) { LobbySurveyPollCounter = 0; RefreshLobbySurvey(); }
 	UGameInstance* GameInstance = GetGameInstance();
 	if (IsValid(GameInstance) && ++ServiceStatusPollCounter >= 5)
 	{
@@ -5583,6 +5775,8 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 		RootSlot->SetVerticalAlignment(VAlign_Fill);
 	}
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 Lobby"), 30.0f);
+	LobbySurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("피드백/설문조사"));
+	LobbySurveyButton->SetIsEnabled(false);
 	LobbyStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("세션 확인 중..."), 14.0f);
 	LobbyViewSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
 	if (UVerticalBoxSlot* SwitcherSlot = Root->AddChildToVerticalBox(LobbyViewSwitcher))
@@ -5716,6 +5910,80 @@ void UProjectProject01LobbyWidget::SetStatus(const FString& Message, const bool 
 	}
 	LobbyStatusText->SetText(FProjectProject01Localization::Text(Message));
 	LobbyStatusText->SetColorAndOpacity(bIsError ? FSlateColor(FLinearColor::Red) : FSlateColor(FLinearColor::Black));
+}
+
+void UProjectProject01LobbyWidget::RefreshLobbySurvey()
+{
+	if (bLobbySurveyRequestPending) return;
+	UProjectProject01GameInstance* Instance = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	const UProjectProject01AuthSubsystem* Auth = IsValid(Instance)
+		? Instance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	if (!IsValid(Auth) || !Auth->IsSignedIn() || bTravelRequested || bLogoutAfterLeave)
+	{
+		LobbySurvey = FProjectProject01SurveyDefinition();
+		if (IsValid(LobbySurveyButton)) LobbySurveyButton->SetIsEnabled(false);
+		return;
+	}
+	bLobbySurveyRequestPending = true;
+	const TWeakObjectPtr<UProjectProject01LobbyWidget> WeakThis(this);
+	Instance->FetchActivePlayerSurvey([WeakThis](bool bSuccess, bool bHasSurvey,
+		const FProjectProject01SurveyDefinition& Survey, const FString& Message)
+	{
+		if (UProjectProject01LobbyWidget* Widget = WeakThis.Get(); IsValid(Widget))
+		{
+			Widget->bLobbySurveyRequestPending = false;
+			const UGameInstance* GameInstance = Widget->GetGameInstance();
+			const UProjectProject01AuthSubsystem* CurrentAuth = IsValid(GameInstance)
+				? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+			const bool bCanParticipate = Widget->IsInViewport() && IsValid(CurrentAuth) && CurrentAuth->IsSignedIn() &&
+				!Widget->bTravelRequested && !Widget->bLogoutAfterLeave;
+			Widget->LobbySurvey = bCanParticipate && bSuccess && bHasSurvey
+				? Survey : FProjectProject01SurveyDefinition();
+			if (IsValid(Widget->LobbySurveyButton)) Widget->LobbySurveyButton->SetIsEnabled(
+				Widget->LobbySurvey.IsValid() && !Widget->bGameStartCountdownActive && !Widget->bGameStartFadeActive);
+			if (Widget->bOpenTitleSurveyOnRefresh)
+			{
+				Widget->bOpenTitleSurveyOnRefresh = false;
+				if (bCanParticipate)
+				{
+					Widget->OpenLobbySurvey(true);
+					if (!Widget->LobbySurvey.IsValid() && IsValid(Widget->LobbySurveyWidget))
+						Widget->LobbySurveyWidget->ShowSurveyNotice(Message.IsEmpty()
+							? TEXT("현재 진행 중인 설문이 없습니다.") : Message, false);
+				}
+			}
+		}
+	});
+}
+
+void UProjectProject01LobbyWidget::PrepareTitleSurveyLogout()
+{
+	if (!IsValid(LobbySurveyWidget) || !LobbySurveyWidget->ShouldReturnToTitleAfterSurvey()) return;
+	bTravelRequested = true;
+	if (UWorld* World = GetWorld()) World->GetTimerManager().ClearTimer(LobbyRefreshTimer);
+	if (UGameInstance* Instance = GetGameInstance())
+		if (UProjectProject01LobbySubsystem* Lobby = Instance->GetSubsystem<UProjectProject01LobbySubsystem>())
+			Lobby->ForceClearLocalSession();
+}
+
+void UProjectProject01LobbyWidget::HandleLobbySurveyClicked()
+{
+	OpenLobbySurvey();
+}
+
+void UProjectProject01LobbyWidget::OpenLobbySurvey(const bool bFromTitle)
+{
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
+	if (bTravelRequested || bLogoutAfterLeave || bGameStartCountdownActive || bGameStartFadeActive ||
+		(!LobbySurvey.IsValid() && !bFromTitle) || !IsValid(Auth) || !Auth->IsSignedIn() || !IsValid(GetOwningPlayer()) ||
+		(IsValid(LobbySurveyWidget) && LobbySurveyWidget->IsInViewport())) return;
+	LobbySurveyWidget = CreateWidget<UProjectProject01SurveyWidget>(GetOwningPlayer(), UProjectProject01SurveyWidget::StaticClass());
+	if (!IsValid(LobbySurveyWidget)) return;
+	LobbySurveyWidget->ConfigureSurvey(LobbySurvey, this, bFromTitle);
+	SetVisibility(ESlateVisibility::Collapsed);
+	LobbySurveyWidget->AddToViewport(600);
 }
 
 bool UProjectProject01LeaderboardWidget::Initialize()

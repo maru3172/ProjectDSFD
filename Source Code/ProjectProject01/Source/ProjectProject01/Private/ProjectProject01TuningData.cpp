@@ -13,6 +13,7 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
+#include <limits>
 #endif
 
 DEFINE_LOG_CATEGORY(LogProjectProject01Tuning);
@@ -51,6 +52,14 @@ bool FProjectProject01TuningValidationTest::RunTest(const FString& Parameters)
 
 	FMannequinAITuningRow ValidMannequinRow;
 	TestTrue(TEXT("Default mannequin tuning is accepted"), ValidMannequinRow.IsValidForApplication(Error));
+	TestEqual(TEXT("Default manual attack range is 180 cm"), ValidMannequinRow.MultiplayerManualAttackRange, 180.0f);
+	FMannequinAITuningRow AttackRangeRow = ValidMannequinRow;
+	AttackRangeRow.MultiplayerManualAttackRange = -1.0f;
+	TestFalse(TEXT("Negative manual attack range is rejected"), AttackRangeRow.IsValidForApplication(Error));
+	AttackRangeRow.MultiplayerManualAttackRange = std::numeric_limits<float>::infinity();
+	TestFalse(TEXT("Non-finite manual attack range is rejected"), AttackRangeRow.IsValidForApplication(Error));
+	AttackRangeRow.MultiplayerManualAttackRange = 0.0f;
+	TestTrue(TEXT("Zero range can disable manual attacks"), AttackRangeRow.IsValidForApplication(Error));
 
 	FMannequinAITuningRow FlexibleMannequinRow = ValidMannequinRow;
 	FlexibleMannequinRow.RoamingOuterRadius = 0.0f;
@@ -156,6 +165,7 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 		!FMath::IsFinite(VisionFovMarginMultiplier) || !FMath::IsFinite(MultiplayerPatrolRadius) ||
 		!FMath::IsFinite(MultiplayerFollowDistance) || !FMath::IsFinite(MultiplayerFollowSeparation) ||
 		!FMath::IsFinite(MultiplayerRepathInterval) || !FMath::IsFinite(MultiplayerAcceptanceRadius) ||
+		!FMath::IsFinite(MultiplayerManualAttackRange) ||
 		MannequinWalkSpeed < 0.0f ||
 		DirectChaseRadius < 0.0f || RoamingOuterRadius < 0.0f ||
 		DirectChaseHalfAngleDegrees < 0.0f || DirectChaseSectorRadius < 0.0f ||
@@ -163,7 +173,7 @@ bool FMannequinAITuningRow::IsValidForApplication(FString& OutError) const
 		SurvivorVisionCheckIntervalSeconds < 0.0f || SurvivorVisionHalfAngleDegrees < 0.0f ||
 		DetectionMargin < 0.0f || VisionFovMarginMultiplier < 0.0f || MultiplayerPatrolRadius < 0.0f ||
 		MultiplayerFollowDistance < 0.0f || MultiplayerFollowSeparation < 0.0f ||
-		MultiplayerRepathInterval < 0.01f || MultiplayerAcceptanceRadius < 0.0f)
+		MultiplayerRepathInterval < 0.01f || MultiplayerAcceptanceRadius < 0.0f || MultiplayerManualAttackRange < 0.0f)
 	{
 		OutError = TEXT("DT_AITuning Default row must contain finite, non-negative numeric values.");
 		return false;

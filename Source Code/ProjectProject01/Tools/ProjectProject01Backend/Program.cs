@@ -141,6 +141,9 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    options.AddPolicy("survey-read", context =>
+        RateLimitPartition.GetFixedWindowLimiter(RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions { PermitLimit=300, Window=TimeSpan.FromMinutes(1), QueueLimit=0, AutoReplenishment=true }));
     options.AddPolicy("survey", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             RequestSecurity.GetClientAddress(context),
@@ -640,6 +643,7 @@ app.MapPost("/api/crash-reports", async (
     }
 }).RequireRateLimiting("crash-report");
 
+app.MapProjectProject01CrashArtifacts();
 app.Run();
 
 static IResult DatabaseUnavailable() =>
@@ -803,6 +807,7 @@ internal static class CrashReportValidation
         if (!Guid.TryParse(report.ReportId, out _) ||
             report.DetectedAtUtc == default || report.StartedAtUtc == default || report.LastUpdatedAtUtc == default ||
             !ValidText(report.BuildVersion, 128) || !ValidText(report.MapName, 128) ||
+            report.MapName.StartsWith("UEDPIE_", StringComparison.OrdinalIgnoreCase) ||
             !ValidText(report.GameMode, 128) || !ProcessRoles.Contains(report.ProcessRole ?? "") ||
             !PlayerRoles.Contains(report.PlayerRole?.Trim() ?? "") ||
             !ValidText(report.DiagnosticRunId, 128) || !ValidText(report.LastLogPath, 256) ||
@@ -863,6 +868,26 @@ internal sealed class AuthDatabase
         await EnsureGuideProgressSchemaAsync(connection, cancellationToken);
         await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
+        await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
+    }
+
+    private static async Task EnsureSurveyReviewSchemaAsync(MySqlConnection connection, CancellationToken ct)
+    {
+        await connection.ChangeDatabaseAsync("projectproject01", ct);
+        foreach (var (name, definition) in new[] {
+            ("review_status", "VARCHAR(16) NOT NULL DEFAULT 'Accepted'"),
+            ("review_reason", "TEXT NULL") })
+        {
+            await using var check = new MySqlCommand("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='player_survey_responses' AND column_name=@name;", connection);
+            check.Parameters.AddWithValue("@name", name);
+            if (Convert.ToInt32(await check.ExecuteScalarAsync(ct)) == 0)
+            {
+                await using var alter = new MySqlCommand($"ALTER TABLE player_survey_responses ADD COLUMN {name} {definition};", connection);
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+        }
+        await using var normalize = new MySqlCommand("UPDATE player_survey_responses SET review_reason='' WHERE review_reason IS NULL;", connection);
+        await normalize.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task EnsureGuideProgressSchemaAsync(

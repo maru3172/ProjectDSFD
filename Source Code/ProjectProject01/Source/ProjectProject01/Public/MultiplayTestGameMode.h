@@ -62,6 +62,7 @@ public:
 		EMultiplayMannequinCommand Command);
 	bool TryResetFollowingMannequins(class AMultiplayTestPlayerController* RequestingController);
 	bool ToggleMannequinCatchDamage(class AMultiplayTestPlayerController* RequestingController);
+	bool TryMannequinAttack(class AMultiplayTestPlayerController* RequestingController);
 	void DeclareVoluntaryExit(class AMultiplayTestPlayerController* RequestingController);
 	void CycleSurvivorSpectator(class AMultiplayTestPlayerController* RequestingController, int32 Direction);
 	bool TryBroadcastSurvivorPing(class AMultiplayTestPlayerController* RequestingController,
@@ -191,6 +192,7 @@ private:
 	float MultiplayerFollowSeparation = 175.0f;
 	float MultiplayerRepathInterval = 0.2f;
 	float MultiplayerAcceptanceRadius = 60.0f;
+	float MultiplayerManualAttackRange = 180.0f;
 
 	/** 현재 목적지에 이 거리만큼 접근하면 다음 정찰 경로를 미리 계산합니다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin AI|Patrol",
@@ -269,6 +271,7 @@ private:
 	bool bFinishCommitted = false;
 	bool bMatchEndedByForfeit = false;
 	bool bSurvivorVictoryByMannequinForfeit = false;
+	bool bGlobalMannequinCatchDamageEnabled = true;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1", UIMin = "1"))
 	int32 ExpectedMatchPlayers = 3;

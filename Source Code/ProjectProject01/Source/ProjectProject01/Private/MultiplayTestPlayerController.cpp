@@ -572,6 +572,7 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinFollowCommand);
 	InputComponent->BindKey(EKeys::Q, IE_Pressed, this, &AMultiplayTestPlayerController::RequestResetFollowingMannequins);
 	InputComponent->BindKey(EKeys::B, IE_Pressed, this, &AMultiplayTestPlayerController::RequestToggleMannequinCatchDamage);
+	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinAttack);
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
 	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
 	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
@@ -1198,6 +1199,21 @@ void AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Implementa
 	}
 }
 
+void AMultiplayTestPlayerController::RequestMannequinAttack()
+{
+	if (IsLocalController() && !bShowMouseCursor && SurvivorState == EMultiplayTestSurvivorState::NotApplicable)
+		ServerRequestMannequinAttack();
+}
+
+void AMultiplayTestPlayerController::ServerRequestMannequinAttack_Implementation()
+{
+	if (!AllowServerRequest(9, 3, 1.0f)) return;
+	if (AMultiplayTestGameMode* Mode = GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(Mode))
+		Mode->TryMannequinAttack(this);
+}
+
+bool AMultiplayTestPlayerController::ServerRequestMannequinAttack_Validate() { return true; }
+
 bool AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Validate()
 {
 	return true;
@@ -1206,8 +1222,8 @@ bool AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Validate()
 void AMultiplayTestPlayerController::ClientNotifyMannequinCatchDamage_Implementation(const bool bEnabled)
 {
 	ClientMessage(bEnabled
-		? TEXT("현재 마네킹의 데스카운트 소모: 활성")
-		: TEXT("현재 마네킹의 데스카운트 소모: 비활성"));
+		? TEXT("전체 AI 마네킹의 데스카운트 소모: 활성")
+		: TEXT("전체 AI 마네킹의 데스카운트 소모: 비활성"));
 }
 
 void AMultiplayTestPlayerController::ClientPlayMannequinCaptureFeedback_Implementation(

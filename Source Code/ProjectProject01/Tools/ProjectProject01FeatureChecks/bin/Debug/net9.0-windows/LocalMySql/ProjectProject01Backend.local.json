@@ -1,0 +1,19 @@
+{
+  "ConnectionStrings": {
+    "ProjectProject01": "Server=127.0.0.1;Port=3307;User ID=projectproject01_api;Password=8gWLEoU7cnV5_bs_tGVib8ysvxXym59JsIhHqv3Nk2VlICkL;SslMode=Disabled;Connection Timeout=5;Default Command Timeout=5"
+  },
+  "LocalMySql": {
+    "AdminUser": "projectproject01_admin",
+    "AdminPassword": "sfL8N5KQ7O1RcBA_DlgFIKXMLXq7e55jdZ2dI8X9BOB287B_"
+  },
+  "GameServer": {
+    "SharedSecret": "swZ779tJhnHQwgO9EpyxzmAF7VTkEWDCJLhcmvn9OkzvoCI0",
+    "TicketKey": "+gNNXDiCdI/Tjh6lEekse86Ex+VQeskevOhzaHHXXZQ="
+  },
+  "Administrator": {
+    "ApiKey": "JD6JwOAS3QSd-wGTPNPPaS64IW8JdS28QV371-cCAZ-n0J7U"
+  },
+  "Security": {
+    "AllowUnverifiedLeaderboardSubmissions": true
+  }
+}

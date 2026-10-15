@@ -17,3 +17,4 @@ MultiplayerFollowDistance,300,마네킹 플레이어를 따르는 마네킹이 �
 MultiplayerFollowSeparation,175,플레이어를 따르는 마네킹끼리 밀집하지 않도록 유지하는 최소 이격 거리다.
 MultiplayerRepathInterval,0.2,MultiplayTest 전용 AI가 감지 대상과 A* 경로를 다시 계산하는 주기다.
 MultiplayerAcceptanceRadius,60,MultiplayTest 전용 A* 이동이 목표에 도달했다고 판단하는 허용 반경이다.
+MultiplayerManualAttackRange,180,멀티에서 직접 조작 중인 마네킹의 좌클릭 공격 사거리다. 단위는 cm이며 마네킹과 생존자의 캐릭터 중심 사이 거리로 서버가 판정한다. 전방 및 시야 검사도 적용하며 0이면 좌클릭 공격만 비활성화한다. 접촉 피해와 싱글 AI에는 영향을 주지 않는다.

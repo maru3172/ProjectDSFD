@@ -274,6 +274,16 @@ struct PROJECTPROJECT01_API FProjectProject01SurveyQuestion
 	FString Prompt;
 	TArray<FString> Options;
 	bool bRequired = true;
+	bool bAllowMultiple = false;
+	int32 MaxSelections = 1;
+	void ApplySelection(TArray<int32>& Selected, const int32 OptionIndex, const bool bChecked) const
+	{
+		if (!Options.IsValidIndex(OptionIndex)) return;
+		Selected.Remove(OptionIndex);
+		if (bChecked) Selected.Add(OptionIndex);
+		const int32 Limit = bAllowMultiple ? FMath::Clamp(MaxSelections > 0 ? MaxSelections : Options.Num(), 1, FMath::Max(1, Options.Num())) : 1;
+		while (Selected.Num() > Limit) Selected.RemoveAt(0);
+	}
 };
 
 struct PROJECTPROJECT01_API FProjectProject01SurveyDefinition
@@ -289,6 +299,7 @@ struct PROJECTPROJECT01_API FProjectProject01SurveyAnswer
 {
 	FString QuestionId;
 	FString Value;
+	TArray<FString> Values;
 };
 
 /** 인증 티켓과 UE 5.8 AES-GCM 네트워크 암호화 핸드셰이크를 연결합니다. */
@@ -362,8 +373,17 @@ public:
 	/** 현재 운영자가 활성화한 설문을 조회합니다. 활성 설문이 없으면 bHasSurvey=false입니다. */
 	void FetchActivePlayerSurvey(
 		TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)> Completion);
+	/** 타이틀 설문 진입 의도만 유지하며 인증 정보는 별도 AuthSubsystem이 관리합니다. */
+	void SetSurveyLoginRequested(bool bRequested) { bSurveyLoginRequested = bRequested; }
+	bool IsSurveyLoginRequested() const { return bSurveyLoginRequested; }
+	bool ConsumeSurveyLoginRequest()
+	{
+		const bool bRequested = bSurveyLoginRequested;
+		bSurveyLoginRequested = false;
+		return bRequested;
+	}
 
-	/** 동적 설문 답변을 백엔드에 저장합니다. 로그인 중이면 계정과 연결되고 아니면 익명으로 저장됩니다. */
+	/** 로그인한 계정의 동적 설문 답변을 백엔드에 저장합니다. */
 	void SubmitPlayerSurvey(
 		const FProjectProject01SurveyDefinition& Survey,
 		const TArray<FProjectProject01SurveyAnswer>& Answers,
@@ -385,6 +405,7 @@ private:
 		ENetworkFailure::Type FailureType, const FString& ErrorString);
 	void BeginSafeLogoutAfterGameServerFailure();
 	bool bPendingSinglePlayerLevelTransitionFade = false;
+	bool bSurveyLoginRequested = false;
 	void EnsureEntireScreenFadeOverlay();
 	void ApplyEntireScreenFadeOpacity();
 	bool TickEntireScreenFade(float DeltaSeconds);
@@ -399,6 +420,7 @@ private:
 	void RefreshCrashReportContext(UWorld* World);
 	void RecoverPendingCrashReports();
 	void UploadPendingCrashReport(const FString& ReportPath);
+	void UploadCrashAttachment(const FString& ReportPath, const FString& ReportId, const TArray<FString>& Files, int32 Index);
 	void WriteActiveCrashMarker(UWorld* World);
 	FString BuildSafeCrashReportJson(UWorld* World) const;
 	FString LoadGameServerSharedSecret() const;
