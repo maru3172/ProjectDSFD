@@ -3,25 +3,56 @@
 
 #include "InteractionActorBase.h"
 
+#include "Components/SceneComponent.h"
+#include "Components/BoxComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Pawn.h"
+
 // Sets default values
 AInteractionActorBase::AInteractionActorBase()
 {
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
-}
-
-// Called when the game starts or when spawned
-void AInteractionActorBase::BeginPlay()
-{
-	Super::BeginPlay();
+	PrimaryActorTick.bCanEverTick = false;
 	
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Scene Root"));
+	SceneRoot = RootComponent;
+
+	ItemMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ItemMesh"));
+	ItemMesh->SetupAttachment(SceneRoot);
+	ItemMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	
+	InteractionCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("Interaction Collision"));
+	InteractionCollision->SetupAttachment(SceneRoot);
+	InteractionCollision->SetBoxExtent(FVector(50.0f));
+	
+	// 상호작용 라인 트레이스는 Visibility 채널만 감지하도록 설정한다.
+	InteractionCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionCollision->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	
+	InteractionText = NSLOCTEXT(
+		"Interaction",
+		"DefaultInteractionText",
+		"상호작용"
+		);
 }
 
-// Called every frame
-void AInteractionActorBase::Tick(float DeltaTime)
+FText AInteractionActorBase::GetInteractionText_Implementation(APawn* Interactor) const
 {
-	Super::Tick(DeltaTime);
-
+	return InteractionText;
 }
 
+bool AInteractionActorBase::CanInteract_Implementation(APawn* Interactor) const
+{
+	return bInteractionEnabled && IsValid(Interactor);
+}
+
+void AInteractionActorBase::Interact_Implementation(APawn* Interactor)
+{
+	if (!CanInteract_Implementation(Interactor))
+	{
+		return;
+	}
+	
+	BP_OnInteracted(Interactor);
+}
