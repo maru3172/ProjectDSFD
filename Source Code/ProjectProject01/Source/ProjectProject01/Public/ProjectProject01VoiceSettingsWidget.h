@@ -31,6 +31,7 @@ private:
 	UFUNCTION() void ParticipantVolumeChanged(float Value);
 	UFUNCTION() void ParticipantChanged(FString Value,ESelectInfo::Type Type);
 	UFUNCTION() void InputChanged(FString Value,ESelectInfo::Type Type);
+	UFUNCTION() void RetryConnection();
 	class UProjectProject01VoiceChatSubsystem* Voice() const;
 	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
 	UPROPERTY(Transient) TObjectPtr<UComboBoxString> Inputs;
@@ -45,7 +46,10 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> VolumeText;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> Status;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> MuteText;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> ConnectionText;
+	UPROPERTY(Transient) TObjectPtr<class UButton> RetryButton;
 	TArray<FString> InputIds,OutputIds,ParticipantIds;
+	TArray<FString> ParticipantLabels;
 	float PollSeconds=0;
 	bool bRefreshingParticipants=false;
 };

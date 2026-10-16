@@ -308,7 +308,8 @@ void UProjectProject01AuthSubsystem::HandleServiceStatusRequestComplete(
 	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> Response,
 	const bool bConnectedSuccessfully)
 {
-	if (ServiceStatusRequest == Request) ServiceStatusRequest.Reset();
+	if (ServiceStatusRequest != Request) return;
+	ServiceStatusRequest.Reset();
 	if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() < 200 ||
 		Response->GetResponseCode() >= 300)
 	{
@@ -411,10 +412,8 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 	FString JsonBody,
 	const int32 RetryIndex)
 {
-	if (ActiveRequest == Request)
-	{
-		ActiveRequest.Reset();
-	}
+	if (ActiveRequest != Request) return;
+	ActiveRequest.Reset();
 
 	const int32 StatusCode = Response.IsValid() ? Response->GetResponseCode() : 0;
 	if ((!bConnectedSuccessfully || ProjectProject01Auth::IsRetryableStatus(StatusCode)) && RetryIndex < MaxRetryCount)

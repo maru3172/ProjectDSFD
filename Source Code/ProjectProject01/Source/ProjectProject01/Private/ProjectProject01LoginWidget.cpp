@@ -640,9 +640,9 @@ void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 	const bool bRequestedActive = bConfigured &&
 		(Voice->IsOpenMicEnabled() || Voice->IsPushToTalkHeld());
 	const bool bReady = bConfigured && Voice->IsVoiceReady();
-	const FString Status = bRequestedActive
-		? (bReady ? TEXT("보이스: 활성") : TEXT("보이스: 활성 (연결 중)"))
-		: TEXT("보이스: 비활성");
+	const FString Status = bReady
+		? (bRequestedActive?TEXT("보이스: 활성"):TEXT("보이스: 비활성"))
+		: FString(TEXT("보이스: 비활성\n"))+(bConfigured?Voice->GetConnectionStatusText():FString());
 	VoiceStatusText->SetText(FProjectProject01Localization::Text(Status));
 	VoiceStatusText->SetColorAndOpacity(FSlateColor(
 		bRequestedActive && bReady ? FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)

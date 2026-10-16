@@ -5,6 +5,7 @@
 #include "Tickable.h"
 #include "HttpFwd.h"
 #include "ProjectProject01VoiceParticipantControls.h"
+#include "ProjectProject01VoiceAudibility.h"
 #include "ProjectProject01VoiceChatSubsystem.generated.h"
 
 class IVoiceChat;
@@ -13,6 +14,7 @@ struct FVoiceChatResult;
 namespace Audio { class FAudioCapture; }
 
 struct FProjectVoiceDevice { FString Id; FString Name; };
+enum class EProjectVoiceConnectionPhase : uint8 { Inactive, Initializing, Identity, Connecting, Login, Token, Joining, Ready, RetryWaiting, Failed, Suspended };
 
 UCLASS(Config=Game)
 class PROJECTPROJECT01_API UProjectProject01VoiceChatSubsystem final
@@ -31,6 +33,12 @@ public:
 	void ConfigureForMatch(const FString& UserId, const FString& MatchId, const FString& Role,
 		class APlayerController* LocalController);
 	void LeaveMatch();
+	void SuspendForLevelTravel();
+	void RetryVoiceConnection();
+	void UpdateAuthoritativeAudibility(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers);
+	float CalculateDistanceGain(float Distance) const { return ProjectVoiceAudibility::DistanceGain(Distance,FullVolumeDistance,MaximumAudibleDistance,DistanceRolloff); }
+	FString GetConnectionStatusText() const;
+	bool CanRetryVoiceConnection() const { return bConfiguredForSurvivor && ConnectionPhase==EProjectVoiceConnectionPhase::Failed; }
 	void SetPushToTalkHeld(bool bHeld);
 	void ToggleOpenMic();
 	bool PrepareAudioDevices();
@@ -42,6 +50,7 @@ public:
 	void SetAudioPreferences(const FString& Input, const FString& Output, float Volume);
 	TArray<FString> GetVoiceParticipants() const;
 	TArray<FProjectVoiceParticipantState> GetVoiceParticipantStates() const;
+	FString GetParticipantDisplayName(const FString& Id) const;
 	void SetParticipantMuted(const FString& Id, bool bMuted);
 	bool IsParticipantMuted(const FString& Id) const { return ParticipantControls.Muted.Contains(Id); }
 	void SetParticipantVolume(const FString& Id, float Volume);
@@ -65,16 +74,45 @@ public:
 	bool IsPushToTalkHeld() const { return bPushToTalkHeld; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
-	bool IsTransmitting() const { return bJoinedChannel && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
+	bool IsTransmitting() const { return bJoinedChannel && HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
 
 private:
 	friend class FProjectVoiceParticipantIsolationTest;
+	friend class FProjectVoiceLifecycleTest;
+	friend class FProjectVoiceAudibilityTest;
+	void StopSession(bool bPreservePreferences);
+	void CancelVoiceRequests();
+	void BeginConnectionAttempt();
+	void FailConnection(const FString& Message, bool bRetryable=true);
+	void SetConnectionPhase(EProjectVoiceConnectionPhase Phase);
+	bool IsCurrentSession(uint64 Generation) const { return bConfiguredForSurvivor && Generation==SessionGeneration; }
+	uint64 SessionGeneration=1;
+	EProjectVoiceConnectionPhase ConnectionPhase=EProjectVoiceConnectionPhase::Inactive;
+	FString ConnectionFailure;
+	FString AccountUserId;
+	int32 ConnectionRetryCount=0;
+	float ConnectionStageSeconds=0;
+	FHttpRequestPtr JoinCredentialRequest;
+	FHttpRequestPtr RosterRequest;
+	TMap<FString,FString> ParticipantNames;
+	float RosterRefreshSeconds=0;
+	void RefreshParticipantNames();
+	void ApplyParticipantNames(const TSharedPtr<class FJsonObject>& Json);
 	void ApplyAudioPreferences();
 	FString PreferredInput;
 	FString PreferredOutput;
 	float ReceiveVolume = 1.0f;
 	bool bDeviceInitializationPending = false;
 	FProjectVoiceParticipantControls ParticipantControls;
+	TMap<FString,FString> ParticipantAccountIds;
+	TMap<FString,float> AuthoritativePeerGains;
+	double LastAudibilityUpdateSeconds=0;
+	bool bAuthoritativeVoiceAllowed=false;
+	TMap<FString,float> AppliedPeerGains;
+	int8 AppliedTransmitState=-1;
+	bool HasFreshAudibility() const;
+	float GetParticipantDistanceGain(const FString& Id) const;
+	void ApplyParticipantReceiveSettings(const FString& Id);
 	void HandleParticipantAdded(const FString& JoinedChannel, const FString& ParticipantId);
 	TSharedPtr<Audio::FAudioCapture> MicrophoneCapture;
 	TSharedRef<TAtomic<float>, ESPMode::ThreadSafe> MicrophoneLevel = MakeShared<TAtomic<float>, ESPMode::ThreadSafe>(0.0f);
@@ -86,13 +124,13 @@ private:
 	void BeginConnect();
 	void BeginLogin();
 	void BeginJoin();
-	void RequestJoinCredential();
-	void HandleJoinCredentialResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded);
+	void RequestJoinCredential(bool bIdentityRefreshOnly=false);
+	void HandleJoinCredentialResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded, uint64 Generation, bool bIdentityRefreshOnly);
 	void ApplyTransmitMode();
 	void HandleInitialized(const FVoiceChatResult& Result);
-	void HandleConnected(const FVoiceChatResult& Result);
-	void HandleLoggedIn(const FString& PlayerName, const FVoiceChatResult& Result);
-	void HandleJoined(const FString& JoinedChannel, const FVoiceChatResult& Result);
+	void HandleConnected(const FVoiceChatResult& Result, uint64 Generation);
+	void HandleLoggedIn(const FString& PlayerName, const FVoiceChatResult& Result, uint64 Generation);
+	void HandleJoined(const FString& JoinedChannel, const FVoiceChatResult& Result, uint64 Generation);
 	void HandleChannelExited(const FString& ExitedChannel, const FVoiceChatResult& Reason);
 	void ReportFailure(const TCHAR* Stage, const FVoiceChatResult& Result);
 

@@ -867,8 +867,12 @@ void UProjectProject01GameInstance::UploadPendingCrashReport(const FString& Repo
 						Marker->TryGetStringField(TEXT("reportId"), ReportId))
 					{
 						Instance->CrashReportsInFlight.Add(ReportPath);
-						Instance->UploadCrashAttachment(ReportPath, ReportId,
-							ProjectProject01CrashFiles::FindAttachments(ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId)), 0);
+						TSharedPtr<FJsonObject> Policy;bool bAllowDump=false;
+						if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Policy) && Policy)
+							Policy->TryGetBoolField(TEXT("allowMinidumpUploads"),bAllowDump);
+						TArray<FString> Files=ProjectProject01CrashFiles::FindAttachments(ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId));
+						if(!bAllowDump)Files.RemoveAll([](const FString& Path){return ProjectProject01CrashFiles::AttachmentName(Path)==TEXT("Crash.dmp");});
+						Instance->UploadCrashAttachment(ReportPath, ReportId,Files,0);
 					}
 				}
 			}

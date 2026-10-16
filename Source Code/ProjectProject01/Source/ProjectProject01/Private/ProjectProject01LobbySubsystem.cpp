@@ -94,6 +94,7 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 
 void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 {
+	++RequestGeneration;
 	if (ActiveRequest.IsValid())
 	{
 		ActiveRequest->OnProcessRequestComplete().Unbind();
@@ -381,6 +382,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 		}
 		return;
 	}
+	++RequestGeneration;
 
 	const UGameInstance* GameInstance = GetGameInstance();
 	const UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
@@ -440,10 +442,8 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	FString JsonBody,
 	const int32 RetryIndex)
 {
-	if (ActiveRequest == Request)
-	{
-		ActiveRequest.Reset();
-	}
+	if (ActiveRequest != Request) return;
+	ActiveRequest.Reset();
 
 	const int32 StatusCode = Response.IsValid() ? Response->GetResponseCode() : 0;
 	if (StatusCode == 401 && RetryIndex == 0)
@@ -454,9 +454,10 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 		if (IsValid(Auth))
 		{
 			const TWeakObjectPtr<UProjectProject01LobbySubsystem> WeakThis(this);
-			Auth->RefreshSession([WeakThis, Operation, Verb, Endpoint, JsonBody](const bool bRefreshed)
+			const uint64 Generation=RequestGeneration;
+			Auth->RefreshSession([WeakThis, Operation, Verb, Endpoint, JsonBody, Generation](const bool bRefreshed)
 			{
-				if (UProjectProject01LobbySubsystem* Self = WeakThis.Get(); IsValid(Self))
+				if (UProjectProject01LobbySubsystem* Self = WeakThis.Get(); IsValid(Self) && Self->RequestGeneration==Generation)
 				{
 					if (bRefreshed)
 					{

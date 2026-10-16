@@ -7,6 +7,7 @@
 #include "GameFramework/PlayerController.h"
 #include "MultiplayMannequinTypes.h"
 #include "ProjectProject01MatchTimeline.h"
+#include "ProjectProject01VoiceAudibility.h"
 #include "MultiplayTestPlayerController.generated.h"
 
 struct FProjectProject01ValidatedJoinClaim;
@@ -99,6 +100,8 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 
 public:
 	AMultiplayTestPlayerController();
+	UFUNCTION(Client,Unreliable)
+	void ClientUpdateVoiceAudibility(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers);
 	class AMannequinAICharacter* GetViewedMannequin() const;
 	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
 	FRotator ResolveMannequinCameraRotation(class AMannequinAICharacter* Mannequin, float DeltaSeconds);

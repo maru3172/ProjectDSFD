@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
-internal sealed class EosVoiceTokenService : IHostedService, IDisposable
+internal sealed partial class EosVoiceTokenService : IHostedService, IDisposable
 {
     private readonly ILogger<EosVoiceTokenService> _logger;
     private readonly IConfiguration _configuration;
@@ -24,7 +24,7 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         _configuration = configuration;
     }
 
-    public bool IsReady => _platform != IntPtr.Zero && _rtcAdmin != IntPtr.Zero;
+    public bool IsReady => _platform != IntPtr.Zero && _rtcAdmin != IntPtr.Zero && _connect != IntPtr.Zero;
 
     public static bool IsProductUserIdText(string? value) =>
         !string.IsNullOrWhiteSpace(value) && Regex.IsMatch(value, "^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
@@ -96,7 +96,7 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
             EosNative.ConfigureLogging((level, category, message) =>
             {
                 // EOS SDK diagnostics are useful for credential/platform setup, but credentials must never enter logs.
-                var safeMessage = message
+                var safeMessage = CrashArtifactEndpoints.ScrubText(message)
                     .Replace(clientSecret!, "***", StringComparison.Ordinal)
                     .Replace(clientId!, "[client-id]", StringComparison.Ordinal);
                 if (level <= 200) _logger.LogError("EOS SDK [{Category}] {Message}", category, safeMessage);
@@ -155,7 +155,8 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
                 throw new InvalidOperationException("EOS_Platform_Create returned a null handle.");
             }
             _rtcAdmin = EosNative.EOS_Platform_GetRTCAdminInterface(_platform);
-            if (_rtcAdmin == IntPtr.Zero)
+            _connect = EosNative.EOS_Platform_GetConnectInterface(_platform);
+            if (_rtcAdmin == IntPtr.Zero || _connect == IntPtr.Zero)
             {
                 throw new InvalidOperationException("EOS RTC Admin interface is unavailable.");
             }
@@ -304,12 +305,14 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
 
     private void ReleaseNativeResources()
     {
+        _connect = IntPtr.Zero;
         _rtcAdmin = IntPtr.Zero;
         if (_platform != IntPtr.Zero)
         {
             EosNative.EOS_Platform_Release(_platform);
             _platform = IntPtr.Zero;
         }
+        ReleaseIdentityOperations();
         if (_initializedSdk)
         {
             EosNative.EOS_Shutdown();
@@ -340,7 +343,7 @@ internal sealed class EosVoiceTokenService : IHostedService, IDisposable
         public void Dispose() => Marshal.FreeCoTaskMem(Pointer);
     }
 
-    private static class EosNative
+    private static partial class EosNative
     {
         private const string LibraryName = "EOSSDK-Win64-Shipping.dll";
         private static IntPtr _library;

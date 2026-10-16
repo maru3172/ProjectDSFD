@@ -117,6 +117,7 @@ public:
 	void RefreshSession(TFunction<void(bool)> Completion);
 
 private:
+	friend class FProjectStaleFrontendResponseTest;
 	enum class EAuthOperation : uint8
 	{
 		Register,

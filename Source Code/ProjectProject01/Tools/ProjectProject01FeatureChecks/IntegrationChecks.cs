@@ -37,6 +37,7 @@ internal static class IntegrationChecks
         var builder=WebApplication.CreateBuilder(new WebApplicationOptions{ContentRootPath=output});
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(database);
+        builder.Services.AddSingleton(new CrashArtifactStore(Path.Combine(output,"CrashArtifactsFixture",Guid.NewGuid().ToString("N")),TimeProvider.System));
         builder.Services.AddSingleton<ServiceControlState>();
         builder.Services.AddSingleton<Microsoft.AspNetCore.Identity.IPasswordHasher<RoomPasswordRecord>,Microsoft.AspNetCore.Identity.PasswordHasher<RoomPasswordRecord>>();
         builder.Services.AddSingleton(AdministratorOptions.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(
@@ -128,7 +129,9 @@ internal static class IntegrationChecks
             Check(reports.GetProperty("crashReports").EnumerateArray().All(r=>r.GetProperty("reportId").GetString()!=pieReport),"크래시 목록 PIE 오탐 제외");
             reports=await Read(await admin.GetAsync("/api/admin/crash-reports?limit=1"));
             Check(reports.GetProperty("count").GetInt32()==1,"크래시 목록 조회 개수 제한");
-            await Expect(await player.PostAsync($"/api/crash-reports/{report}/artifacts/Crash.dmp",new ByteArrayContent(Encoding.ASCII.GetBytes("MDMP-test-fixture"))),HttpStatusCode.OK,"덤프 업로드");
+            await Expect(await player.PostAsync($"/api/crash-reports/{report}/artifacts/Crash.dmp",new ByteArrayContent(Encoding.ASCII.GetBytes("MDMP-test-fixture"))),HttpStatusCode.NoContent,"기본 덤프 업로드 비활성");
+            await Expect(await admin.PutAsJsonAsync("/api/admin/crash-artifact-policy",new CrashArtifactPolicy(AllowMinidumps:true)),HttpStatusCode.OK,"관리자가 원본 덤프 수집 허용");
+            await Expect(await player.PostAsync($"/api/crash-reports/{report}/artifacts/Crash.dmp",new ByteArrayContent(Encoding.ASCII.GetBytes("MDMP-test-fixture"))),HttpStatusCode.OK,"허용 후 덤프 업로드");
             await Expect(await player.PostAsync($"/api/crash-reports/{report}/artifacts/Game.log",new StringContent("log password=secret-fixture Bearer token-fixture")),HttpStatusCode.OK,"전체 로그 업로드");
             await Expect(await player.PostAsync($"/api/crash-reports/{report}/artifacts/secret.json",new StringContent("x")),HttpStatusCode.BadRequest,"허용되지 않은 첨부파일 차단");
             await Expect(await player.GetAsync($"/api/admin/crash-reports/{report}/artifacts"),HttpStatusCode.Unauthorized,"일반 클라이언트 덤프 다운로드 차단");

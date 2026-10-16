@@ -19,6 +19,10 @@
 #include "HAL/FileManager.h"
 #include "Serialization/BufferArchive.h"
 #include "RenderingThread.h"
+#include "VoiceChat.h"
+#include "VoiceChatErrors.h"
+#include "HttpModule.h"
+#include "Dom/JsonObject.h"
 #include <limits>
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectVoiceParticipantControlsTest,"ProjectProject01.Multiplayer.SurvivorVoice.LocalParticipantControls",
@@ -74,6 +78,50 @@ bool FProjectVoiceParticipantIsolationTest::RunTest(const FString&)
 	TestFalse(TEXT("Leaving disables survivor communication"),Service->IsConfiguredForSurvivor());
 	TestFalse(TEXT("Leaving clears channel readiness"),Service->IsVoiceReady());
 	TestTrue(TEXT("Leaving clears channel identity"),Service->ChannelName.IsEmpty()&&Service->LocalUserId.IsEmpty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectVoiceLifecycleTest,"ProjectProject01.Multiplayer.SurvivorVoice.LifecycleAndNames",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectVoiceLifecycleTest::RunTest(const FString&)
+{
+	auto* Instance=NewObject<UGameInstance>();
+	auto* Service=NewObject<UProjectProject01VoiceChatSubsystem>(Instance);
+	Service->bConfiguredForSurvivor=true;Service->AccountUserId=TEXT("account");Service->MatchId=TEXT("match");
+	Service->LocalUserId=TEXT("self");Service->ChannelName=TEXT("channel");
+	Service->ParticipantControls.Muted.Add(TEXT("peer"));Service->ParticipantControls.Volumes.Add(TEXT("peer"),0.4f);
+	const uint64 OldGeneration=Service->SessionGeneration;
+	Service->SuspendForLevelTravel();
+	TestFalse(TEXT("Travel disables transport and old callbacks"),Service->IsCurrentSession(OldGeneration));
+	TestEqual(TEXT("Travel preserves local gain"),Service->GetParticipantVolume(TEXT("peer")),0.4f);
+	TestTrue(TEXT("Travel preserves mute and account/match scope"),Service->IsParticipantMuted(TEXT("peer"))&&Service->AccountUserId==TEXT("account")&&Service->MatchId==TEXT("match"));
+	Service->HandleJoined(TEXT("channel"),FVoiceChatResult::CreateSuccess(),OldGeneration);
+	TestFalse(TEXT("Late join after travel cannot resurrect channel"),Service->IsVoiceReady());
+	Service->bConfiguredForSurvivor=true;Service->ChannelName=TEXT("new-channel");Service->bJoinedChannel=true;
+	Service->SetConnectionPhase(EProjectVoiceConnectionPhase::Ready);
+	Service->HandleJoined(TEXT("channel"),FVoiceChatResult::CreateSuccess(),OldGeneration);
+	Service->HandleConnected(VoiceChat::Errors::NotConnected(),OldGeneration);
+	Service->HandleLoggedIn(TEXT("old-user"),VoiceChat::Errors::NotConnected(),OldGeneration);
+	TestTrue(TEXT("Old successful/failed callbacks cannot overwrite newer ready state"),Service->IsVoiceReady()&&Service->ConnectionPhase==EProjectVoiceConnectionPhase::Ready);
+	Service->bJoinCredentialPending=true;
+	Service->HandleJoinCredentialResponse(FHttpModule::Get().CreateRequest(),nullptr,false,OldGeneration,false);
+	TestTrue(TEXT("Old token failure cannot clear current request state"),Service->bJoinCredentialPending);
+	Service->bJoinCredentialPending=false;Service->bJoinedChannel=false;
+	Service->SetConnectionPhase(EProjectVoiceConnectionPhase::Connecting);Service->Tick(10.0f);
+	TestTrue(TEXT("No response becomes a bounded retry, not endless connecting"),Service->ConnectionPhase==EProjectVoiceConnectionPhase::RetryWaiting&&Service->RejoinDelaySeconds==2);
+	for(int32 Index=0;Index<3;++Index)Service->FailConnection(TEXT("검사 실패"));
+	TestTrue(TEXT("Automatic retries stop after three attempts"),Service->CanRetryVoiceConnection()&&Service->ConnectionRetryCount==3&&Service->RejoinDelaySeconds==0);
+	TestTrue(TEXT("Terminal failure is visible to UI"),Service->GetConnectionStatusText().Contains(TEXT("연결 실패")));
+	const FString PeerId=TEXT("0123456789abcdef0123456789abcdef");
+	TSharedRef<FJsonObject> Row=MakeShared<FJsonObject>();Row->SetStringField(TEXT("productUserId"),PeerId);Row->SetStringField(TEXT("displayName"),TEXT("테스트\n생존자"));
+	TSharedRef<FJsonObject> Roster=MakeShared<FJsonObject>();Roster->SetArrayField(TEXT("participants"),{MakeShared<FJsonValueObject>(Row)});
+	Service->ApplyParticipantNames(Roster);
+	TestEqual(TEXT("Server nickname, not ID suffix, is displayed safely"),Service->GetParticipantDisplayName(PeerId),FString(TEXT("테스트 생존자")));
+	TestTrue(TEXT("Unknown identities retain safe fallback"),Service->GetParticipantDisplayName(TEXT("unresolved")).StartsWith(TEXT("동료 생존자")));
+	Service->LeaveMatch();
+	TestTrue(TEXT("Logout clears match-scoped names and receive overrides"),Service->ParticipantNames.IsEmpty()&&Service->ParticipantControls.GetAdjustedIds().IsEmpty()&&Service->AccountUserId.IsEmpty()&&Service->MatchId.IsEmpty());
+	Service->ConfigureForMatch(TEXT("account"),TEXT("match"),TEXT("Mannequin"),nullptr);
+	TestFalse(TEXT("Role change cannot resume survivor transport"),Service->IsConfiguredForSurvivor());
 	return true;
 }
 

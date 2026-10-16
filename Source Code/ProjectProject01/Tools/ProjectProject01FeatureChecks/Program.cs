@@ -17,21 +17,25 @@ internal static class FeatureChecks
             }
             var compatibility=VersionCompatibilityOptions.FromConfiguration(
                 new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
-            Check(compatibility.NetworkProtocolVersion=="2","타임라인 결과 통신 프로토콜 기본값 2");
+            Check(compatibility.NetworkProtocolVersion=="3","서버 권위 보이스 감쇄 통신 프로토콜 기본값 3");
             var versionHeaders=new Microsoft.AspNetCore.Http.HeaderDictionary
             {
                 [VersionCompatibilityOptions.ClientBuildHeader]=compatibility.ClientBuildVersion,
                 [VersionCompatibilityOptions.DedicatedServerBuildHeader]=compatibility.DedicatedServerBuildVersion,
                 [VersionCompatibilityOptions.ApiVersionHeader]=compatibility.ApiVersion,
                 [VersionCompatibilityOptions.GameDataVersionHeader]=compatibility.GameDataVersion,
-                [VersionCompatibilityOptions.NetworkProtocolHeader]="2"
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="3"
             };
-            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 2 클라이언트 허용");
-            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 2 데디 서버 허용");
-            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="1";
+            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 3 클라이언트 허용");
+            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 3 데디 서버 허용");
+            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="2";
             Check(compatibility.GetMismatches(versionHeaders,false).SequenceEqual(new[]{"NetworkProtocol"}),"구형 클라이언트 프로토콜 혼용 차단");
             Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");
+            VoiceDirectoryChecks.Run(Check);
+            VoiceSecurityChecks.Run(Check);
+            CrashRetentionChecks.RunAsync(Check).GetAwaiter().GetResult();
+            CrashPolicyHttpChecks.RunAsync(Check).GetAwaiter().GetResult();
             var single=new SurveyQuestionDefinition(id,"Choice","질문",["A","B","C"],true);
             Check(SurveyEndpoints.ValidateDefinition(new("호환성","",[single]),out _),"기존 문항 JSON 호환");
             var old=JsonSerializer.Deserialize<SurveyQuestionDefinition>(JsonSerializer.Serialize(new {Id=id,Type="Choice",Prompt="질문",Options=new[]{"A","B"},Required=true}))!;
@@ -113,6 +117,14 @@ internal static class FeatureChecks
             PrepareRender(capacity);
             using var bitmap=new Bitmap(capacity.Width,capacity.Height);capacity.DrawToBitmap(bitmap,new Rectangle(Point.Empty,capacity.Size));bitmap.Save(Path.Combine(output,"room-capacity.png"));
             Check(Children(capacity).OfType<NumericUpDown>().Single().Maximum==100,"방 한도 설정 UI 8개 제한 제거");
+        }
+        using(var policy=new CrashArtifactPolicyForm(MockRequest))
+        {
+            PrepareRender(policy);
+            using var bitmap=new Bitmap(policy.Width,policy.Height);policy.DrawToBitmap(bitmap,new Rectangle(Point.Empty,policy.Size));bitmap.Save(Path.Combine(output,"crash-retention-policy.png"));
+            Check(Children(policy).OfType<CheckBox>().Count()==2,"크래시 자동 정리·덤프 수집 별도 체크박스");
+            var apply=Children(policy).OfType<Button>().Single();
+            Check(policy.ClientRectangle.Contains(policy.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle))),"크래시 정책 적용 버튼 가시 영역");
         }
         using(var restrictions=new AccountRestrictionForm(MockRequest))
         {

@@ -60,7 +60,7 @@ void UProjectProject01VoiceChatSubsystem::ApplyAudioPreferences()
 void UProjectProject01VoiceChatSubsystem::UpdateReceiveVolume()
 {
 	if(!VoiceUser)return;
-	float Gain=ReceiveVolume;
+	float Gain=HasFreshAudibility() && bAuthoritativeVoiceAllowed ? ReceiveVolume : 0.0f;
 	if(const auto* Settings=UProjectProject01GameUserSettings::Get())
 	{
 		const bool bInactive=FSlateApplication::IsInitialized()&&!FSlateApplication::Get().IsActive();
@@ -81,7 +81,7 @@ TArray<FProjectVoiceParticipantState> UProjectProject01VoiceChatSubsystem::GetVo
 	{
 		FProjectVoiceParticipantState State;
 		State.Id=Id;
-		State.DisplayName=FString::Printf(TEXT("동료 생존자 (%s)"),*Id.Right(6));
+		State.DisplayName=GetParticipantDisplayName(Id);
 		State.Volume=GetParticipantVolume(Id);
 		State.bMuted=IsParticipantMuted(Id);
 		State.bTalking=VoiceUser->IsPlayerTalking(Id);
@@ -97,24 +97,61 @@ void UProjectProject01VoiceChatSubsystem::SetParticipantMuted(const FString& Id,
 void UProjectProject01VoiceChatSubsystem::SetParticipantVolume(const FString& Id,float Volume)
 {
 	if (!VoiceUser || !ParticipantControls.SetVolume(Id,LocalUserId,GetVoiceParticipants(),Volume)) return;
-	VoiceUser->SetPlayerVolume(Id,ParticipantControls.GetVolume(Id));
+	ApplyParticipantReceiveSettings(Id);
 }
 void UProjectProject01VoiceChatSubsystem::HandleParticipantAdded(const FString& JoinedChannel,const FString& Id)
 {
 	if (!bConfiguredForSurvivor || !VoiceUser || JoinedChannel!=ChannelName || Id.IsEmpty() || Id==LocalUserId) return;
+	AppliedPeerGains.Remove(Id);
 	VoiceUser->SetPlayerMuted(Id,IsParticipantMuted(Id));
-	VoiceUser->SetPlayerVolume(Id,GetParticipantVolume(Id));
+	ApplyParticipantReceiveSettings(Id);
+}
+
+bool UProjectProject01VoiceChatSubsystem::HasFreshAudibility() const
+{
+	return LastAudibilityUpdateSeconds>0 && FPlatformTime::Seconds()-LastAudibilityUpdateSeconds<=1.0;
+}
+
+float UProjectProject01VoiceChatSubsystem::GetParticipantDistanceGain(const FString& Id) const
+{
+	if(!HasFreshAudibility() || !bAuthoritativeVoiceAllowed)return 0;
+	const FString* Account=ParticipantAccountIds.Find(Id.ToLower());
+	const float* Gain=Account?AuthoritativePeerGains.Find(*Account):nullptr;
+	return Gain?*Gain:0;
+}
+
+void UProjectProject01VoiceChatSubsystem::ApplyParticipantReceiveSettings(const FString& Id)
+{
+	if(!VoiceUser)return;
+	const float Gain=GetParticipantVolume(Id)*GetParticipantDistanceGain(Id);
+	const float* Applied=AppliedPeerGains.Find(Id);
+	if(!Applied || !FMath::IsNearlyEqual(*Applied,Gain,0.001f))
+	{
+		VoiceUser->SetPlayerVolume(Id,Gain);AppliedPeerGains.Add(Id,Gain);
+	}
+}
+
+void UProjectProject01VoiceChatSubsystem::UpdateAuthoritativeAudibility(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers)
+{
+	if(!bConfiguredForSurvivor || InMatchId!=MatchId || Peers.Num()>3)return;
+	AuthoritativePeerGains.Reset();
+	for(const auto& Peer:Peers)
+		if(!Peer.UserId.IsEmpty() && FMath::IsFinite(Peer.Gain))AuthoritativePeerGains.Add(Peer.UserId,FMath::Clamp(Peer.Gain,0.0f,1.0f));
+	bAuthoritativeVoiceAllowed=bAllowed;LastAudibilityUpdateSeconds=FPlatformTime::Seconds();
+	UpdateReceiveVolume();ApplyTransmitMode();
 }
 void UProjectProject01VoiceChatSubsystem::ResetParticipantPreferences()
 {
-	// EOS keeps per-player settings beyond a channel leave. Clear its local cache too.
+	const auto Adjusted=ParticipantControls.GetAdjustedIds();
+	ParticipantControls.Reset();AppliedPeerGains.Reset();
+	// Reset personal preferences, not the server's distance/eligibility decision.
 	if (VoiceUser && VoiceUser->IsLoggedIn())
-		for (const FString& Id:ParticipantControls.GetAdjustedIds())
+		for (const FString& Id:Adjusted)
 		{
 			VoiceUser->SetPlayerMuted(Id,false);
-			VoiceUser->SetPlayerVolume(Id,1.0f);
+			if(bConfiguredForSurvivor)ApplyParticipantReceiveSettings(Id);
+			else VoiceUser->SetPlayerVolume(Id,1.0f);
 		}
-	ParticipantControls.Reset();
 }
 bool UProjectProject01VoiceChatSubsystem::StartMicrophoneTest(const FString& InputId,FString& Error)
 {

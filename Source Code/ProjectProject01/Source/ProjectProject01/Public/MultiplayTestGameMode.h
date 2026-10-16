@@ -106,6 +106,8 @@ public:
 	virtual void HandleSeamlessTravelPlayer(AController*& Controller) override;
 
 private:
+	void UpdateVoiceAudibility();
+	float VoiceAudibilityAccumulator=0;
 	void RecordTimeline(EProjectMatchEvent Kind, const FString& PlayerName = {}, const FString& Detail = {});
 	void BeginMatchTimeline();
 	double GetTimelineElapsedSeconds() const;

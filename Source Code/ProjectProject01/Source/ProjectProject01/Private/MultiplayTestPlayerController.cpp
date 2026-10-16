@@ -151,6 +151,7 @@ void AMultiplayTestPlayerController::SeamlessTravelFrom(APlayerController* OldPC
 	}
 
 	AuthenticatedUserId = Previous->AuthenticatedUserId;
+	AuthenticatedDisplayName = Previous->AuthenticatedDisplayName;
 	AuthenticatedMatchId = Previous->AuthenticatedMatchId;
 	AuthenticatedRole = Previous->AuthenticatedRole;
 	MatchPhase = Previous->MatchPhase;
@@ -212,7 +213,8 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 			}
 			if (UProjectProject01VoiceChatSubsystem* Voice = GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
 			{
-				Voice->LeaveMatch();
+				if(bLocalLevelTransitionFadeHeld && EndPlayReason!=EEndPlayReason::Quit && EndPlayReason!=EEndPlayReason::EndPlayInEditor)Voice->SuspendForLevelTravel();
+				else Voice->LeaveMatch();
 			}
 		}
 	}
@@ -397,6 +399,13 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 		}
 	}
 	TryRevealInitialGameplayFade();
+}
+
+void AMultiplayTestPlayerController::ClientUpdateVoiceAudibility_Implementation(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers)
+{
+	if(IsLocalController() && GetGameInstance())
+		if(auto* Voice=GetGameInstance()->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
+			Voice->UpdateAuthoritativeAudibility(InMatchId,bAllowed,Peers);
 }
 
 void AMultiplayTestPlayerController::SetSurvivorVoiceStatusVisible(const bool bVisible)

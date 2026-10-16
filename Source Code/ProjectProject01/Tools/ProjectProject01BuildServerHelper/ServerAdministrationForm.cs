@@ -209,6 +209,7 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(serviceButtons, "점검 예약 취소", CancelMaintenanceScheduleAsync);
         AddButton(serviceButtons, "공지 지우기", ClearAnnouncementAsync);
         AddButton(serviceButtons, "크래시 보고서 보기", LoadCrashReportsAsync);
+        AddButton(serviceButtons, "크래시 보관 정책", () => {using var dialog=new CrashArtifactPolicyForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "피드백/설문조사 관리", OpenSurveyAdministrationAsync);
         AddButton(serviceButtons, "계정 이용 제한", () => {using var dialog=new AccountRestrictionForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "최대 방 수", () => {using var dialog=new RoomCapacityForm(CreateAdminRequest, value=>CapacityChanged?.Invoke(value));dialog.ShowDialog(this);return Task.CompletedTask;});

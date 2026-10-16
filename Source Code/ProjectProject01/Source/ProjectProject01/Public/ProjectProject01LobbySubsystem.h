@@ -380,6 +380,8 @@ public:
 	const FString& GetGameTicketRole() const { return GameTicketRole; }
 
 private:
+	friend class FProjectStaleFrontendResponseTest;
+	uint64 RequestGeneration=0;
 	friend class FProjectRoomPreparationStateTest;
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
 		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0);

@@ -39,7 +39,8 @@ bool UProjectProject01VoiceSettingsWidget::Initialize()
 	MuteText=Label(TEXT("참가한 생존자 음성 채널에서만 사용 가능합니다."));ParticipantMuteButton=Button(TEXT("선택한 동료 음소거 / 해제"),TEXT("ToggleMute"));
 	ParticipantVolumeText=Label(TEXT("선택한 동료 음량 100%"));ParticipantVolume=WidgetTree->ConstructWidget<USlider>();ParticipantVolume->SetMinValue(0);ParticipantVolume->SetMaxValue(1);ParticipantVolume->SetStepSize(0.01f);ParticipantVolume->SetValue(1);Panel->AddChild(ParticipantVolume);
 	ParticipantVolume->OnValueChanged.AddUniqueDynamic(this,&UProjectProject01VoiceSettingsWidget::ParticipantVolumeChanged);
-	Label(TEXT("동료 음소거·음량은 내 수신에만 즉시 적용되며 상대에게 알리지 않습니다. 경기에서 나가거나 맵이 바뀌면 초기화됩니다."));
+	Label(TEXT("동료 음소거·음량은 내 수신에만 즉시 적용되며 상대에게 알리지 않습니다. 같은 경기의 맵 이동에는 유지되고, 경기 종료·로그아웃 때 초기화됩니다."));
+	ConnectionText=Label(TEXT("경기 중 생존자 전용"));RetryButton=Button(TEXT("음성 연결 다시 시도"),TEXT("RetryConnection"));RetryButton->SetIsEnabled(false);
 	Status=Label(TEXT("장치 선택과 전체 수신 음량은 적용 버튼으로 저장합니다."));
 	Button(TEXT("적용"),TEXT("Apply"));Button(TEXT("음성 설정 초기화"),TEXT("Reset"));Button(TEXT("돌아가기"),TEXT("Back"));
 	RefreshSelectedParticipant();
@@ -80,18 +81,21 @@ void UProjectProject01VoiceSettingsWidget::RefreshParticipants()
 {
 	auto* Service=Voice();
 	TArray<FString> Current=Service?Service->GetVoiceParticipants():TArray<FString>();
-	if(Current!=ParticipantIds)
+	TArray<FString> Labels;for(const FString& Id:Current)Labels.Add(Service->GetParticipantDisplayName(Id));
+	if(Current!=ParticipantIds || Labels!=ParticipantLabels)
 	{
 		const int32 OldIndex=Participants->GetSelectedIndex();
 		const FString Selected=ParticipantIds.IsValidIndex(OldIndex)?ParticipantIds[OldIndex]:FString();
 		bRefreshingParticipants=true;
-		ParticipantIds=Current;Participants->ClearOptions();
-		for(const FString& Id:ParticipantIds)Participants->AddOption(FString::Printf(TEXT("동료 생존자 (%s)"),*Id.Right(6)));
+		ParticipantIds=Current;ParticipantLabels=Labels;Participants->ClearOptions();
+		for(const FString& Label:Labels)Participants->AddOption(Label);
 		if(ParticipantIds.Num())Participants->SetSelectedIndex(FMath::Max(0,ParticipantIds.IndexOfByKey(Selected)));
 		bRefreshingParticipants=false;
 		ParticipantChanged(FString(),ESelectInfo::Direct);
 	}
 	RefreshSelectedParticipant();
+	ConnectionText->SetText(FText::FromString(Service?Service->GetConnectionStatusText():TEXT("경기 중 생존자 전용")));
+	RetryButton->SetIsEnabled(Service && Service->CanRetryVoiceConnection());
 }
 void UProjectProject01VoiceSettingsWidget::RefreshSelectedParticipant()
 {
@@ -145,6 +149,7 @@ void UProjectProject01VoiceSettingsWidget::ToggleMicrophoneTest()
 	}
 }
 void UProjectProject01VoiceSettingsWidget::ToggleMute(){if(auto* Service=Voice()){int32 Index=Participants->GetSelectedIndex();if(ParticipantIds.IsValidIndex(Index))Service->SetParticipantMuted(ParticipantIds[Index],!Service->IsParticipantMuted(ParticipantIds[Index]));}RefreshSelectedParticipant();}
+void UProjectProject01VoiceSettingsWidget::RetryConnection(){if(auto* Service=Voice())Service->RetryVoiceConnection();RefreshParticipants();}
 void UProjectProject01VoiceSettingsWidget::NativeDestruct(){if(auto* Service=Voice())Service->StopMicrophoneTest();Super::NativeDestruct();}
 void UProjectProject01VoiceSettingsWidget::Back(){if(auto* Service=Voice())Service->StopMicrophoneTest();RemoveFromParent();if(IsValid(ReturnWidget)){ReturnWidget->SetVisibility(ESlateVisibility::Visible);ReturnWidget->SetKeyboardFocus();}}
 FReply UProjectProject01VoiceSettingsWidget::NativeOnKeyDown(const FGeometry& Geometry,const FKeyEvent& Key){if(Key.GetKey()==EKeys::Escape){Back();return FReply::Handled();}return Super::NativeOnKeyDown(Geometry,Key);}

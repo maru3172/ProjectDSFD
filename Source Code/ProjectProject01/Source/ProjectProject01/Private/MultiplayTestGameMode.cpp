@@ -28,6 +28,7 @@
 #include "NavigationPath.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
+#include "ProjectProject01VoiceChatSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -1426,6 +1427,8 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 		FinishAuthoritativeMatch(TEXT("TimeLimit"));
 	}
 	ProcessReconnectTimeouts();
+	VoiceAudibilityAccumulator+=DeltaSeconds;
+	if(VoiceAudibilityAccumulator>=0.1f){VoiceAudibilityAccumulator=0;UpdateVoiceAudibility();}
 	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
 	{
 		return;
@@ -1446,6 +1449,35 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 
 	SurvivorVisionCheckAccumulatorSeconds = 0.0f;
 	UpdateSurvivorVisionFrozenStates();
+}
+
+void AMultiplayTestGameMode::UpdateVoiceAudibility()
+{
+	const auto* Voice=GetDefault<UProjectProject01VoiceChatSubsystem>(); // Read Config even on a dedicated server without a voice transport subsystem.
+	for(const auto& Listener:MatchPlayerRecords)
+	{
+		auto* PC=Listener.Key.Get();const auto& Record=Listener.Value;
+		if(!PC || Record.Role!=TEXT("Survivor"))continue;
+		const auto IsAudible=[this](const FMultiplayTestServerPlayerRecord& Player)
+		{
+			return AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress && !Player.bDisconnected && !Player.bForfeited &&
+				Player.SurvivorState==EMultiplayTestSurvivorState::Active && Player.SurvivorPawn.IsValid();
+		};
+		const bool bAllowed=IsAudible(Record);
+		TArray<FProjectVoiceAudibility> Peers;
+		for(const auto& Other:MatchPlayerRecords)
+		{
+			if(Other.Key==Listener.Key || Other.Value.Role!=TEXT("Survivor"))continue;
+			FProjectVoiceAudibility Peer;Peer.UserId=Other.Value.UserId;
+			if(bAllowed && IsAudible(Other.Value))
+			{
+				const float Distance=FVector::Distance(Record.SurvivorPawn->GetActorLocation(),Other.Value.SurvivorPawn->GetActorLocation());
+				Peer.Gain=Voice?Voice->CalculateDistanceGain(Distance):ProjectVoiceAudibility::DistanceGain(Distance,350,1800,1);
+			}
+			Peers.Add(MoveTemp(Peer));
+		}
+		PC->ClientUpdateVoiceAudibility(Record.MatchId,bAllowed,Peers);
+	}
 }
 
 void AMultiplayTestGameMode::PreLogin(

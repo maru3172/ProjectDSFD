@@ -83,7 +83,8 @@ namespace ProjectProject01CrashFiles
 	FString ScrubText(FString Text)
 	{
 		Text = ReplacePattern(Text, TEXT("(?i)(Bearer\\s+)[A-Za-z0-9._~+/=\\-]+"));
-		Text = ReplacePattern(Text, TEXT("(?i)((?:access[_-]?token|refresh[_-]?token|client[_-]?secret|password|authorization|encryption[_-]?key|api[_-]?key|game[_-]?server[_-]?secret|admin[_-]?key|EncryptionToken)[\"']?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s<>;,]+)"));
+		Text = ReplacePattern(Text, TEXT("(?i)((?:access[_-]?token|refresh[_-]?token|id[_-]?token|productUserIdToken|JsonWebToken|participant[_-]?token|client[_-]?secret|password|authorization|encryption[_-]?key|api[_-]?key|game[_-]?server[_-]?secret|admin[_-]?key|EncryptionToken)[\"']?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s<>;,]+)"));
+		Text = ReplacePattern(Text, TEXT("()\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\b"));
 		Text = ReplacePattern(Text, TEXT("(?is)(<(access[_-]?token|refresh[_-]?token|client[_-]?secret|password|encryption[_-]?key)>).*?(?=</\\2>)"));
 		// Native command lines can carry secrets in arbitrary option names.
 		Text = ReplacePattern(Text, TEXT("(?i)(<CommandLine>)[\\s\\S]*?(?=</CommandLine>)"));
@@ -132,6 +133,8 @@ bool FProjectCrashEvidenceTest::RunTest(const FString&)
 	const FString Structured = ProjectProject01CrashFiles::ScrubText(TEXT("{\"password\":\"spaced secret\"}<AccessToken>xml-secret</AccessToken>"));
 	TestFalse(TEXT("JSON secret redacted"), Structured.Contains(TEXT("spaced secret")));
 	TestFalse(TEXT("XML token redacted"), Structured.Contains(TEXT("xml-secret")));
+	const FString Proof=ProjectProject01CrashFiles::ScrubText(TEXT("JsonWebToken=eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl"));
+	TestFalse(TEXT("EOS identity proof redacted before upload"),Proof.Contains(TEXT("eyJ")));
 	TestEqual(TEXT("Dump has canonical server file name"), ProjectProject01CrashFiles::AttachmentName(TEXT("UE4Minidump.dmp")), FString(TEXT("Crash.dmp")));
 	return true;
 }

@@ -63,6 +63,10 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<GameServerDemandManager>();
 builder.Services.AddHostedService(services=>services.GetRequiredService<GameServerDemandManager>());
 builder.Services.AddSingleton<EosVoiceTokenService>();
+builder.Services.AddSingleton<VoiceParticipantDirectory>();
+builder.Services.AddSingleton<VoiceAccountRateLimit>();
+builder.Services.AddSingleton<CrashArtifactStore>();
+builder.Services.AddHostedService<CrashArtifactRetentionWorker>();
 builder.Services.AddHostedService(services => services.GetRequiredService<EosVoiceTokenService>());
 
 builder.Services.AddSingleton<IPasswordHasher<AuthUser>, PasswordHasher<AuthUser>>();
@@ -176,11 +180,14 @@ builder.Services.AddRateLimiter(options =>
             RequestSecurity.GetClientAddress(context),
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 30,
+                PermitLimit = Math.Clamp(builder.Configuration.GetValue("EosVoice:TokenRequestsPerIpPerMinute",600),60,6000),
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    options.AddPolicy("voice-roster", context =>
+        RateLimitPartition.GetFixedWindowLimiter(RequestSecurity.GetClientAddress(context),
+            _ => new FixedWindowRateLimiterOptions { PermitLimit=600, Window=TimeSpan.FromMinutes(1), QueueLimit=0, AutoReplenishment=true }));
 });
 
 var app = builder.Build();
@@ -614,6 +621,7 @@ app.MapProjectProject01Lobby(
 app.MapPost("/api/crash-reports", async (
     CrashReportRequest report,
     AuthDatabase database,
+    CrashArtifactStore artifacts,
     CancellationToken cancellationToken) =>
 {
     if (!database.IsConfigured)
@@ -650,7 +658,7 @@ app.MapPost("/api/crash-reports", async (
         command.Parameters.AddWithValue("@diagnosticRunId", report.DiagnosticRunId.Trim());
         command.Parameters.AddWithValue("@matchId", string.IsNullOrWhiteSpace(report.MatchId) ? DBNull.Value : report.MatchId.Trim());
         await command.ExecuteNonQueryAsync(cancellationToken);
-        return Results.Created($"/api/crash-reports/{report.ReportId}", new { reportId = report.ReportId });
+        return Results.Created($"/api/crash-reports/{report.ReportId}", new { reportId = report.ReportId, allowMinidumpUploads=artifacts.Policy.AllowMinidumps });
     }
     catch (MySqlException)
     {

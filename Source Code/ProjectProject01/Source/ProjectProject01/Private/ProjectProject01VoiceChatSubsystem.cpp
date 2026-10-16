@@ -1,4 +1,5 @@
 #include "ProjectProject01VoiceChatSubsystem.h"
+#include "ProjectProject01VersionContract.h"
 
 #include "ProjectProject01AuthSubsystem.h"
 #include "EOSVoiceChat.h"
@@ -28,6 +29,7 @@ namespace ProjectProject01Voice
 	struct FCallbackContext
 	{
 		TWeakObjectPtr<UProjectProject01VoiceChatSubsystem> Owner;
+		uint64 Generation;
 	};
 
 	EOS_HConnect GetConnectHandle(IVoiceChat* VoiceChat)
@@ -83,42 +85,55 @@ void UProjectProject01VoiceChatSubsystem::ConfigureForMatch(
 	const FString& Role,
 	APlayerController* LocalController)
 {
-	LeaveMatch();
-	if (!bEnableSurvivorProximityVoice || !Role.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase) ||
-		UserId.IsEmpty() || InMatchId.IsEmpty() || !IsValid(LocalController))
+	const bool bAllowed=bEnableSurvivorProximityVoice && Role.Equals(TEXT("Survivor"),ESearchCase::IgnoreCase) &&
+		!UserId.IsEmpty() && !InMatchId.IsEmpty() && IsValid(LocalController);
+	const bool bSameMatch=bAllowed && AccountUserId==UserId && MatchId==InMatchId;
+	StopSession(bSameMatch);
+	if (!bAllowed)
 	{
 		return;
 	}
 
 	bConfiguredForSurvivor = true;
+	AccountUserId=UserId;
 	OwnerController = LocalController;
 	LocalUserId.Reset();
 	MatchId = InMatchId;
 	ChannelName = FString::Printf(TEXT("pp01-survivors-%s"), *InMatchId.Replace(TEXT("-"), TEXT("")));
-	ApplyRuntimeEosConfiguration();
-	VoiceChat = IVoiceChat::Get();
-	if (VoiceChat == nullptr)
-	{
-		UE_LOG(LogProjectProject01Voice, Warning,
-			TEXT("VoiceChat provider is unavailable. Configure EOSVoiceChat credentials to enable survivor voice."));
-		return;
-	}
-	if (!VoiceChat->IsInitialized())
-	{
-		VoiceChat->Initialize(FOnVoiceChatInitializeCompleteDelegate::CreateUObject(
-			this, &UProjectProject01VoiceChatSubsystem::HandleInitialized));
-		return;
-	}
-	BeginProductUserLogin();
+	ConnectionRetryCount=0;
+	BeginConnectionAttempt();
 }
 
 void UProjectProject01VoiceChatSubsystem::LeaveMatch()
 {
-	StopMicrophoneTest();
-	ResetParticipantPreferences();
+	StopSession(false);
+}
+
+void UProjectProject01VoiceChatSubsystem::SuspendForLevelTravel()
+{
+	if (bConfiguredForSurvivor) StopSession(true);
+}
+
+void UProjectProject01VoiceChatSubsystem::CancelVoiceRequests()
+{
+	for(FHttpRequestPtr* Request:{&JoinCredentialRequest,&RosterRequest})
+		if(Request->IsValid())
+		{
+			(*Request)->OnProcessRequestComplete().Unbind();(*Request)->CancelRequest();Request->Reset();
+		}
+	bJoinCredentialPending=false;
+}
+
+void UProjectProject01VoiceChatSubsystem::StopSession(bool bPreservePreferences)
+{
+	AppliedTransmitState=-1;AppliedPeerGains.Reset();
+	LastAudibilityUpdateSeconds=0;bAuthoritativeVoiceAllowed=false;AuthoritativePeerGains.Reset();
+	++SessionGeneration; // Invalidate before cancellation or provider callbacks can run.
 	bConfiguredForSurvivor = false;
 	bPushToTalkHeld = false;
 	bOpenMic = false;
+	CancelVoiceRequests();
+	StopMicrophoneTest();
 	if (VoiceUser != nullptr)
 	{
 		VoiceUser->TransmitToNoChannels();
@@ -127,6 +142,10 @@ void UProjectProject01VoiceChatSubsystem::LeaveMatch()
 			VoiceUser->LeaveChannel(ChannelName, FOnVoiceChatChannelLeaveCompleteDelegate());
 		}
 	}
+	if(!bPreservePreferences)
+	{
+		ResetParticipantPreferences();ParticipantNames.Reset();ParticipantAccountIds.Reset();AccountUserId.Reset();MatchId.Reset();
+	}
 	bJoinedChannel = false;
 	bProductUserLoginPending = false;
 	bJoinCredentialPending = false;
@@ -134,9 +153,67 @@ void UProjectProject01VoiceChatSubsystem::LeaveMatch()
 	RejoinDelaySeconds = 0.0f;
 	OwnerController.Reset();
 	LocalUserId.Reset();
-	MatchId.Reset();
 	ChannelName.Reset();
 	PendingJoinCredential.Reset();
+	ConnectionFailure.Reset();ConnectionRetryCount=0;RosterRefreshSeconds=0;
+	SetConnectionPhase(bPreservePreferences?EProjectVoiceConnectionPhase::Suspended:EProjectVoiceConnectionPhase::Inactive);
+}
+
+void UProjectProject01VoiceChatSubsystem::SetConnectionPhase(EProjectVoiceConnectionPhase Phase)
+{
+	ConnectionPhase=Phase;ConnectionStageSeconds=0;
+}
+
+void UProjectProject01VoiceChatSubsystem::BeginConnectionAttempt()
+{
+	if(!bConfiguredForSurvivor)return;
+	AppliedTransmitState=-1;AppliedPeerGains.Reset();
+	++SessionGeneration;CancelVoiceRequests();bProductUserLoginPending=false;
+	bJoinedChannel=false;ConnectionFailure.Reset();
+	SetConnectionPhase(EProjectVoiceConnectionPhase::Initializing);
+	if(!VoiceChat){ApplyRuntimeEosConfiguration();VoiceChat=IVoiceChat::Get();}
+	if(!VoiceChat){FailConnection(TEXT("음성 기능을 사용할 수 없습니다. EOS 설정을 확인하세요."),false);return;}
+	if(VoiceChat->IsInitialized())BeginProductUserLogin();
+	else PrepareAudioDevices(); // One shared SDK initialization; no account-specific work in that callback.
+}
+
+void UProjectProject01VoiceChatSubsystem::RetryVoiceConnection()
+{
+	if(!CanRetryVoiceConnection())return;
+	ConnectionRetryCount=0;BeginConnectionAttempt();
+}
+
+void UProjectProject01VoiceChatSubsystem::FailConnection(const FString& Message,bool bRetryable)
+{
+	if(!bConfiguredForSurvivor)return;
+	++SessionGeneration;CancelVoiceRequests();bProductUserLoginPending=false;bJoinedChannel=false;
+	if(VoiceUser)VoiceUser->TransmitToNoChannels();
+	PendingJoinCredential.Reset();ConnectionFailure=Message;
+	if(bRetryable && ConnectionRetryCount<3)
+	{
+		RejoinDelaySeconds=2.0f*FMath::Pow(2.0f,ConnectionRetryCount++);
+		SetConnectionPhase(EProjectVoiceConnectionPhase::RetryWaiting);
+	}
+	else {RejoinDelaySeconds=0;SetConnectionPhase(EProjectVoiceConnectionPhase::Failed);}
+}
+
+FString UProjectProject01VoiceChatSubsystem::GetConnectionStatusText() const
+{
+	if(ConnectionPhase==EProjectVoiceConnectionPhase::Failed)return TEXT("연결 실패: ")+ConnectionFailure;
+	if(ConnectionPhase==EProjectVoiceConnectionPhase::RetryWaiting)
+		return FString::Printf(TEXT("재시도 대기 (%d/3): %s"),ConnectionRetryCount,*ConnectionFailure);
+	switch(ConnectionPhase)
+	{
+	case EProjectVoiceConnectionPhase::Initializing:return TEXT("음성 장치 초기화 중");
+	case EProjectVoiceConnectionPhase::Identity:return TEXT("EOS 사용자 인증 중");
+	case EProjectVoiceConnectionPhase::Connecting:return TEXT("음성 서비스 연결 중");
+	case EProjectVoiceConnectionPhase::Login:return TEXT("음성 사용자 로그인 중");
+	case EProjectVoiceConnectionPhase::Token:return TEXT("음성 참가 허가 요청 중");
+	case EProjectVoiceConnectionPhase::Joining:return TEXT("생존자 음성 채널 입장 중");
+	case EProjectVoiceConnectionPhase::Ready:return TEXT("연결됨");
+	case EProjectVoiceConnectionPhase::Suspended:return TEXT("맵 이동 중");
+	default:return TEXT("경기 중 생존자 전용");
+	}
 }
 
 void UProjectProject01VoiceChatSubsystem::SetPushToTalkHeld(const bool bHeld)
@@ -165,25 +242,31 @@ void UProjectProject01VoiceChatSubsystem::ToggleOpenMic()
 
 void UProjectProject01VoiceChatSubsystem::Tick(float DeltaTime)
 {
+	if(!bConfiguredForSurvivor)return;
 	UpdateReceiveVolume();
+	ApplyTransmitMode();
+	if(ConnectionPhase!=EProjectVoiceConnectionPhase::Ready && ConnectionPhase!=EProjectVoiceConnectionPhase::Failed &&
+		ConnectionPhase!=EProjectVoiceConnectionPhase::RetryWaiting)
+	{
+		ConnectionStageSeconds+=FMath::Max(0.0f,DeltaTime);
+		if(ConnectionStageSeconds>=10){FailConnection(TEXT("음성 연결 단계의 응답 시간이 초과되었습니다."));return;}
+	}
 	if (RejoinDelaySeconds > 0.0f)
 	{
 		RejoinDelaySeconds = FMath::Max(0.0f, RejoinDelaySeconds - DeltaTime);
 		if (RejoinDelaySeconds <= 0.0f && bConfiguredForSurvivor && !bJoinedChannel)
 		{
-			RequestJoinCredential();
+			BeginConnectionAttempt();
 		}
 	}
 	if (!bJoinedChannel || VoiceUser == nullptr || ChannelName.IsEmpty()) return;
+	RosterRefreshSeconds+=DeltaTime;
+	if(RosterRefreshSeconds>=15){RosterRefreshSeconds=0;RefreshParticipantNames();}
 	PositionUpdateAccumulatorSeconds += DeltaTime;
 	if (PositionUpdateAccumulatorSeconds < FMath::Max(0.02f, PositionUpdateIntervalSeconds)) return;
 	PositionUpdateAccumulatorSeconds = 0.0f;
-	APlayerController* Controller = OwnerController.Get();
-	APawn* Pawn = IsValid(Controller) ? Controller->GetPawn() : nullptr;
-	if (IsValid(Pawn))
-	{
-		VoiceUser->Set3DPosition(ChannelName, Pawn->GetActorLocation());
-	}
+	// EOSVoiceChat UE5.8 does not implement Set3DPosition. Apply the server's distance gain instead.
+	for(const FString& Id:GetVoiceParticipants())ApplyParticipantReceiveSettings(Id);
 }
 
 void UProjectProject01VoiceChatSubsystem::ApplyRuntimeEosConfiguration()
@@ -205,14 +288,15 @@ void UProjectProject01VoiceChatSubsystem::ApplyRuntimeEosConfiguration()
 void UProjectProject01VoiceChatSubsystem::BeginProductUserLogin()
 {
 	if (!bConfiguredForSurvivor || bProductUserLoginPending) return;
+	SetConnectionPhase(EProjectVoiceConnectionPhase::Identity);
 	EOS_HConnect ConnectHandle = ProjectProject01Voice::GetConnectHandle(VoiceChat);
 	if (ConnectHandle == nullptr)
 	{
-		UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS Connect interface is unavailable."));
+		FailConnection(TEXT("EOS 사용자 인증 기능을 사용할 수 없습니다."),false);
 		return;
 	}
 	bProductUserLoginPending = true;
-	auto* Context = new ProjectProject01Voice::FCallbackContext{this};
+	auto* Context = new ProjectProject01Voice::FCallbackContext{this,SessionGeneration};
 	FTCHARToUTF8 DeviceModel(TEXT("ProjectProject01 Windows PC"));
 	EOS_Connect_CreateDeviceIdOptions Options{};
 	Options.ApiVersion = EOS_CONNECT_CREATEDEVICEID_API_LATEST;
@@ -223,12 +307,13 @@ void UProjectProject01VoiceChatSubsystem::BeginProductUserLogin()
 			TUniquePtr<ProjectProject01Voice::FCallbackContext> CallbackContext(
 				static_cast<ProjectProject01Voice::FCallbackContext*>(Data->ClientData));
 			UProjectProject01VoiceChatSubsystem* Owner = CallbackContext->Owner.Get();
-			if (!IsValid(Owner) || !Owner->bConfiguredForSurvivor) return;
+			if (!IsValid(Owner) || !Owner->IsCurrentSession(CallbackContext->Generation)) return;
 			if (Data->ResultCode != EOS_EResult::EOS_Success && Data->ResultCode != EOS_EResult::EOS_DuplicateNotAllowed)
 			{
 				Owner->bProductUserLoginPending = false;
 				UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS device identity creation failed: %s"),
 					UTF8_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+				Owner->FailConnection(TEXT("EOS 장치 인증에 실패했습니다."));
 				return;
 			}
 			Owner->LoginWithDeviceId();
@@ -241,6 +326,7 @@ void UProjectProject01VoiceChatSubsystem::LoginWithDeviceId()
 	if (ConnectHandle == nullptr)
 	{
 		bProductUserLoginPending = false;
+		FailConnection(TEXT("EOS 사용자 인증 기능을 사용할 수 없습니다."),false);
 		return;
 	}
 	FTCHARToUTF8 DisplayName(TEXT("ProjectProject01Player"));
@@ -255,14 +341,14 @@ void UProjectProject01VoiceChatSubsystem::LoginWithDeviceId()
 	Options.ApiVersion = EOS_CONNECT_LOGIN_API_LATEST;
 	Options.Credentials = &Credentials;
 	Options.UserLoginInfo = &UserInfo;
-	auto* Context = new ProjectProject01Voice::FCallbackContext{this};
+	auto* Context = new ProjectProject01Voice::FCallbackContext{this,SessionGeneration};
 	EOS_Connect_Login(ConnectHandle, &Options, Context,
 		[](const EOS_Connect_LoginCallbackInfo* Data)
 		{
 			TUniquePtr<ProjectProject01Voice::FCallbackContext> CallbackContext(
 				static_cast<ProjectProject01Voice::FCallbackContext*>(Data->ClientData));
 			UProjectProject01VoiceChatSubsystem* Owner = CallbackContext->Owner.Get();
-			if (!IsValid(Owner) || !Owner->bConfiguredForSurvivor) return;
+			if (!IsValid(Owner) || !Owner->IsCurrentSession(CallbackContext->Generation)) return;
 			if (Data->ResultCode == EOS_EResult::EOS_Success)
 			{
 				Owner->CompleteProductUserLogin(Data->LocalUserId);
@@ -276,6 +362,7 @@ void UProjectProject01VoiceChatSubsystem::LoginWithDeviceId()
 				Owner->bProductUserLoginPending = false;
 				UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS device login failed: %s"),
 					UTF8_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+				Owner->FailConnection(TEXT("EOS 사용자 인증에 실패했습니다."));
 			}
 		});
 }
@@ -286,19 +373,20 @@ void UProjectProject01VoiceChatSubsystem::CreateProductUser(void* ContinuanceTok
 	if (ConnectHandle == nullptr)
 	{
 		bProductUserLoginPending = false;
+		FailConnection(TEXT("EOS 사용자 생성 기능을 사용할 수 없습니다."),false);
 		return;
 	}
 	EOS_Connect_CreateUserOptions Options{};
 	Options.ApiVersion = EOS_CONNECT_CREATEUSER_API_LATEST;
 	Options.ContinuanceToken = static_cast<EOS_ContinuanceToken>(ContinuanceToken);
-	auto* Context = new ProjectProject01Voice::FCallbackContext{this};
+	auto* Context = new ProjectProject01Voice::FCallbackContext{this,SessionGeneration};
 	EOS_Connect_CreateUser(ConnectHandle, &Options, Context,
 		[](const EOS_Connect_CreateUserCallbackInfo* Data)
 		{
 			TUniquePtr<ProjectProject01Voice::FCallbackContext> CallbackContext(
 				static_cast<ProjectProject01Voice::FCallbackContext*>(Data->ClientData));
 			UProjectProject01VoiceChatSubsystem* Owner = CallbackContext->Owner.Get();
-			if (!IsValid(Owner) || !Owner->bConfiguredForSurvivor) return;
+			if (!IsValid(Owner) || !Owner->IsCurrentSession(CallbackContext->Generation)) return;
 			if (Data->ResultCode == EOS_EResult::EOS_Success)
 			{
 				Owner->CompleteProductUserLogin(Data->LocalUserId);
@@ -308,6 +396,7 @@ void UProjectProject01VoiceChatSubsystem::CreateProductUser(void* ContinuanceTok
 				Owner->bProductUserLoginPending = false;
 				UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS product user creation failed: %s"),
 					UTF8_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+				Owner->FailConnection(TEXT("EOS 사용자 생성에 실패했습니다."));
 			}
 		});
 }
@@ -322,6 +411,7 @@ void UProjectProject01VoiceChatSubsystem::CompleteProductUserLogin(void* Product
 	{
 		UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS Product User ID serialization failed: %s"),
 			UTF8_TO_TCHAR(EOS_EResult_ToString(Result)));
+		FailConnection(TEXT("EOS 사용자 식별자를 확인하지 못했습니다."),false);
 		return;
 	}
 	LocalUserId = UTF8_TO_TCHAR(Buffer);
@@ -331,23 +421,26 @@ void UProjectProject01VoiceChatSubsystem::CompleteProductUserLogin(void* Product
 void UProjectProject01VoiceChatSubsystem::BeginConnect()
 {
 	if (!bConfiguredForSurvivor || VoiceChat == nullptr) return;
+	SetConnectionPhase(EProjectVoiceConnectionPhase::Connecting);
 	if (VoiceChat->IsConnected())
 	{
 		BeginLogin();
 		return;
 	}
 	VoiceChat->Connect(FOnVoiceChatConnectCompleteDelegate::CreateUObject(
-		this, &UProjectProject01VoiceChatSubsystem::HandleConnected));
+		this, &UProjectProject01VoiceChatSubsystem::HandleConnected,SessionGeneration));
 }
 
 void UProjectProject01VoiceChatSubsystem::BeginLogin()
 {
 	if (!bConfiguredForSurvivor || VoiceChat == nullptr) return;
+	SetConnectionPhase(EProjectVoiceConnectionPhase::Login);
 	if (VoiceUser == nullptr) VoiceUser = VoiceChat->CreateUser();
 	ApplyAudioPreferences();
 	if (VoiceUser == nullptr)
 	{
 		UE_LOG(LogProjectProject01Voice, Error, TEXT("VoiceChat provider could not create a local user."));
+		FailConnection(TEXT("로컬 음성 사용자를 만들지 못했습니다."));
 		return;
 	}
 	if (!ChannelExitedDelegateHandle.IsValid())
@@ -367,7 +460,7 @@ void UProjectProject01VoiceChatSubsystem::BeginLogin()
 	}
 
 	VoiceUser->Login(FPlatformUserId::CreateFromInternalId(0), LocalUserId, TEXT("EOSConnect"),
-		FOnVoiceChatLoginCompleteDelegate::CreateUObject(this, &UProjectProject01VoiceChatSubsystem::HandleLoggedIn));
+		FOnVoiceChatLoginCompleteDelegate::CreateUObject(this, &UProjectProject01VoiceChatSubsystem::HandleLoggedIn,SessionGeneration));
 }
 
 void UProjectProject01VoiceChatSubsystem::BeginJoin()
@@ -376,21 +469,33 @@ void UProjectProject01VoiceChatSubsystem::BeginJoin()
 	RequestJoinCredential();
 }
 
-void UProjectProject01VoiceChatSubsystem::RequestJoinCredential()
+void UProjectProject01VoiceChatSubsystem::RequestJoinCredential(bool bIdentityRefreshOnly)
 {
 	if (!bConfiguredForSurvivor || VoiceUser == nullptr || MatchId.IsEmpty() || LocalUserId.IsEmpty() ||
-		bJoinCredentialPending || bJoinedChannel) return;
+		bJoinCredentialPending || (bJoinedChannel && !bIdentityRefreshOnly)) return;
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01AuthSubsystem* Auth = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
 	if (!IsValid(Auth) || !Auth->IsSignedIn() || Auth->GetAccessTokenForAuthenticatedRequest().IsEmpty())
 	{
-		UE_LOG(LogProjectProject01Voice, Warning, TEXT("Voice token request requires a signed-in project account."));
+		if(!bIdentityRefreshOnly)FailConnection(TEXT("음성 연결에는 로그인된 게임 계정이 필요합니다."),false);
 		return;
 	}
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("matchId"), MatchId);
 	Body->SetStringField(TEXT("productUserId"), LocalUserId);
+	EOS_Connect_CopyIdTokenOptions ProofOptions={};ProofOptions.ApiVersion=EOS_CONNECT_COPYIDTOKEN_API_LATEST;
+	ProofOptions.LocalUserId=EOS_ProductUserId_FromString(TCHAR_TO_UTF8(*LocalUserId));
+	EOS_Connect_IdToken* Proof=nullptr;
+	const EOS_HConnect Connect=ProjectProject01Voice::GetConnectHandle(VoiceChat);
+	if(!Connect || EOS_Connect_CopyIdToken(Connect,&ProofOptions,&Proof)!=EOS_EResult::EOS_Success || !Proof || !Proof->JsonWebToken)
+	{
+		if(Proof)EOS_Connect_IdToken_Release(Proof);
+		if(!bIdentityRefreshOnly)FailConnection(TEXT("EOS 음성 사용자 증명을 가져오지 못했습니다. 음성 연결을 다시 시도하세요."),false);
+		return;
+	}
+	Body->SetStringField(TEXT("productUserIdToken"),UTF8_TO_TCHAR(Proof->JsonWebToken));
+	EOS_Connect_IdToken_Release(Proof);
 	FString SerializedBody;
 	FJsonSerializer::Serialize(Body, TJsonWriterFactory<>::Create(&SerializedBody));
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
@@ -398,43 +503,59 @@ void UProjectProject01VoiceChatSubsystem::RequestJoinCredential()
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json; charset=utf-8"));
 	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Auth->GetAccessTokenForAuthenticatedRequest());
+	FProjectProject01VersionContract::ApplyToRequest(Request);
 	Request->SetContentAsString(SerializedBody);
-	Request->OnProcessRequestComplete().BindUObject(this, &UProjectProject01VoiceChatSubsystem::HandleJoinCredentialResponse);
+	Request->SetTimeout(5.0f);
+	Request->OnProcessRequestComplete().BindUObject(this, &UProjectProject01VoiceChatSubsystem::HandleJoinCredentialResponse,SessionGeneration,bIdentityRefreshOnly);
+	JoinCredentialRequest=Request;
 	bJoinCredentialPending = true;
+	if(!bIdentityRefreshOnly)SetConnectionPhase(EProjectVoiceConnectionPhase::Token);
 	if (!Request->ProcessRequest())
 	{
 		bJoinCredentialPending = false;
-		RejoinDelaySeconds = 2.0f;
+		JoinCredentialRequest.Reset();
+		if(!bIdentityRefreshOnly)FailConnection(TEXT("음성 참가 허가 요청을 시작하지 못했습니다."));
 	}
 }
 
 void UProjectProject01VoiceChatSubsystem::HandleJoinCredentialResponse(
-	FHttpRequestPtr Request, FHttpResponsePtr Response, const bool bSucceeded)
+	FHttpRequestPtr Request, FHttpResponsePtr Response, const bool bSucceeded,uint64 Generation,bool bIdentityRefreshOnly)
 {
+	if(!IsCurrentSession(Generation) || Request!=JoinCredentialRequest)return;
+	JoinCredentialRequest.Reset();
 	bJoinCredentialPending = false;
-	if (!bConfiguredForSurvivor) return;
 	if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() < 200 || Response->GetResponseCode() >= 300)
 	{
 		UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS voice room token request failed (HTTP %d)."),
 			Response.IsValid() ? Response->GetResponseCode() : 0);
-		RejoinDelaySeconds = 3.0f;
+		if(!bIdentityRefreshOnly)
+		{
+			const int32 Code=Response.IsValid()?Response->GetResponseCode():0;
+			FailConnection(Code==401||Code==403?TEXT("음성 참가 자격이 없거나 로그인이 만료되었습니다."):TEXT("음성 참가 허가 서버에 연결하지 못했습니다."),Code!=401&&Code!=403);
+		}
 		return;
 	}
 	TSharedPtr<FJsonObject> Json;
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Json) || !Json.IsValid())
 	{
-		RejoinDelaySeconds = 3.0f;
+		if(!bIdentityRefreshOnly)FailConnection(TEXT("음성 참가 허가 응답을 읽지 못했습니다."));
 		return;
 	}
-	const FString ReturnedChannel = Json->GetStringField(TEXT("channelName"));
-	const FString ClientBaseUrl = Json->GetStringField(TEXT("clientBaseUrl"));
-	const FString ParticipantToken = Json->GetStringField(TEXT("participantToken"));
-	if (!ReturnedChannel.Equals(ChannelName, ESearchCase::IgnoreCase) || ClientBaseUrl.IsEmpty() || ParticipantToken.IsEmpty())
+	FString ReturnedChannel,ClientBaseUrl,ParticipantToken,ReturnedUser;
+	Json->TryGetStringField(TEXT("channelName"),ReturnedChannel);
+	Json->TryGetStringField(TEXT("clientBaseUrl"),ClientBaseUrl);
+	Json->TryGetStringField(TEXT("participantToken"),ParticipantToken);
+	Json->TryGetStringField(TEXT("productUserId"),ReturnedUser);
+	if (ReturnedChannel!=ChannelName || ReturnedUser!=LocalUserId || ClientBaseUrl.IsEmpty() || ParticipantToken.IsEmpty())
 	{
 		UE_LOG(LogProjectProject01Voice, Warning, TEXT("EOS voice token response was invalid or for another channel."));
+		if(!bIdentityRefreshOnly)FailConnection(TEXT("음성 참가 허가가 현재 사용자·경기와 일치하지 않습니다."),false);
 		return;
 	}
 	ChannelName = ReturnedChannel;
+	const TSharedPtr<FJsonObject>* Roster=nullptr;
+	if(Json->TryGetObjectField(TEXT("roster"),Roster))ApplyParticipantNames(*Roster);
+	if(bIdentityRefreshOnly)return; // Refresh backend identity after restart without interrupting an active call.
 	TSharedRef<FJsonObject> Credential = MakeShared<FJsonObject>();
 	Credential->SetStringField(TEXT("override_userid"), LocalUserId);
 	Credential->SetStringField(TEXT("client_base_url"), ClientBaseUrl);
@@ -446,15 +567,19 @@ void UProjectProject01VoiceChatSubsystem::HandleJoinCredentialResponse(
 	Properties.MinDistance = FMath::Max(0.0f, FullVolumeDistance);
 	Properties.MaxDistance = FMath::Max(Properties.MinDistance + 1.0f, MaximumAudibleDistance);
 	Properties.Rolloff = FMath::Max(0.01f, DistanceRolloff);
+	SetConnectionPhase(EProjectVoiceConnectionPhase::Joining);
 	VoiceUser->JoinChannel(ChannelName, PendingJoinCredential, EVoiceChatChannelType::Positional,
-		FOnVoiceChatChannelJoinCompleteDelegate::CreateUObject(this, &UProjectProject01VoiceChatSubsystem::HandleJoined),
+		FOnVoiceChatChannelJoinCompleteDelegate::CreateUObject(this, &UProjectProject01VoiceChatSubsystem::HandleJoined,SessionGeneration),
 		Properties);
 }
 
 void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 {
 	if (VoiceUser == nullptr || !bJoinedChannel) return;
-	if (!IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld))
+	const bool bTransmit=HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld);
+	if(AppliedTransmitState==static_cast<int8>(bTransmit))return;
+	AppliedTransmitState=static_cast<int8>(bTransmit);
+	if (bTransmit)
 	{
 		TSet<FString> Channels;
 		Channels.Add(ChannelName);
@@ -469,46 +594,62 @@ void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 void UProjectProject01VoiceChatSubsystem::HandleInitialized(const FVoiceChatResult& Result)
 {
 	bDeviceInitializationPending = false;
-	if (!Result.IsSuccess()) { ReportFailure(TEXT("Initialize"), Result); return; }
-	if (bConfiguredForSurvivor) BeginProductUserLogin();
-	else PrepareAudioDevices();
+	if (!Result.IsSuccess())
+	{
+		if(bConfiguredForSurvivor && ConnectionPhase==EProjectVoiceConnectionPhase::Initializing)ReportFailure(TEXT("Initialize"),Result);
+		return;
+	}
+	if (bConfiguredForSurvivor && ConnectionPhase==EProjectVoiceConnectionPhase::Initializing) BeginProductUserLogin();
+	else if(!bConfiguredForSurvivor)PrepareAudioDevices();
 }
 
-void UProjectProject01VoiceChatSubsystem::HandleConnected(const FVoiceChatResult& Result)
+void UProjectProject01VoiceChatSubsystem::HandleConnected(const FVoiceChatResult& Result,uint64 Generation)
 {
+	if(!IsCurrentSession(Generation))return;
 	if (!Result.IsSuccess()) { ReportFailure(TEXT("Connect"), Result); return; }
 	BeginLogin();
 }
 
-void UProjectProject01VoiceChatSubsystem::HandleLoggedIn(const FString& PlayerName, const FVoiceChatResult& Result)
+void UProjectProject01VoiceChatSubsystem::HandleLoggedIn(const FString& PlayerName, const FVoiceChatResult& Result,uint64 Generation)
 {
+	if(!IsCurrentSession(Generation))return;
 	if (!Result.IsSuccess()) { ReportFailure(TEXT("Login"), Result); return; }
 	BeginJoin();
 }
 
-void UProjectProject01VoiceChatSubsystem::HandleJoined(const FString& JoinedChannel, const FVoiceChatResult& Result)
+void UProjectProject01VoiceChatSubsystem::HandleJoined(const FString& JoinedChannel, const FVoiceChatResult& Result,uint64 Generation)
 {
+	if(!IsCurrentSession(Generation))
+	{
+		if(Result.IsSuccess() && VoiceUser && (!bConfiguredForSurvivor || JoinedChannel!=ChannelName))
+			VoiceUser->LeaveChannel(JoinedChannel,FOnVoiceChatChannelLeaveCompleteDelegate());
+		return;
+	}
+	if(JoinedChannel!=ChannelName)return;
 	if (!Result.IsSuccess()) { ReportFailure(TEXT("JoinChannel"), Result); return; }
-	bJoinedChannel = bConfiguredForSurvivor && JoinedChannel == ChannelName;
+	bJoinedChannel = true;PendingJoinCredential.Reset();ConnectionFailure.Reset();ConnectionRetryCount=0;
+	SetConnectionPhase(EProjectVoiceConnectionPhase::Ready);
 	ApplyAudioPreferences();
 	ApplyTransmitMode();
+	RefreshParticipantNames();
 	UE_LOG(LogProjectProject01Voice, Log, TEXT("Joined survivor-only positional voice channel %s."), *JoinedChannel);
 }
 
 void UProjectProject01VoiceChatSubsystem::HandleChannelExited(
 	const FString& ExitedChannel, const FVoiceChatResult& Reason)
 {
-	if (ExitedChannel != ChannelName) return;
+	if (ExitedChannel != ChannelName || !bConfiguredForSurvivor || !bJoinedChannel) return;
 	bJoinedChannel = false;
 	if (bConfiguredForSurvivor)
 	{
 		UE_LOG(LogProjectProject01Voice, Warning,
 			TEXT("EOS voice channel exited (%s). A fresh short-lived token will be requested."), *LexToString(Reason));
-		RejoinDelaySeconds = 2.0f;
+		FailConnection(TEXT("음성 연결이 끊어졌습니다."));
 	}
 }
 
 void UProjectProject01VoiceChatSubsystem::ReportFailure(const TCHAR* Stage, const FVoiceChatResult& Result)
 {
 	UE_LOG(LogProjectProject01Voice, Warning, TEXT("Voice %s failed: %s"), Stage, *LexToString(Result));
+	FailConnection(FString::Printf(TEXT("음성 %s 단계에 실패했습니다."),Stage));
 }
