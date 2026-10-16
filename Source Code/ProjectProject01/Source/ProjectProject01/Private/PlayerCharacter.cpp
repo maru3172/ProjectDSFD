@@ -500,6 +500,16 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
                 UE_LOG(LogTemp, Warning, TEXT("Debug camera input not bound: IA_Player_DebugCamera is missing on %s."), *GetName());
             }
         }
+		
+		// 상호작용 키를 누르기 시작했을 때 한 번 실행한다.
+		if (IsValid(IA_Interact) && IsValid(InteractionComponent))
+		{
+			EnhancedInputComponent->BindAction(IA_Interact, ETriggerEvent::Started, InteractionComponent.Get(), &UPlayerInteractionComponent::TryInteract);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Interaction input is not bound on %s"), *GetName());
+		}
 	}
 }
 

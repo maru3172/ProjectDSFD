@@ -150,6 +150,9 @@ private:
 	UInputAction* IA_Sprint;
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> RuntimeSprintInputContext;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UInputAction* IA_Interact;
 
 	// 입력 이벤트 발생 시 실행할 함수
 	void Move(const FInputActionValue& Value);
