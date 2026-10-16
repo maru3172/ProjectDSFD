@@ -12,6 +12,8 @@ public class ProjectProject01 : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore", "EOSVoiceChat", "EOSShared", "EOSSDK", "AudioCaptureCore", "AudioCapture" });
 
+		PrivateDependencyModuleNames.Add("ImageWrapper");
+
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 		

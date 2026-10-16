@@ -19,6 +19,7 @@ struct FMultiplayTestServerPlayerRecord
 	FString UserId;
 	FString MatchId;
 	FString Role;
+	FString DisplayName;
 	TWeakObjectPtr<class APlayerCharacter> SurvivorPawn;
 	EMultiplayTestSurvivorState SurvivorState = EMultiplayTestSurvivorState::NotApplicable;
 	int32 CaptureCount = 0;
@@ -80,6 +81,7 @@ public:
 	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
 	/** 서버가 확정한 포획 성공 피드백을 이번 경기의 마네킹 플레이어에게만 전달합니다. */
 	void NotifyMannequinCaptureFeedback(bool bElimination);
+	void NotifySurvivorDeathCountLost(class APlayerCharacter* Survivor);
 
 	/** Escape 태그 TriggerBox 또는 이후의 탈출 장치가 서버에서 호출하는 탈출 확정 경로다. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Multiplayer|Match")
@@ -104,6 +106,38 @@ public:
 	virtual void HandleSeamlessTravelPlayer(AController*& Controller) override;
 
 private:
+	void RecordTimeline(EProjectMatchEvent Kind, const FString& PlayerName = {}, const FString& Detail = {});
+	void BeginMatchTimeline();
+	double GetTimelineElapsedSeconds() const;
+	TSharedPtr<FProjectMatchTimelineLog> TimelineLog;
+	double TimelineLevelStartWorldSeconds = 0.0;
+	bool bTimelineTravelPrepared = false;
+	friend class FProjectMatchTimelineServerTest;
+	friend class FProjectMannequinSearchTest;
+	friend class FProjectMannequinDisguiseTest;
+	bool TryBeginPatrolDisguise(class AMannequinAICharacter* Mannequin, double Now);
+	bool ContinuePatrolDisguise(class AMannequinAICharacter* Mannequin);
+	bool SelectAutomaticDisguiseLocation(class AMannequinAICharacter* Mannequin, FVector& OutDestination, float& OutYaw) const;
+	bool IsDisguiseLocationHidden(const class AMannequinAICharacter* Mannequin, const FVector& CapsuleCenter) const;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FMultiplayMannequinDisguiseState> MultiplayerDisguiseStates;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="0",ClampMax="1"))
+	float MultiplayerDisguiseChance = 0.12f;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="0.1",Units="s"))
+	float MultiplayerDisguiseMinSeconds = 3.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="0.1",Units="s"))
+	float MultiplayerDisguiseMaxSeconds = 6.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="1",Units="s"))
+	float MultiplayerDisguiseCooldownSeconds = 20.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="250",Units="cm"))
+	float MultiplayerDisguiseSearchRadius = 1200.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="1",Units="s"))
+	float MultiplayerDisguiseApproachTimeoutSeconds = 15.0f;
+	bool ContinueLastSeenSearch(class AMannequinAICharacter* Mannequin, class AAIController* Controller, double Now);
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FMultiplayMannequinSearchState> MultiplayerSearchStates;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Search", meta=(ClampMin="1.0",Units="s"))
+	float MultiplayerSearchTimeoutSeconds = 10.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Search", meta=(ClampMin="0.1",Units="s"))
+	float MultiplayerSearchObserveSeconds = 2.5f;
 	void InitializeRoleSpawnPoints();
 	void InitializeMannequinSpawns();
 	void UpdateMultiplayerMannequinAI();

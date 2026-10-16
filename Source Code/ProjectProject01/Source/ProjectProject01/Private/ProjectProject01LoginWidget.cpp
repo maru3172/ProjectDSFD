@@ -14,6 +14,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/MultiLineEditableTextBox.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
@@ -39,15 +40,24 @@
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "ProjectProject01VoiceSettingsWidget.h"
 #include "Engine/World.h"
+#include "Engine/Texture2D.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "InputCoreTypes.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
+#include "Misc/PackageName.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
-#include "Misc/PackageName.h"
+#include "Misc/App.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+#include "Slate/WidgetRenderer.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/UserInterfaceSettings.h"
+#include "ImageUtils.h"
 #endif
 
 namespace ProjectProject01LoginUI
@@ -88,6 +98,57 @@ namespace ProjectProject01LoginUI
 			Slot->SetHorizontalAlignment(HAlign_Fill);
 		}
 		return Label;
+	}
+
+	UTextBlock* AddSaveSlotSummary(UWidgetTree* Tree, UVerticalBox* Parent, UImage*& OutImage)
+	{
+		UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>();
+		Parent->AddChildToVerticalBox(Row)->SetPadding(FMargin(2,4));
+		USizeBox* Frame = Tree->ConstructWidget<USizeBox>();
+		Frame->SetWidthOverride(160); Frame->SetHeightOverride(90);
+		Frame->SetClipping(EWidgetClipping::ClipToBounds);
+		Row->AddChildToHorizontalBox(Frame)->SetPadding(FMargin(0,0,10,0));
+		UBorder* Background=Tree->ConstructWidget<UBorder>();
+		Background->SetBrushColor(FLinearColor(0.08f,0.08f,0.08f,1));
+		Background->SetPadding(FMargin(0)); Frame->AddChild(Background);
+		UOverlay* Layers=Tree->ConstructWidget<UOverlay>(); Background->AddChild(Layers);
+		UTextBlock* Missing=Tree->ConstructWidget<UTextBlock>();
+		Missing->SetText(NSLOCTEXT("CheckpointPreview","Missing","미리보기 없음"));
+		Missing->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		FSlateFontInfo MissingFont=Missing->GetFont(); MissingFont.Size=12; Missing->SetFont(MissingFont);
+		Missing->SetJustification(ETextJustify::Center);
+		Missing->SetWrapTextAt(148);
+		UOverlaySlot* MissingSlot=Layers->AddChildToOverlay(Missing);
+		MissingSlot->SetHorizontalAlignment(HAlign_Fill); MissingSlot->SetVerticalAlignment(VAlign_Center);
+		OutImage=Tree->ConstructWidget<UImage>();
+		UOverlaySlot* ImageSlot=Layers->AddChildToOverlay(OutImage);
+		ImageSlot->SetHorizontalAlignment(HAlign_Fill);
+		ImageSlot->SetVerticalAlignment(VAlign_Fill);
+		OutImage->SetVisibility(ESlateVisibility::Collapsed);
+		UVerticalBox* Description=Tree->ConstructWidget<UVerticalBox>();
+		Row->AddChildToHorizontalBox(Description)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		UTextBlock* Label=AddLabel(Tree,Description,TEXT(""),14);
+		Label->SetAutoWrapText(true);
+		return Label;
+	}
+
+	void RefreshSavePreview(const TArray<TObjectPtr<UImage>>& Images, int32 Index, UTexture2D* Texture)
+	{
+		if (!Images.IsValidIndex(Index) || !IsValid(Images[Index])) return;
+		Images[Index]->SetBrushFromTexture(Texture, true);
+		Images[Index]->SetVisibility(IsValid(Texture) ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (UOverlay* Layers=Cast<UOverlay>(Images[Index]->GetParent()))
+			if (UWidget* Missing=Layers->GetChildAt(0))
+				Missing->SetVisibility(IsValid(Texture) ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
+
+	FString SaveSlotDescription(const FProjectProject01SaveSlotInfo& Info, const FString& CurrentMark)
+	{
+		if (!Info.bHasSave) return FString::Printf(TEXT("저장소 %d%s | 빈 저장소"),Info.SlotIndex,*CurrentMark);
+		return FString::Printf(TEXT("저장소 %d%s | %s\n맵: %s | 저장: %s (한국 시간) | 데스카운트 %d"),
+			Info.SlotIndex,*CurrentMark,Info.CheckpointId.IsNone() ? TEXT("저장된 시점") : *Info.CheckpointId.ToString(),
+			*FPackageName::GetShortName(Info.SavedMapPackageName),
+			*(Info.SavedAtUtc+FTimespan::FromHours(9)).ToString(TEXT("%Y-%m-%d %H:%M")),Info.RemainingDeathCount);
 	}
 
 	UButton* AddButton(UWidgetTree* WidgetTree, UVerticalBox* Root, const FString& Text)
@@ -445,10 +506,11 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 		? Controller->GetViewedMannequin() : nullptr;
 	if (!IsValid(Mannequin))
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(
-			TEXT("현재 빙의한 마네킹: 준비 중\n현재 상태: 확인 중\n데스카운트 소모: 확인 중")));
+		StatusText->SetText(FText::GetEmpty());
+		if (UPanelWidget* Background=StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::Collapsed);
 		return;
 	}
+	if (UPanelWidget* Background=StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
 	FString Activity;
 	switch (Mannequin->GetMultiplayActivity())
@@ -460,6 +522,8 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	case EMultiplayMannequinActivity::Holding: Activity = TEXT("정지"); break;
 	case EMultiplayMannequinActivity::ManualControl: Activity = TEXT("직접 조작"); break;
 	case EMultiplayMannequinActivity::FrozenByVision: Activity = TEXT("생존자 시야로 정지"); break;
+	case EMultiplayMannequinActivity::Searching: Activity = TEXT("마지막 목격 지점 수색"); break;
+	case EMultiplayMannequinActivity::Disguised: Activity = TEXT("전시물 위장"); break;
 	default: Activity = TEXT("확인 중"); break;
 	}
 	if (Mannequin->IsManualControlEnabled() && IsValid(Controller) &&
@@ -509,6 +573,9 @@ void UProjectProject01VoiceStatusWidget::NativeTick(
 	const float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+	RefreshSeconds+=InDeltaTime;
+	if(RefreshSeconds<0.1f)return;
+	RefreshSeconds=0;
 	RefreshVoiceStatus();
 }
 
@@ -540,6 +607,11 @@ void UProjectProject01VoiceStatusWidget::BuildWidgetTree()
 	StatusFont.Size = 16;
 	VoiceStatusText->SetFont(StatusFont);
 	Root->AddChildToVerticalBox(VoiceStatusText);
+	TeammateVoiceText=WidgetTree->ConstructWidget<UTextBlock>();
+	TeammateVoiceText->SetColorAndOpacity(FLinearColor::White);
+	FSlateFontInfo PeerFont=StatusFont;PeerFont.Size=14;TeammateVoiceText->SetFont(PeerFont);
+	TeammateVoiceText->SetWrapTextAt(350);
+	Root->AddChildToVerticalBox(TeammateVoiceText);
 }
 
 void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
@@ -553,6 +625,18 @@ void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 	const UProjectProject01VoiceChatSubsystem* Voice = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01VoiceChatSubsystem>() : nullptr;
 	const bool bConfigured = IsValid(Voice) && Voice->IsConfiguredForSurvivor();
+	if(IsValid(StatusBackground))StatusBackground->SetVisibility(bConfigured?ESlateVisibility::SelfHitTestInvisible:ESlateVisibility::Collapsed);
+	if(IsValid(TeammateVoiceText))
+	{
+		TArray<FString> Lines;
+		if(bConfigured)
+			for(const auto& Peer:Voice->GetVoiceParticipantStates())
+			{
+				Lines.Add(FString::Printf(TEXT("%s: %s"),*Peer.DisplayName,*Peer.GetStatusLabel()));
+			}
+		TeammateVoiceText->SetText(FText::FromString(FString::Join(Lines,TEXT("\n"))));
+		TeammateVoiceText->SetVisibility(Lines.IsEmpty()?ESlateVisibility::Collapsed:ESlateVisibility::HitTestInvisible);
+	}
 	const bool bRequestedActive = bConfigured &&
 		(Voice->IsOpenMicEnabled() || Voice->IsPushToTalkHeld());
 	const bool bReady = bConfigured && Voice->IsVoiceReady();
@@ -1244,18 +1328,12 @@ void UProjectProject01TitleWidget::RefreshSaveSlotPage()
 	for (int32 Index = 0; Index < UProjectProject01SaveSubsystem::SaveSlotCount; ++Index)
 	{
 		const int32 SlotIndex = Index + 1;
-		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex);
+		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex, true);
+		ProjectProject01LoginUI::RefreshSavePreview(SaveSlotPreviewImages, Index, Info.PreviewTexture);
 		const FString CurrentMark = Saves->GetCurrentSlotIndex() == SlotIndex ? TEXT(" (현재)") : TEXT("");
 		if (SaveSlotStatusTexts.IsValidIndex(Index) && IsValid(SaveSlotStatusTexts[Index]))
 		{
-			const FString CheckpointText = Info.CheckpointId.IsNone()
-				? TEXT("저장된 시점") : Info.CheckpointId.ToString();
-			const FString SavedTimeText = (Info.SavedAtUtc + FTimespan::FromHours(9.0)).ToString(
-				TEXT("%Y-%m-%d %H:%M"));
-			const FString Description = Info.bHasSave
-				? FString::Printf(TEXT("저장소 %d%s | %s | 데스카운트 %d | %s"), SlotIndex,
-					*CurrentMark, *CheckpointText, Info.RemainingDeathCount, *SavedTimeText)
-				: FString::Printf(TEXT("저장소 %d%s | 빈 저장소"), SlotIndex, *CurrentMark);
+			const FString Description = ProjectProject01LoginUI::SaveSlotDescription(Info, CurrentMark);
 			SaveSlotStatusTexts[Index]->SetText(FProjectProject01Localization::Text(Description));
 		}
 		if (SaveSlotPlayButtons.IsValidIndex(Index) && IsValid(SaveSlotPlayButtons[Index]))
@@ -1685,13 +1763,15 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		WidgetTree, SaveSlotMenu,
 		TEXT("플레이는 저장 시점을 이어하고, 새 게임은 해당 저장소를 초기화합니다."), 14.0f);
 	SaveSlotStatusTexts.Reset();
+	SaveSlotPreviewImages.Reset();
 	SaveSlotPlayButtons.Reset();
 	SaveSlotNewGameButtons.Reset();
 	SaveSlotDeleteButtons.Reset();
 	for (int32 SlotIndex = 1; SlotIndex <= UProjectProject01SaveSubsystem::SaveSlotCount; ++SlotIndex)
 	{
-		SaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddLabel(
-			WidgetTree, SaveSlotMenu, FString::Printf(TEXT("저장소 %d | 빈 저장소"), SlotIndex), 16.0f));
+		UImage* Preview = nullptr;
+		SaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddSaveSlotSummary(WidgetTree, SaveSlotMenu, Preview));
+		SaveSlotPreviewImages.Add(Preview);
 		UHorizontalBox* Actions = WidgetTree->ConstructWidget<UHorizontalBox>();
 		if (UVerticalBoxSlot* RowSlot = SaveSlotMenu->AddChildToVerticalBox(Actions))
 		{
@@ -2578,18 +2658,12 @@ void UProjectProject01SessionMenuWidget::RefreshManualSaveSlots()
 	for (int32 Index = 0; Index < UProjectProject01SaveSubsystem::SaveSlotCount; ++Index)
 	{
 		const int32 SlotIndex = Index + 1;
-		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex);
+		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex, true);
+		ProjectProject01LoginUI::RefreshSavePreview(ManualSaveSlotPreviewImages, Index, Info.PreviewTexture);
 		const FString CurrentMark = Saves->GetCurrentSlotIndex() == SlotIndex ? TEXT(" (현재)") : TEXT("");
 		if (ManualSaveSlotStatusTexts.IsValidIndex(Index) && IsValid(ManualSaveSlotStatusTexts[Index]))
 		{
-			const FString CheckpointText = Info.CheckpointId.IsNone()
-				? TEXT("저장된 시점") : Info.CheckpointId.ToString();
-			const FString SavedTimeText = (Info.SavedAtUtc + FTimespan::FromHours(9.0)).ToString(
-				TEXT("%Y-%m-%d %H:%M"));
-			const FString Description = Info.bHasSave
-				? FString::Printf(TEXT("저장소 %d%s | %s | %s"), SlotIndex,
-					*CurrentMark, *CheckpointText, *SavedTimeText)
-				: FString::Printf(TEXT("저장소 %d%s | 빈 저장소"), SlotIndex, *CurrentMark);
+			const FString Description = ProjectProject01LoginUI::SaveSlotDescription(Info, CurrentMark);
 			ManualSaveSlotStatusTexts[Index]->SetText(FProjectProject01Localization::Text(Description));
 		}
 	}
@@ -2674,18 +2748,12 @@ void UProjectProject01SessionMenuWidget::RefreshLoadSaveSlots()
 	for (int32 Index = 0; Index < UProjectProject01SaveSubsystem::SaveSlotCount; ++Index)
 	{
 		const int32 SlotIndex = Index + 1;
-		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex);
+		const FProjectProject01SaveSlotInfo Info = Saves->GetSaveSlotInfo(SlotIndex, true);
+		ProjectProject01LoginUI::RefreshSavePreview(LoadSaveSlotPreviewImages, Index, Info.PreviewTexture);
 		const FString CurrentMark = Saves->GetCurrentSlotIndex() == SlotIndex ? TEXT(" (현재 플레이 중)") : TEXT("");
 		if (LoadSaveSlotStatusTexts.IsValidIndex(Index) && IsValid(LoadSaveSlotStatusTexts[Index]))
 		{
-			const FString CheckpointText = Info.CheckpointId.IsNone()
-				? TEXT("저장된 시점") : Info.CheckpointId.ToString();
-			const FString SavedTimeText = (Info.SavedAtUtc + FTimespan::FromHours(9.0)).ToString(
-				TEXT("%Y-%m-%d %H:%M"));
-			const FString Description = Info.bHasSave
-				? FString::Printf(TEXT("저장소 %d%s | %s | %s"), SlotIndex,
-					*CurrentMark, *CheckpointText, *SavedTimeText)
-				: FString::Printf(TEXT("저장소 %d%s | 빈 저장소"), SlotIndex, *CurrentMark);
+			const FString Description = ProjectProject01LoginUI::SaveSlotDescription(Info, CurrentMark);
 			LoadSaveSlotStatusTexts[Index]->SetText(FProjectProject01Localization::Text(Description));
 		}
 		if (LoadSaveSlotButtons.IsValidIndex(Index) && IsValid(LoadSaveSlotButtons[Index]))
@@ -3113,11 +3181,12 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, ManualSaveSlotPanel, TEXT("수동 저장소 선택"), 18.0f);
 	ManualSaveSlotButtons.Reset();
 	ManualSaveSlotStatusTexts.Reset();
+	ManualSaveSlotPreviewImages.Reset();
 	for (int32 SlotIndex = 1; SlotIndex <= UProjectProject01SaveSubsystem::SaveSlotCount; ++SlotIndex)
 	{
-		ManualSaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddLabel(
-			WidgetTree, ManualSaveSlotPanel,
-			FString::Printf(TEXT("저장소 %d | 빈 저장소"), SlotIndex), 14.0f));
+		UImage* Preview = nullptr;
+		ManualSaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddSaveSlotSummary(WidgetTree, ManualSaveSlotPanel, Preview));
+		ManualSaveSlotPreviewImages.Add(Preview);
 		ManualSaveSlotButtons.Add(ProjectProject01LoginUI::AddButton(
 			WidgetTree, ManualSaveSlotPanel,
 			FString::Printf(TEXT("저장소 %d에 저장"), SlotIndex)));
@@ -3129,11 +3198,12 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, LoadSaveSlotPanel, TEXT("다른 저장소 불러오기"), 18.0f);
 	LoadSaveSlotButtons.Reset();
 	LoadSaveSlotStatusTexts.Reset();
+	LoadSaveSlotPreviewImages.Reset();
 	for (int32 SlotIndex = 1; SlotIndex <= UProjectProject01SaveSubsystem::SaveSlotCount; ++SlotIndex)
 	{
-		LoadSaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddLabel(
-			WidgetTree, LoadSaveSlotPanel,
-			FString::Printf(TEXT("저장소 %d | 빈 저장소"), SlotIndex), 14.0f));
+		UImage* Preview = nullptr;
+		LoadSaveSlotStatusTexts.Add(ProjectProject01LoginUI::AddSaveSlotSummary(WidgetTree, LoadSaveSlotPanel, Preview));
+		LoadSaveSlotPreviewImages.Add(Preview);
 		LoadSaveSlotButtons.Add(ProjectProject01LoginUI::AddButton(
 			WidgetTree, LoadSaveSlotPanel,
 			FString::Printf(TEXT("저장소 %d 불러오기"), SlotIndex)));
@@ -3191,6 +3261,7 @@ void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMat
 
 void UProjectProject01MatchResultWidget::ConfigureSinglePlayerResult(const bool bEscaped)
 {
+	bShowingTimeline = false;
 	Result = FMultiplayTestMatchResult();
 	Result.Role = TEXT("SinglePlayer");
 	Result.Outcome = bEscaped ? TEXT("Escaped") : TEXT("Eliminated");
@@ -3202,6 +3273,7 @@ void UProjectProject01MatchResultWidget::ConfigureSinglePlayerResult(const bool 
 
 void UProjectProject01MatchResultWidget::NativeConstruct()
 {
+	if (IsValid(TimelineButton)) TimelineButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleTimelineClicked);
 	Super::NativeConstruct();
 	if (IsValid(RegisterButton))
 	{
@@ -3263,6 +3335,7 @@ void UProjectProject01MatchResultWidget::NativeConstruct()
 
 void UProjectProject01MatchResultWidget::NativeDestruct()
 {
+	if (IsValid(TimelineButton)) TimelineButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleTimelineClicked);
 	if (IsValid(RegisterButton))
 	{
 		RegisterButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleRegisterClicked);
@@ -3663,6 +3736,35 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 		}
 	}
 	ResultText->SetText(FProjectProject01Localization::Text(Details));
+	const bool bHasTimeline = !bSinglePlayer && !Result.Timeline.IsEmpty();
+	if (!bHasTimeline) bShowingTimeline = false;
+	if (IsValid(TimelineButton))
+	{
+		TimelineButton->SetVisibility(bHasTimeline ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		if (UTextBlock* Label = Cast<UTextBlock>(TimelineButton->GetChildAt(0)))
+			Label->SetText(bShowingTimeline ? NSLOCTEXT("MatchTimeline","Summary","결과 요약") : NSLOCTEXT("MatchTimeline","Title","경기 타임라인"));
+	}
+	ResultText->SetVisibility(bShowingTimeline ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(TimelineFrame)) TimelineFrame->SetVisibility(bShowingTimeline ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(TimelineRows))
+	{
+		TimelineRows->ClearChildren();
+		if (Result.OmittedTimelineEvents > 0)
+		{
+			UTextBlock* Note = WidgetTree->ConstructWidget<UTextBlock>();
+			Note->SetText(FText::Format(NSLOCTEXT("MatchTimeline","Omitted","사건이 많아 중간 기록 {0}개를 생략했습니다."), FText::AsNumber(Result.OmittedTimelineEvents)));
+			Note->SetColorAndOpacity(FSlateColor(FLinearColor::Yellow));
+			Note->SetAutoWrapText(true); TimelineRows->AddChildToVerticalBox(Note);
+		}
+		for (const FProjectMatchTimelineEvent& Event : Result.Timeline)
+		{
+			UTextBlock* Row = WidgetTree->ConstructWidget<UTextBlock>();
+			Row->SetText(ProjectProject01Timeline::FormatEvent(Event));
+			Row->SetColorAndOpacity(FSlateColor(FLinearColor::White)); Row->SetAutoWrapText(true);
+			FSlateFontInfo Font = Row->GetFont(); Font.Size = 18; Row->SetFont(Font);
+			TimelineRows->AddChildToVerticalBox(Row)->SetPadding(FMargin(6,4));
+		}
+	}
 
 	const bool bCanRegister = !bSinglePlayer && !Result.bLeaderboardVerificationPending &&
 		Result.bSuccess && Result.bLeaderboardVerificationReady;
@@ -3710,6 +3812,7 @@ void UProjectProject01MatchResultWidget::SetBusy(
 	const bool bIsError)
 {
 	bBusy = bInBusy;
+	if (IsValid(TimelineButton)) TimelineButton->SetIsEnabled(!bBusy && FadeElapsedSeconds >= FadeDurationSeconds);
 	const bool bFadeFinished = FadeElapsedSeconds >= FadeDurationSeconds;
 	if (IsValid(RegisterButton))
 	{
@@ -3773,6 +3876,15 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	StatusText->SetJustification(ETextJustify::Center);
 	ResultMenu->AddChildToVerticalBox(StatusText)->SetPadding(FMargin(8.0f));
+	TimelineButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("경기 타임라인"));
+	TimelineButton->SetVisibility(ESlateVisibility::Collapsed);
+	TimelineFrame = WidgetTree->ConstructWidget<USizeBox>();
+	TimelineFrame->SetWidthOverride(760); TimelineFrame->SetHeightOverride(240);
+	TimelineFrame->SetVisibility(ESlateVisibility::Collapsed);
+	UScrollBox* TimelineScroll = WidgetTree->ConstructWidget<UScrollBox>();
+	TimelineFrame->AddChild(TimelineScroll);
+	TimelineRows = WidgetTree->ConstructWidget<UVerticalBox>(); TimelineScroll->AddChild(TimelineRows);
+	ResultMenu->AddChildToVerticalBox(TimelineFrame);
 
 	LeaderboardButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("리더보드"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("방으로 돌아가기"));
@@ -3780,6 +3892,13 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	LoadLastCheckpointButton = ProjectProject01LoginUI::AddButton(
 		WidgetTree, ResultMenu, TEXT("마지막 체크포인트에서 시작"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("타이틀로 돌아가기"));
+}
+
+void UProjectProject01MatchResultWidget::HandleTimelineClicked()
+{
+	if (bSinglePlayer || bBusy || FadeElapsedSeconds < FadeDurationSeconds || Result.Timeline.IsEmpty()) return;
+	bShowingTimeline = !bShowingTimeline;
+	RefreshResultText();
 }
 
 void UProjectProject01SettingsWidget::ConfigureReturnWidget(UUserWidget* InReturnWidget)
@@ -6465,6 +6584,81 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("방으로 돌아가기"));
 	ReturnToRoomButton->SetVisibility(ESlateVisibility::Collapsed);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCheckpointSlotPreviewWidgetTest,"ProjectProject01.SinglePlayer.CheckpointPreviewWidgets",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCheckpointSlotPreviewWidgetTest::RunTest(const FString&)
+{
+	UUserWidget* TitleBase=NewObject<UProjectProject01TitleWidget>();
+	UUserWidget* MenuBase=NewObject<UProjectProject01SessionMenuWidget>();
+	if (!TestTrue(TEXT("Title initializes"),TitleBase->Initialize()) || !TestTrue(TEXT("Pause menu initializes"),MenuBase->Initialize())) return false;
+	auto* Title=CastChecked<UProjectProject01TitleWidget>(TitleBase);
+	auto* Menu=CastChecked<UProjectProject01SessionMenuWidget>(MenuBase);
+	TestEqual(TEXT("Title has three preview slots"),Title->SaveSlotPreviewImages.Num(),3);
+	TestEqual(TEXT("Manual save has three preview slots"),Menu->ManualSaveSlotPreviewImages.Num(),3);
+	TestEqual(TEXT("In-game loading has three preview slots"),Menu->LoadSaveSlotPreviewImages.Num(),3);
+	UTexture2D* Texture=UTexture2D::CreateTransient(320,180);
+	ProjectProject01LoginUI::RefreshSavePreview(Title->SaveSlotPreviewImages,0,Texture);
+	TestTrue(TEXT("Available image displayed"),Title->SaveSlotPreviewImages[0]->GetVisibility()==ESlateVisibility::HitTestInvisible);
+	TestTrue(TEXT("Image brush retains texture"),Title->SaveSlotPreviewImages[0]->GetBrush().GetResourceObject()==Texture);
+	UImage* Preview=Title->SaveSlotPreviewImages[0];
+	auto* ImageSlot=CastChecked<UOverlaySlot>(Preview->Slot);
+	TestTrue(TEXT("Image fills the complete preview frame instead of a 32px corner"),
+		ImageSlot->GetHorizontalAlignment()==HAlign_Fill && ImageSlot->GetVerticalAlignment()==VAlign_Fill);
+	auto* Layers=CastChecked<UOverlay>(Preview->GetParent());
+	TestTrue(TEXT("Valid image hides missing-image text"),Layers->GetChildAt(0)->GetVisibility()==ESlateVisibility::Collapsed);
+	ProjectProject01LoginUI::RefreshSavePreview(Title->SaveSlotPreviewImages,0,nullptr);
+	TestTrue(TEXT("Deleted/legacy slot clears previous texture"),Title->SaveSlotPreviewImages[0]->GetBrush().GetResourceObject()==nullptr);
+	TestTrue(TEXT("Missing image reveals placeholder"),Title->SaveSlotPreviewImages[0]->GetVisibility()==ESlateVisibility::Collapsed);
+	TestTrue(TEXT("Empty slot restores missing-image text"),Layers->GetChildAt(0)->GetVisibility()==ESlateVisibility::HitTestInvisible);
+	FProjectProject01SaveSlotInfo Info; Info.SlotIndex=2; Info.bHasSave=true; Info.SavedMapPackageName=TEXT("/Game/Maps/TestMap");
+	Info.SavedAtUtc=FDateTime(2026,10,16,1,2); Info.RemainingDeathCount=3;
+	const FString Description=ProjectProject01LoginUI::SaveSlotDescription(Info,TEXT(" (현재)"));
+	TestTrue(TEXT("Slot description contains map and Korean save time"),Description.Contains(TEXT("TestMap")) && Description.Contains(TEXT("2026-10-16 10:02")));
+	TestTrue(TEXT("Slot description retains current marker and death count"),Description.Contains(TEXT("(현재)")) && Description.Contains(TEXT("데스카운트 3")));
+	if (FApp::CanEverRender())
+	{
+		// Exercise real Slate layout and paint, not only UWidget properties.
+		TArray<FColor> ThumbnailPixels;ThumbnailPixels.Init(FColor(35,100,165,255),320*180);
+		for (int32 Y=25;Y<155;++Y) for (int32 X=40;X<280;++X) ThumbnailPixels[Y*320+X]=FColor(185,210,230,255);
+		void* Data=Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+		FMemory::Memcpy(Data,ThumbnailPixels.GetData(),ThumbnailPixels.Num()*sizeof(FColor));
+		Texture->GetPlatformData()->Mips[0].BulkData.Unlock();Texture->UpdateResource();
+		ProjectProject01LoginUI::RefreshSavePreview(Title->SaveSlotPreviewImages,0,Texture);
+		Info.SlotIndex=1;
+		Title->SaveSlotStatusTexts[0]->SetText(FText::FromString(ProjectProject01LoginUI::SaveSlotDescription(Info,TEXT(" (현재)"))));
+		for (int32 Index=1;Index<3;++Index)
+		{
+			FProjectProject01SaveSlotInfo Empty;Empty.SlotIndex=Index+1;
+			Title->SaveSlotStatusTexts[Index]->SetText(FText::FromString(ProjectProject01LoginUI::SaveSlotDescription(Empty,TEXT(""))));
+		}
+		Title->TitlePageSwitcher->SetActiveWidgetIndex(1);
+		FWidgetRenderer Renderer(true);
+		const TSharedRef<SWidget> Slate=Title->WidgetTree->RootWidget->TakeWidget();
+		const FString Directory=FPaths::ProjectSavedDir()/TEXT("CheckpointPreviewTests");
+		IFileManager::Get().MakeDirectory(*Directory,true);
+		for (const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
+		{
+			UTextureRenderTarget2D* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,true);
+			TArray<FColor> Pixels;
+			if (!TestNotNull(TEXT("Slot UI render target"),Target)) continue;
+			const float DpiScale=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+			// Match viewport DPI and allow auto-wrapped labels a second layout pass.
+			Renderer.DrawWidget(Target,Slate,DpiScale,FVector2D(Size),0.016f);
+			Renderer.DrawWidget(Target,Slate,DpiScale,FVector2D(Size),0.016f);
+			TestTrue(TEXT("Slot UI readback"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels));
+			const FVector2D Actual=Preview->GetCachedGeometry().GetLocalSize();
+			TestTrue(TEXT("Painted image occupies the 160x90 frame"),FMath::IsNearlyEqual(Actual.X,160.0,0.1)&&FMath::IsNearlyEqual(Actual.Y,90.0,0.1));
+			const FGeometry& Back=Title->SaveSlotsBackButton->GetCachedGeometry();
+			TestTrue(TEXT("Return button remains inside viewport at project DPI"),Back.GetAbsolutePosition().Y+Back.GetAbsoluteSize().Y<=Size.Y+0.1f);
+			TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,Png);
+			FFileHelper::SaveArrayToFile(Png,*(Directory/FString::Printf(TEXT("SlotLayout-%dx%d.png"),Size.X,Size.Y)));
+		}
+	}
+	return true;
+}
+#endif
 
 void UProjectProject01LeaderboardWidget::SetStatus(const FString& Message, const bool bIsError)
 {

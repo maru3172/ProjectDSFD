@@ -55,7 +55,7 @@ void UProjectProject01VoiceChatSubsystem::ApplyAudioPreferences()
 	VoiceUser->SetOutputDeviceId(bHasOutput?PreferredOutput:FString());
 	AppliedReceiveVolume=-1.0f;
 	UpdateReceiveVolume();
-	for(const FString& Id:MutedParticipants)VoiceUser->SetPlayerMuted(Id,true);
+	for(const FString& Id:GetVoiceParticipants()) HandleParticipantAdded(ChannelName,Id);
 }
 void UProjectProject01VoiceChatSubsystem::UpdateReceiveVolume()
 {
@@ -71,13 +71,50 @@ void UProjectProject01VoiceChatSubsystem::UpdateReceiveVolume()
 TArray<FString> UProjectProject01VoiceChatSubsystem::GetVoiceParticipants() const
 {
 	TArray<FString> Participants=bConfiguredForSurvivor && bJoinedChannel && VoiceUser ? VoiceUser->GetPlayersInChannel(ChannelName) : TArray<FString>();
-	Participants.Remove(LocalUserId);return Participants;
+	Participants.Remove(LocalUserId);Participants.Remove(FString());Participants.Sort();return Participants;
+}
+TArray<FProjectVoiceParticipantState> UProjectProject01VoiceChatSubsystem::GetVoiceParticipantStates() const
+{
+	TArray<FProjectVoiceParticipantState> Result;
+	// Both settings and HUD use the same survivor-channel membership gate. No game RPC is involved.
+	for (const FString& Id : GetVoiceParticipants())
+	{
+		FProjectVoiceParticipantState State;
+		State.Id=Id;
+		State.DisplayName=FString::Printf(TEXT("동료 생존자 (%s)"),*Id.Right(6));
+		State.Volume=GetParticipantVolume(Id);
+		State.bMuted=IsParticipantMuted(Id);
+		State.bTalking=VoiceUser->IsPlayerTalking(Id);
+		Result.Add(MoveTemp(State));
+	}
+	return Result;
 }
 void UProjectProject01VoiceChatSubsystem::SetParticipantMuted(const FString& Id,bool bMuted)
 {
-	if (!VoiceUser || Id==LocalUserId || !GetVoiceParticipants().Contains(Id)) return;
-	if(bMuted) MutedParticipants.Add(Id);else MutedParticipants.Remove(Id);
+	if (!VoiceUser || !ParticipantControls.SetMuted(Id,LocalUserId,GetVoiceParticipants(),bMuted)) return;
 	VoiceUser->SetPlayerMuted(Id,bMuted);
+}
+void UProjectProject01VoiceChatSubsystem::SetParticipantVolume(const FString& Id,float Volume)
+{
+	if (!VoiceUser || !ParticipantControls.SetVolume(Id,LocalUserId,GetVoiceParticipants(),Volume)) return;
+	VoiceUser->SetPlayerVolume(Id,ParticipantControls.GetVolume(Id));
+}
+void UProjectProject01VoiceChatSubsystem::HandleParticipantAdded(const FString& JoinedChannel,const FString& Id)
+{
+	if (!bConfiguredForSurvivor || !VoiceUser || JoinedChannel!=ChannelName || Id.IsEmpty() || Id==LocalUserId) return;
+	VoiceUser->SetPlayerMuted(Id,IsParticipantMuted(Id));
+	VoiceUser->SetPlayerVolume(Id,GetParticipantVolume(Id));
+}
+void UProjectProject01VoiceChatSubsystem::ResetParticipantPreferences()
+{
+	// EOS keeps per-player settings beyond a channel leave. Clear its local cache too.
+	if (VoiceUser && VoiceUser->IsLoggedIn())
+		for (const FString& Id:ParticipantControls.GetAdjustedIds())
+		{
+			VoiceUser->SetPlayerMuted(Id,false);
+			VoiceUser->SetPlayerVolume(Id,1.0f);
+		}
+	ParticipantControls.Reset();
 }
 bool UProjectProject01VoiceChatSubsystem::StartMicrophoneTest(const FString& InputId,FString& Error)
 {

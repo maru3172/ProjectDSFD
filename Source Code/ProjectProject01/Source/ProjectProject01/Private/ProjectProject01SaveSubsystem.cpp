@@ -7,6 +7,7 @@
 #include "ProjectProject01Checkpoint.h"
 #include "ProjectProject01CheckpointSaveable.h"
 #include "ProjectProject01SinglePlayerSaveGame.h"
+#include "ProjectProject01CheckpointPreview.h"
 #include "ProjectProject01TuningData.h"
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -17,6 +18,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/MovementComponent.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
@@ -143,6 +145,8 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	const FDateTime SaveTimeUtc = FDateTime::UtcNow();
 	Save->SavedAtUtc = SaveTimeUtc;
 	Save->LastPlayedAtUtc = SaveTimeUtc;
+	ProjectCheckpointPreview::Capture(World, Cast<APlayerController>(Player->GetController()), Save->PreviewPng);
+	Save->PreviewCrc = Save->PreviewPng.IsEmpty() ? 0 : FCrc::MemCrc32(Save->PreviewPng.GetData(), Save->PreviewPng.Num());
 	Save->IntegrityHash = Save->CalculateIntegrityHash();
 
 	PreviousSlotIndexBeforeSave = CurrentSlotIndex;
@@ -260,7 +264,7 @@ bool UProjectProject01SaveSubsystem::HasRecoverableSaveInSlot(const int32 SlotIn
 		IsValid(LoadValidatedSlot(GetBackupSlotName(SlotIndex), Ignored));
 }
 
-FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(const int32 SlotIndex) const
+FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(const int32 SlotIndex, const bool bIncludePreview) const
 {
 	FProjectProject01SaveSlotInfo Info;
 	Info.SlotIndex = SlotIndex;
@@ -278,6 +282,7 @@ FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(co
 	Info.RemainingDeathCount = Save->RemainingDeathCount;
 	Info.SavedAtUtc = Save->SavedAtUtc;
 	Info.LastPlayedAtUtc = Save->LastPlayedAtUtc;
+	if (bIncludePreview) Info.PreviewTexture = ProjectCheckpointPreview::Decode(Save->PreviewPng, Save->PreviewCrc);
 	return Info;
 }
 

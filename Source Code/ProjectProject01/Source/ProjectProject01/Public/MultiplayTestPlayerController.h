@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "MultiplayMannequinTypes.h"
+#include "ProjectProject01MatchTimeline.h"
 #include "MultiplayTestPlayerController.generated.h"
 
 struct FProjectProject01ValidatedJoinClaim;
@@ -82,6 +83,12 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 
 	UPROPERTY(BlueprintReadOnly)
 	double EscapeSeconds = 0.0;
+
+	/** Server-confirmed events delivered only after the match ends. */
+	UPROPERTY(BlueprintReadOnly)
+	TArray<FProjectMatchTimelineEvent> Timeline;
+	UPROPERTY(BlueprintReadOnly)
+	int32 OmittedTimelineEvents = 0;
 };
 
 /** 마네킹 슬롯 선택 입력을 서버에 요청하는 MultiplayTest 전용 컨트롤러입니다. */
@@ -94,7 +101,11 @@ public:
 	AMultiplayTestPlayerController();
 	class AMannequinAICharacter* GetViewedMannequin() const;
 	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
+	FRotator ResolveMannequinCameraRotation(class AMannequinAICharacter* Mannequin, float DeltaSeconds);
+	bool IsMannequinCameraAligning() const { return bManualCameraAligning; }
+	bool IsManualMannequinCameraReady() const { return bCameraWasManual && !bManualCameraAligning; }
 	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
+	const FString& GetAuthenticatedDisplayName() const { return AuthenticatedDisplayName; }
 	void SetServerMatchState(EMultiplayTestMatchPhase NewPhase, EMultiplayTestSurvivorState NewSurvivorState);
 	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
 	void DeclareVoluntaryExit();
@@ -122,6 +133,22 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	friend class FProjectMannequinCameraTest;
+	void EnsureMannequinLookBinding();
+	void RemoveMannequinLookBinding();
+	void HandleMannequinLook(const struct FInputActionValue& Value);
+	UPROPERTY(Transient)
+	TObjectPtr<class UInputAction> MannequinCameraLookAction;
+	UPROPERTY(Transient)
+	TObjectPtr<class UInputMappingContext> MannequinCameraInputContext;
+	uint32 MannequinLookBindingHandle = 0;
+	TWeakObjectPtr<class AMannequinAICharacter> LocalCameraMannequin;
+	FRotator LocalMannequinCameraRotation = FRotator::ZeroRotator;
+	FRotator ManualCameraAlignFrom = FRotator::ZeroRotator;
+	FRotator ManualCameraAlignTo = FRotator::ZeroRotator;
+	float ManualCameraAlignSeconds = 0;
+	bool bCameraWasManual = false;
+	bool bManualCameraAligning = false;
 	void SelectMannequinSlot0();
 	void SelectMannequinSlot1();
 	void SelectMannequinSlot2();
@@ -254,6 +281,7 @@ private:
 	EMultiplayTestSurvivorState SurvivorState = EMultiplayTestSurvivorState::NotApplicable;
 
 	FString AuthenticatedUserId;
+	FString AuthenticatedDisplayName;
 	FString AuthenticatedMatchId;
 	FString AuthenticatedRole;
 	float RpcWindowStartSeconds[10] = {};

@@ -13,6 +13,7 @@
 #include "ProjectProject01GameInstance.generated.h"
 
 class SBorder;
+struct FProjectMatchTimelineLog;
 
 UENUM(BlueprintType)
 enum class EProjectProject01VFXIntensity : uint8
@@ -309,6 +310,8 @@ class PROJECTPROJECT01_API UProjectProject01GameInstance final : public UGameIns
 	GENERATED_BODY()
 
 public:
+	/** Server-only transient history; never replicated and never written to account/save data. */
+	TSharedPtr<FProjectMatchTimelineLog> ServerMatchTimeline;
 	virtual void Init() override;
 	virtual void Shutdown() override;
 	virtual void ReceivedNetworkEncryptionToken(

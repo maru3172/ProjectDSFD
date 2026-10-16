@@ -268,6 +268,7 @@ void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
 	}
 
 	bManualControlEnabled = bEnabled;
+	ApplyManualRotationSettings();
 	if (bManualControlEnabled)
 	{
 		SetMultiplayActivity(EMultiplayMannequinActivity::ManualControl);
@@ -453,12 +454,68 @@ void AMannequinAICharacter::PawnClientRestart()
 	RegisterLocalInputMapping();
 }
 
+void AMannequinAICharacter::OnRep_ManualControlEnabled()
+{
+	ApplyManualRotationSettings();
+}
+
+void AMannequinAICharacter::ApplyManualRotationSettings()
+{
+	UCharacterMovementComponent* Movement=GetCharacterMovement();
+	if (!Movement) return;
+	if (bManualControlEnabled && !bHasSavedRotationSettings)
+	{
+		bHasSavedRotationSettings=true;
+		bSavedUseControllerYaw=bUseControllerRotationYaw;
+		bSavedOrientRotationToMovement=Movement->bOrientRotationToMovement;
+		bSavedUseControllerDesiredRotation=Movement->bUseControllerDesiredRotation;
+		bUseControllerRotationYaw=true;
+		Movement->bOrientRotationToMovement=false;
+		if (auto* PC=Cast<AMultiplayTestPlayerController>(GetController());PC && PC->IsLocalController())
+		{
+			PC->ResolveMannequinCameraRotation(this,0);
+			Movement->bUseControllerDesiredRotation=PC->IsManualMannequinCameraReady();
+		}
+		else Movement->bUseControllerDesiredRotation=true;
+	}
+	else if (!bManualControlEnabled && bHasSavedRotationSettings)
+	{
+		bUseControllerRotationYaw=bSavedUseControllerYaw;
+		Movement->bOrientRotationToMovement=bSavedOrientRotationToMovement;
+		Movement->bUseControllerDesiredRotation=bSavedUseControllerDesiredRotation;
+		bHasSavedRotationSettings=false;
+	}
+}
+
+void AMannequinAICharacter::CalcCamera(float DeltaTime,FMinimalViewInfo& OutResult)
+{
+	Super::CalcCamera(DeltaTime,OutResult);
+	if (!GetWorld()) return;
+	for(FConstPlayerControllerIterator It=GetWorld()->GetPlayerControllerIterator();It;++It)
+		if(auto* PC=Cast<AMultiplayTestPlayerController>(It->Get());PC && PC->IsLocalController() && PC->GetViewedMannequin()==this)
+		{
+			OutResult.Rotation=PC->ResolveMannequinCameraRotation(this,DeltaTime);
+			return; // Visual view only: never write the AI's controller/actor rotation here.
+		}
+}
+
+void AMannequinAICharacter::FaceRotation(FRotator NewControlRotation,float DeltaTime)
+{
+	if (auto* PC=Cast<AMultiplayTestPlayerController>(GetController());PC && bManualControlEnabled)
+	{
+		if (bFrozenBySurvivorVision || (PC->IsLocalController() && !PC->IsManualMannequinCameraReady())) return;
+		SetActorRotation(FRotator(0,NewControlRotation.Yaw,0));return;
+	}
+	Super::FaceRotation(NewControlRotation,DeltaTime);
+}
+
 void AMannequinAICharacter::Move(const FInputActionValue& Value)
 {
 	if (!IsLocallyControlled() || !bManualControlEnabled || bFrozenBySurvivorVision)
 	{
 		return;
 	}
+	if (const auto* PC=Cast<AMultiplayTestPlayerController>(GetController());PC && PC->IsMannequinCameraAligning()) return;
 
 	const FVector2D MovementVector = Value.Get<FVector2D>();
 	AddMovementInput(GetActorForwardVector(), MovementVector.X);
@@ -467,6 +524,8 @@ void AMannequinAICharacter::Move(const FInputActionValue& Value)
 
 void AMannequinAICharacter::Look(const FInputActionValue& Value)
 {
+	// Multiplayer owns its look binding even when this pawn remains AI-controlled.
+	if (Cast<AMultiplayTestPlayerController>(GetController())) return;
 	if (!IsLocallyControlled())
 	{
 		return;

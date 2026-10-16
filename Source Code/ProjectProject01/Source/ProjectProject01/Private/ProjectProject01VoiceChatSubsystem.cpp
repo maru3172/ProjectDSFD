@@ -60,6 +60,11 @@ void UProjectProject01VoiceChatSubsystem::Deinitialize()
 			VoiceUser->OnVoiceChatChannelExited().Remove(ChannelExitedDelegateHandle);
 			ChannelExitedDelegateHandle.Reset();
 		}
+		if (ParticipantAddedDelegateHandle.IsValid())
+		{
+			VoiceUser->OnVoiceChatPlayerAdded().Remove(ParticipantAddedDelegateHandle);
+			ParticipantAddedDelegateHandle.Reset();
+		}
 		VoiceChat->ReleaseUser(VoiceUser);
 	}
 	VoiceUser = nullptr;
@@ -110,7 +115,7 @@ void UProjectProject01VoiceChatSubsystem::ConfigureForMatch(
 void UProjectProject01VoiceChatSubsystem::LeaveMatch()
 {
 	StopMicrophoneTest();
-	MutedParticipants.Reset();
+	ResetParticipantPreferences();
 	bConfiguredForSurvivor = false;
 	bPushToTalkHeld = false;
 	bOpenMic = false;
@@ -349,6 +354,11 @@ void UProjectProject01VoiceChatSubsystem::BeginLogin()
 	{
 		ChannelExitedDelegateHandle = VoiceUser->OnVoiceChatChannelExited().AddUObject(
 			this, &UProjectProject01VoiceChatSubsystem::HandleChannelExited);
+	}
+	if (!ParticipantAddedDelegateHandle.IsValid())
+	{
+		ParticipantAddedDelegateHandle=VoiceUser->OnVoiceChatPlayerAdded().AddUObject(
+			this,&UProjectProject01VoiceChatSubsystem::HandleParticipantAdded);
 	}
 	if (VoiceUser->IsLoggedIn())
 	{

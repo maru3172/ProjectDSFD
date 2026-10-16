@@ -4,6 +4,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Tickable.h"
 #include "HttpFwd.h"
+#include "ProjectProject01VoiceParticipantControls.h"
 #include "ProjectProject01VoiceChatSubsystem.generated.h"
 
 class IVoiceChat;
@@ -40,8 +41,12 @@ public:
 	float GetReceiveVolume() const { return ReceiveVolume; }
 	void SetAudioPreferences(const FString& Input, const FString& Output, float Volume);
 	TArray<FString> GetVoiceParticipants() const;
+	TArray<FProjectVoiceParticipantState> GetVoiceParticipantStates() const;
 	void SetParticipantMuted(const FString& Id, bool bMuted);
-	bool IsParticipantMuted(const FString& Id) const { return MutedParticipants.Contains(Id); }
+	bool IsParticipantMuted(const FString& Id) const { return ParticipantControls.Muted.Contains(Id); }
+	void SetParticipantVolume(const FString& Id, float Volume);
+	float GetParticipantVolume(const FString& Id) const { return ParticipantControls.GetVolume(Id); }
+	void ResetParticipantPreferences();
 	bool StartMicrophoneTest(const FString& InputId, FString& Error);
 	void StopMicrophoneTest();
 	bool IsMicrophoneTestActive() const { return MicrophoneCapture.IsValid(); }
@@ -63,12 +68,14 @@ public:
 	bool IsTransmitting() const { return bJoinedChannel && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
 
 private:
+	friend class FProjectVoiceParticipantIsolationTest;
 	void ApplyAudioPreferences();
 	FString PreferredInput;
 	FString PreferredOutput;
 	float ReceiveVolume = 1.0f;
 	bool bDeviceInitializationPending = false;
-	TSet<FString> MutedParticipants;
+	FProjectVoiceParticipantControls ParticipantControls;
+	void HandleParticipantAdded(const FString& JoinedChannel, const FString& ParticipantId);
 	TSharedPtr<Audio::FAudioCapture> MicrophoneCapture;
 	TSharedRef<TAtomic<float>, ESPMode::ThreadSafe> MicrophoneLevel = MakeShared<TAtomic<float>, ESPMode::ThreadSafe>(0.0f);
 	void ApplyRuntimeEosConfiguration();
@@ -131,4 +138,5 @@ private:
 	float AppliedReceiveVolume = -1.0f;
 	void UpdateReceiveVolume();
 	FDelegateHandle ChannelExitedDelegateHandle;
+	FDelegateHandle ParticipantAddedDelegateHandle;
 };

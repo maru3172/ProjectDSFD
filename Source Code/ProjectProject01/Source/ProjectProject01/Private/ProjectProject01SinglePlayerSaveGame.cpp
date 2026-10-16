@@ -129,6 +129,11 @@ bool UProjectProject01SinglePlayerSaveGame::MigrateToCurrentVersion(FString& Out
 	if (SchemaVersion <= 3)
 	{
 		LastPlayedAtUtc = SavedAtUtc;
+	}
+	if (SchemaVersion < CurrentSchemaVersion)
+	{
+		PreviewPng.Reset();
+		PreviewCrc = 0;
 		SchemaVersion = CurrentSchemaVersion;
 		IntegrityHash = CalculateIntegrityHash();
 	}
@@ -173,6 +178,14 @@ bool FProjectProject01SinglePlayerSaveIntegrityTest::RunTest(const FString& Para
 	TestEqual(TEXT("Migrated v3 save uses save time as last played time"),
 		Save->LastPlayedAtUtc, Save->SavedAtUtc);
 	TestTrue(TEXT("Migrated v3 save has valid integrity"), Save->HasValidIntegrity());
+
+	Save->SchemaVersion = 4;
+	Save->IntegrityHash = Save->CalculateIntegrityHash();
+	const FDateTime PreviousPlayTime = Save->LastPlayedAtUtc;
+	TestTrue(TEXT("Legacy v4 save validates before optional preview migration"), Save->HasValidIntegrity());
+	TestTrue(TEXT("Existing three-slot v4 save migrates"), Save->MigrateToCurrentVersion(Error));
+	TestEqual(TEXT("v4 migration preserves last played metadata"), Save->LastPlayedAtUtc, PreviousPlayTime);
+	TestTrue(TEXT("Legacy save remains loadable without a screenshot"), Save->PreviewPng.IsEmpty() && Save->HasValidIntegrity());
 
 	Save->SchemaVersion = 2;
 	Save->PlayerVelocity = FVector::ZeroVector;

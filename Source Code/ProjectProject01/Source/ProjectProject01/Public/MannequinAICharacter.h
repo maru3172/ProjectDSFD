@@ -40,6 +40,8 @@ protected:
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+	virtual void CalcCamera(float DeltaTime, struct FMinimalViewInfo& OutResult) override;
+	virtual void FaceRotation(FRotator NewControlRotation, float DeltaTime = 0.0f) override;
 	virtual void NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp,
 		bool bSelfMoved, FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit) override;
 
@@ -129,8 +131,15 @@ private:
 		Category = "Multiplayer|Mannequin", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float MannequinWalkSpeed = 600.0f;
 
-	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
+	UPROPERTY(ReplicatedUsing=OnRep_ManualControlEnabled, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	bool bManualControlEnabled = false;
+	UFUNCTION()
+	void OnRep_ManualControlEnabled();
+	void ApplyManualRotationSettings();
+	bool bHasSavedRotationSettings = false;
+	bool bSavedUseControllerYaw = false;
+	bool bSavedOrientRotationToMovement = false;
+	bool bSavedUseControllerDesiredRotation = false;
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinCommand MultiplayCommand = EMultiplayMannequinCommand::Patrol;

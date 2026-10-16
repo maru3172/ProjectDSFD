@@ -1302,6 +1302,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 			IsValid(MultiplayGameMode))
 		{
 			MultiplayGameMode->NotifyMannequinCaptureFeedback(false);
+			MultiplayGameMode->NotifySurvivorDeathCountLost(this);
 		}
 		ForceNetUpdate();
 		return true;

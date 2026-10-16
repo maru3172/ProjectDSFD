@@ -92,6 +92,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01VoiceStatusWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectVoiceParticipantWidgetTest;
 
 protected:
 	virtual bool Initialize() override;
@@ -106,6 +107,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> VoiceStatusText;
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> TeammateVoiceText;
+	float RefreshSeconds=0;
 };
 
 /** 마네킹 플레이어에게만 각 번호의 실시간 행동 상태를 표시합니다. */
@@ -113,6 +117,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01MannequinStatusWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectMannequinCameraTest;
 
 protected:
 	virtual bool Initialize() override;
@@ -216,6 +221,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01TitleWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectCheckpointSlotPreviewWidgetTest;
 
 protected:
 	virtual bool Initialize() override;
@@ -313,6 +319,9 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<class UTextBlock>> SaveSlotStatusTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UImage>> SaveSlotPreviewImages;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<class UButton>> SaveSlotPlayButtons;
@@ -440,6 +449,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01SessionMenuWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectCheckpointSlotPreviewWidgetTest;
 
 public:
 	void ConfigureForSession(bool bInMultiplayer);
@@ -559,6 +569,9 @@ private:
 	TArray<TObjectPtr<class UTextBlock>> ManualSaveSlotStatusTexts;
 
 	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UImage>> ManualSaveSlotPreviewImages;
+
+	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ManualSaveCancelButton;
 
 	UPROPERTY(Transient)
@@ -575,6 +588,9 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<class UTextBlock>> LoadSaveSlotStatusTexts;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UImage>> LoadSaveSlotPreviewImages;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> LoadSaveCancelButton;
@@ -639,6 +655,13 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	friend class FProjectMatchTimelineWidgetTest;
+	UFUNCTION()
+	void HandleTimelineClicked();
+	UPROPERTY(Transient) TObjectPtr<class UButton> TimelineButton;
+	UPROPERTY(Transient) TObjectPtr<class USizeBox> TimelineFrame;
+	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> TimelineRows;
+	bool bShowingTimeline = false;
 	UFUNCTION()
 	void HandleRegisterClicked();
 

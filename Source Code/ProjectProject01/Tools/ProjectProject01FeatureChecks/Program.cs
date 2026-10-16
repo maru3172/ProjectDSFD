@@ -15,6 +15,22 @@ internal static class FeatureChecks
                 IntegrationChecks.RunAsync(args[1],int.Parse(args[2])).GetAwaiter().GetResult();
                 return 0;
             }
+            var compatibility=VersionCompatibilityOptions.FromConfiguration(
+                new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+            Check(compatibility.NetworkProtocolVersion=="2","타임라인 결과 통신 프로토콜 기본값 2");
+            var versionHeaders=new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                [VersionCompatibilityOptions.ClientBuildHeader]=compatibility.ClientBuildVersion,
+                [VersionCompatibilityOptions.DedicatedServerBuildHeader]=compatibility.DedicatedServerBuildVersion,
+                [VersionCompatibilityOptions.ApiVersionHeader]=compatibility.ApiVersion,
+                [VersionCompatibilityOptions.GameDataVersionHeader]=compatibility.GameDataVersion,
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="2"
+            };
+            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 2 클라이언트 허용");
+            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 2 데디 서버 허용");
+            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="1";
+            Check(compatibility.GetMismatches(versionHeaders,false).SequenceEqual(new[]{"NetworkProtocol"}),"구형 클라이언트 프로토콜 혼용 차단");
+            Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");
             var single=new SurveyQuestionDefinition(id,"Choice","질문",["A","B","C"],true);
             Check(SurveyEndpoints.ValidateDefinition(new("호환성","",[single]),out _),"기존 문항 JSON 호환");

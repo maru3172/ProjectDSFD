@@ -79,7 +79,7 @@ class PROJECTPROJECT01_API UProjectProject01SinglePlayerSaveGame final : public 
 	GENERATED_BODY()
 
 public:
-	static constexpr int32 CurrentSchemaVersion = 4;
+	static constexpr int32 CurrentSchemaVersion = 5;
 	static constexpr int32 MinimumSupportedSchemaVersion = 1;
 
 	UPROPERTY()
@@ -133,6 +133,13 @@ public:
 
 	UPROPERTY()
 	uint32 IntegrityHash = 0;
+
+	/** Optional preview has independent integrity so a damaged image cannot invalidate gameplay state. */
+	UPROPERTY()
+	TArray<uint8> PreviewPng;
+
+	UPROPERTY()
+	uint32 PreviewCrc = 0;
 
 	uint32 CalculateIntegrityHash() const;
 	bool HasValidIntegrity() const;

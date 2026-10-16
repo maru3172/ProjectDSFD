@@ -25,6 +25,13 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "UObject/UObjectGlobals.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "InputAction.h"
+#include "InputActionValue.h"
+#include "InputMappingContext.h"
+#include "ProjectProject01TuningData.h"
+#include "UObject/ConstructorHelpers.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -60,6 +67,9 @@ bool FProjectProject01SurvivorVoiceRoleIsolationTest::RunTest(const FString& Par
 
 AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 {
+	static ConstructorHelpers::FObjectFinder<UInputAction> Look(TEXT("/Game/MyProject/Input/IA_Player_Look.IA_Player_Look"));
+	static ConstructorHelpers::FObjectFinder<UInputMappingContext> Mapping(TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
+	MannequinCameraLookAction=Look.Object;MannequinCameraInputContext=Mapping.Object;
 	MannequinCaptureSFXComponent = CreateDefaultSubobject<UMannequinCaptureSynthComponent>(
 		TEXT("Mannequin Capture SFX Component"));
 }
@@ -172,6 +182,7 @@ void AMultiplayTestPlayerController::PostSeamlessTravel()
 
 void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	RemoveMannequinLookBinding();
 	if (IsLocalController())
 	{
 		if (UWorld* World = GetWorld())
@@ -369,6 +380,7 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 	const FString& InRole)
 {
 	const bool bAllowSurvivorVoice = ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
+	if (!InRole.Equals(TEXT("Mannequin"),ESearchCase::IgnoreCase)) RemoveMannequinLookBinding();
 	SetSurvivorVoiceStatusVisible(bAllowSurvivorVoice);
 	SetMannequinStatusVisible(InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase));
 	if (bAllowSurvivorVoice || InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
@@ -576,6 +588,7 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
 	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
 	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
+	if (GetViewedMannequin()) EnsureMannequinLookBinding();
 }
 
 void AMultiplayTestPlayerController::ToggleSessionMenu()
@@ -607,9 +620,80 @@ void AMultiplayTestPlayerController::ToggleSessionMenu()
 	SetInputMode(InputMode);
 }
 
+void AMultiplayTestPlayerController::EnsureMannequinLookBinding()
+{
+	if (!IsLocalController()) return;
+	if (auto* Enhanced=Cast<UEnhancedInputComponent>(InputComponent); Enhanced && MannequinCameraLookAction && !MannequinLookBindingHandle)
+		MannequinLookBindingHandle=Enhanced->BindAction(MannequinCameraLookAction,ETriggerEvent::Triggered,this,
+			&AMultiplayTestPlayerController::HandleMannequinLook).GetHandle();
+	if (ULocalPlayer* Local=GetLocalPlayer())
+		if (auto* Input=ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(Local);Input && MannequinCameraInputContext)
+			if (!Input->HasMappingContext(MannequinCameraInputContext)) Input->AddMappingContext(MannequinCameraInputContext,0);
+}
+
+void AMultiplayTestPlayerController::RemoveMannequinLookBinding()
+{
+	if (auto* Enhanced=Cast<UEnhancedInputComponent>(InputComponent);Enhanced && MannequinLookBindingHandle)
+		Enhanced->RemoveBindingByHandle(MannequinLookBindingHandle);
+	MannequinLookBindingHandle=0;
+	LocalCameraMannequin.Reset();bCameraWasManual=false;bManualCameraAligning=false;
+	// Shared IMC_PlayerControl is also used by survivors; do not remove its mapping context.
+}
+
+void AMultiplayTestPlayerController::HandleMannequinLook(const FInputActionValue& Value)
+{
+	AMannequinAICharacter* Mannequin=GetViewedMannequin();
+	if (!IsLocalController() || !Mannequin || bShowMouseCursor || IsLookInputIgnored() ||
+		MatchPhase==EMultiplayTestMatchPhase::Ending || MatchPhase==EMultiplayTestMatchPhase::Results ||
+		MatchPhase==EMultiplayTestMatchPhase::ReturningToRoom) return;
+	ResolveMannequinCameraRotation(Mannequin,0);
+	if (bManualCameraAligning) return;
+	const FVector2D Delta=Value.Get<FVector2D>();
+	const auto* Settings=UProjectProject01GameUserSettings::Get();
+	const float Sensitivity=Settings?Settings->GetMouseSensitivity():1;
+	AddYawInput(Delta.X*Sensitivity);AddPitchInput(Delta.Y*Sensitivity);
+}
+
+FRotator AMultiplayTestPlayerController::ResolveMannequinCameraRotation(AMannequinAICharacter* Mannequin,float DeltaSeconds)
+{
+	if (!IsLocalController() || !IsValid(Mannequin)) return GetControlRotation();
+	if (LocalCameraMannequin.Get()!=Mannequin)
+	{
+		LocalCameraMannequin=Mannequin;
+		LocalMannequinCameraRotation=Mannequin->GetActorRotation();LocalMannequinCameraRotation.Pitch=0;LocalMannequinCameraRotation.Roll=0;
+		SetControlRotation(LocalMannequinCameraRotation);RotationInput=FRotator::ZeroRotator;
+		bCameraWasManual=false;bManualCameraAligning=false;
+	}
+	const bool bManual=GetPawn()==Mannequin && Mannequin->IsManualControlEnabled();
+	if (bManual && !bCameraWasManual)
+	{
+		ManualCameraAlignFrom=LocalMannequinCameraRotation;
+		ManualCameraAlignTo=Mannequin->GetActorRotation();ManualCameraAlignTo.Pitch=0;ManualCameraAlignTo.Roll=0;
+		ManualCameraAlignSeconds=0;bManualCameraAligning=true;
+		SetControlRotation(ManualCameraAlignTo);RotationInput=FRotator::ZeroRotator;
+	}
+	if (!bManual) bManualCameraAligning=false;
+	bCameraWasManual=bManual;
+	if (bManualCameraAligning)
+	{
+		ManualCameraAlignSeconds+=FMath::Max(0.0f,DeltaSeconds);
+		const float Alpha=FMath::Clamp(ManualCameraAlignSeconds/0.25f,0.0f,1.0f);
+		const float Smooth=Alpha*Alpha*(3-2*Alpha);
+		LocalMannequinCameraRotation=FQuat::Slerp(ManualCameraAlignFrom.Quaternion(),ManualCameraAlignTo.Quaternion(),Smooth).Rotator();
+		if (Alpha>=1)
+		{
+			bManualCameraAligning=false;
+			if (auto* Movement=Mannequin->GetCharacterMovement()) Movement->bUseControllerDesiredRotation=true;
+		}
+	}
+	else LocalMannequinCameraRotation=GetControlRotation();
+	return LocalMannequinCameraRotation;
+}
+
 AMannequinAICharacter* AMultiplayTestPlayerController::GetViewedMannequin() const
 {
-	return IsValid(ViewedMannequin) ? ViewedMannequin.Get() : nullptr;
+	if (IsValid(ViewedMannequin)) return ViewedMannequin.Get();
+	return Cast<AMannequinAICharacter>(GetPawn());
 }
 
 void AMultiplayTestPlayerController::SetViewedMannequin(AMannequinAICharacter* Mannequin)
@@ -633,6 +717,7 @@ void AMultiplayTestPlayerController::SetAuthenticatedLobbyIdentity(
 		return;
 	}
 	AuthenticatedUserId = Claim.UserId;
+	AuthenticatedDisplayName = Claim.DisplayName.Left(48);
 	AuthenticatedMatchId = Claim.MatchId;
 	AuthenticatedRole = Claim.Role;
 }
@@ -725,12 +810,15 @@ void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
 void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
-	ApplyViewedMannequinCamera(GetViewedMannequin());
+	if (Cast<APlayerCharacter>(GetPawn())) RemoveMannequinLookBinding();
+	else ApplyViewedMannequinCamera(GetViewedMannequin());
 	TryRevealInitialGameplayFade();
 }
 
 void AMultiplayTestPlayerController::ClientApplyViewedMannequin_Implementation(AMannequinAICharacter* Mannequin)
 {
+	// Owner RPC and owner-only property replication can arrive in either order.
+	if (IsValid(Mannequin)) ViewedMannequin=Mannequin;
 	ApplyViewedMannequinCamera(Mannequin);
 	TryRevealInitialGameplayFade();
 }
@@ -977,6 +1065,8 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 	// 번호키로 선택한 시점은 Possess/UnPossess 직후의 자동 Pawn 카메라 갱신보다 우선한다.
 	// 이 함수는 마네킹 조종자로 지정된 컨트롤러에서만 서버가 호출한다.
 	bAutoManageActiveCameraTarget = false;
+	EnsureMannequinLookBinding();
+	ResolveMannequinCameraRotation(Mannequin,0);
 
 	const FViewTargetTransitionParams TransitionParams;
 	SetViewTarget(Mannequin, TransitionParams);

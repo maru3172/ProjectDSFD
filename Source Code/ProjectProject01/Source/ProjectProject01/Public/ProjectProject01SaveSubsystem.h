@@ -31,6 +31,10 @@ struct FProjectProject01SaveSlotInfo
 
 	UPROPERTY(BlueprintReadOnly)
 	FDateTime LastPlayedAtUtc;
+
+	/** Decoded on demand, not part of replicated or saved gameplay state. */
+	UPROPERTY(BlueprintReadOnly)
+	TObjectPtr<class UTexture2D> PreviewTexture;
 };
 
 UCLASS()
@@ -84,7 +88,7 @@ public:
 	bool HasRecoverableSaveInSlot(int32 SlotIndex) const;
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Save")
-	FProjectProject01SaveSlotInfo GetSaveSlotInfo(int32 SlotIndex) const;
+	FProjectProject01SaveSlotInfo GetSaveSlotInfo(int32 SlotIndex, bool bIncludePreview = false) const;
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Save")
 	int32 GetCurrentSlotIndex() const { return CurrentSlotIndex; }

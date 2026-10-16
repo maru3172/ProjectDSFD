@@ -17,6 +17,10 @@ protected:
 	virtual void NativeTick(const FGeometry&,float DeltaSeconds) override;
 	virtual FReply NativeOnKeyDown(const FGeometry&,const FKeyEvent&) override;
 private:
+	friend class FProjectVoiceParticipantWidgetTest;
+	friend class FProjectVoiceParticipantRenderTest;
+	void RefreshParticipants();
+	void RefreshSelectedParticipant();
 	UFUNCTION() void RefreshDevices();
 	UFUNCTION() void Apply();
 	UFUNCTION() void Reset();
@@ -24,6 +28,8 @@ private:
 	UFUNCTION() void ToggleMute();
 	UFUNCTION() void Back();
 	UFUNCTION() void VolumeChanged(float Value);
+	UFUNCTION() void ParticipantVolumeChanged(float Value);
+	UFUNCTION() void ParticipantChanged(FString Value,ESelectInfo::Type Type);
 	UFUNCTION() void InputChanged(FString Value,ESelectInfo::Type Type);
 	class UProjectProject01VoiceChatSubsystem* Voice() const;
 	UPROPERTY(Transient) TObjectPtr<UUserWidget> ReturnWidget;
@@ -31,10 +37,15 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UComboBoxString> Outputs;
 	UPROPERTY(Transient) TObjectPtr<UComboBoxString> Participants;
 	UPROPERTY(Transient) TObjectPtr<class USlider> Volume;
+	UPROPERTY(Transient) TObjectPtr<class USlider> ParticipantVolume;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> ParticipantVolumeText;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ParticipantMuteButton;
+	UPROPERTY(Transient) TObjectPtr<class USizeBox> ContentFrame;
 	UPROPERTY(Transient) TObjectPtr<class UProgressBar> Meter;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> VolumeText;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> Status;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> MuteText;
 	TArray<FString> InputIds,OutputIds,ParticipantIds;
 	float PollSeconds=0;
+	bool bRefreshingParticipants=false;
 };

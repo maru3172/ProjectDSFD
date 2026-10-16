@@ -112,6 +112,6 @@ bool FProjectVoiceSettingsLayoutTest::RunTest(const FString&)
 		Combos+=Child->IsA<UComboBoxString>()?1:0;Meters+=Child->IsA<UProgressBar>()?1:0;
 		if(auto* Slider=Cast<USlider>(Child)){++Sliders;TestEqual(TEXT("Volume lower bound"),Slider->GetMinValue(),0.0f);TestEqual(TEXT("Volume upper bound"),Slider->GetMaxValue(),1.0f);}
 	}
-	TestEqual(TEXT("Input/output/peer selectors"),Combos,3);TestEqual(TEXT("Microphone level meter"),Meters,1);TestEqual(TEXT("Voice receive volume gauge"),Sliders,1);return true;
+	TestEqual(TEXT("Input/output/peer selectors"),Combos,3);TestEqual(TEXT("Microphone level meter"),Meters,1);TestEqual(TEXT("Overall and selected peer volume gauges"),Sliders,2);return true;
 }
 #endif
