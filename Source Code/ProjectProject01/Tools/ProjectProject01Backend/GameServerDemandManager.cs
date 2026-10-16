@@ -6,6 +6,7 @@ using MySqlConnector;
 
 internal sealed record GameServerDemandConfiguration(bool Enabled,string Executable="",string Arguments="MultiplayTest -log",int FirstPort=7777,int MaximumConcurrent=1,string ProjectRoot="");
 internal sealed record GameServerDemandCapacity(int MaximumConcurrent);
+internal sealed record GameServerDrainRequest(bool Cancel=false);
 internal interface IManagedGameProcess : IDisposable { bool HasExited {get;} void RequestStop(); void Stop(); }
 internal interface IGameServerProcessFactory
 {
@@ -53,6 +54,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     private readonly SemaphoreSlim cycle=new(1,1);
     private readonly Dictionary<string,Entry> entries=[];
     private GameServerDemandConfiguration configuration=new(false);
+    private bool draining,drainCompleted;
     private sealed class Entry(string room,int port,DateTimeOffset created)
     {
         public string Room=room,Instance=Guid.NewGuid().ToString("N");public int Port=port;
@@ -60,8 +62,9 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
         public IManagedGameProcess? Process;
     }
     internal bool Enabled {get{lock(gate)return configuration.Enabled;}}
+    internal bool AcceptingNewMatches {get{lock(gate)return configuration.Enabled&&!draining;}}
     internal bool Configured {get{lock(gate)return !string.IsNullOrEmpty(configuration.Executable);}}
-    internal object Snapshot(){lock(gate)return new {enabled=configuration.Enabled,maximumConcurrent=configuration.MaximumConcurrent,activeSessions=entries.Count,firstPort=configuration.FirstPort,
+    internal object Snapshot(){lock(gate)return new {enabled=configuration.Enabled,draining,drainCompleted,acceptingNewMatches=configuration.Enabled&&!draining,maximumConcurrent=configuration.MaximumConcurrent,activeSessions=entries.Count,firstPort=configuration.FirstPort,
         sessions=entries.Values.Select(e=>new {roomId=e.Room,port=e.Port,phase=e.ObservedMatch?"Playing":"Preparing"}).ToArray()};}
     internal bool OwnsHeartbeat(int port,string instance){lock(gate)return entries.Values.Any(e=>e.Port==port&&e.Instance==instance&&e.Committed);}
     internal bool HasManagedPort(int port){lock(gate)return entries.Values.Any(e=>e.Port==port);}
@@ -75,7 +78,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     {
         lock(gate)
         {
-            if(!configuration.Enabled||entries.Count>=Math.Min(configuration.MaximumConcurrent,roomLimit)||entries.ContainsKey(room))return null;
+            if(!configuration.Enabled||draining||entries.Count>=Math.Min(configuration.MaximumConcurrent,roomLimit)||entries.ContainsKey(room))return null;
             int? port=Enumerable.Range(configuration.FirstPort,configuration.MaximumConcurrent)
                 .Where(p=>!entries.Values.Any(e=>e.Port==p)&&processes.IsPortAvailable(p)).Cast<int?>().FirstOrDefault();
             if(port is null)return null;
@@ -98,11 +101,31 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
         {
             lock(gate)
             {
+                if(value.Enabled&&draining)throw new InvalidOperationException("경기 종료 대기 중입니다. 먼저 종료 대기를 취소하세요.");
                 if(!value.Enabled)value=configuration with {Enabled=false};
                 if(value.Enabled&&configuration==value)return;
                 if(value.Enabled&&entries.Count>0)throw new InvalidOperationException("진행 중인 세션이 있습니다. 운영을 중지한 뒤 설정을 변경하세요.");
                 configuration=value;
+                draining=false;drainCompleted=false;
                 if(!value.Enabled)foreach(var entry in entries.Values)entry.Process?.RequestStop();
+            }
+        }
+        finally{cycle.Release();}
+    }
+    internal async Task DrainAsync(bool cancel,CancellationToken ct)
+    {
+        await cycle.WaitAsync(ct);
+        try
+        {
+            lock(gate)
+            {
+                if(cancel)
+                {
+                    if(!configuration.Enabled)throw new InvalidOperationException("운영 중지가 이미 완료되었습니다. 게임 서버 운영 시작을 다시 누르세요.");
+                    draining=false;drainCompleted=false;
+                }
+                else if(configuration.Enabled){draining=true;drainCompleted=false;}
+                else {draining=false;drainCompleted=true;}
             }
         }
         finally{cycle.Release();}
@@ -195,6 +218,14 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
                     if(ex is not MySqlException)try{await RemoveAsync(entry,true,ct);}catch(Exception cleanup){logger.LogWarning(cleanup,"세션 정리 재시도 필요");}
                 }
             }
+            lock(gate)
+            {
+                if(draining&&entries.Count==0)
+                {
+                    configuration=configuration with {Enabled=false};draining=false;drainCompleted=true;
+                    logger.LogInformation("모든 경기 세션이 정리되어 게임 서버 운영을 안전하게 중지했습니다.");
+                }
+            }
         }
         finally{cycle.Release();}
     }
@@ -228,7 +259,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
             await using var tx=await connection.BeginTransactionAsync(ct);
             await using var roomLock=new MySqlCommand("SELECT status FROM game_rooms WHERE id=@room FOR UPDATE;",connection,tx);roomLock.Parameters.AddWithValue("@room",item.Room);
             if((string?)await roomLock.ExecuteScalarAsync(ct)!=item.Status){await tx.RollbackAsync(ct);continue;}
-            if(!Enabled||item.Expired||(await ReadyMembersAsync(connection,tx,item.Room,ct)).Count!=3)
+            if(!AcceptingNewMatches||item.Expired||(await ReadyMembersAsync(connection,tx,item.Room,ct)).Count!=3)
             {
                 await ResetPendingAsync(connection,tx,item.Room,ct);await tx.CommitAsync(ct);
                 logger.LogInformation("경기 시작 대기 취소/시간 초과/인원 변경: 방 {Room}",item.Room);continue;
@@ -269,6 +300,12 @@ internal static class GameServerDemandEndpoints
 {
     internal static void MapGameServerDemand(this WebApplication app)
     {
+        app.MapPost("/api/admin/game-server-demand/drain",async(HttpRequest request,GameServerDrainRequest body,AdministratorOptions admin,GameServerDemandManager manager,CancellationToken ct)=>
+        {
+            if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();
+            try{await manager.DrainAsync(body.Cancel,ct);return Results.Ok(manager.Snapshot());}
+            catch(InvalidOperationException ex){return Results.Conflict(new {message=ex.Message});}
+        }).RequireRateLimiting("admin");
         app.MapPut("/api/admin/game-server-demand/capacity",async(HttpRequest request,GameServerDemandCapacity body,AdministratorOptions admin,GameServerDemandManager manager,AuthDatabase database,CancellationToken ct)=>
         {
             if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();

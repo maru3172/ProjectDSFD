@@ -75,29 +75,40 @@ internal sealed class LauncherForm : Form
     private readonly Button checkButton = new() { Text = "업데이트 확인", AutoSize = true };
     private readonly Button updateButton = new() { Text = "업데이트 및 실행", AutoSize = true };
     private readonly Button launchButton = new() { Text = "현재 버전 실행", AutoSize = true };
+    private readonly Button pauseButton = new() { Text = "다운로드 중단", AutoSize = true, Enabled=false };
     private readonly CancellationTokenSource lifetime = new();
-    private readonly string installRoot = Path.GetFullPath(AppContext.BaseDirectory);
+    private CancellationTokenSource? operationCancellation;
+    private CancellationToken OperationToken=>operationCancellation?.Token??lifetime.Token;
+    private bool closeRequested;
+    private readonly string installRoot;
     private readonly string settingsPath;
     private bool busy;
 
-    public LauncherForm()
+    public LauncherForm(string? installationRoot=null)
     {
+        installRoot=Path.GetFullPath(installationRoot??AppContext.BaseDirectory);
         Text = "ProjectProject01 업데이트 런처";
         Width = 760;
         Height = 500;
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterScreen;
-        settingsPath = Path.Combine(
+        settingsPath = installationRoot is not null?Path.Combine(installRoot,"launcher-test-settings.json"):Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ProjectProject01", "ClientLauncher.json");
         BuildUi();
         LoadSettings();
-        FormClosing += (_, _) => lifetime.Cancel();
+        FormClosing += (_, e) =>
+        {
+            if(busy){e.Cancel=true;closeRequested=true;}
+            lifetime.Cancel();
+        };
+        pauseButton.Click+=(_,_)=>{pauseButton.Enabled=false;operationCancellation?.Cancel();};
         checkButton.Click += async (_, _) => await RunBusyAsync(CheckForUpdatesAsync);
         updateButton.Click += async (_, _) => await RunBusyAsync(() => UpdateAsync(true));
         launchButton.Click += (_, _) => LaunchGame();
         Shown += async (_, _) =>
         {
+            if(installationRoot is not null)return;
             if (HasValidSavedServerAddress())
             {
                 await RunBusyAsync(CheckForUpdatesAsync);
@@ -156,6 +167,7 @@ internal sealed class LauncherForm : Form
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
         buttons.Controls.Add(checkButton);
         buttons.Controls.Add(updateButton);
+        buttons.Controls.Add(pauseButton);
         buttons.Controls.Add(launchButton);
         root.Controls.Add(buttons);
         root.Controls.Add(progress);
@@ -168,15 +180,16 @@ internal sealed class LauncherForm : Form
     {
         if (busy) return;
         busy = true;
+        operationCancellation=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         checkButton.Enabled = updateButton.Enabled = launchButton.Enabled = false;
         try
         {
             SaveSettings();
             await action();
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        catch (OperationCanceledException) when (OperationToken.IsCancellationRequested)
         {
-            SetStatus("작업을 취소했습니다.");
+            SetStatus("다운로드를 중단했습니다. 업데이트를 다시 누르면 보관한 부분부터 이어받습니다.");
         }
         catch (TimeoutException exception)
         {
@@ -199,7 +212,10 @@ internal sealed class LauncherForm : Form
         finally
         {
             busy = false;
+            pauseButton.Enabled=false;
+            operationCancellation?.Dispose();operationCancellation=null;
             checkButton.Enabled = updateButton.Enabled = launchButton.Enabled = true;
+            if(closeRequested&&!IsDisposed)BeginInvoke(new Action(Close));
         }
     }
 
@@ -250,96 +266,81 @@ internal sealed class LauncherForm : Form
     }
 
     private async Task DownloadAndCommitAsync(
-        string baseUrl,
-        ClientUpdateManifest manifest,
-        IReadOnlyList<ClientFileUpdatePlan> plans,
-        IReadOnlyList<string> stalePaths)
+        string baseUrl,ClientUpdateManifest manifest,IReadOnlyList<ClientFileUpdatePlan> plans,IReadOnlyList<string> stalePaths)
     {
-        string safeReleaseId = Regex.Replace(manifest.ReleaseId, "[^A-Za-z0-9._-]", "_");
-        string operationId = $"{safeReleaseId}-{Guid.NewGuid():N}";
-        string tempRoot = Path.Combine(installRoot, ".update-temp", operationId);
-        string backupRoot = Path.Combine(installRoot, ".update-backup", operationId);
+        string operationId=Guid.NewGuid().ToString("N");
+        string tempRoot=Path.Combine(installRoot,".update-temp",operationId);
+        string backupRoot=Path.Combine(installRoot,".update-backup",operationId);
         Directory.CreateDirectory(tempRoot);
-        long totalBytes = Math.Max(1, plans.Sum(plan => plan.DownloadBytes));
-        long downloadedBytes = 0;
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-
-        foreach (ClientFileUpdatePlan plan in plans)
+        long totalBytes=Math.Max(1,plans.Sum(plan=>plan.DownloadBytes)),downloadedBytes=0;
+        var completedCache=new List<(string Url,ClientUpdateFile File)>();
+        var downloader=new ResumableUpdateDownloader(Path.Combine(installRoot,".update-cache"),bytes=>
         {
-            lifetime.Token.ThrowIfCancellationRequested();
-            ClientUpdateFile file = plan.File;
-            string relativePath = NormalizeRelativePath(file.Path);
-            string tempPath = ResolveInsideRoot(tempRoot, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-            string uriPath = string.Join('/', relativePath.Split(Path.DirectorySeparatorChar)
-                .Select(Uri.EscapeDataString));
-            string fileUrl = $"{baseUrl}/api/client-updates/files/{uriPath}" +
-                $"?release={Uri.EscapeDataString(manifest.ReleaseId)}";
-            if (plan.ChangedBlocks is not null)
-            {
-                downloadedBytes = await BuildPatchedFileAsync(
-                    http, fileUrl, file, plan.ChangedBlocks, tempPath,
-                    downloadedBytes, totalBytes);
-            }
-            else
-            {
-                downloadedBytes = await DownloadFullFileAsync(
-                    http, fileUrl, file, tempPath, downloadedBytes, totalBytes);
-            }
-
-            string hash = await ComputeSha256Async(tempPath, lifetime.Token);
-            if (!string.Equals(hash, file.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"다운로드 파일 검증 실패: {file.Path}");
-        }
-
-        var committed = new List<(string Target, string Backup, bool HadOriginal)>();
+            downloadedBytes=Math.Max(0,downloadedBytes+bytes);
+            SetProgress(downloadedBytes,totalBytes,"다운로드/이어받기 중");
+        },Append);
+        using var http=new HttpClient {Timeout=Timeout.InfiniteTimeSpan};
         try
         {
-            foreach (ClientFileUpdatePlan plan in plans)
+            pauseButton.Enabled=plans.Count>0;
+            foreach(var plan in plans)
             {
-                ClientUpdateFile file = plan.File;
-                string relativePath = NormalizeRelativePath(file.Path);
-                string sourcePath = ResolveInsideRoot(tempRoot, relativePath);
-                string targetPath = ResolveInsideRoot(installRoot, relativePath);
-                string backupPath = ResolveInsideRoot(backupRoot, relativePath);
-                bool hadOriginal = File.Exists(targetPath);
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                if (hadOriginal)
+                OperationToken.ThrowIfCancellationRequested();
+                string relative=NormalizeRelativePath(plan.File.Path),tempPath=ResolveInsideRoot(tempRoot,relative);
+                string uriPath=string.Join('/',relative.Split(Path.DirectorySeparatorChar).Select(Uri.EscapeDataString));
+                string url=$"{baseUrl}/api/client-updates/files/{uriPath}?release={Uri.EscapeDataString(manifest.ReleaseId)}";
+                Append("[다운로드] "+plan.File.Path);
+                await downloader.DownloadAsync(http,url,plan.File,tempPath,ResolveInsideRoot(installRoot,relative),plan.ChangedBlocks,OperationToken);
+                string hash=await ComputeSha256Async(tempPath,OperationToken);
+                if(!hash.Equals(plan.File.Sha256,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("다운로드 파일 검증 실패: "+plan.File.Path);
+                completedCache.Add((url,plan.File));
+            }
+            OperationToken.ThrowIfCancellationRequested();
+            EnsureGameIsNotRunning(manifest.ExecutablePath);
+            // Once replacement begins, cancellation cannot leave a half-installed client.
+            pauseButton.Enabled=false;SetStatus("다운로드 검증 완료 — 안전하게 적용 중...");
+            var committed=new List<(string Target,string Backup,bool HadOriginal)>();
+            try
+            {
+                foreach(var plan in plans)
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
-                    File.Move(targetPath, backupPath, true);
+                    string relative=NormalizeRelativePath(plan.File.Path);
+                    string source=ResolveInsideRoot(tempRoot,relative),target=ResolveInsideRoot(installRoot,relative),backup=ResolveInsideRoot(backupRoot,relative);
+                    bool existed=File.Exists(target);Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    if(existed){Directory.CreateDirectory(Path.GetDirectoryName(backup)!);File.Move(target,backup,true);}
+                    committed.Add((target,backup,existed));File.Move(source,target,true);
                 }
-                committed.Add((targetPath, backupPath, hadOriginal));
-                File.Move(sourcePath, targetPath, true);
-            }
-            foreach (string relativePath in stalePaths)
-            {
-                string targetPath = ResolveInsideRoot(installRoot, relativePath);
-                if (!File.Exists(targetPath)) continue;
-                string backupPath = ResolveInsideRoot(backupRoot, relativePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
-                File.Move(targetPath, backupPath, true);
-                committed.Add((targetPath, backupPath, true));
-            }
-        }
-        catch
-        {
-            foreach (var item in committed.AsEnumerable().Reverse())
-            {
-                if (File.Exists(item.Target)) File.Delete(item.Target);
-                if (item.HadOriginal && File.Exists(item.Backup))
+                foreach(string relative in stalePaths)
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(item.Target)!);
-                    File.Move(item.Backup, item.Target, true);
+                    string target=ResolveInsideRoot(installRoot,relative);
+                    if(!File.Exists(target))continue;
+                    string backup=ResolveInsideRoot(backupRoot,relative);Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
+                    File.Move(target,backup,true);committed.Add((target,backup,true));
                 }
             }
-            throw;
+            catch
+            {
+                foreach(var item in committed.AsEnumerable().Reverse())
+                {
+                    if(File.Exists(item.Target))File.Delete(item.Target);
+                    if(item.HadOriginal&&File.Exists(item.Backup))
+                    {Directory.CreateDirectory(Path.GetDirectoryName(item.Target)!);File.Move(item.Backup,item.Target,true);}
+                }
+                throw;
+            }
+            TryDeleteDirectory(backupRoot,"업데이트 백업 폴더");
+            foreach(var item in completedCache)
+            {
+                try{downloader.Forget(item.Url,item.File);}
+                catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){Append("[주의] 적용된 다운로드 캐시 정리 실패: "+ex.Message);}
+            }
         }
         finally
         {
-            TryDeleteDirectory(tempRoot, "임시 업데이트 폴더");
+            pauseButton.Enabled=false;
+            // Interrupted downloads live in .update-cache, never in the install/rollback staging area.
+            TryDeleteDirectory(tempRoot,"임시 업데이트 폴더");
         }
-        TryDeleteDirectory(backupRoot, "업데이트 백업 폴더");
     }
 
     private async Task<List<ClientFileUpdatePlan>> BuildUpdatePlansAsync(ClientUpdateManifest manifest)
@@ -349,7 +350,7 @@ internal sealed class LauncherForm : Form
         int checkedCount = 0;
         foreach (ClientUpdateFile file in manifest.Files)
         {
-            lifetime.Token.ThrowIfCancellationRequested();
+            OperationToken.ThrowIfCancellationRequested();
             string relativePath = NormalizeRelativePath(file.Path);
             string localPath = ResolveInsideRoot(installRoot, relativePath);
             var info = new FileInfo(localPath);
@@ -358,7 +359,7 @@ internal sealed class LauncherForm : Form
             {
                 // 업데이트 기록만 신뢰하지 않고 실제 설치 파일을 매번 SHA-256으로 확인한다.
                 // 같은 크기의 손상·변조 파일도 반드시 다시 내려받는다.
-                string hash = await ComputeSha256Async(localPath, lifetime.Token);
+                string hash = await ComputeSha256Async(localPath, OperationToken);
                 matches = string.Equals(hash, file.Sha256, StringComparison.OrdinalIgnoreCase);
             }
 
@@ -394,7 +395,7 @@ internal sealed class LauncherForm : Form
     {
         try
         {
-            string hash = await ComputeRangeSha256Async(path, block.Offset, block.Size, lifetime.Token);
+            string hash = await ComputeRangeSha256Async(path, block.Offset, block.Size, OperationToken);
             return string.Equals(hash, block.Sha256, StringComparison.OrdinalIgnoreCase);
         }
         catch (IOException)
@@ -407,152 +408,6 @@ internal sealed class LauncherForm : Form
         }
     }
 
-    private async Task<long> DownloadFullFileAsync(
-        HttpClient http,
-        string fileUrl,
-        ClientUpdateFile file,
-        string tempPath,
-        long downloadedBytes,
-        long totalBytes)
-    {
-        using HttpResponseMessage response = await http.GetAsync(
-            fileUrl,
-            HttpCompletionOption.ResponseHeadersRead,
-            lifetime.Token);
-        response.EnsureSuccessStatusCode();
-        await using Stream input = await response.Content.ReadAsStreamAsync(lifetime.Token);
-        await using var output = new FileStream(
-            tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 128, true);
-        byte[] buffer = new byte[1024 * 128];
-        long received = 0;
-        while (true)
-        {
-            int read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), lifetime.Token);
-            if (read == 0) break;
-            received += read;
-            if (received > file.Size)
-                throw new InvalidDataException($"다운로드 크기가 목록보다 큽니다: {file.Path}");
-            await output.WriteAsync(buffer.AsMemory(0, read), lifetime.Token);
-            downloadedBytes += read;
-            SetProgress(downloadedBytes, totalBytes, $"전체 파일 다운로드 중: {file.Path}");
-        }
-        if (received != file.Size)
-            throw new InvalidDataException($"다운로드 크기가 목록과 다릅니다: {file.Path}");
-        await output.FlushAsync(lifetime.Token);
-        return downloadedBytes;
-    }
-
-    private async Task<long> BuildPatchedFileAsync(
-        HttpClient http,
-        string fileUrl,
-        ClientUpdateFile file,
-        IReadOnlyList<ClientUpdateBlock> changedBlocks,
-        string tempPath,
-        long downloadedBytes,
-        long totalBytes)
-    {
-        string relativePath = NormalizeRelativePath(file.Path);
-        string localPath = ResolveInsideRoot(installRoot, relativePath);
-        IReadOnlyList<ClientUpdateBlock> blocks = file.Blocks ??
-            throw new InvalidDataException($"업데이트 블록 목록이 없습니다: {file.Path}");
-        var changedOffsets = changedBlocks.Select(block => block.Offset).ToHashSet();
-        bool needsLocalSource = blocks.Any(block => !changedOffsets.Contains(block.Offset));
-        FileStream? local = null;
-        try
-        {
-            if (needsLocalSource)
-            {
-                local = new FileStream(
-                    localPath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    1024 * 128, FileOptions.Asynchronous | FileOptions.RandomAccess);
-            }
-            await using var output = new FileStream(
-                tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 128, true);
-            foreach (ClientUpdateBlock block in blocks)
-            {
-                lifetime.Token.ThrowIfCancellationRequested();
-                if (!changedOffsets.Contains(block.Offset))
-                {
-                    if (local is null)
-                        throw new InvalidDataException($"기존 파일의 재사용 블록을 읽을 수 없습니다: {file.Path}");
-                    await CopyExactRangeAsync(local, output, block.Offset, block.Size, lifetime.Token);
-                    continue;
-                }
-
-                using var request = new HttpRequestMessage(
-                    HttpMethod.Get, fileUrl);
-                request.Headers.Range = new RangeHeaderValue(block.Offset, block.Offset + block.Size - 1);
-                using HttpResponseMessage response = await http.SendAsync(
-                    request, HttpCompletionOption.ResponseHeadersRead, lifetime.Token);
-
-                if (response.StatusCode != HttpStatusCode.PartialContent)
-                {
-                    // 구형 프록시나 서버가 Range를 지원하지 않으면 검증된 기존 전체 파일 방식으로 전환한다.
-                    await output.DisposeAsync();
-                    local?.Dispose();
-                    local = null;
-                    Append($"[안내] 부분 다운로드를 지원하지 않아 전체 파일로 전환합니다: {file.Path}");
-                    return await DownloadFullFileAsync(
-                        http, fileUrl, file, tempPath, downloadedBytes, totalBytes);
-                }
-
-                ContentRangeHeaderValue? range = response.Content.Headers.ContentRange;
-                if (range is not null &&
-                    (range.From != block.Offset || range.To != block.Offset + block.Size - 1))
-                    throw new InvalidDataException($"서버가 잘못된 파일 범위를 반환했습니다: {file.Path}");
-                if (response.Content.Headers.ContentLength is long contentLength && contentLength != block.Size)
-                    throw new InvalidDataException($"부분 다운로드 크기가 올바르지 않습니다: {file.Path}");
-
-                await using Stream input = await response.Content.ReadAsStreamAsync(lifetime.Token);
-                using var blockHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                byte[] buffer = new byte[1024 * 128];
-                int remaining = block.Size;
-                while (remaining > 0)
-                {
-                    int read = await input.ReadAsync(
-                        buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), lifetime.Token);
-                    if (read == 0)
-                        throw new EndOfStreamException($"부분 다운로드가 일찍 종료되었습니다: {file.Path}");
-                    blockHash.AppendData(buffer, 0, read);
-                    await output.WriteAsync(buffer.AsMemory(0, read), lifetime.Token);
-                    remaining -= read;
-                    downloadedBytes += read;
-                    SetProgress(downloadedBytes, totalBytes, $"변경 블록 다운로드 중: {file.Path}");
-                }
-                if (await input.ReadAsync(buffer.AsMemory(0, 1), lifetime.Token) != 0)
-                    throw new InvalidDataException($"부분 다운로드 크기가 목록보다 큽니다: {file.Path}");
-                string actualBlockHash = Convert.ToHexString(blockHash.GetHashAndReset()).ToLowerInvariant();
-                if (!string.Equals(actualBlockHash, block.Sha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"부분 다운로드 검증 실패: {file.Path} ({block.Offset})");
-            }
-            await output.FlushAsync(lifetime.Token);
-        }
-        finally
-        {
-            if (local is not null) await local.DisposeAsync();
-        }
-        return downloadedBytes;
-    }
-
-    private static async Task CopyExactRangeAsync(
-        FileStream input,
-        FileStream output,
-        long offset,
-        int count,
-        CancellationToken cancellationToken)
-    {
-        input.Position = offset;
-        byte[] buffer = new byte[1024 * 128];
-        int remaining = count;
-        while (remaining > 0)
-        {
-            int read = await input.ReadAsync(
-                buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), cancellationToken);
-            if (read == 0) throw new EndOfStreamException("기존 설치 파일이 예상보다 짧습니다.");
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-            remaining -= read;
-        }
-    }
 
     private static async Task<string> ComputeRangeSha256Async(
         string path,
@@ -585,7 +440,7 @@ internal sealed class LauncherForm : Form
         try
         {
             response = await http.GetAsync(
-                $"{baseUrl}/api/client-updates/manifest", lifetime.Token);
+                $"{baseUrl}/api/client-updates/manifest", OperationToken);
         }
         catch (TaskCanceledException) when (!lifetime.IsCancellationRequested)
         {
@@ -593,7 +448,7 @@ internal sealed class LauncherForm : Form
         }
         using (response)
         {
-        string json = await response.Content.ReadAsStringAsync(lifetime.Token);
+        string json = await response.Content.ReadAsStringAsync(OperationToken);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"업데이트 서버 HTTP {(int)response.StatusCode}: {json}");
         ClientUpdateManifest? manifest = JsonSerializer.Deserialize<ClientUpdateManifest>(json, JsonOptions);
@@ -616,7 +471,7 @@ internal sealed class LauncherForm : Form
         if (!File.Exists(path)) return null;
         try
         {
-            string json = await File.ReadAllTextAsync(path, lifetime.Token);
+            string json = await File.ReadAllTextAsync(path, OperationToken);
             ClientUpdateManifest? manifest = JsonSerializer.Deserialize<ClientUpdateManifest>(json, JsonOptions);
             if (manifest is null) return null;
             ValidateManifest(manifest);
@@ -636,7 +491,7 @@ internal sealed class LauncherForm : Form
         try
         {
             string json = JsonSerializer.Serialize(manifest, JsonOptions);
-            await File.WriteAllTextAsync(temporaryPath, json, lifetime.Token);
+            await File.WriteAllTextAsync(temporaryPath, json, OperationToken);
             File.Move(temporaryPath, path, true);
         }
         finally
@@ -679,6 +534,9 @@ internal sealed class LauncherForm : Form
         foreach (ClientUpdateFile file in manifest.Files)
         {
             string path = NormalizeRelativePath(file.Path);
+            string first=path.Split(Path.DirectorySeparatorChar)[0];
+            if(first.Equals(".update-cache",StringComparison.OrdinalIgnoreCase)||first.Equals(".update-temp",StringComparison.OrdinalIgnoreCase)||first.Equals(".update-backup",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("런처 전용 작업 폴더는 업데이트 대상이 될 수 없습니다.");
             if (!paths.Add(path) || file.Size < 0 ||
                 !Regex.IsMatch(file.Sha256 ?? string.Empty, "^[A-Fa-f0-9]{64}$"))
                 throw new InvalidDataException($"업데이트 파일 정보가 올바르지 않습니다: {file.Path}");
@@ -753,8 +611,12 @@ internal sealed class LauncherForm : Form
     private void EnsureGameIsNotRunning(string executablePath)
     {
         string processName = Path.GetFileNameWithoutExtension(executablePath);
-        if (Process.GetProcessesByName(processName).Any())
-            throw new InvalidOperationException("게임이 실행 중입니다. 게임을 완전히 종료한 뒤 업데이트하세요.");
+        foreach(string name in new[]{processName,"ProjectProject01-Win64-Shipping"}.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var processes=Process.GetProcessesByName(name);
+            try{if(processes.Length>0)throw new InvalidOperationException("게임이 실행 중입니다. 게임을 완전히 종료한 뒤 업데이트하세요.");}
+            finally{foreach(var process in processes)process.Dispose();}
+        }
     }
 
     private void LaunchGame(string? executablePath = null)

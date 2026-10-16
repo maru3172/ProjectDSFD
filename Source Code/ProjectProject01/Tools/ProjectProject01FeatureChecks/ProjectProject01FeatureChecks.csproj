@@ -6,5 +6,6 @@
   <ItemGroup>
     <ProjectReference Include="../ProjectProject01Backend/ProjectProject01Backend.csproj" />
     <ProjectReference Include="../ProjectProject01BuildServerHelper/ProjectProject01BuildServerHelper.csproj" />
+    <ProjectReference Include="../ProjectProject01ClientLauncher/ProjectProject01ClientLauncher.csproj" />
   </ItemGroup>
 </Project>

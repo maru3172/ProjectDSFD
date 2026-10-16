@@ -8,6 +8,7 @@
 #include "HelperRearGuardCharacter.generated.h"
 
 class APawn;
+class APlayerCharacter;
 class UFootstepSynthComponent;
 struct FHelperTuningRow;
 
@@ -53,6 +54,8 @@ public:
 	bool IsGuardingPlayer(const APawn* PlayerPawn) const;
 	void GetDiagnosticAppliedTuning(struct FHelperTuningRow& OutTuning) const;
 	bool IsDiagnosticRetreatLocked() const { return bFollowDistanceLocked; }
+	/** Only a contact confirmed during actual retreat movement may consume a death count. */
+	bool CanApplyRetreatPushToPlayer(const APlayerCharacter* Player) const;
 
 	/** 싱글플레이 스태미나 규칙이 사용하는 현재 실제 시야 반각입니다. */
 	float GetCurrentGuardSightHalfAngleDegrees() const;
@@ -126,7 +129,7 @@ private:
 	bool HasGuardedPlayerMovementInput() const;
 	void UpdateVisionRetreatState();
 	void BeginVisionRetreat(const FVector& CurrentViewDirection);
-	bool IsGuardedPlayerOnRetreatPath(const FVector& RetreatTarget) const;
+	void UpdateRetreatContact();
 	void ResetVisionDirectionChangeTracking();
 	void UpdateLastPlayerMovementDirection();
 	void DrawGuardDebug() const;
@@ -152,6 +155,13 @@ private:
 
 	UPROPERTY(SaveGame)
 	bool bFollowDistanceLocked = false;
+	/** One push per retreat. Persist consumption, but never persist a pending contact. */
+	UPROPERTY(SaveGame)
+	bool bRetreatPushConsumed = true;
+	FVector PreviousRetreatLocation = FVector::ZeroVector;
+	bool bRetreatLocationInitialized = false;
+	bool bRetreatContactConfirmed = false;
+	friend class FProjectProject01HelperRetreatContactTest;
 
 	UPROPERTY(SaveGame)
 	bool bGuardHalfAngleInitialized = false;

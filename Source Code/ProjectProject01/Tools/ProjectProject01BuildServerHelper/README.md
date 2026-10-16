@@ -46,3 +46,5 @@ Git에서 제외된 `LocalMySql/ProjectProject01Backend.local.json`에서 읽으
 재패키징 범위, 마이크 테스트, DB 복원 안전장치와 검증 방법은 [운영·음성 편의 기능 안내](../../Docs/OperationsAndVoiceUsability.md)를 참고하세요.
 
 Launcher Installed Build는 전용 서버 패키징을 지원하지 않으므로 도구가 이를 차단하고 이유를 표시합니다. 비밀키와 DB 연결 문자열은 도구나 Git에 저장하지 않고 환경변수/user-secrets에서 읽습니다.
+
+`경기 종료 후 운영 중지`는 신규 시작과 대기열만 취소하고 시작된 경기는 유지합니다. 전원 복귀/세션 정리가 끝나면 게임 서버 운영만 중지하며, 백엔드/MySQL은 유지됩니다. 완료 전에는 `종료 대기 취소`로 해제할 수 있습니다. `게임 서버 운영 즉시 중지`는 기존처럼 진행 경기도 종료하므로 구분해서 사용하세요. 종료 대기 중에는 도우미를 열어 두세요. [상세 동작 및 검사](../../Docs/FinalThreeFeatures.md)

@@ -146,6 +146,7 @@ internal static class IntegrationChecks
             catch(InvalidDataException){Check((await File.ReadAllBytesAsync(zipPath)).SequenceEqual(zip),"손상 ZIP은 기존 저장본 보존");}
             await OperationsIntegration.RunAsync(database,admin);
             await DemandSessionChecks.RunAsync(database,admin,demand,demandFactory,demandClock,output);
+            await DrainSessionChecks.RunAsync(database,admin,demand,demandFactory,output);
             Console.WriteLine($"PASS: {passed} isolated API/database checks");
         }
         finally{await app.StopAsync();}

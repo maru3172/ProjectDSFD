@@ -111,6 +111,8 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
 	TObjectPtr<USoundAttenuation> SoundAttenuation;
+	UPROPERTY(Transient) TObjectPtr<USoundAttenuation> OccludedSoundAttenuation;
+	UPROPERTY(Transient) TObjectPtr<USoundAttenuation> OcclusionSource;
 	
 	// 관련 함수
 	bool PlaySoundAsset(bool bRunning);

@@ -47,6 +47,8 @@ internal static class FeatureChecks
             Check(!CrashArtifactEndpoints.Names.Contains("../secret.txt") && !CrashArtifactEndpoints.Names.Contains("password.json"),"덤프 첨부 경로 및 확장자 제한");
             var daily=SurveyEndpoints.FillDailyGaps([new("2026-10-01",2,1,1),new("2026-10-03",3,3,0)]);
             Check(daily.Count==3 && daily[1].Date=="2026-10-02" && daily[1].ResponseCount==0,"꺾은선 무응답 날짜 0건 처리");
+            ResumeDownloadChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/ResumeDownloads")).GetAwaiter().GetResult();
+            UpdateInstallChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/UpdateInstall")).GetAwaiter().GetResult();
             if(args.Length>0) CheckLayouts(args[0]);
             Console.WriteLine($"PASS: {checks} checks");return 0;
         }
@@ -68,12 +70,19 @@ internal static class FeatureChecks
         using(var helper=new MainForm())
         {
             PrepareRender(helper);
-            foreach(string caption in new[]{"동시 경기 수 적용","방 한도 설정·적용"})
+            foreach(string caption in new[]{"동시 경기 수 적용","방 한도 설정·적용","경기 종료 후 운영 중지","종료 대기 취소","게임 서버 운영 즉시 중지"})
             {
                 var button=Children(helper).OfType<Button>().Single(b=>b.Text==caption);
                 Check(helper.ClientRectangle.Contains(helper.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),caption+" 버튼이 메인 창에 표시됨");
             }
             using var bitmap=new Bitmap(helper.Width,helper.Height);helper.DrawToBitmap(bitmap,new Rectangle(Point.Empty,helper.Size));bitmap.Save(Path.Combine(output,"helper-capacity-buttons.png"));
+        }
+        using(var launcher=new ProjectProject01ClientLauncher.LauncherForm(Path.Combine(output,"LauncherUiFixture")))
+        {
+            PrepareRender(launcher);
+            var pause=Children(launcher).OfType<Button>().Single(b=>b.Text=="다운로드 중단");
+            Check(!pause.Enabled&&launcher.ClientRectangle.Contains(launcher.RectangleToClient(pause.RectangleToScreen(pause.ClientRectangle))),"런처 다운로드 중단 버튼 표시·유휴 중 비활성");
+            using var bitmap=new Bitmap(launcher.Width,launcher.Height);launcher.DrawToBitmap(bitmap,new Rectangle(Point.Empty,launcher.Size));bitmap.Save(Path.Combine(output,"resumable-launcher.png"));
         }
         using(var administration=new ServerAdministrationForm(Path.GetFullPath(Path.Combine(output,"empty-fixture")),_=>{}))
         {

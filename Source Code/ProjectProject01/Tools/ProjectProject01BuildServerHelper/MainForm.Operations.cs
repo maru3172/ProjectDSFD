@@ -3,6 +3,90 @@ using System.Text.RegularExpressions;
 namespace ProjectProject01BuildServerHelper;
 internal sealed partial class MainForm
 {
+    private readonly System.Windows.Forms.Timer drainPollTimer=new(){Interval=3000};
+    private bool drainPollBusy,drainPollHooked;
+    private int drainPollFailures;
+    private async Task<bool> ConfirmBackendStopAsync()
+    {
+        if(backendProcess is null||backendProcess.HasExited)return true;
+        string warning;
+        try
+        {
+            using var request=CreateLocalAdminRequest(HttpMethod.Get,"/api/admin/game-server-demand");
+            using var http=new HttpClient {Timeout=TimeSpan.FromSeconds(5)};
+            using var response=await http.SendAsync(request,lifetime.Token);response.EnsureSuccessStatusCode();
+            using var json=System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(lifetime.Token));
+            int active=json.RootElement.GetProperty("activeSessions").GetInt32();
+            if(active==0)return true;
+            warning=$"준비/진행 중인 경기 세션이 {active}개 있습니다. 지금 백엔드를 중지하거나 도우미를 닫으면 해당 경기가 중단됩니다.\n\n경기를 보호하려면 '아니오'를 누르고 '경기 종료 후 운영 중지'를 사용한 뒤 이 창을 열어 두세요.\n\n그래도 지금 종료하시겠습니까?";
+        }
+        catch(Exception ex) when(ex is HttpRequestException or OperationCanceledException or IOException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException)
+        {warning="경기 상태를 확인하지 못했습니다. 지금 종료하면 진행 중인 경기가 중단될 수 있습니다. 그래도 종료하시겠습니까?";}
+        return MessageBox.Show(this,warning,"진행 중인 경기 보호",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes;
+    }
+    private async Task BeginGameServerDrainAsync()
+    {
+        using var snapshot=await SetGameServerDrainAsync(false);
+        Append("[안내] 신규 시작·카운트다운·세션 대기는 취소하고 이미 시작한 경기는 유지합니다. 경기 종료 후 전원 복귀/세션 정리가 끝나면 게임 서버 운영만 중지합니다. 백엔드와 MySQL은 유지됩니다.");
+        ShowDrainStatus(snapshot.RootElement);
+        if(!drainPollHooked)
+        {
+            drainPollHooked=true;
+            drainPollTimer.Tick+=async(_,_)=>await RefreshDrainStatusAsync();
+        }
+        drainPollFailures=0;
+        if(snapshot.RootElement.GetProperty("draining").GetBoolean())drainPollTimer.Start();
+    }
+    private async Task CancelGameServerDrainAsync()
+    {
+        using var snapshot=await SetGameServerDrainAsync(true);
+        drainPollTimer.Stop();SetStatus("경기 종료 대기 취소 — 신규 시작 허용");
+        Append("[OK] 종료 대기를 취소했습니다. 신규 경기 시작을 다시 허용합니다.");
+    }
+    private async Task<System.Text.Json.JsonDocument> SetGameServerDrainAsync(bool cancel)
+    {
+        using var request=CreateLocalAdminRequest(HttpMethod.Post,"/api/admin/game-server-demand/drain");
+        request.Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(new {cancel}),System.Text.Encoding.UTF8,"application/json");
+        using var http=new HttpClient {Timeout=TimeSpan.FromSeconds(8)};
+        using var response=await http.SendAsync(request,lifetime.Token);
+        string json=await response.Content.ReadAsStringAsync(lifetime.Token);
+        if(!response.IsSuccessStatusCode)
+        {
+            using var error=System.Text.Json.JsonDocument.Parse(json);
+            throw new InvalidOperationException(error.RootElement.TryGetProperty("message",out var message)?message.GetString():$"HTTP {(int)response.StatusCode}");
+        }
+        return System.Text.Json.JsonDocument.Parse(json);
+    }
+    private void ShowDrainStatus(System.Text.Json.JsonElement snapshot)
+    {
+        if(snapshot.GetProperty("drainCompleted").GetBoolean())
+        {
+            drainPollTimer.Stop();SetStatus("모든 세션 정리 완료 — 게임 서버 운영 중지");
+            Append("[OK] 기존 경기를 보호하며 게임 서버 운영 중지를 완료했습니다.");
+        }
+        else if(snapshot.GetProperty("draining").GetBoolean())
+            SetStatus($"경기 종료 대기 중 — 남은 세션 {snapshot.GetProperty("activeSessions").GetInt32()}개 / 신규 시작 차단");
+        else {drainPollTimer.Stop();SetStatus(snapshot.GetProperty("enabled").GetBoolean()?"경기 세션 운영 중":"경기 세션 운영 중지");}
+    }
+    private async Task RefreshDrainStatusAsync()
+    {
+        if(drainPollBusy||IsDisposed||Disposing)return;
+        drainPollBusy=true;
+        try
+        {
+            using var request=CreateLocalAdminRequest(HttpMethod.Get,"/api/admin/game-server-demand");
+            using var http=new HttpClient {Timeout=TimeSpan.FromSeconds(5)};
+            using var response=await http.SendAsync(request,lifetime.Token);response.EnsureSuccessStatusCode();
+            using var json=System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(lifetime.Token));
+            if(!IsDisposed&&!Disposing){ShowDrainStatus(json.RootElement);drainPollFailures=0;}
+        }
+        catch(Exception ex)
+        {
+            if(!lifetime.IsCancellationRequested&&++drainPollFailures>=3&&!IsDisposed&&!Disposing)
+            {drainPollTimer.Stop();Append("[주의] 종료 대기 상태를 확인하지 못했습니다. 백엔드의 종료 대기 요청은 유지될 수 있으니 다시 확인하세요. "+ex.Message);}
+        }
+        finally{drainPollBusy=false;}
+    }
     private Task OpenRoomCapacityAsync()
     {
         using var dialog=new RoomCapacityForm((method,endpoint,body)=>

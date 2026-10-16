@@ -196,6 +196,8 @@ private:
 	// 사운드의 개수와 관계없이 소리가 발생한 위치와 청취자 사이의 거리에 따라 볼륨이 감소하는 방식 등을 설정
 	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep")
 	TObjectPtr<class USoundAttenuation> FootstepAttenuation;
+	UPROPERTY(Transient) TObjectPtr<class USoundAttenuation> OccludedFootstepAttenuation;
+	UPROPERTY(Transient) TObjectPtr<class USoundAttenuation> OcclusionFootstepSource;
 	
 	// 발 위치에서 위쪽으로 트레이스를 시작할 거리
 	UPROPERTY(EditDefaultsOnly, Category = "Audio|Footstep", meta = (ClampMin = "0.0", Units = "cm"))

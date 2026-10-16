@@ -15,6 +15,7 @@
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "Sound/SoundAttenuation.h"
+#include "ProjectProject01SpatialAudio.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -159,17 +160,12 @@ UPainGroanSynthComponent::UPainGroanSynthComponent(const FObjectInitializer& Obj
 	bAllowSpatialization = true;
 	bIsUISound = false;
 	NumChannels = 1;
-	bOverrideAttenuation = true;
-	AttenuationOverrides.bAttenuate = true;
-	AttenuationOverrides.bSpatialize = true;
-	AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
-	AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
-	AttenuationOverrides.AttenuationShapeExtents = FVector(250.0f, 0.0f, 0.0f);
-	AttenuationOverrides.FalloffDistance = 2500.0f;
+	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 }
 
 void UPainGroanSynthComponent::TriggerPain(const bool bFatal, const float Intensity)
 {
+	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 	const float SafeIntensity = FMath::Clamp(Intensity, 0.35f, 1.0f);
 	SynthCommand([this, bFatal, SafeIntensity]()
 	{
@@ -316,17 +312,12 @@ UBodyFallSynthComponent::UBodyFallSynthComponent(const FObjectInitializer& Objec
 	bAllowSpatialization = true;
 	bIsUISound = false;
 	NumChannels = 1;
-	bOverrideAttenuation = true;
-	AttenuationOverrides.bAttenuate = true;
-	AttenuationOverrides.bSpatialize = true;
-	AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
-	AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
-	AttenuationOverrides.AttenuationShapeExtents = FVector(180.0f, 0.0f, 0.0f);
-	AttenuationOverrides.FalloffDistance = 2200.0f;
+	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 }
 
 void UBodyFallSynthComponent::TriggerBodyFall()
 {
+	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 	SynthCommand([this]()
 	{
 		ImpactFrameIndex = 0;

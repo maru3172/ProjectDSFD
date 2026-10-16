@@ -26,7 +26,7 @@ internal static class LobbyEndpoints
         var travelUrl = string.IsNullOrWhiteSpace(configuredTravelUrl)
             ? "127.0.0.1:7777"
             : configuredTravelUrl.Trim();
-        bool CanLaunchOrConnect()=>demand?.Configured==true?demand.Enabled:gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge);
+        bool CanLaunchOrConnect()=>demand?.Configured==true?demand.AcceptingNewMatches:gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge);
 
         app.MapPost("/api/server/heartbeat", async (HttpRequest request,AuthDatabase database,CancellationToken ct) =>
         {
@@ -621,7 +621,7 @@ internal static class LobbyEndpoints
                     return Results.Conflict(new LobbyFailure("방장을 제외한 모든 플레이어가 준비해야 합니다."));
                 }
 
-                if(demand?.Enabled==true)
+                if(demand?.AcceptingNewMatches==true)
                 {
                     await ExecuteAsync(connection,transaction,"UPDATE room_members SET assigned_role=NULL,returned_to_room=FALSE WHERE room_id=@roomId;",("@roomId",membership.RoomId),ct);
                     // No capacity reservation, process, role or join ticket before the countdown completes.
@@ -632,11 +632,11 @@ internal static class LobbyEndpoints
                     return Results.Ok(new {message="게임 시작 카운트다운을 시작합니다.",room=countdown});
                 }
 
-                if (demand is {Configured:true,Enabled:false} || !gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge))
+                if (demand is {Configured:true,AcceptingNewMatches:false} || !gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge))
                 {
                     await transaction.RollbackAsync(ct);
                     return Results.Json(
-                        new LobbyFailure("경기 세션 운영이 비활성 상태입니다. 방을 유지합니다. 운영자가 서버 운영을 활성화해야 합니다."),
+                        new LobbyFailure("경기 세션 운영이 중지되었거나 종료 대기 중입니다. 신규 경기를 시작하지 않고 방을 유지합니다."),
                         statusCode: StatusCodes.Status409Conflict);
                 }
 
@@ -768,7 +768,7 @@ internal static class LobbyEndpoints
                 }
                 if(demand?.Configured==true)
                 {
-                    if(!demand.Enabled)
+                    if(!demand.AcceptingNewMatches)
                     {
                         await ResetStartingRoomAsync(connection,transaction,membership.RoomId,ct);
                         await transaction.CommitAsync(ct);

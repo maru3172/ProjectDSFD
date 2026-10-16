@@ -6,6 +6,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "ProjectProject01GameInstance.h"
 #include "Sound/SoundAttenuation.h"
+#include "ProjectProject01SpatialAudio.h"
 
 #include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -60,13 +61,7 @@ UFootstepSynthComponent::UFootstepSynthComponent(const FObjectInitializer& Objec
 	bIsUISound = false;
 	NumChannels = 1;
 
-	bOverrideAttenuation = true;
-	AttenuationOverrides.bAttenuate = true;
-	AttenuationOverrides.bSpatialize = true;
-	AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
-	AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
-	AttenuationOverrides.AttenuationShapeExtents = FVector(150.0f, 0.0f, 0.0f);
-	AttenuationOverrides.FalloffDistance = 2200.0f;
+	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 }
 
 void UFootstepSynthComponent::Configure(
@@ -81,6 +76,7 @@ void UFootstepSynthComponent::Configure(
 
 void UFootstepSynthComponent::BeginPlay()
 {
+	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 	Super::BeginPlay();
 	if (const AActor* Owner = GetOwner(); IsValid(Owner))
 	{
@@ -412,6 +408,11 @@ bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning)
 	{
 		return false;
 	}
+	if(!IsValid(OccludedSoundAttenuation)||OcclusionSource!=SoundAttenuation)
+	{
+		OcclusionSource=SoundAttenuation;
+		OccludedSoundAttenuation=ProjectProject01SpatialAudio::MakeOccludedCopy(this,SoundAttenuation,AttenuationOverrides);
+	}
 
 	UAudioComponent* SpawnedAudioComponent =
 		UGameplayStatics::SpawnSoundAtLocation(
@@ -424,7 +425,7 @@ bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning)
 				FMath::FRandRange(0.92f, 1.0f),
 			FMath::FRandRange(0.97f, 1.03f),
 			0.0f,
-			SoundAttenuation);
+			OccludedSoundAttenuation);
 
 	if (!IsValid(SpawnedAudioComponent))
 	{

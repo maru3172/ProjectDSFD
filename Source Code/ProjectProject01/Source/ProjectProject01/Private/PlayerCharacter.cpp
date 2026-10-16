@@ -1483,6 +1483,10 @@ bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* Pushing
 	{
 		return false;
 	}
+	if (!PushingHelper->CanApplyRetreatPushToPlayer(this))
+	{
+		return false;
+	}
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
 	{

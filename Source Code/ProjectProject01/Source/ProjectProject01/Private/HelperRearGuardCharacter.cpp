@@ -4,6 +4,7 @@
 #include "HelperRearGuardCharacter.h"
 
 #include "Components/CapsuleComponent.h"
+#include "CollisionShape.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -11,9 +12,8 @@
 #include "FootstepSynthComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
-#include "NavigationPath.h"
-#include "NavigationSystem.h"
 #include "PlayerCharacter.h"
+#include "Engine/World.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
 
@@ -23,6 +23,19 @@
 
 namespace
 {
+	bool CapsulesTouch(const UCapsuleComponent* First, const UCapsuleComponent* Second)
+	{
+		if (!IsValid(First) || !IsValid(Second)) return false;
+		const float FirstRadius = First->GetScaledCapsuleRadius();
+		const float SecondRadius = Second->GetScaledCapsuleRadius();
+		const FVector FirstAxis = First->GetUpVector() * FMath::Max(0.0f, First->GetScaledCapsuleHalfHeight() - FirstRadius);
+		const FVector SecondAxis = Second->GetUpVector() * FMath::Max(0.0f, Second->GetScaledCapsuleHalfHeight() - SecondRadius);
+		FVector FirstClosest, SecondClosest;
+		FMath::SegmentDistToSegmentSafe(First->GetComponentLocation() - FirstAxis, First->GetComponentLocation() + FirstAxis,
+			Second->GetComponentLocation() - SecondAxis, Second->GetComponentLocation() + SecondAxis, FirstClosest, SecondClosest);
+		return FVector::DistSquared(FirstClosest, SecondClosest) <= FMath::Square(FirstRadius + SecondRadius);
+	}
+
 	bool HasUsableGuardSight(const float SightHalfAngleDegrees)
 	{
 		return SightHalfAngleDegrees > KINDA_SMALL_NUMBER;
@@ -72,6 +85,82 @@ bool FProjectProject01HelperVisionBoundsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("120-degree actual sight stays inside 180-degree coverage"), FMath::IsNearlyEqual(OffsetDegrees, 30.0f, 0.01f));
 	TestFalse(TEXT("A zero-degree helper sight observes nothing"), HasUsableGuardSight(0.0f));
 	TestTrue(TEXT("A positive helper sight remains active"), HasUsableGuardSight(0.01f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectProject01HelperRetreatContactTest,
+	"ProjectProject01.Helper.RetreatContact", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01HelperRetreatContactTest::RunTest(const FString&)
+{
+	const auto Values = UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true)
+		.CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+	AHelperRearGuardCharacter* Helper = World->SpawnActor<AHelperRearGuardCharacter>();
+	APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
+	if (!IsValid(Helper) || !IsValid(Player))
+	{
+		AddError(TEXT("Contact fixture actors could not spawn"));
+		World->DestroyWorld(false);
+		return false;
+	}
+	Helper->SetActorLocation(FVector(0, 0, 100));
+	Player->SetActorLocation(FVector(1000, 0, 100));
+	// This test world intentionally does not run BeginPlay; initialize the movement receiver explicitly.
+	Player->GetCharacterMovement()->SetUpdatedComponent(Player->GetCapsuleComponent());
+	Player->GetCharacterMovement()->Activate(true);
+	Player->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	Player->SetRemainingDeathCountForGameMode(3);
+	AddExpectedMessage(TEXT("lost one death count after being pushed by helper"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, 2);
+	AddExpectedMessage(TEXT("after actual retreat capsule contact."), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, 2);
+	Helper->GuardedPlayer = Player;
+	Helper->BeginVisionRetreat(-FVector::ForwardVector);
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Player on future retreat route is not damaged at planning time"), Player->GetRemainingDeathCount(), 3);
+	TestFalse(TEXT("Direct damage call without confirmed contact is rejected"), Player->HandlePartnerPushDeath(Helper));
+	Helper->SetActorLocation(FVector(400, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Actual movement still short of the player is safe"), Player->GetRemainingDeathCount(), 3);
+	Player->SetActorLocation(FVector(1000, 0, 500));
+	Helper->SetActorLocation(FVector(930, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Same XY on a different floor does not count as contact"), Player->GetRemainingDeathCount(), 3);
+	Player->SetActorLocation(FVector(1000, 0, 100));
+	Helper->SetActorLocation(FVector(940, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Actual retreat capsule contact consumes one death count"), Player->GetRemainingDeathCount(), 2);
+	TestTrue(TEXT("Physical contact also queues a push"), Player->GetCharacterMovement()->PendingLaunchVelocity.X > 0.0f);
+	Player->SetRemainingDeathCountForGameMode(3); // Also clears invulnerability; test the one-push latch, not the cooldown.
+	Helper->SetActorLocation(FVector(950, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Same retreat cannot consume again even with cooldown reset"), Player->GetRemainingDeathCount(), 3);
+	Helper->bFollowDistanceLocked = false;
+	Helper->BeginVisionRetreat(-FVector::ForwardVector);
+	Player->SetActorLocation(FVector(1500, 0, 100));
+	Helper->SetActorLocation(FVector(1700, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Sweep of already travelled movement catches a crossed player"), Player->GetRemainingDeathCount(), 2);
+	Player->SetRemainingDeathCountForGameMode(3);
+	Helper->bFollowDistanceLocked = false;
+	Helper->BeginVisionRetreat(-FVector::ForwardVector);
+	Helper->SetActorLocation(FVector(5000, 0, 100));
+	Player->SetActorLocation(FVector(5000, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Teleport/load jump is not a retreat collision"), Player->GetRemainingDeathCount(), 3);
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Standing in contact without retreat movement does not push"), Player->GetRemainingDeathCount(), 3);
+	Helper->bFollowDistanceLocked = false;
+	Helper->SetActorLocation(FVector(5010, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Normal following is not a retreat attack"), Player->GetRemainingDeathCount(), 3);
+	Helper->BeginVisionRetreat(-FVector::ForwardVector);
+	Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Helper->SetActorLocation(FVector(5020, 0, 100));
+	Helper->UpdateRetreatContact();
+	TestEqual(TEXT("Disabled player collision does not permit a retreat push"), Player->GetRemainingDeathCount(), 3);
+	World->DestroyWorld(false);
 	return true;
 }
 #endif
@@ -193,6 +282,8 @@ void AHelperRearGuardCharacter::Tick(float DeltaTime)
 	UpdateGuardViewDirection();
 	if (HasAuthority())
 	{
+		// Inspect the movement that actually happened, before updating/cancelling the next retreat.
+		UpdateRetreatContact();
 		UpdateVisionRetreatState();
 	}
 
@@ -566,21 +657,11 @@ void AHelperRearGuardCharacter::BeginVisionRetreat(const FVector& CurrentViewDir
 	LockedRetreatTarget = GetActorLocation() - SafeViewDirection * RetreatDistance;
 	LockedRetreatTarget.Z = GetActorLocation().Z;
 	bFollowDistanceLocked = true;
+	bRetreatPushConsumed = false;
+	bRetreatContactConfirmed = false;
+	PreviousRetreatLocation = GetActorLocation();
+	bRetreatLocationInitialized = true;
 	ResetVisionDirectionChangeTracking();
-
-	if (IsGuardedPlayerOnRetreatPath(LockedRetreatTarget))
-	{
-		if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GuardedPlayer.Get()); IsValid(PlayerCharacter))
-		{
-			const UCharacterMovementComponent* Movement = GetCharacterMovement();
-			const float PushSpeed = IsValid(Movement) ? FMath::Max(1.0f, Movement->MaxWalkSpeed) : 600.0f;
-			PlayerCharacter->LaunchCharacter(-SafeViewDirection * PushSpeed, true, false);
-			if (PlayerCharacter->HandlePartnerPushDeath(this))
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Helper %s pushed player %s during vision retreat."), *GetName(), *PlayerCharacter->GetName());
-			}
-		}
-	}
 
 	if (AHelperRearGuardAIController* HelperController = Cast<AHelperRearGuardAIController>(GetController()))
 	{
@@ -588,40 +669,60 @@ void AHelperRearGuardCharacter::BeginVisionRetreat(const FVector& CurrentViewDir
 	}
 }
 
-bool AHelperRearGuardCharacter::IsGuardedPlayerOnRetreatPath(const FVector& RetreatTarget) const
+bool AHelperRearGuardCharacter::CanApplyRetreatPushToPlayer(const APlayerCharacter* Player) const
 {
-	const APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GuardedPlayer.Get());
-	const UCapsuleComponent* HelperCapsule = GetCapsuleComponent();
-	const UCapsuleComponent* PlayerCapsule = IsValid(PlayerCharacter) ? PlayerCharacter->GetCapsuleComponent() : nullptr;
-	UWorld* World = GetWorld();
-	if (!IsValid(PlayerCharacter) || !IsValid(HelperCapsule) || !IsValid(PlayerCapsule) || !IsValid(World))
-	{
-		return false;
-	}
+	return HasAuthority() && IsValid(Player) && GuardedPlayer.Get() == Player &&
+		bFollowDistanceLocked && !bRetreatPushConsumed && bRetreatContactConfirmed;
+}
 
-	UNavigationPath* NavigationPath = UNavigationSystemV1::FindPathToLocationSynchronously(
-		World, GetActorLocation(), RetreatTarget, const_cast<AHelperRearGuardCharacter*>(this));
-	if (!IsValid(NavigationPath) || !NavigationPath->IsValid() || NavigationPath->PathPoints.Num() < 2)
+void AHelperRearGuardCharacter::UpdateRetreatContact()
+{
+	bRetreatContactConfirmed = false;
+	APlayerCharacter* Player = Cast<APlayerCharacter>(GuardedPlayer.Get());
+	UCapsuleComponent* HelperCapsule = GetCapsuleComponent();
+	UCapsuleComponent* PlayerCapsule = IsValid(Player) ? Player->GetCapsuleComponent() : nullptr;
+	if (!HasAuthority() || !bFollowDistanceLocked || bRetreatPushConsumed || !IsValid(PlayerCapsule) ||
+		!IsValid(HelperCapsule) || !PlayerCapsule->IsQueryCollisionEnabled() ||
+		!HelperCapsule->IsQueryCollisionEnabled() || Player->IsGameOver())
 	{
-		return false;
+		bRetreatLocationInitialized = false;
+		return;
 	}
-
-	FVector PlayerLocation = PlayerCharacter->GetActorLocation();
-	PlayerLocation.Z = 0.0f;
-	const float CombinedCapsuleRadius = HelperCapsule->GetScaledCapsuleRadius() + PlayerCapsule->GetScaledCapsuleRadius();
-	for (int32 PointIndex = 1; PointIndex < NavigationPath->PathPoints.Num(); ++PointIndex)
+	const FVector CurrentLocation = GetActorLocation();
+	if (!bRetreatLocationInitialized)
 	{
-		FVector SegmentStart = NavigationPath->PathPoints[PointIndex - 1];
-		FVector SegmentEnd = NavigationPath->PathPoints[PointIndex];
-		SegmentStart.Z = 0.0f;
-		SegmentEnd.Z = 0.0f;
-		if (FMath::PointDistToSegmentSquared(PlayerLocation, SegmentStart, SegmentEnd) <= FMath::Square(CombinedCapsuleRadius))
-		{
-			return true;
-		}
+		PreviousRetreatLocation = CurrentLocation;
+		bRetreatLocationInitialized = true;
+		return;
 	}
-
-	return false;
+	const FVector PreviousLocation = PreviousRetreatLocation;
+	PreviousRetreatLocation = CurrentLocation;
+	const FVector ActualMovement = CurrentLocation - PreviousLocation;
+	// No damage for merely planning a route, standing nearby, another floor, or teleport/load.
+	if (ActualMovement.SizeSquared2D() <= FMath::Square(0.1f) || ActualMovement.SizeSquared() > FMath::Square(1000.0f))
+	{
+		return;
+	}
+	bRetreatContactConfirmed = CapsulesTouch(HelperCapsule, PlayerCapsule);
+	if (!bRetreatContactConfirmed)
+	{
+		// Sweep ONLY the short distance already travelled this frame. Never the future NavMesh route.
+		FHitResult Contact;
+		bRetreatContactConfirmed = PlayerCapsule->SweepComponent(Contact, PreviousLocation, CurrentLocation,
+			HelperCapsule->GetComponentQuat(), FCollisionShape::MakeCapsule(
+				HelperCapsule->GetScaledCapsuleRadius(), HelperCapsule->GetScaledCapsuleHalfHeight()));
+	}
+	if (!CanApplyRetreatPushToPlayer(Player)) return;
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const float PushSpeed = IsValid(Movement) ? FMath::Max(1.0f, Movement->MaxWalkSpeed) : 600.0f;
+	const FString HelperName = GetName();
+	if (Player->HandlePartnerPushDeath(this))
+	{
+		bRetreatPushConsumed = true;
+		bRetreatContactConfirmed = false;
+		Player->LaunchCharacter(ActualMovement.GetSafeNormal2D() * PushSpeed, true, false);
+		UE_LOG(LogTemp, Warning, TEXT("Helper %s pushed player %s after actual retreat capsule contact."), *HelperName, *Player->GetName());
+	}
 }
 
 void AHelperRearGuardCharacter::ResetVisionDirectionChangeTracking()

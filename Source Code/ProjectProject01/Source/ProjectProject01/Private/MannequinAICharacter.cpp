@@ -25,6 +25,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 #include "Sound/SoundAttenuation.h"
+#include "ProjectProject01SpatialAudio.h"
 #include "FootstepSynthComponent.h"
 
 
@@ -548,7 +549,7 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	const FVector TraceStart = FootLocation + FVector::UpVector * FootstepTraceUpDistance;
 	const FVector TraceEnd = FootLocation - FVector::UpVector * FootstepTraceDownDistance;
 	
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(MannequinFootstep), false, this);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(MannequinFootstep), true, this);
 	QueryParams.bReturnPhysicalMaterial = true;
 	
 	FHitResult Hit;
@@ -568,19 +569,26 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	
 	if (IsValid(FootstepSFXComponent))
 	{
-		FootstepSFXComponent->SetWorldLocation(Hit.ImpactPoint);
+		// Keep the source just above the floor so the floor itself does not occlude every step.
+		FootstepSFXComponent->SetWorldLocation(Hit.ImpactPoint+Hit.ImpactNormal*8.0f);
 		FootstepSFXComponent->TriggerFootstep(HorizontalSpeed >= 700.0f);
 	}
 	else if (IsValid(DefaultFootstepSound))
 	{
+		if(!IsValid(OccludedFootstepAttenuation)||OcclusionFootstepSource!=FootstepAttenuation)
+		{
+			FSoundAttenuationSettings Fallback;
+			OcclusionFootstepSource=FootstepAttenuation;
+			OccludedFootstepAttenuation=ProjectProject01SpatialAudio::MakeOccludedCopy(this,FootstepAttenuation,Fallback);
+		}
 		// 기존 Blueprint가 별도 음원을 지정한 경우를 위한 안전한 하위 호환 경로입니다.
 		UGameplayStatics::PlaySoundAtLocation(
 			this,
 			DefaultFootstepSound,
-			Hit.ImpactPoint,
+			Hit.ImpactPoint+Hit.ImpactNormal*8.0f,
 			1.0f,
 			FMath::FRandRange(0.95f, 1.05f),
 			0.0f,
-			FootstepAttenuation);
+			OccludedFootstepAttenuation);
 	}
 }

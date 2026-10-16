@@ -57,14 +57,23 @@ internal sealed partial class MainForm : Form
             eventArgs.Cancel=true;
             if(closingInProgress)return;
             closingInProgress=true;Enabled=false;
-            try{await StopBackendAsync();}
+            bool confirmed=false;
+            try
+            {
+                if(!await ConfirmBackendStopAsync())return;
+                await StopBackendAsync();confirmed=true;
+            }
+            catch(Exception ex){Append("[실패] 도우미 종료: "+ex.Message);}
             finally
             {
-            SaveHelperSettings();
-            lifetime.Cancel();
-            StopProcess(serverProcess, "게임 서버");
-            foreach(var process in ownedServerPool.Where(p=>p!=serverProcess)) StopProcess(process,"게임 서버 풀");
-            closeReady=true;Close();
+                if(!confirmed){closingInProgress=false;Enabled=true;}
+                else
+                {
+                    SaveHelperSettings();drainPollTimer.Dispose();lifetime.Cancel();
+                    StopProcess(serverProcess, "게임 서버");
+                    foreach(var process in ownedServerPool.Where(p=>p!=serverProcess))StopProcess(process,"게임 서버 풀");
+                    closeReady=true;Close();
+                }
             }
         };
     }
@@ -101,13 +110,15 @@ internal sealed partial class MainForm : Form
         AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
         AddButton(buttons, "DB 백업·복원", OpenDatabaseRecoveryAsync);
         AddButton(buttons, "백엔드 시작", StartBackend);
-        AddButton(buttons, "백엔드 중지", StopBackendAsync);
+        AddButton(buttons, "백엔드 중지", async()=>{if(await ConfirmBackendStopAsync())await StopBackendAsync();});
         AddButton(buttons, "EOS 보이스 자격 증명", OpenEosVoiceSetupAsync);
         AddButton(buttons, "IP 직접 연결 방화벽 설정", ConfigureDirectIpFirewallAsync);
         AddButton(buttons, "IP 직접 연결 검사", () => ValidateDirectIpConnectivityAsync(false));
         AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
         AddButton(buttons, "게임 서버 운영 시작", StartServer);
-        AddButton(buttons, "게임 서버 운영 중지", StopAllGameServersAsync);
+        AddButton(buttons, "경기 종료 후 운영 중지", BeginGameServerDrainAsync);
+        AddButton(buttons, "종료 대기 취소", CancelGameServerDrainAsync);
+        AddButton(buttons, "게임 서버 운영 즉시 중지", StopAllGameServersAsync);
         AddButton(buttons, "전체 흐름 스모크 테스트", RunSmokeTestAsync);
         AddButton(buttons, "로그 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Logs"); return Task.CompletedTask; });
         AddButton(buttons, "진단 결과 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Diagnostics"); return Task.CompletedTask; });
