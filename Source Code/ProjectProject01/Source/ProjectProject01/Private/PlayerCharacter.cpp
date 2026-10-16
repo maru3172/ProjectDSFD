@@ -40,6 +40,7 @@
 #include "SceneViewExtension.h"
 #include "PlayerHeartbeatComponent.h"
 #include "FootstepSynthComponent.h"
+#include "PlayerInteractionComponent.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -318,6 +319,8 @@ APlayerCharacter::APlayerCharacter()
         DebugTopViewCamera->SetRelativeLocation(FVector(0.0f, 0.0f, 5000.0f));
         DebugTopViewCamera->SetRelativeRotation(FRotator(-90.0f, 0.0f, 0.0f));
     }
+	
+	InteractionComponent = CreateDefaultSubobject<UPlayerInteractionComponent>(TEXT("Interaction Component"));
 }
 
 // Called when the game starts or when spawned

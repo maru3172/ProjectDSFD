@@ -23,6 +23,8 @@ class UProjectProject01DamageFeedbackWidget;
 class UProjectProject01DeathFeedbackWidget;
 class UProjectProject01TransientNoticeWidget;
 
+class UPlayerInteractionComponent;
+
 UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
 {
@@ -351,6 +353,10 @@ private:
 	FRotator FeedbackCameraStartRotation = FRotator::ZeroRotator;
 	bool bStaminaInitialized = false;
 	TWeakObjectPtr<AHelperRearGuardCharacter> StaminaHelper;
+	
+	// 플레이어와 아이템의 상호작용 관련
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPlayerInteractionComponent> InteractionComponent;
 
 	// =========================================================================================================================
 	// 카메라 B 키 디버깅 관련
