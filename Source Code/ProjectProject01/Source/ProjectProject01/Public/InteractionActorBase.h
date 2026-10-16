@@ -48,7 +48,7 @@ protected:
 	
 	// false 라면 Line Trace 에 맞더라도 상호작용하지 않는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction")
-	bool bInteractionEnabled;
+	bool bInteractionEnabled = true;
 	
 	// 아이템별 동작은 자식 BP 에서 구현할 것이다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Interaction", meta = (DisplayName = "On Interacted"))

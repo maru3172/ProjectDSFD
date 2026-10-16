@@ -15,7 +15,9 @@ AInteractionActorBase::AInteractionActorBase()
 	PrimaryActorTick.bCanEverTick = false;
 	
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Scene Root"));
-	SceneRoot = RootComponent;
+	// RootComponent = SceneRoot;
+	// 이 버전이 더 권장되는 설정
+	SetRootComponent(SceneRoot);
 
 	ItemMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ItemMesh"));
 	ItemMesh->SetupAttachment(SceneRoot);
@@ -49,7 +51,8 @@ bool AInteractionActorBase::CanInteract_Implementation(APawn* Interactor) const
 
 void AInteractionActorBase::Interact_Implementation(APawn* Interactor)
 {
-	if (!CanInteract_Implementation(Interactor))
+	// BP 재정의를 포함한 실제 CanInteract 구현을 호출한다.
+	if (!IInteractionInterface::Execute_CanInteract(this, Interactor))
 	{
 		return;
 	}
