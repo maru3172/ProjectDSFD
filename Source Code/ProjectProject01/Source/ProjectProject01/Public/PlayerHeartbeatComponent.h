@@ -181,6 +181,11 @@ public:
 	void ApplyHeartbeatTuning(const FPlayerTuningRow& Tuning);
 	void GetDiagnosticAppliedTuning(FPlayerTuningRow& OutTuning) const;
 
+	/** Tools에서 선택해 DefaultGame.ini에 저장한 실제 화면 VFX 경로입니다. */
+	TArray<FSoftObjectPath> GetHeartbeatVFXMaterialPaths() const;
+	/** 연결 변경/머티리얼 재생성 후 이전 MID를 제거하고 다음 로컬 Tick에 다시 연결합니다. */
+	void RefreshHeartbeatVFXMaterial();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -366,7 +371,7 @@ private:
 	float HeartbeatVFXDensityAlpha = 0.0f;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> HeartbeatVFXInstance;
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> HeartbeatVFXInstances;
 
 	TWeakObjectPtr<UCameraComponent> HeartbeatVFXCamera;
 	TWeakObjectPtr<UHeartbeatSynthComponent> HeartbeatSFXSynth;

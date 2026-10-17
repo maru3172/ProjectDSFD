@@ -12,6 +12,8 @@
 #include "MannequinAICharacter.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/Material.h"
+#include "Misc/ConfigCacheIni.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "Sound/SoundAttenuation.h"
@@ -924,31 +926,72 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 	{
 		HeartbeatVFXProximityAlpha = 0.0f;
 		HeartbeatVFXDensityAlpha = 0.0f;
-		if (bHeartbeatVFXBlendableAttached && HeartbeatVFXCamera.IsValid() && IsValid(HeartbeatVFXInstance))
+		if (bHeartbeatVFXBlendableAttached && HeartbeatVFXCamera.IsValid())
 		{
-			HeartbeatVFXCamera->RemoveBlendable(HeartbeatVFXInstance);
+			for (UMaterialInstanceDynamic* Instance : HeartbeatVFXInstances)
+				if (IsValid(Instance)) HeartbeatVFXCamera->RemoveBlendable(Instance);
 			bHeartbeatVFXBlendableAttached = false;
 		}
 		return;
 	}
 
-	if (!EnsureHeartbeatVFX(OwnerPawn) || !IsValid(HeartbeatVFXInstance))
+	if (!EnsureHeartbeatVFX(OwnerPawn))
 	{
 		return;
 	}
 
-	HeartbeatVFXInstance->SetScalarParameterValue(EffectOpacityParameter, EffectOpacity);
-	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * DistortionAlpha);
-	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionSpeedParameter, FMath::Lerp(HeartbeatVFXMinDistortionSpeed, HeartbeatVFXMaxDistortionSpeed, DistortionAlpha));
-	HeartbeatVFXInstance->SetScalarParameterValue(
-		DistortionFrequencyParameter, FMath::Lerp(HeartbeatVFXMinDistortionFrequency, HeartbeatVFXMaxDistortionFrequency, DistortionAlpha));
+	for (UMaterialInstanceDynamic* Instance : HeartbeatVFXInstances)
+	{
+		if (!IsValid(Instance)) continue;
+		Instance->SetScalarParameterValue(EffectOpacityParameter, EffectOpacity);
+		Instance->SetScalarParameterValue(DistortionAmountParameter, HeartbeatVFXMaxDistortionAmount * DistortionAlpha);
+		Instance->SetScalarParameterValue(DistortionSpeedParameter,
+			FMath::Lerp(HeartbeatVFXMinDistortionSpeed, HeartbeatVFXMaxDistortionSpeed, DistortionAlpha));
+		Instance->SetScalarParameterValue(DistortionFrequencyParameter,
+			FMath::Lerp(HeartbeatVFXMinDistortionFrequency, HeartbeatVFXMaxDistortionFrequency, DistortionAlpha));
+	}
+}
+
+TArray<FSoftObjectPath> UPlayerHeartbeatComponent::GetHeartbeatVFXMaterialPaths() const
+{
+	TArray<FSoftObjectPath> Result;
+	TArray<FString> ConfiguredPaths;
+	if (GConfig) GConfig->GetArray(TEXT("ProjectProject01.HeartbeatVFX"), TEXT("Materials"), ConfiguredPaths, GGameIni);
+	for (const FString& Path : ConfiguredPaths)
+		if (!Path.IsEmpty()) Result.AddUnique(FSoftObjectPath(Path));
+	if (!Result.IsEmpty()) return Result;
+
+	FString ConfiguredPath;
+	if (GConfig && GConfig->GetString(TEXT("ProjectProject01.HeartbeatVFX"), TEXT("Material"), ConfiguredPath, GGameIni) &&
+		!ConfiguredPath.IsEmpty())
+	{
+		Result.Add(FSoftObjectPath(ConfiguredPath));
+		return Result;
+	}
+	// Preserve old Blueprint defaults when no shared tool selection has been saved.
+	Result.Add(HeartbeatVFXMaterial.ToSoftObjectPath());
+	return Result;
+}
+
+void UPlayerHeartbeatComponent::RefreshHeartbeatVFXMaterial()
+{
+	ReleaseHeartbeatVFX();
+	bHeartbeatVFXLoadFailureLogged = false;
 }
 
 bool UPlayerHeartbeatComponent::EnsureHeartbeatVFX(APawn& OwnerPawn)
 {
-	UCameraComponent* Camera = OwnerPawn.FindComponentByClass<UCameraComponent>();
+	// Match AActor::CalcCamera: only an active camera contributes to the player view.
+	UCameraComponent* Camera = nullptr;
+	TInlineComponentArray<UCameraComponent*> Cameras(&OwnerPawn);
+	for (UCameraComponent* Candidate : Cameras)
+	{
+		if (IsValid(Candidate) && Candidate->IsActive())
+		{
+			Camera = Candidate;
+			break;
+		}
+	}
 	if (!IsValid(Camera))
 	{
 		return false;
@@ -960,32 +1003,38 @@ bool UPlayerHeartbeatComponent::EnsureHeartbeatVFX(APawn& OwnerPawn)
 		HeartbeatVFXCamera = Camera;
 	}
 
-	if (!IsValid(HeartbeatVFXInstance))
+	if (HeartbeatVFXInstances.IsEmpty())
 	{
-		UMaterialInterface* Material = HeartbeatVFXMaterial.LoadSynchronous();
-		if (!IsValid(Material))
+		bool bHadLoadFailure = false;
+		const float Phase = FMath::FRandRange(0.0f, 90.0f);
+		for (const FSoftObjectPath& MaterialPath : GetHeartbeatVFXMaterialPaths())
 		{
-			if (!bHeartbeatVFXLoadFailureLogged)
+			UMaterialInterface* Material = Cast<UMaterialInterface>(MaterialPath.TryLoad());
+			if (!IsValid(Material) || Material->GetMaterial()->MaterialDomain != MD_PostProcess)
 			{
-				UE_LOG(LogTemp, Error,
-					TEXT("[HeartbeatVFX] Post-process material is unavailable: %s"),
-					*HeartbeatVFXMaterial.ToSoftObjectPath().ToString());
-				bHeartbeatVFXLoadFailureLogged = true;
+				if (!bHeartbeatVFXLoadFailureLogged)
+					UE_LOG(LogTemp, Error, TEXT("[HeartbeatVFX] Missing or non-postprocess material: %s"), *MaterialPath.ToString());
+				bHadLoadFailure = true;
+				continue;
 			}
-			return false;
+			UMaterialInstanceDynamic* Instance = UMaterialInstanceDynamic::Create(Material, this);
+			if (!IsValid(Instance)) continue;
+			// Share one phase across selected layers instead of stacking conflicting random movements.
+			Instance->SetScalarParameterValue(TEXT("VertigoPhaseOffset"), Phase);
+			HeartbeatVFXInstances.Add(Instance);
+			UE_LOG(LogTemp, Log,
+				TEXT("[HeartbeatVFX] Material=%s -> Owner=%s Camera=%s Active=%d PostProcessWeight=%.3f"),
+				*MaterialPath.ToString(), *OwnerPawn.GetName(), *Camera->GetName(),
+				Camera->IsActive(), Camera->PostProcessBlendWeight);
 		}
-
-		HeartbeatVFXInstance = UMaterialInstanceDynamic::Create(Material, this);
-		if (!ensureMsgf(IsValid(HeartbeatVFXInstance), TEXT("Heartbeat VFX dynamic material creation failed.")))
-		{
-			return false;
-		}
-		bHeartbeatVFXLoadFailureLogged = false;
+		bHeartbeatVFXLoadFailureLogged = bHadLoadFailure;
+		if (HeartbeatVFXInstances.IsEmpty()) return false;
 	}
 
 	if (!bHeartbeatVFXBlendableAttached)
 	{
-		Camera->AddOrUpdateBlendable(HeartbeatVFXInstance, 1.0f);
+		for (UMaterialInstanceDynamic* Instance : HeartbeatVFXInstances)
+			Camera->AddOrUpdateBlendable(Instance, 1.0f);
 		bHeartbeatVFXBlendableAttached = true;
 	}
 	return true;
@@ -993,13 +1042,14 @@ bool UPlayerHeartbeatComponent::EnsureHeartbeatVFX(APawn& OwnerPawn)
 
 void UPlayerHeartbeatComponent::ReleaseHeartbeatVFX()
 {
-	if (bHeartbeatVFXBlendableAttached && HeartbeatVFXCamera.IsValid() && IsValid(HeartbeatVFXInstance))
+	if (bHeartbeatVFXBlendableAttached && HeartbeatVFXCamera.IsValid())
 	{
-		HeartbeatVFXCamera->RemoveBlendable(HeartbeatVFXInstance);
+		for (UMaterialInstanceDynamic* Instance : HeartbeatVFXInstances)
+			if (IsValid(Instance)) HeartbeatVFXCamera->RemoveBlendable(Instance);
 	}
 	bHeartbeatVFXBlendableAttached = false;
 	HeartbeatVFXCamera.Reset();
-	HeartbeatVFXInstance = nullptr;
+	HeartbeatVFXInstances.Reset();
 }
 
 bool UPlayerHeartbeatComponent::EnsureHeartbeatSFX(APawn& OwnerPawn)
