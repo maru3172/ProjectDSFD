@@ -102,6 +102,7 @@ void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 		ActiveRequest.Reset();
 	}
 	Rooms.Reset();
+    bMatchmaking=false;bCancelMatchmaking=false;MatchSearchId.Reset();MatchmakingMessage.Reset();MatchmakingWaiting=0;MatchmakingPosition=0;MatchmakingSeconds=0;
 	CurrentRoom = FProjectProject01RoomState();
 	LeaderboardEntries.Reset();
 	ClearGameJoinTicket();
@@ -131,6 +132,43 @@ void UProjectProject01LobbySubsystem::RefreshRooms()
 void UProjectProject01LobbySubsystem::RefreshCurrentRoom()
 {
 	SendRequest(EProjectProject01LobbyOperation::RefreshCurrentRoom, TEXT("GET"), TEXT("/api/rooms/current"), FString());
+}
+void UProjectProject01LobbySubsystem::JoinMatchmaking()
+{
+    if(!HasCurrentRoom()||!CurrentRoom.bRandomParty||!CurrentRoom.bIsHost||CurrentRoom.Members.Num()!=1||bMatchmaking||IsRequestInFlight())return;
+    MatchSearchId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);bMatchmaking=true;bCancelMatchmaking=false;
+    MatchmakingMessage=TEXT("매칭 신청 중…");
+    SendRequest(EProjectProject01LobbyOperation::JoinMatchmaking,TEXT("POST"),TEXT("/api/rooms/matchmaking/join"),TEXT("{\"searchId\":\"")+MatchSearchId+TEXT("\"}"));
+}
+void UProjectProject01LobbySubsystem::CreateMatchParty()
+{
+    if(IsRequestInFlight()||HasCurrentRoom())return;
+    SendRequest(EProjectProject01LobbyOperation::CreateMatchParty,TEXT("POST"),TEXT("/api/rooms/matchmaking/party"),TEXT("{}"));
+}
+void UProjectProject01LobbySubsystem::PollMatchmaking()
+{
+    if(!bMatchmaking||IsRequestInFlight())return;
+    if(bCancelMatchmaking){CancelMatchmaking();return;}
+    SendRequest(EProjectProject01LobbyOperation::PollMatchmaking,TEXT("GET"),TEXT("/api/rooms/matchmaking/status/")+MatchSearchId,FString());
+}
+void UProjectProject01LobbySubsystem::CancelMatchmaking()
+{
+    if(!bMatchmaking)return;bCancelMatchmaking=true;
+    if(IsRequestInFlight())return;
+    SendRequest(EProjectProject01LobbyOperation::CancelMatchmaking,TEXT("POST"),TEXT("/api/rooms/matchmaking/cancel"),TEXT("{\"searchId\":\"")+MatchSearchId+TEXT("\"}"));
+}
+bool UProjectProject01LobbySubsystem::ParseMatchmaking(const TSharedPtr<FJsonObject>& Json,FString& Error)
+{
+    FString State;if(!Json||!Json->TryGetStringField(TEXT("state"),State)){Error=TEXT("매칭 상태 응답이 올바르지 않습니다.");return false;}
+    Json->TryGetStringField(TEXT("message"),MatchmakingMessage);
+    double N=0;Json->TryGetNumberField(TEXT("waitingCount"),N);MatchmakingWaiting=FMath::Max(0,(int32)N);
+    N=0;Json->TryGetNumberField(TEXT("position"),N);MatchmakingPosition=FMath::Max(0,(int32)N);
+    N=0;Json->TryGetNumberField(TEXT("secondsRemaining"),N);MatchmakingSeconds=FMath::Max(0,(int32)N);
+    bMatchmaking=State==TEXT("Waiting");
+    if(!bMatchmaking)bCancelMatchmaking=false;
+    const TSharedPtr<FJsonObject>* Room=nullptr;
+    if(Json->TryGetObjectField(TEXT("room"),Room))return ParseRoomState(Json,Error);
+    OnCurrentRoomChanged.Broadcast();return true;
 }
 
 void UProjectProject01LobbySubsystem::CreateRoom(
@@ -548,7 +586,11 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 
 	FString ParseError;
 	bool bParsed = true;
-	if (Operation == EProjectProject01LobbyOperation::RefreshRooms)
+	if (Operation==EProjectProject01LobbyOperation::JoinMatchmaking||Operation==EProjectProject01LobbyOperation::PollMatchmaking||Operation==EProjectProject01LobbyOperation::CancelMatchmaking)
+    {
+        bParsed=ParseMatchmaking(Json,ParseError);
+    }
+    else if (Operation == EProjectProject01LobbyOperation::RefreshRooms)
 	{
 		bParsed = ParseRoomList(Json, ParseError);
 	}
@@ -641,6 +683,9 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	}
 	StateJson->TryGetBoolField(TEXT("returnedToRoom"), Parsed.bReturnedToRoom);
 	StateJson->TryGetBoolField(TEXT("serverPreparing"), Parsed.bServerPreparing);
+    StateJson->TryGetBoolField(TEXT("randomMatch"),Parsed.bRandomMatch);
+    StateJson->TryGetBoolField(TEXT("randomParty"),Parsed.bRandomParty);
+    StateJson->TryGetStringField(TEXT("matchSearchId"),Parsed.MatchSearchId);
 	StateJson->TryGetStringField(TEXT("travelUrl"), Parsed.TravelUrl);
 	StateJson->TryGetStringField(TEXT("assignedRole"), Parsed.AssignedRole);
 
@@ -686,7 +731,11 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		}
 	}
 
+    const bool bPreviouslyConfirmed=CurrentRoom.bRandomMatch;
 	CurrentRoom = MoveTemp(Parsed);
+    bMatchmaking=CurrentRoom.bRandomParty&&!CurrentRoom.MatchSearchId.IsEmpty();
+    if(bMatchmaking)MatchSearchId=CurrentRoom.MatchSearchId;else bCancelMatchmaking=false;
+    if(bPreviouslyConfirmed&&!CurrentRoom.bRandomMatch&&!bMatchmaking)MatchmakingMessage.Reset();
 	OnCurrentRoomChanged.Broadcast();
 	OutError.Reset();
 	return true;

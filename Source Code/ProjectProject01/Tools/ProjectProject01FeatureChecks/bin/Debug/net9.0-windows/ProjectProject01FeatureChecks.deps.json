@@ -9,7 +9,8 @@
       "ProjectProject01FeatureChecks/1.0.0": {
         "dependencies": {
           "ProjectProject01Backend": "1.0.0",
-          "ProjectProject01BuildServerHelper": "1.0.0"
+          "ProjectProject01BuildServerHelper": "1.0.0",
+          "ProjectProject01ClientLauncher": "1.0.0"
         },
         "runtime": {
           "ProjectProject01FeatureChecks.dll": {}
@@ -41,6 +42,14 @@
             "fileVersion": "1.0.0.0"
           }
         }
+      },
+      "ProjectProject01ClientLauncher/1.0.0": {
+        "runtime": {
+          "ProjectProject01ClientLauncher.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
       }
     }
   },
@@ -63,6 +72,11 @@
       "sha512": ""
     },
     "ProjectProject01BuildServerHelper/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "ProjectProject01ClientLauncher/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

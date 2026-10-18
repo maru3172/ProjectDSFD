@@ -97,6 +97,7 @@ internal static class VersionCompatibilityMiddleware
 
     private static bool RequiresCompatibilityCheck(PathString path) =>
         path.StartsWithSegments("/api/auth") ||
+        path.StartsWithSegments("/api/social") ||
         path.StartsWithSegments("/api/rooms") ||
         path.StartsWithSegments("/api/game-tickets") ||
         path.StartsWithSegments("/api/leaderboards") ||

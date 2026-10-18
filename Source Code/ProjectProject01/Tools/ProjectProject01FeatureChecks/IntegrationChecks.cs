@@ -43,7 +43,7 @@ internal static class IntegrationChecks
         builder.Services.AddSingleton(AdministratorOptions.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string,string?>{{"Administrator:ApiKey",new string('a',48)}}).Build()));
         builder.Services.AddRateLimiter(options=>{
-            foreach(string policy in new[]{"admin","survey","survey-read","crash-report","lobby","game-server","game-ticket"})
+            foreach(string policy in new[]{"admin","survey","survey-read","crash-report","lobby","social","session-heartbeat","game-server","game-ticket"})
                 options.AddFixedWindowLimiter(policy,limit=>{limit.PermitLimit=1000;limit.Window=TimeSpan.FromMinutes(1);});
         });
         var testConfig=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
@@ -57,6 +57,8 @@ internal static class IntegrationChecks
         app.Urls.Add("http://127.0.0.1:0");app.UseRateLimiter();
         app.MapProjectProject01Surveys();app.MapProjectProject01CrashArtifacts();
         app.MapProjectProject01ServiceAdministration();
+        app.MapCommunity();
+        app.MapClientLiveness();
         app.MapAccountRestrictions();app.MapRoomCapacity();
         app.MapGameServerDemand();
         app.MapProjectProject01Lobby("127.0.0.1:24477",ProjectSecurityOptions.FromConfiguration(testConfig),VersionCompatibilityOptions.FromConfiguration(testConfig),new GameServerPresenceState(),demand);
@@ -148,8 +150,10 @@ internal static class IntegrationChecks
             try{await ProjectProject01BuildServerHelper.CrashReportDownloadForm.SaveZipAsync(zipPath,[1,2,3]);throw new Exception("Invalid ZIP accepted");}
             catch(InvalidDataException){Check((await File.ReadAllBytesAsync(zipPath)).SequenceEqual(zip),"손상 ZIP은 기존 저장본 보존");}
             await OperationsIntegration.RunAsync(database,admin);
+            await CommunityChecks.RunAsync(database,admin);
             await DemandSessionChecks.RunAsync(database,admin,demand,demandFactory,demandClock,output);
             await DrainSessionChecks.RunAsync(database,admin,demand,demandFactory,output);
+            await MatchmakingChecks.RunAsync(database,admin,demand,demandFactory,output);
             Console.WriteLine($"PASS: {passed} isolated API/database checks");
         }
         finally{await app.StopAsync();}

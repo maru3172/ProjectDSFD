@@ -2,6 +2,8 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01LoginWidget.h"
+#include "ProjectProject01SocialSubsystem.h"
+#include "ProjectProject01SocialWidget.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/BackgroundBlur.h"
@@ -47,6 +49,9 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
 #include "Misc/PackageName.h"
+#include "Brushes/SlateColorBrush.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -221,6 +226,24 @@ namespace ProjectProject01LoginUI
 		TextBox->WidgetStyle = Style;
 		TextBox->SetTextStyle(TextStyle);
 		TextBox->SetForegroundColor(FLinearColor::Black);
+	}
+
+	void EnlargeInput(UEditableTextBox* Input)
+	{
+		FEditableTextBoxStyle Style=Input->GetWidgetStyle();
+		FSlateFontInfo Font=Style.TextStyle.Font;Font.Size=20;
+		Style.TextStyle.SetFont(Font);Style.SetPadding(FMargin(12,10));Input->SetWidgetStyle(Style);
+	}
+	void EnlargeInput(UMultiLineEditableTextBox* Input)
+	{
+		FSlateFontInfo Font=Input->WidgetStyle.TextStyle.Font;Font.Size=20;
+		Input->WidgetStyle.TextStyle.SetFont(Font);Input->WidgetStyle.SetPadding(FMargin(12,10));
+		Input->SetTextStyle(Input->WidgetStyle.TextStyle);
+	}
+	void AddLargeField(UWidgetTree* Tree,UVerticalBox* Parent,UWidget* Input,float Height)
+	{
+		auto* Frame=Tree->ConstructWidget<USizeBox>();Frame->SetMinDesiredHeight(Height);Frame->AddChild(Input);
+		Parent->AddChildToVerticalBox(Frame)->SetPadding(FMargin(6));
 	}
 
 	UButton* AddTabButton(UWidgetTree* WidgetTree, UHorizontalBox* Root, const FString& Text)
@@ -739,7 +762,7 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 		const FProjectProject01SurveyQuestion& Question = Survey.Questions[Index];
 		const FString RequiredMark = Question.bRequired ? TEXT(" *") : TEXT("");
 		ProjectProject01LoginUI::AddLabel(WidgetTree, QuestionPanel,
-			FString::Printf(TEXT("%d. %s%s"), Index + 1, *Question.Prompt, *RequiredMark), 16.0f);
+			FString::Printf(TEXT("%d. %s%s"), Index + 1, *Question.Prompt, *RequiredMark), 20.0f);
 		if (Question.Type == TEXT("Choice") || Question.Type == TEXT("OX"))
 		{
 			if (Question.bAllowMultiple)
@@ -751,6 +774,7 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 				UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
 				Label->SetText(FText::FromString(Question.Options[OptionIndex]));
 				Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+				FSlateFontInfo AnswerFont=Label->GetFont();AnswerFont.Size=20;Label->SetFont(AnswerFont);Label->SetAutoWrapText(true);
 				Check->AddChild(Label);
 				QuestionPanel->AddChildToVerticalBox(Check)->SetPadding(FMargin(6.0f));
 				UProjectProject01SurveyOptionBinding* Binding = NewObject<UProjectProject01SurveyOptionBinding>(this);
@@ -772,7 +796,9 @@ void UProjectProject01SurveyWidget::ConfigureSurvey(
 			TextInput->WidgetStyle.TextStyle.SetColorAndOpacity(FSlateColor(FLinearColor::White));
 			TextInput->WidgetStyle.SetBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f, 1.0f));
 			TextInput->SetForegroundColor(FLinearColor::White);
-			QuestionPanel->AddChildToVerticalBox(TextInput)->SetPadding(FMargin(6.0f));
+			ProjectProject01LoginUI::EnlargeInput(TextInput);
+			TextInput->SetAutoWrapText(true);
+			ProjectProject01LoginUI::AddLargeField(WidgetTree,QuestionPanel,TextInput,160);
 			TextInputs.Add(TextInput);
 		}
 	}
@@ -3978,6 +4004,7 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 
 void UProjectProject01SettingsWidget::NativeDestruct()
 {
+    if(IsValid(VoiceSettingsWidget))VoiceSettingsWidget->RemoveFromParent();
 	if (IsValid(VoiceSettingsWidget)) VoiceSettingsWidget->RemoveFromParent();
 	if (IsValid(VoiceSettingsButton)) VoiceSettingsButton->OnClicked.RemoveDynamic(this,&UProjectProject01SettingsWidget::HandleVoiceSettingsClicked);
 	if (IsValid(MasterVolumeSlider)) MasterVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
@@ -4704,6 +4731,11 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 
 	UVerticalBox* ServerPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SettingsPageSwitcher);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, ServerPage, TEXT("멀티플레이 서버 연결"), 20.0f);
+    if (IsValid(GetOwningPlayer())) if (auto* Blocks=CreateWidget<UProjectProject01SocialWidget>(GetOwningPlayer()))
+    {
+        Blocks->ConfigureBlockList();
+        ServerPage->AddChildToVerticalBox(Blocks);
+    }
 	DirectServerAddressInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	DirectServerAddressInput->SetHintText(FProjectProject01Localization::Text(
 		TEXT("서버 PC IPv4 주소 (예: 192.168.0.10)")));
@@ -4943,6 +4975,8 @@ bool UProjectProject01LobbyWidget::Initialize()
 
 void UProjectProject01LobbyWidget::NativeConstruct()
 {
+    GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SetLobbyVisible(true);
+    if(IsValid(LobbySettingsButton))LobbySettingsButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbySettingsClicked);
 	Super::NativeConstruct();
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
 	LobbySurvey = FProjectProject01SurveyDefinition();
@@ -5021,6 +5055,9 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 
 void UProjectProject01LobbyWidget::NativeDestruct()
 {
+    GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SetLobbyVisible(false);
+    if(IsValid(LobbySettingsWidget))LobbySettingsWidget->RemoveFromParent();
+    LobbySettingsWidget=nullptr;
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
 	if (IsValid(LobbySurveyWidget)) LobbySurveyWidget->RemoveFromParent();
 	LobbySurveyWidget = nullptr;
@@ -5077,8 +5114,56 @@ void UProjectProject01LobbyWidget::NativeTick(const FGeometry& MyGeometry, const
 
 void UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked()
 {
+	HandleCloseCodeJoinClicked();
 	bShowingCreateRoom = true;
 	ShowLobbyView(1);
+}
+void UProjectProject01LobbyWidget::HandleOpenMatchClicked()
+{
+    HandleCloseCodeJoinClicked();
+    bShowingOpenMatching=true;bShowingMatchmaking=false;bShowingCreateRoom=false;ShowLobbyView(0);
+}
+void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
+{
+    HandleCloseCodeJoinClicked();
+    bShowingMatchmaking=true;bShowingOpenMatching=false;bShowingCreateRoom=false;bPartyCreationRequested=false;ShowLobbyView(3);RefreshMatchmakingView();RefreshLobbyState();
+}
+void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
+{
+    auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
+    if(Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||(Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomMatch))return;
+    if(Lobby->HasCurrentRoom()&&!Lobby->GetCurrentRoom().bRandomParty)return;
+    HandleCloseCodeJoinClicked();
+    bShowingMatchmaking=false;bShowingOpenMatching=false;bShowingCreateRoom=false;
+    if(Lobby->HasCurrentRoom())Lobby->LeaveRoom();else ShowLobbyView(4);
+}
+void UProjectProject01LobbyWidget::HandleMatchStartClicked()
+{
+    GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>()->JoinMatchmaking();RefreshMatchmakingView();
+}
+void UProjectProject01LobbyWidget::HandleMatchCancelClicked()
+{
+    GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>()->CancelMatchmaking();RefreshMatchmakingView();
+}
+void UProjectProject01LobbyWidget::RefreshMatchmakingView()
+{
+    auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;if(!Lobby)return;
+    bool Party=Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomParty;
+    bool Matched=Party&&Lobby->GetCurrentRoom().bRandomMatch,Leader=Party&&Lobby->GetCurrentRoom().bIsHost,Waiting=Lobby->IsMatchmaking(),Busy=Lobby->IsRequestInFlight();
+    if(MatchStartButton)MatchStartButton->SetIsEnabled(Party&&Leader&&Lobby->GetCurrentRoom().Members.Num()==1&&!Matched&&!Waiting&&!Busy);
+    if(MatchCancelButton)MatchCancelButton->SetIsEnabled(!Matched&&Leader&&Waiting&&!Lobby->IsCancellingMatchmaking());
+    if(MatchBackButton)MatchBackButton->SetIsEnabled(!Matched&&!Waiting&&!Busy);
+    FString Text=Matched?(Lobby->GetCurrentRoom().bReturnedToRoom?TEXT("경기 종료 정리 중 — 개인 대기 상태로 돌아갑니다."):TEXT("매칭 완료 (3/3) — 매칭 취소 불가")):Waiting
+        ? (Lobby->MatchmakingWaiting>=3?TEXT("매칭 확정 대기 중 — 방 또는 서버 공간을 기다리고 있습니다.")
+           :FString::Printf(TEXT("인원 모집 중 (%d/3)"),FMath::Clamp(Lobby->MatchmakingWaiting,1,2)))
+        :!Party?TEXT("랜덤 매칭을 준비 중입니다. 실패했다면 뒤로가기 후 다시 시도하세요."):Lobby->GetCurrentRoom().Members.Num()!=1?TEXT("솔로 전용입니다. 뒤로가기 후 다시 입장하세요."):TEXT("시작을 누르면 개인 신청자 3명으로 랜덤 매칭합니다.");
+    if(Waiting)Text+=FString::Printf(TEXT("\n남은 대기 시간: %d초"),Lobby->MatchmakingSeconds);
+    if(!Waiting&&!Matched&&!Lobby->MatchmakingMessage.IsEmpty())Text+=TEXT("\n")+Lobby->MatchmakingMessage;
+    if(Party)
+    {
+        if(Matched)for(const auto& M:Lobby->GetCurrentRoom().Members)Text+=TEXT("\n")+M.DisplayName;
+    }
+    if(MatchStatusText)MatchStatusText->SetText(FText::FromString(Text));
 }
 
 void UProjectProject01LobbyWidget::HandleCancelCreateRoomClicked()
@@ -5114,6 +5199,30 @@ void UProjectProject01LobbyWidget::HandleRefreshRoomsClicked()
 
 void UProjectProject01LobbyWidget::HandleJoinRoomClicked()
 {
+    auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+    const FString Code=PublicRoomLabels.Contains(SelectedPublicRoomCode)?SelectedPublicRoomCode:FString();
+    if(!Lobby||Code.IsEmpty()){SetStatus(TEXT("참가할 공개방을 먼저 선택하세요."),true);return;}
+    Lobby->JoinRoom(Code,PublicJoinPasswordInput?PublicJoinPasswordInput->GetText().ToString():FString());
+}
+
+void UProjectProject01LobbyWidget::HandleOpenCodeJoinClicked()
+{
+    auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+    if(!Lobby||Lobby->HasCurrentRoom()||Lobby->IsRequestInFlight())return;
+    if(CodeJoinPanel)CodeJoinPanel->SetVisibility(ESlateVisibility::Visible);
+    if(CodeJoinPanel&&CodeJoinPanel->GetParent())if(auto* Scroll=Cast<UScrollBox>(CodeJoinPanel->GetParent()->GetParent()))Scroll->ScrollWidgetIntoView(CodeJoinPanel,false);
+    if(DirectRoomCodeInput)DirectRoomCodeInput->SetKeyboardFocus();
+}
+
+void UProjectProject01LobbyWidget::HandleCloseCodeJoinClicked()
+{
+    if(CodeJoinPanel)CodeJoinPanel->SetVisibility(ESlateVisibility::Collapsed);
+    if(DirectRoomCodeInput)DirectRoomCodeInput->SetText(FText::GetEmpty());
+    if(JoinPasswordInput)JoinPasswordInput->SetText(FText::GetEmpty());
+}
+
+void UProjectProject01LobbyWidget::HandleJoinByCodeClicked()
+{
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
@@ -5123,14 +5232,8 @@ void UProjectProject01LobbyWidget::HandleJoinRoomClicked()
 		return;
 	}
 	FString JoinCode = DirectRoomCodeInput->GetText().ToString().TrimStartAndEnd();
-	if (JoinCode.IsEmpty() && IsValid(RoomListComboBox))
-	{
-		const FString Selected = RoomListComboBox->GetSelectedOption();
-		if (const FString* SelectedJoinCode = JoinCodeByDisplayOption.Find(Selected))
-		{
-			JoinCode = *SelectedJoinCode;
-		}
-	}
+	if(JoinCode.IsEmpty()){SetStatus(TEXT("참가 코드를 입력하세요."),true);return;}
+	if(!CodeJoinPanel||CodeJoinPanel->GetVisibility()==ESlateVisibility::Collapsed)return;
 	Lobby->JoinRoom(JoinCode, JoinPasswordInput->GetText().ToString());
 }
 
@@ -5190,22 +5293,15 @@ void UProjectProject01LobbyWidget::HandleLeaveRoomClicked()
 
 void UProjectProject01LobbyWidget::HandleTransferHostClicked()
 {
-	if (!IsValid(HostTransferComboBox))
-	{
-		SetStatus(TEXT("방장 위임 UI를 찾지 못했습니다."), true);
-		return;
-	}
-	const FString SelectedOption = HostTransferComboBox->GetSelectedOption();
-	const FString* TargetUserId = UserIdByTransferOption.Find(SelectedOption);
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
-	if (!IsValid(Lobby) || TargetUserId == nullptr)
+	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().Members.ContainsByPredicate([this](const FProjectProject01RoomMember& M){return !M.bIsHost&&M.UserId==SelectedHostTransferUserId;}))
 	{
 		SetStatus(TEXT("방장을 넘길 플레이어를 선택하세요."), true);
 		return;
 	}
-	Lobby->TransferHost(*TargetUserId);
+	Lobby->TransferHost(SelectedHostTransferUserId);
 }
 
 void UProjectProject01LobbyWidget::HandleDeleteRoomClicked()
@@ -5478,13 +5574,15 @@ void UProjectProject01LobbyWidget::RefreshLobbyState()
 	{
 		return;
 	}
-	if (Lobby->HasCurrentRoom()) Lobby->RefreshCurrentRoom();
+	if (Lobby->IsMatchmaking()) Lobby->PollMatchmaking();
+    else if (Lobby->HasCurrentRoom()) Lobby->RefreshCurrentRoom();
+    else if(bShowingMatchmaking&&!bPartyCreationRequested){bPartyCreationRequested=true;Lobby->CreateMatchParty();}
 	else Lobby->RefreshRooms();
 }
 
 void UProjectProject01LobbyWidget::RefreshRoomListView()
 {
-	if (!IsValid(RoomListComboBox))
+	if (!IsValid(PublicRoomList))
 	{
 		return;
 	}
@@ -5495,12 +5593,17 @@ void UProjectProject01LobbyWidget::RefreshRoomListView()
 	{
 		return;
 	}
-	const FString PreviousSelection = RoomListComboBox->GetSelectedOption();
-	RoomListComboBox->ClearOptions();
-	JoinCodeByDisplayOption.Reset();
+	PopulatePublicRooms(Lobby->GetRooms());
+}
+
+void UProjectProject01LobbyWidget::PopulatePublicRooms(const TArray<FProjectProject01RoomSummary>& Rooms)
+{
+    if(!PublicRoomList)return;
+    PublicRoomLabels.Reset();TArray<TPair<FString,FString>> Entries;
+    PasswordPublicRoomCodes.Reset();
 	const FString Search = IsValid(RoomSearchInput)
 		? RoomSearchInput->GetText().ToString().TrimStartAndEnd() : FString();
-	for (const FProjectProject01RoomSummary& Room : Lobby->GetRooms())
+	for (const FProjectProject01RoomSummary& Room : Rooms)
 	{
 		if (!Search.IsEmpty() && !Room.Name.Contains(Search, ESearchCase::IgnoreCase) &&
 			!Room.JoinCode.Contains(Search, ESearchCase::IgnoreCase) &&
@@ -5509,13 +5612,139 @@ void UProjectProject01LobbyWidget::RefreshRoomListView()
 			continue;
 		}
 		const FString LockText = Room.bHasPassword ? TEXT(" [비밀번호]") : FString();
-		const FString Option = FString::Printf(TEXT("%s (%d/%d) - %s%s"),
-			*Room.Name, Room.MemberCount, Room.MaxPlayers, *Room.HostDisplayName, *LockText);
-		RoomListComboBox->AddOption(Option);
-		JoinCodeByDisplayOption.Add(Option, Room.JoinCode);
+		const FString Option = FString::Printf(TEXT("%s (%d/%d) - %s%s [%s]"),
+			*Room.Name, Room.MemberCount, Room.MaxPlayers, *Room.HostDisplayName, *LockText,*Room.JoinCode);
+        PublicRoomLabels.Add(Room.JoinCode,Option);Entries.Emplace(Room.JoinCode,Option);
+        if(Room.bHasPassword)PasswordPublicRoomCodes.Add(Room.JoinCode);
 	}
-	if (JoinCodeByDisplayOption.Contains(PreviousSelection)) RoomListComboBox->SetSelectedOption(PreviousSelection);
-	else if (RoomListComboBox->GetOptionCount() > 0) RoomListComboBox->SetSelectedIndex(0);
+    if(!PublicRoomLabels.Contains(SelectedPublicRoomCode))
+    {
+        SelectedPublicRoomCode.Reset();
+        if(PublicJoinPasswordInput)PublicJoinPasswordInput->SetText(FText::GetEmpty());
+    }
+    PopulateLobbyChoices(PublicRoomList,Entries,PublicRoomBindings,false);
+	UpdatePublicRoomSelection();
+}
+
+void UProjectProject01LobbySelectionBinding::HandleClicked()
+{
+    if(IsValid(Owner))Owner->SelectLobbyEntry(Key,bHost);
+}
+
+void UProjectProject01LobbyWidget::PopulateLobbyChoices(UVerticalBox* Panel,const TArray<TPair<FString,FString>>& Entries,TArray<TObjectPtr<UProjectProject01LobbySelectionBinding>>& Bindings,bool bHost)
+{
+    if(!Panel)return;
+    bool Rebuild=Bindings.Num()!=Entries.Num()||Panel->GetChildrenCount()==0;
+    if(!Rebuild)for(int32 I=0;I<Entries.Num();++I)if(Bindings[I]->Key!=Entries[I].Key){Rebuild=true;break;}
+    if(Rebuild){Panel->ClearChildren();Bindings.Reset();}
+    for(int32 I=0;I<Entries.Num();++I)
+    {
+        UProjectProject01LobbySelectionBinding* Binding=nullptr;
+        if(Rebuild)
+        {
+            Binding=NewObject<UProjectProject01LobbySelectionBinding>(this);Binding->Owner=this;Binding->Key=Entries[I].Key;Binding->bHost=bHost;
+            Binding->Button=ProjectProject01LoginUI::AddButton(WidgetTree,Panel,Entries[I].Value);
+            Binding->Label=CastChecked<UTextBlock>(Binding->Button->GetChildAt(0));
+            FSlateFontInfo Font=Binding->Label->GetFont();Font.Size=22;Binding->Label->SetFont(Font);Binding->Label->SetAutoWrapText(true);
+            Binding->Button->OnClicked.AddUniqueDynamic(Binding,&UProjectProject01LobbySelectionBinding::HandleClicked);Bindings.Add(Binding);
+        }
+        else Binding=Bindings[I];
+        Binding->Caption=Entries[I].Value;
+    }
+    if(Rebuild&&Entries.IsEmpty())ProjectProject01LoginUI::AddLabel(WidgetTree,Panel,bHost?TEXT("위임할 참가자 없음"):TEXT("조건에 맞는 공개방 없음"),20);
+    UpdateLobbyChoiceHighlight(Bindings,bHost?SelectedHostTransferUserId:SelectedPublicRoomCode);
+}
+
+void UProjectProject01LobbyWidget::UpdateLobbyChoiceHighlight(const TArray<TObjectPtr<UProjectProject01LobbySelectionBinding>>& Bindings,const FString& Selected)
+{
+    for(const auto& B:Bindings)
+    {
+        const bool Chosen=B->Key==Selected;
+        B->Label->SetText(FText::FromString((Chosen?TEXT("✓ 선택됨: "):TEXT(""))+B->Caption));
+        B->Button->SetBackgroundColor(Chosen?FLinearColor(.35f,.85f,.55f,1):FLinearColor::White);
+    }
+}
+
+void UProjectProject01LobbyWidget::SelectLobbyEntry(const FString& Key,bool bHost)
+{
+    if(bHost)
+    {
+        if(!HostTransferBindings.ContainsByPredicate([&](const auto& B){return B->Key==Key;}))return;
+        SelectedHostTransferUserId=Key;UpdateLobbyChoiceHighlight(HostTransferBindings,Key);RefreshCurrentRoomView();
+    }
+    else
+    {
+        if(!PublicRoomLabels.Contains(Key))return;
+        SelectedPublicRoomCode=Key;HandleCloseCodeJoinClicked();
+        if(PublicJoinPasswordInput)PublicJoinPasswordInput->SetText(FText::GetEmpty());
+        UpdatePublicRoomSelection();
+    }
+}
+
+void UProjectProject01LobbyWidget::UpdatePublicRoomSelection()
+{
+    if(!SelectedPublicRoomText)return;
+    const bool Selected=PublicRoomLabels.Contains(SelectedPublicRoomCode);const FString Option=PublicRoomLabels.FindRef(SelectedPublicRoomCode);
+    UpdateLobbyChoiceHighlight(PublicRoomBindings,SelectedPublicRoomCode);
+    if(PublicJoinPasswordInput)PublicJoinPasswordInput->SetVisibility(Selected&&PasswordPublicRoomCodes.Contains(SelectedPublicRoomCode)?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+    const auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+    if(JoinRoomButton)JoinRoomButton->SetIsEnabled(Selected&&Lobby&&!Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight());
+	SelectedPublicRoomText->SetText(FProjectProject01Localization::Text(Selected
+		?TEXT("✓ 선택됨: ")+Option+TEXT("\n아래 방 참가 버튼을 눌러야 입장합니다.")
+		:TEXT("선택한 공개방 없음 — 위 목록을 눌러 방을 선택하세요.")));
+	SelectedPublicRoomBanner->SetBrushColor(Selected?FLinearColor(.04f,.25f,.14f,1):FLinearColor(.08f,.12f,.18f,1));
+}
+
+FEventReply UProjectProject01RoomProfileBinding::HandleMouseButtonDown(FGeometry Geometry,const FPointerEvent& MouseEvent)
+{
+	return FEventReply(MouseEvent.GetEffectingButton()==EKeys::RightMouseButton&&IsValid(Owner)&&Owner->ShowRoomMemberMenu(UserId,MouseEvent));
+}
+
+bool UProjectProject01LobbyWidget::ShowRoomMemberMenu(const FString& UserId,const FPointerEvent& MouseEvent)
+{
+	const auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+	if(!Lobby||!Lobby->HasCurrentRoom()||bTravelRequested||bGameStartFadeActive||!FSlateApplication::IsInitialized()||
+		!Lobby->GetCurrentRoom().Members.ContainsByPredicate([&](const FProjectProject01RoomMember& M){return M.UserId==UserId;}))return false;
+	return IsValid(SocialOverlay)&&SocialOverlay->ShowRoomMemberMenu(UserId,MouseEvent.GetScreenSpacePosition());
+}
+
+void UProjectProject01LobbyWidget::OpenRoomMemberProfile(const FString& UserId)
+{
+	const auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+	if(!Lobby||!Lobby->HasCurrentRoom()||bTravelRequested||bGameStartFadeActive)return;
+	if(!Lobby->GetCurrentRoom().Members.ContainsByPredicate([&](const FProjectProject01RoomMember& M){return M.UserId==UserId;}))
+	{
+		SetStatus(TEXT("이 참가자가 방을 나갔습니다. 참가자 목록을 다시 확인하세요."),true);return;
+	}
+	if(!IsValid(SocialOverlay)||!SocialOverlay->ShowRoomMemberProfile(UserId))
+		SetStatus(TEXT("열린 확인창을 먼저 닫거나 로그인 상태를 확인한 뒤 프로필을 다시 열어주세요."),true);
+}
+
+void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProjectProject01RoomMember>& Members,bool bRevealRoles)
+{
+	if(!IsValid(MemberProfilePanel))return;
+	TArray<FString> Keys;
+	for(const auto& M:Members)Keys.Add(FString::Printf(TEXT("%s:%d:%s:%d%d%d:%d:%s"),*M.UserId,M.DisplayName.Len(),*M.DisplayName,
+		M.bIsHost,M.bIsReady,M.bReturnedToRoom,bRevealRoles,*M.AssignedRole));
+	// Keep live buttons stable across the room's periodic refresh (including mouse-down/up).
+	if(Keys==MemberProfileRowKeys)return;
+	MemberProfileRowKeys=MoveTemp(Keys);MemberProfilePanel->ClearChildren();MemberProfileBindings.Reset();
+	for(const auto& M:Members)
+	{
+		auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();
+		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
+		const FString Role=bRevealRoles&&!M.AssignedRole.IsEmpty()?TEXT(" [")+M.AssignedRole+TEXT("]"):FString();
+		Label->SetText(FText::FromString(M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+
+			(M.bIsHost?TEXT("시작 대기"):M.bIsReady?TEXT("준비"):TEXT("대기"))+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
+		FSlateFontInfo Font=Label->GetFont();Font.Size=20;Label->SetFont(Font);Label->SetAutoWrapText(true);Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		auto* LabelSlot=Row->AddChildToHorizontalBox(Label);LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));LabelSlot->SetVerticalAlignment(VAlign_Center);
+		auto* Binding=NewObject<UProjectProject01RoomProfileBinding>(this);Binding->Owner=this;Binding->UserId=M.UserId;
+		MemberProfileBindings.Add(Binding);
+		auto* Background=WidgetTree->ConstructWidget<UBorder>();Background->SetBrushColor(FLinearColor(.06f,.09f,.13f,1));Background->SetPadding(FMargin(12,8));Background->AddChild(Row);
+		Background->SetToolTipText(FProjectProject01Localization::Text(TEXT("우클릭하여 프로필·친구·귓속말·차단·신고")));
+		Background->OnMouseButtonDownEvent.BindDynamic(Binding,&UProjectProject01RoomProfileBinding::HandleMouseButtonDown);
+		MemberProfilePanel->AddChildToVerticalBox(Background)->SetPadding(FMargin(6,3));
+	}
 }
 
 void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
@@ -5528,30 +5757,35 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		return;
 	}
 	const bool bInRoom = Lobby->HasCurrentRoom();
+    if(bInRoom)HandleCloseCodeJoinClicked();
 	if (!bInRoom)
 	{
 		bServerPreparationPending = false;
 		CancelGameStartCountdown();
 	}
-	ShowLobbyView(bInRoom ? 2 : (bShowingCreateRoom ? 1 : 0));
+    RefreshMatchmakingView();
+    const bool RandomStart=bInRoom&&Lobby->GetCurrentRoom().bRandomMatch;
+	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bShowingOpenMatching?0:4);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
-	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom);
+	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
+    if(OpenCodeJoinButton)OpenCodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
+    if(CodeJoinButton)CodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
 	if (IsValid(ReadyButton)) ReadyButton->SetVisibility(bInRoom && !Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (IsValid(StartRoomButton)) StartRoomButton->SetVisibility(bInRoom && Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(StartRoomButton)) StartRoomButton->SetVisibility(bInRoom && !RandomStart && Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(LeaveRoomButton)) LeaveRoomButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(CopyJoinCodeButton)) CopyJoinCodeButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	const bool bCanManageRoom = bInRoom && Lobby->GetCurrentRoom().bIsHost;
-	if (IsValid(HostTransferComboBox)) HostTransferComboBox->SetVisibility(bCanManageRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (HostTransferFrame) HostTransferFrame->SetVisibility(bCanManageRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(TransferHostButton)) TransferHostButton->SetVisibility(bCanManageRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(DeleteRoomButton)) DeleteRoomButton->SetVisibility(bCanManageRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(SendChatButton)) SendChatButton->SetIsEnabled(bInRoom);
 	if (!bInRoom)
 	{
 		if (IsValid(CurrentRoomText)) CurrentRoomText->SetText(FProjectProject01Localization::Text(TEXT("참가 중인 방 없음")));
-		if (IsValid(MemberListText)) MemberListText->SetText(FText::GetEmpty());
+		PopulateRoomMemberProfiles({},false);
+		if(IsValid(SocialOverlay))SocialOverlay->CloseRoomMemberProfile();
 		if (IsValid(ChatLogText)) ChatLogText->SetText(FText::GetEmpty());
-		if (IsValid(HostTransferComboBox)) HostTransferComboBox->ClearOptions();
-		UserIdByTransferOption.Reset();
+        SelectedHostTransferUserId.Reset();PopulateLobbyChoices(HostTransferList,{},HostTransferBindings,true);
 		return;
 	}
 
@@ -5563,50 +5797,14 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 			*Room.Name, *Room.JoinCode, Room.Members.Num(),
 			Room.bServerPreparing ? TEXT("세션 찾는 중…") : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"))));
 	}
-	FString MembersText;
-	for (const FProjectProject01RoomMember& Member : Room.Members)
-	{
-		const bool bRevealRoles = bGameStartFadeActive || bGameStartFadeComplete;
-		const FString RoleText = !bRevealRoles || Member.AssignedRole.IsEmpty()
-			? FString()
-			: FString::Printf(TEXT(" [%s]"), *Member.AssignedRole);
-		const FString ReturnText = Member.bReturnedToRoom ? FString(TEXT(" [방 복귀]")) : FString();
-		MembersText += FString::Printf(TEXT("%s%s - %s%s%s\n"), *Member.DisplayName,
-			Member.bIsHost ? TEXT(" [방장]") : TEXT(""),
-			Member.bIsHost ? TEXT("시작 대기") : (Member.bIsReady ? TEXT("준비") : TEXT("대기")),
-			*RoleText, *ReturnText);
-	}
-	if (IsValid(MemberListText)) MemberListText->SetText(FText::FromString(MembersText));
-	if (IsValid(HostTransferComboBox))
-	{
-		const FString PreviousSelection = HostTransferComboBox->GetSelectedOption();
-		HostTransferComboBox->ClearOptions();
-		UserIdByTransferOption.Reset();
-		if (Room.bIsHost)
-		{
-			for (const FProjectProject01RoomMember& Member : Room.Members)
-			{
-				if (Member.bIsHost || Member.UserId.IsEmpty())
-				{
-					continue;
-				}
-				const FString Option = FString::Printf(TEXT("%s (%s)"), *Member.DisplayName, *Member.UserId);
-				HostTransferComboBox->AddOption(Option);
-				UserIdByTransferOption.Add(Option, Member.UserId);
-			}
-			if (UserIdByTransferOption.Contains(PreviousSelection))
-			{
-				HostTransferComboBox->SetSelectedOption(PreviousSelection);
-			}
-			else if (HostTransferComboBox->GetOptionCount() > 0)
-			{
-				HostTransferComboBox->SetSelectedIndex(0);
-			}
-		}
-	}
+	PopulateRoomMemberProfiles(Room.Members,bGameStartFadeActive||bGameStartFadeComplete);
+    TArray<TPair<FString,FString>> HostEntries;
+    if(Room.bIsHost)for(const auto& Member:Room.Members)if(!Member.bIsHost&&!Member.UserId.IsEmpty())HostEntries.Emplace(Member.UserId,Member.DisplayName+TEXT(" (")+Member.UserId+TEXT(")"));
+    if(!HostEntries.ContainsByPredicate([this](const auto& E){return E.Key==SelectedHostTransferUserId;}))SelectedHostTransferUserId.Reset();
+    PopulateLobbyChoices(HostTransferList,HostEntries,HostTransferBindings,true);
 	if (IsValid(TransferHostButton))
 	{
-		TransferHostButton->SetIsEnabled(Room.bIsHost && UserIdByTransferOption.Num() > 0);
+		TransferHostButton->SetIsEnabled(Room.bIsHost&&!SelectedHostTransferUserId.IsEmpty()&&!Room.bStarting&&!Room.bStarted&&!Room.bServerPreparing&&!Lobby->IsRequestInFlight());
 	}
 	if (IsValid(ReadyButton))
 	{
@@ -5754,6 +5952,10 @@ void UProjectProject01LobbyWidget::BeginGameStartCountdown()
 		return;
 	}
 	bGameStartCountdownActive = true;
+    if(IsValid(LobbySettingsWidget)&&LobbySettingsWidget->IsInViewport())
+    {
+        LobbySettingsWidget->RemoveFromParent();LobbySettingsWidget=nullptr;SetVisibility(ESlateVisibility::Visible);
+    }
 	GameStartFadeElapsedSeconds = 0.0f;
 	GameStartCountdownNumber = 5;
 	if (IsValid(StartCountdownPanel))
@@ -5763,7 +5965,7 @@ void UProjectProject01LobbyWidget::BeginGameStartCountdown()
 	}
 	if (IsValid(StartCountdownText))
 	{
-		StartCountdownText->SetText(FText::FromString(TEXT("게임 시작 준비\n5...")));
+        UpdateStartCountdownText();
 	}
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
@@ -5785,8 +5987,7 @@ void UProjectProject01LobbyWidget::AdvanceGameStartCountdown()
 		--GameStartCountdownNumber;
 		if (IsValid(StartCountdownText))
 		{
-			StartCountdownText->SetText(FText::FromString(FString::Printf(
-				TEXT("게임 시작 준비\n%d..."), GameStartCountdownNumber)));
+            UpdateStartCountdownText();
 		}
 		return;
 	}
@@ -5854,6 +6055,15 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 			GameStartFadeTimer, this, &UProjectProject01LobbyWidget::CompleteGameStartFade,
 			GameStartFadeDurationSeconds, false);
 	}
+}
+void UProjectProject01LobbyWidget::UpdateStartCountdownText()
+{
+    if(!StartCountdownText)return;
+    const auto* L=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+    const bool Random=L&&L->HasCurrentRoom()&&L->GetCurrentRoom().bRandomMatch;
+    const FString Role=Random?(L->GetCurrentRoom().AssignedRole==TEXT("Mannequin")?TEXT("마네킹"):TEXT("생존자")):FString();
+    StartCountdownText->SetText(FText::FromString(Random?FString::Printf(TEXT("게임이 시작됩니다\n역할: %s\n%d..."),*Role,GameStartCountdownNumber)
+        :FString::Printf(TEXT("게임 시작 준비\n%d..."),GameStartCountdownNumber)));
 }
 
 void UProjectProject01LobbyWidget::CompleteGameStartFade()
@@ -5944,7 +6154,17 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 		RootSlot->SetVerticalAlignment(VAlign_Fill);
 	}
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01 Lobby"), 30.0f);
+    if (IsValid(GetOwningPlayer())) if (auto* Social=CreateWidget<UProjectProject01SocialWidget>(GetOwningPlayer()))
+    {
+        SocialOverlay=Social;
+        if (auto* SocialSlot=RootOverlay->AddChildToOverlay(Social))
+        {
+            SocialSlot->SetHorizontalAlignment(HAlign_Fill);
+            SocialSlot->SetVerticalAlignment(VAlign_Fill);
+        }
+    }
 	LobbySurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("피드백/설문조사"));
+    LobbySettingsButton=ProjectProject01LoginUI::AddButton(WidgetTree,Root,TEXT("환경설정"));
 	LobbySurveyButton->SetIsEnabled(false);
 	LobbyStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("세션 확인 중..."), 14.0f);
 	LobbyViewSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
@@ -5964,26 +6184,49 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 
 	// 0: 처음 보이는 방 검색/참가 화면
 	UVerticalBox* BrowserPanel = MakeScrollablePanel();
+    auto* BrowserBack=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("매칭 방식 선택으로"));BrowserBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, BrowserPanel, TEXT("방 목록 / 참가"), 20.0f);
 	OpenCreateRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("새 방 만들기"));
 	RoomSearchInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	RoomSearchInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 이름 / 참가 코드 / 방장 이름 검색")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(RoomSearchInput);
-	BrowserPanel->AddChildToVerticalBox(RoomSearchInput)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::EnlargeInput(RoomSearchInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,BrowserPanel,RoomSearchInput,54);
 	RefreshRoomsButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("공개방 목록 새로고침"));
-	RoomListComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
-	ProjectProject01LoginUI::SetComboBoxTextBlack(RoomListComboBox);
-	BrowserPanel->AddChildToVerticalBox(RoomListComboBox)->SetPadding(FMargin(6.0f));
+    auto* RoomListScroll=WidgetTree->ConstructWidget<UScrollBox>();PublicRoomList=WidgetTree->ConstructWidget<UVerticalBox>();RoomListScroll->AddChild(PublicRoomList);
+    auto* RoomListFrame=WidgetTree->ConstructWidget<USizeBox>();RoomListFrame->SetHeightOverride(240);RoomListFrame->AddChild(RoomListScroll);
+    BrowserPanel->AddChildToVerticalBox(RoomListFrame)->SetPadding(FMargin(6));
+	SelectedPublicRoomBanner=WidgetTree->ConstructWidget<UBorder>();SelectedPublicRoomBanner->SetPadding(FMargin(12));
+	SelectedPublicRoomText=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo SelectionFont=SelectedPublicRoomText->GetFont();SelectionFont.Size=20;SelectedPublicRoomText->SetFont(SelectionFont);
+	SelectedPublicRoomText->SetColorAndOpacity(FSlateColor(FLinearColor::White));SelectedPublicRoomText->SetAutoWrapText(true);
+	SelectedPublicRoomBanner->AddChild(SelectedPublicRoomText);BrowserPanel->AddChildToVerticalBox(SelectedPublicRoomBanner)->SetPadding(FMargin(6));
+    PublicJoinPasswordInput=WidgetTree->ConstructWidget<UEditableTextBox>();
+    PublicJoinPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("선택한 공개방 비밀번호")));
+    PublicJoinPasswordInput->SetIsPassword(true);ProjectProject01LoginUI::SetEditableTextBoxTextBlack(PublicJoinPasswordInput);
+    ProjectProject01LoginUI::EnlargeInput(PublicJoinPasswordInput);
+    BrowserPanel->AddChildToVerticalBox(PublicJoinPasswordInput)->SetPadding(FMargin(6));
+    JoinRoomButton=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("선택한 공개방 참가"));
+	UpdatePublicRoomSelection();
+    OpenCodeJoinButton=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("참가 코드로 방 참가"));
+    OpenCodeJoinButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenCodeJoinClicked);
+    CodeJoinPanel=WidgetTree->ConstructWidget<UVerticalBox>();BrowserPanel->AddChildToVerticalBox(CodeJoinPanel)->SetPadding(FMargin(6));
+    CodeJoinPanel->SetVisibility(ESlateVisibility::Collapsed);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,CodeJoinPanel,TEXT("참가 코드로 방 참가"),22);
 	DirectRoomCodeInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	DirectRoomCodeInput->SetHintText(FProjectProject01Localization::Text(TEXT("6~8자리 참가 코드 (비공개방 또는 직접 참가)")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DirectRoomCodeInput);
-	BrowserPanel->AddChildToVerticalBox(DirectRoomCodeInput)->SetPadding(FMargin(6.0f));
+    ProjectProject01LoginUI::EnlargeInput(DirectRoomCodeInput);
+    ProjectProject01LoginUI::AddLargeField(WidgetTree,CodeJoinPanel,DirectRoomCodeInput,54);
 	JoinPasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	JoinPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("참가 비밀번호 (비밀번호방만)")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(JoinPasswordInput);
 	JoinPasswordInput->SetIsPassword(true);
-	BrowserPanel->AddChildToVerticalBox(JoinPasswordInput)->SetPadding(FMargin(6.0f));
-	JoinRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("선택/참가 코드로 방 참가"));
+    ProjectProject01LoginUI::EnlargeInput(JoinPasswordInput);
+    ProjectProject01LoginUI::AddLargeField(WidgetTree,CodeJoinPanel,JoinPasswordInput,54);
+    CodeJoinButton=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("방 참가"));
+    CodeJoinButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleJoinByCodeClicked);
+    auto* CloseCodeJoin=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("닫기"));
+    CloseCodeJoin->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCloseCodeJoinClicked);
 	OpenLeaderboardTestButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("리더보드 열기"));
 	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("로그아웃 / 로그인 화면으로"));
 
@@ -6020,20 +6263,20 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, RoomPanel, TEXT("현재 방 정보"), 20.0f);
 	CurrentRoomText = ProjectProject01LoginUI::AddLabel(WidgetTree, RoomPanel, TEXT("참가 중인 방 없음"), 16.0f);
 	CopyJoinCodeButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("참가 코드 복사"));
-	MemberListText = ProjectProject01LoginUI::AddLabel(WidgetTree, RoomPanel, TEXT(""), 14.0f);
+	MemberProfilePanel=WidgetTree->ConstructWidget<UVerticalBox>();RoomPanel->AddChildToVerticalBox(MemberProfilePanel);
 	ReadyButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("준비"));
 	StartRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("게임 시작"));
 	LeaveRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("방 나가기"));
-	HostTransferComboBox = WidgetTree->ConstructWidget<UComboBoxString>();
-	ProjectProject01LoginUI::SetComboBoxTextBlack(HostTransferComboBox);
-	RoomPanel->AddChildToVerticalBox(HostTransferComboBox)->SetPadding(FMargin(6.0f));
+    HostTransferList=WidgetTree->ConstructWidget<UVerticalBox>();auto* HostScroll=WidgetTree->ConstructWidget<UScrollBox>();HostScroll->AddChild(HostTransferList);
+    HostTransferFrame=WidgetTree->ConstructWidget<USizeBox>();HostTransferFrame->SetHeightOverride(140);HostTransferFrame->AddChild(HostScroll);
+    RoomPanel->AddChildToVerticalBox(HostTransferFrame)->SetPadding(FMargin(6));
 	TransferHostButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("선택한 플레이어에게 방장 넘기기"));
 	DeleteRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("방 삭제 (모두 로비로)"));
 	ReadyButton->SetVisibility(ESlateVisibility::Collapsed);
 	StartRoomButton->SetVisibility(ESlateVisibility::Collapsed);
 	LeaveRoomButton->SetVisibility(ESlateVisibility::Collapsed);
 	CopyJoinCodeButton->SetVisibility(ESlateVisibility::Collapsed);
-	HostTransferComboBox->SetVisibility(ESlateVisibility::Collapsed);
+	HostTransferFrame->SetVisibility(ESlateVisibility::Collapsed);
 	TransferHostButton->SetVisibility(ESlateVisibility::Collapsed);
 	DeleteRoomButton->SetVisibility(ESlateVisibility::Collapsed);
 
@@ -6041,13 +6284,26 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ChatLogText->SetIsReadOnly(true);
 	ChatLogText->SetHintText(FProjectProject01Localization::Text(TEXT("방 채팅")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(ChatLogText);
-	RoomPanel->AddChildToVerticalBox(ChatLogText)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::EnlargeInput(ChatLogText);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,RoomPanel,ChatLogText,180);
 	ChatInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	ChatInput->SetHintText(FProjectProject01Localization::Text(TEXT("채팅 입력 (최대 300자)")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(ChatInput);
-	RoomPanel->AddChildToVerticalBox(ChatInput)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::EnlargeInput(ChatInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,RoomPanel,ChatInput,54);
 	SendChatButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("채팅 보내기"));
 	SendChatButton->SetIsEnabled(false);
+
+    UVerticalBox* Matching=MakeScrollablePanel(); // 3: explicit random-match consent, readiness and queue.
+    ProjectProject01LoginUI::AddLabel(WidgetTree,Matching,TEXT("랜덤 매칭 (솔로 전용)"),26);
+    MatchStatusText=ProjectProject01LoginUI::AddLabel(WidgetTree,Matching,TEXT("시작 → 매칭 중…"),22);
+    MatchStartButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("시작"));MatchStartButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMatchStartClicked);
+    MatchCancelButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("매칭 취소"));MatchCancelButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMatchCancelClicked);
+    MatchBackButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("뒤로가기"));MatchBackButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
+    auto* Modes=MakeScrollablePanel(); // 4: lobby entry; existing room browser is only under Open Matching.
+    ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("매칭 방식 선택"),26);
+    auto* Random=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("랜덤 매칭"));Random->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRandomMatchClicked);
+    auto* Open=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("오픈 매칭"));Open->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenMatchClicked);
 
 	StartCountdownPanel = WidgetTree->ConstructWidget<UBorder>();
 	StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
@@ -6068,7 +6324,8 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 		CountdownSlot->SetHorizontalAlignment(HAlign_Fill);
 		CountdownSlot->SetVerticalAlignment(VAlign_Fill);
 	}
-	ShowLobbyView(0);
+    RefreshMatchmakingView();
+	ShowLobbyView(4);
 }
 
 void UProjectProject01LobbyWidget::SetStatus(const FString& Message, const bool bIsError)
@@ -6138,6 +6395,14 @@ void UProjectProject01LobbyWidget::PrepareTitleSurveyLogout()
 void UProjectProject01LobbyWidget::HandleLobbySurveyClicked()
 {
 	OpenLobbySurvey();
+}
+
+void UProjectProject01LobbyWidget::HandleLobbySettingsClicked()
+{
+    if(!IsValid(GetOwningPlayer())||bServerPreparationPending||bGameStartCountdownActive||bGameStartFadeActive||bTravelRequested)return;
+    if(IsValid(LobbySettingsWidget)&&LobbySettingsWidget->IsInViewport())return;
+    LobbySettingsWidget=CreateWidget<UProjectProject01SettingsWidget>(GetOwningPlayer());
+    if(IsValid(LobbySettingsWidget)){LobbySettingsWidget->ConfigureReturnWidget(this);LobbySettingsWidget->AddToViewport(650);SetVisibility(ESlateVisibility::Collapsed);}
 }
 
 void UProjectProject01LobbyWidget::OpenLobbySurvey(const bool bFromTitle)

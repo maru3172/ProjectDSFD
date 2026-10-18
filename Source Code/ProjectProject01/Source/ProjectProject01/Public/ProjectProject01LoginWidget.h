@@ -15,6 +15,7 @@
 class UProjectProject01SettingsWidget;
 class UProjectProject01SessionMenuWidget;
 class UProjectProject01SurveyWidget;
+class UProjectProject01LobbyWidget;
 
 /** 체크포인트나 목표 갱신에 재사용할 수 있는 좌측 상단 일시 알림입니다. */
 UCLASS()
@@ -955,13 +956,40 @@ private:
 };
 
 UCLASS()
+class PROJECTPROJECT01_API UProjectProject01RoomProfileBinding final : public UObject
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(Transient) TObjectPtr<UProjectProject01LobbyWidget> Owner;
+    FString UserId;
+    UFUNCTION() FEventReply HandleMouseButtonDown(FGeometry Geometry,const FPointerEvent& MouseEvent);
+};
+
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01LobbySelectionBinding final : public UObject
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(Transient) TObjectPtr<UProjectProject01LobbyWidget> Owner;
+    UPROPERTY(Transient) TObjectPtr<class UButton> Button;
+    UPROPERTY(Transient) TObjectPtr<class UTextBlock> Label;
+    FString Key, Caption;
+    bool bHost=false;
+    UFUNCTION() void HandleClicked();
+};
+
+UCLASS()
 class PROJECTPROJECT01_API UProjectProject01LobbyWidget final : public UUserWidget
 {
 	GENERATED_BODY()
 	friend class FProjectLobbySessionPresentationTest;
+	friend class FProjectLobbyReadabilityTest;
+    friend class UProjectProject01LobbySelectionBinding;
 
 public:
 	void PrepareTitleSurveyLogout();
+    void OpenRoomMemberProfile(const FString& UserId);
+    bool ShowRoomMemberMenu(const FString& UserId,const FPointerEvent& MouseEvent);
 
 protected:
 	virtual bool Initialize() override;
@@ -970,6 +998,27 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+    UFUNCTION() void HandleOpenMatchClicked();
+    UFUNCTION() void HandleRandomMatchClicked();
+    UFUNCTION() void HandleMatchStartClicked();
+    UFUNCTION() void HandleMatchCancelClicked();
+    UFUNCTION() void HandleLobbyModesClicked();
+    void RefreshMatchmakingView();
+    void UpdateStartCountdownText();
+    bool bPartyCreationRequested=false;
+    bool bShowingMatchmaking=false,bShowingOpenMatching=false;
+    UPROPERTY(Transient) TObjectPtr<class UButton> MatchStartButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> MatchCancelButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> MatchBackButton;
+    UPROPERTY(Transient) TObjectPtr<class UTextBlock> MatchStatusText;
+    UFUNCTION() void HandleLobbySettingsClicked();
+    UPROPERTY(Transient) TObjectPtr<class UButton> LobbySettingsButton;
+    UPROPERTY(Transient) TObjectPtr<UProjectProject01SettingsWidget> LobbySettingsWidget;
+    UPROPERTY(Transient) TObjectPtr<class UProjectProject01SocialWidget> SocialOverlay;
+    UPROPERTY(Transient) TObjectPtr<class UVerticalBox> MemberProfilePanel;
+    UPROPERTY(Transient) TArray<TObjectPtr<UProjectProject01RoomProfileBinding>> MemberProfileBindings;
+    TArray<FString> MemberProfileRowKeys;
+    void PopulateRoomMemberProfiles(const TArray<FProjectProject01RoomMember>& Members,bool bRevealRoles);
 	UFUNCTION() void HandleLobbySurveyClicked();
 	void RefreshLobbySurvey();
 	void OpenLobbySurvey(bool bFromTitle = false);
@@ -994,9 +1043,22 @@ private:
 
 	UFUNCTION()
 	void HandleRoomSearchChanged(const FText& SearchText);
+	void PopulatePublicRooms(const TArray<FProjectProject01RoomSummary>& Rooms);
+	void UpdatePublicRoomSelection();
+    void SelectLobbyEntry(const FString& Key,bool bHost);
+    void PopulateLobbyChoices(class UVerticalBox* Panel,const TArray<TPair<FString,FString>>& Entries,TArray<TObjectPtr<UProjectProject01LobbySelectionBinding>>& Bindings,bool bHost);
+    void UpdateLobbyChoiceHighlight(const TArray<TObjectPtr<UProjectProject01LobbySelectionBinding>>& Bindings,const FString& Selected);
 
 	UFUNCTION()
 	void HandleJoinRoomClicked();
+    UFUNCTION() void HandleOpenCodeJoinClicked();
+    UFUNCTION() void HandleCloseCodeJoinClicked();
+    UFUNCTION() void HandleJoinByCodeClicked();
+    UPROPERTY(Transient) TObjectPtr<class UVerticalBox> CodeJoinPanel;
+    UPROPERTY(Transient) TObjectPtr<class UButton> OpenCodeJoinButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> CodeJoinButton;
+    UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> PublicJoinPasswordInput;
+    TSet<FString> PasswordPublicRoomCodes;
 
 	UFUNCTION()
 	void HandleReadyClicked();
@@ -1087,7 +1149,11 @@ private:
 	TObjectPtr<class UEditableTextBox> RoomSearchInput;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UComboBoxString> RoomListComboBox;
+	TObjectPtr<class UVerticalBox> PublicRoomList;
+    UPROPERTY(Transient) TArray<TObjectPtr<UProjectProject01LobbySelectionBinding>> PublicRoomBindings;
+    UPROPERTY(Transient) TArray<TObjectPtr<UProjectProject01LobbySelectionBinding>> HostTransferBindings;
+	UPROPERTY(Transient) TObjectPtr<class UBorder> SelectedPublicRoomBanner;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> SelectedPublicRoomText;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UEditableTextBox> DirectRoomCodeInput;
@@ -1105,9 +1171,6 @@ private:
 	TObjectPtr<class UButton> CopyJoinCodeButton;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UTextBlock> MemberListText;
-
-	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReadyButton;
 
 	UPROPERTY(Transient)
@@ -1117,7 +1180,8 @@ private:
 	TObjectPtr<class UButton> LeaveRoomButton;
 
 	UPROPERTY(Transient)
-	TObjectPtr<class UComboBoxString> HostTransferComboBox;
+	TObjectPtr<class UVerticalBox> HostTransferList;
+    UPROPERTY(Transient) TObjectPtr<class USizeBox> HostTransferFrame;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> TransferHostButton;
@@ -1149,8 +1213,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> StartCountdownText;
 
-	TMap<FString, FString> JoinCodeByDisplayOption;
-	TMap<FString, FString> UserIdByTransferOption;
+    TMap<FString,FString> PublicRoomLabels;
+    FString SelectedPublicRoomCode,SelectedHostTransferUserId;
 	FTimerHandle LobbyRefreshTimer;
 	FTimerHandle GameStartCountdownTimer;
 	FTimerHandle GameStartFadeTimer;

@@ -79,6 +79,14 @@ internal static class FeatureChecks
         if(!value)throw new InvalidOperationException(name);
         checks++; Console.WriteLine($"PASS {name}");
     }
+    private sealed class ArticleImageFixture(byte[] bytes):HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
+        {
+            Check(request.RequestUri!.AbsolutePath=="/api/launcher/images/11111111-1111-1111-1111-111111111111","사진은 지정된 서버의 공지 이미지 경로에서만 요청");
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=new ByteArrayContent(bytes)});
+        }
+    }
     private static IEnumerable<Control> Children(Control control)
     {
         foreach(Control child in control.Controls){yield return child;foreach(var descendant in Children(child))yield return descendant;}
@@ -87,6 +95,15 @@ internal static class FeatureChecks
     {
         Directory.CreateDirectory(output);
         HttpRequestMessage MockRequest(HttpMethod method,string endpoint,object? body)=>new(method,"http://127.0.0.1:1"+endpoint);
+        using(var reports=new PlayerReportsForm(MockRequest))
+        {
+            PrepareRender(reports);
+            Check(Children(reports).OfType<Button>().Count(b=>b.Text is "검토 완료" or "보류 종료" or "미확인으로 변경")==3,"운영 신고 목록에 검토 상태 변경 기능 표시");
+            Check(Children(reports).OfType<TextBox>().Any(t=>!t.ReadOnly&&t.MaxLength==2000),"신고 검토 메모 입력 제공");
+            foreach(var b in Children(reports).OfType<Button>())Check(reports.ClientRectangle.Contains(reports.RectangleToClient(b.RectangleToScreen(b.ClientRectangle))),"신고 창 버튼이 화면 범위에 표시: "+b.Text);
+            Check(PlayerReportsForm.Reason("Griefing")=="게임 진행 방해","운영자에게 신고 사유 한글 표시");
+            using var bitmap=new Bitmap(reports.Width,reports.Height);reports.DrawToBitmap(bitmap,new Rectangle(Point.Empty,reports.Size));bitmap.Save(Path.Combine(output,"player-reports.png"));
+        }
         using(var helper=new MainForm())
         {
             PrepareRender(helper);
@@ -101,15 +118,84 @@ internal static class FeatureChecks
         {
             PrepareRender(launcher);
             var pause=Children(launcher).OfType<Button>().Single(b=>b.Text=="다운로드 중단");
-            Check(!pause.Enabled&&launcher.ClientRectangle.Contains(launcher.RectangleToClient(pause.RectangleToScreen(pause.ClientRectangle))),"런처 다운로드 중단 버튼 표시·유휴 중 비활성");
+            Check(!pause.Enabled&&!pause.Visible,"런처 다운로드 중단은 작업 중에만 표시·유휴 중 숨김");
             using var bitmap=new Bitmap(launcher.Width,launcher.Height);launcher.DrawToBitmap(bitmap,new Rectangle(Point.Empty,launcher.Size));bitmap.Save(Path.Combine(output,"resumable-launcher.png"));
+            var settings=Children(launcher).OfType<Button>().Single(b=>b.Text=="⚙ 환경설정");
+            Check(!Children(launcher).OfType<TextBox>().Any(),"런처 메인에는 서버 입력·설치 관리 대신 환경설정만 표시");
+            Exception? settingsError=null;
+            using var closeSettings=new System.Windows.Forms.Timer {Interval=150};
+            closeSettings.Tick+=(_,_)=>
+            {
+                var dialog=Application.OpenForms.Cast<Form>().FirstOrDefault(f=>f.Text=="런처 환경설정");if(dialog is null)return;closeSettings.Stop();
+                try
+                {
+                    var tabs=Children(dialog).OfType<TabControl>().Single();
+                    Check(tabs.TabPages.Count==3,"런처 서버·설치 / 공지·패치노트 / 고객센터 탭");
+                    foreach(TabPage page in tabs.TabPages)
+                    {
+                        tabs.SelectedTab=page;dialog.PerformLayout();
+                        using var image=new Bitmap(dialog.Width,dialog.Height);dialog.DrawToBitmap(image,new Rectangle(Point.Empty,dialog.Size));image.Save(Path.Combine(output,"launcher-settings-"+tabs.SelectedIndex+".png"));
+                    }
+                    Check(Children(dialog).OfType<Button>().Any(b=>b.Text=="무결성 검사")&&Children(dialog).OfType<Button>().Any(b=>b.Text=="캐시 삭제"),"런처 검사·캐시 기능 환경설정에 포함");
+                }catch(Exception ex){settingsError=ex;}finally{dialog.Close();}
+            };
+            closeSettings.Start();settings.PerformClick();if(settingsError is not null)throw settingsError;
+        }
+        using(var community=new CommunityAdministrationForm(MockRequest))
+        {
+            PrepareRender(community);
+            Check(Children(community).OfType<TabControl>().Single().TabPages.Count==2,"운영 뉴스·패치노트 / 문의 답변 분리");
+            using var image=new Bitmap(community.Width,community.Height);community.DrawToBitmap(image,new Rectangle(Point.Empty,community.Size));image.Save(Path.Combine(output,"community-administration.png"));
+            Exception? tableError=null;
+            using var tableTimer=new System.Windows.Forms.Timer {Interval=150};
+            tableTimer.Tick+=(_,_)=>
+            {
+                var editor=Application.OpenForms.Cast<Form>().FirstOrDefault(f=>f.Text=="본문에 표 삽입");if(editor is null)return;tableTimer.Stop();
+                try
+                {
+                    var table=Children(editor).OfType<DataGridView>().Single();
+                    table.Rows[0].Cells[0].Value="변경 항목";table.Rows[0].Cells[1].Value="설명";table.Rows[1].Cells[0].Value="게임";table.Rows[1].Cells[1].Value="수정 내용";
+                    Children(editor).OfType<Button>().Single(b=>b.Text=="본문에 삽입").PerformClick();
+                }catch(Exception ex){tableError=ex;editor.Close();}
+            };
+            tableTimer.Start();Children(community).OfType<Button>().Single(b=>b.Text=="표 삽입").PerformClick();if(tableError is not null)throw tableError;
+            var text=(TextBox)typeof(CommunityAdministrationForm).GetField("body",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(community)!;
+            Check(text.Text.Contains("| 변경 항목 | 설명 |")&&text.Text.Contains("| 게임 | 수정 내용 |"),"운영자가 표 칸에 입력한 내용이 게시글 본문에 삽입됨");
+            text.AppendText("\n![첫 사진](image:11111111-1111-1111-1111-111111111111)\n![두 번째](image:22222222-2222-2222-2222-222222222222)\n");
+            var previewSelector=(ComboBox)typeof(CommunityAdministrationForm).GetField("previewImage",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(community)!;
+            Check(previewSelector.Items.Count==3&&previewSelector.SelectedIndex==0&&previewSelector.SelectedItem!.GetType().GetProperty("Id")!.GetValue(previewSelector.SelectedItem) is null,"사진을 첨부해도 대표 미리보기 자동 선택하지 않음·하나만 선택 가능");
+            text.Clear();Check(previewSelector.Items.Count==1&&previewSelector.SelectedIndex==0,"사진을 지우면 미리보기 후보에서도 제거");
+        }
+        using(var article=new ProjectProject01ClientLauncher.LauncherPostView {Width=600,Height=400})
+        {
+            article.ShowPostAsync("한국어 뉴스\n| 항목 | 내용 |\n| --- | --- |\n| 버전 | 1.0 |","http://127.0.0.1:1").GetAwaiter().GetResult();
+            var table=Children(article).OfType<DataGridView>().Single();
+            Check(table.ReadOnly&&!table.AllowUserToAddRows&&table.Rows.Count==1&&table.Columns.Count==2,"클라이언트 공지 표 읽기 전용 표시·편집 불가");
+        }
+        byte[] fixtureImage;
+        using(var photo=new Bitmap(320,180))
+        using(var drawing=Graphics.FromImage(photo))
+        using(var bytes=new MemoryStream())
+        {
+            drawing.Clear(Color.SteelBlue);drawing.DrawString("Photo / 사진 미리보기",SystemFonts.DefaultFont,Brushes.White,new PointF(12,12));
+            photo.Save(bytes,System.Drawing.Imaging.ImageFormat.Png);fixtureImage=bytes.ToArray();
+        }
+        using(var article=new ProjectProject01ClientLauncher.LauncherPostView(new ArticleImageFixture(fixtureImage)){Dock=DockStyle.Fill})
+        using(var preview=new Form {Text="읽기 전용 뉴스 표시 검사",Width=760,Height=650})
+        {
+            preview.Controls.Add(article);
+            article.ShowPostAsync("공지 사진과 표\n![공지 사진](image:11111111-1111-1111-1111-111111111111)\n| 항목 | 내용 |\n| --- | --- |\n| 버전 | 1.0 |","http://127.0.0.1:1").GetAwaiter().GetResult();
+            PrepareRender(preview);
+            Check(Children(article).OfType<PictureBox>().Single().Image?.Width==320,"클라이언트가 공지 사진을 실제 PNG로 해석·표시");
+            using var image=new Bitmap(preview.Width,preview.Height);preview.DrawToBitmap(image,new Rectangle(Point.Empty,preview.Size));image.Save(Path.Combine(output,"launcher-news-photo-table.png"));
         }
         using(var administration=new ServerAdministrationForm(Path.GetFullPath(Path.Combine(output,"empty-fixture")),_=>{}))
         {
             PrepareRender(administration);
             using var bitmap=new Bitmap(administration.Width,administration.Height);administration.DrawToBitmap(bitmap,new Rectangle(Point.Empty,administration.Size));bitmap.Save(Path.Combine(output,"server-administration.png"));
             Check(Children(administration).OfType<Button>().Any(b=>b.Text=="최대 방 수")&&Children(administration).OfType<Button>().Any(b=>b.Text=="계정 이용 제한"),"서버 운영에서 방 한도·계정 제한 접근");
-            foreach(var button in Children(administration).OfType<Button>().Where(b=>b.Text is "최대 방 수" or "계정 이용 제한"))
+            Check(Children(administration).OfType<Button>().Any(b=>b.Text=="플레이어 신고 확인"),"서버 운영에서 플레이어 신고 확인 접근");
+            foreach(var button in Children(administration).OfType<Button>().Where(b=>b.Text is "최대 방 수" or "계정 이용 제한" or "플레이어 신고 확인"))
                 Check(administration.ClientRectangle.Contains(administration.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),button.Text+" 버튼이 창 밖으로 잘리지 않음");
         }
         using(var capacity=new RoomCapacityForm(MockRequest,_=>{}))

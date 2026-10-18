@@ -13,5 +13,6 @@
 
   <ItemGroup>
     <Content Include="Database\001_CreateAuthSchema.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Database\002_Community.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

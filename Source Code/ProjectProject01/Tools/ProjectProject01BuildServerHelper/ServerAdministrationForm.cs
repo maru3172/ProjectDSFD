@@ -211,6 +211,8 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(serviceButtons, "크래시 보고서 보기", LoadCrashReportsAsync);
         AddButton(serviceButtons, "크래시 보관 정책", () => {using var dialog=new CrashArtifactPolicyForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "피드백/설문조사 관리", OpenSurveyAdministrationAsync);
+        AddButton(serviceButtons, "런처 뉴스·패치노트·문의", () => {using var dialog=new CommunityAdministrationForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
+        AddButton(serviceButtons, "플레이어 신고 확인", () => {using var dialog=new PlayerReportsForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "계정 이용 제한", () => {using var dialog=new AccountRestrictionForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "최대 방 수", () => {using var dialog=new RoomCapacityForm(CreateAdminRequest, value=>CapacityChanged?.Invoke(value));dialog.ShowDialog(this);return Task.CompletedTask;});
         root.Controls.Add(serviceButtons);

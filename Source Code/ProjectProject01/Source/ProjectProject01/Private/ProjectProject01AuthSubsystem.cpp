@@ -6,6 +6,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Containers/Ticker.h"
+#include "Misc/CoreDelegates.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -60,10 +61,13 @@ void UProjectProject01AuthSubsystem::Initialize(FSubsystemCollectionBase& Collec
 	}
 	SessionMonitorTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateUObject(this, &UProjectProject01AuthSubsystem::TickSessionMonitor), 5.0f);
+	ExitLogoutHandle = FCoreDelegates::OnPreExit.AddUObject(this, &ThisClass::LogoutOnExit);
 }
 
 void UProjectProject01AuthSubsystem::Deinitialize()
 {
+	LogoutOnExit(); // PIE stop also deinitializes the game instance, without exiting the editor.
+	FCoreDelegates::OnPreExit.Remove(ExitLogoutHandle);
 	if (SessionMonitorTickerHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(SessionMonitorTickerHandle);
@@ -101,6 +105,22 @@ void UProjectProject01AuthSubsystem::Deinitialize()
 	}
 	ClearSession();
 	Super::Deinitialize();
+}
+
+void UProjectProject01AuthSubsystem::LogoutOnExit()
+{
+	if (bExitLogoutSent || AccessToken.IsEmpty() || !IsApiBaseUrlAllowed()) return;
+	bExitLogoutSent = true;
+	// Independent of UObject callbacks and other pending UI operations. The server lease is the
+	// fallback for force-kill, power loss, or shutdown before HTTP delivery can finish.
+	auto Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(ApiBaseUrl + TEXT("/api/auth/logout"));
+	Request->SetVerb(TEXT("POST")); Request->SetTimeout(5);
+	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + AccessToken);
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetContentAsString(TEXT("{}"));
+	Request->ProcessRequest();
 }
 
 void UProjectProject01AuthSubsystem::RegisterAccount(
@@ -601,6 +621,7 @@ void UProjectProject01AuthSubsystem::ClearSession()
 	bSeenSurvivorGuideForAccount = false;
 	bSeenMannequinGuideForAccount = false;
 	AuthState = EProjectProject01AuthState::SignedOut;
+    OnLocalSessionCleared.Broadcast();
 }
 
 bool UProjectProject01AuthSubsystem::TickSessionMonitor(const float DeltaSeconds)
@@ -619,8 +640,8 @@ void UProjectProject01AuthSubsystem::CheckAuthenticatedSession()
 	}
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(ApiBaseUrl + TEXT("/api/auth/session"));
-	Request->SetVerb(TEXT("GET"));
+	Request->SetURL(ApiBaseUrl + TEXT("/api/auth/heartbeat"));
+	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + AccessToken);
 	FProjectProject01VersionContract::ApplyToRequest(Request);

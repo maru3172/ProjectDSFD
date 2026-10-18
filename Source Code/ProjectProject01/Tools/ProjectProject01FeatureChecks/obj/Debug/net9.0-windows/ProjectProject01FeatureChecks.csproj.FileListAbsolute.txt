@@ -198,3 +198,10 @@ C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Saved\VoiceSecurityChecks\Proje
 C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Saved\VoiceSecurityChecks\ProjectProject01FeatureChecks.runtimeconfig.json
 C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Saved\VoiceSecurityChecks\ProjectProject01FeatureChecks.dll
 C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Saved\VoiceSecurityChecks\ProjectProject01FeatureChecks.pdb
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\LocalMySql\Backups\ProjectProject01_20261015_145730815_c2c47c6a.sql.manifest.json
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\Database\002_Community.sql
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.deps.json
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.runtimeconfig.json
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.exe
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.dll
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.pdb

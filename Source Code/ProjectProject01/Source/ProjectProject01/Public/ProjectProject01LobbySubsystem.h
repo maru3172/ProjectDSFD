@@ -25,7 +25,8 @@ enum class EProjectProject01LobbyOperation : uint8
 	SendChat,
 	RequestGameTicket,
 	RefreshLeaderboard,
-	SubmitLeaderboardRecord
+	SubmitLeaderboardRecord,
+    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty
 };
 
 UENUM(BlueprintType)
@@ -193,6 +194,9 @@ USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FProjectProject01RoomState
 {
 	GENERATED_BODY()
+    UPROPERTY(BlueprintReadOnly) bool bRandomMatch=false;
+    UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;
+    UPROPERTY(BlueprintReadOnly) FString MatchSearchId;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString RoomId;
@@ -276,6 +280,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void RefreshRooms();
+    void JoinMatchmaking();
+    void CreateMatchParty();
+    void PollMatchmaking();
+    void CancelMatchmaking();
+    bool IsMatchmaking() const { return bMatchmaking; }
+    bool IsCancellingMatchmaking() const { return bCancelMatchmaking; }
+    FString MatchmakingMessage;
+    int32 MatchmakingWaiting=0,MatchmakingPosition=0,MatchmakingSeconds=0;
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void RefreshCurrentRoom();
@@ -381,7 +393,11 @@ public:
 
 private:
 	friend class FProjectStaleFrontendResponseTest;
+    friend class FProjectLobbyReadabilityTest;
 	uint64 RequestGeneration=0;
+    bool bMatchmaking=false,bCancelMatchmaking=false;
+    FString MatchSearchId;
+    bool ParseMatchmaking(const TSharedPtr<class FJsonObject>& Json,FString& Error);
 	friend class FProjectRoomPreparationStateTest;
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
 		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0);

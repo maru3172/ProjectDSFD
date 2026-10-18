@@ -50,7 +50,7 @@ internal static class Program
     }
 }
 
-internal sealed class LauncherForm : Form
+internal sealed partial class LauncherForm : Form
 {
     private const string ManifestFileName = "client-update-manifest.json";
     private const string LocalManifestFileName = ".projectproject01-update.json";
@@ -75,12 +75,12 @@ internal sealed class LauncherForm : Form
     private readonly Button checkButton = new() { Text = "업데이트 확인", AutoSize = true };
     private readonly Button updateButton = new() { Text = "업데이트 및 실행", AutoSize = true };
     private readonly Button launchButton = new() { Text = "현재 버전 실행", AutoSize = true };
-    private readonly Button pauseButton = new() { Text = "다운로드 중단", AutoSize = true, Enabled=false };
+    private readonly Button pauseButton = new() { Text = "다운로드 중단", AutoSize = true, Enabled=false, Visible=false };
     private readonly CancellationTokenSource lifetime = new();
     private CancellationTokenSource? operationCancellation;
     private CancellationToken OperationToken=>operationCancellation?.Token??lifetime.Token;
     private bool closeRequested;
-    private readonly string installRoot;
+    private string installRoot;
     private readonly string settingsPath;
     private bool busy;
 
@@ -143,20 +143,13 @@ internal sealed class LauncherForm : Form
             Font = new Font(Font.FontFamily, 18, FontStyle.Bold),
             Text = "ProjectProject01"
         };
-        root.Controls.Add(title);
-
-        var addressRow = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
-        addressRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-        addressRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        addressRow.Controls.Add(new Label
-        {
-            Text = "서버 PC IPv4",
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-            Padding = new Padding(0, 7, 0, 0)
-        }, 0, 0);
-        addressRow.Controls.Add(serverAddress, 1, 0);
-        root.Controls.Add(addressRow);
+        var heading=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=2};
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        heading.Controls.Add(title,0,0);
+        var settings=new Button {Text="⚙ 환경설정",AutoSize=true};
+        settings.Click+=(_,_)=>{if(!busy)OpenLauncherSettings();};heading.Controls.Add(settings,1,0);
+        root.Controls.Add(heading);
+        root.Controls.Add(new Label {AutoSize=true,Text="서버·설치 관리·공지·패치노트·고객센터는 환경설정에서 확인하세요."});
 
         var versionRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
         versionRow.Controls.Add(currentVersion);
@@ -180,10 +173,12 @@ internal sealed class LauncherForm : Form
     {
         if (busy) return;
         busy = true;
+        pauseButton.Visible=true;
         operationCancellation=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         checkButton.Enabled = updateButton.Enabled = launchButton.Enabled = false;
         try
         {
+            using var targetLock=AcquireInstallLock();
             SaveSettings();
             await action();
         }
@@ -213,6 +208,7 @@ internal sealed class LauncherForm : Form
         {
             busy = false;
             pauseButton.Enabled=false;
+            pauseButton.Visible=false;
             operationCancellation?.Dispose();operationCancellation=null;
             checkButton.Enabled = updateButton.Enabled = launchButton.Enabled = true;
             if(closeRequested&&!IsDisposed)BeginInvoke(new Action(Close));
@@ -585,7 +581,7 @@ internal sealed class LauncherForm : Form
     {
         string normalized = (path ?? string.Empty).Replace('/', Path.DirectorySeparatorChar)
             .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (normalized.Length == 0 || Path.IsPathRooted(normalized) ||
+        if (normalized.Length == 0 || normalized.Contains(':') || Path.IsPathRooted(normalized) ||
             normalized.Split(Path.DirectorySeparatorChar).Any(part => part is "" or "." or ".."))
             throw new InvalidDataException("안전하지 않은 업데이트 파일 경로입니다.");
         return normalized;
@@ -597,6 +593,14 @@ internal sealed class LauncherForm : Form
         string fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
         if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("업데이트 경로가 설치 폴더를 벗어났습니다.");
+        // A user-selected existing installation may contain junctions or symlinks.
+        // Do not read/write/delete through them, even when the lexical path is inside the root.
+        for(string? check=fullPath;check is not null;check=Path.GetDirectoryName(check))
+        {
+            if((File.Exists(check)||Directory.Exists(check))&&(File.GetAttributes(check)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("업데이트 경로에 연결 파일 또는 연결 폴더가 있습니다.");
+            if(string.Equals(Path.TrimEndingDirectorySeparator(check),Path.TrimEndingDirectorySeparator(fullRoot),StringComparison.OrdinalIgnoreCase))break;
+        }
         return fullPath;
     }
 
@@ -632,8 +636,8 @@ internal sealed class LauncherForm : Form
                         File.ReadAllText(Path.Combine(installRoot, LocalManifestFileName)), JsonOptions)
                     : null;
                 resolvedExecutable = local?.ExecutablePath ?? Directory
-                    .EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.AllDirectories)
-                    .FirstOrDefault();
+                    .EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.TopDirectoryOnly)
+                    .Select(path=>Path.GetRelativePath(installRoot,path)).FirstOrDefault();
             }
             if (string.IsNullOrWhiteSpace(resolvedExecutable))
                 throw new FileNotFoundException("ProjectProject01.exe를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
@@ -663,6 +667,8 @@ internal sealed class LauncherForm : Form
             if (!File.Exists(settingsPath)) return;
             LauncherSettings? settings = JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(settingsPath), JsonOptions);
             if (!string.IsNullOrWhiteSpace(settings?.ServerAddress)) serverAddress.Text = settings.ServerAddress;
+            if (!string.IsNullOrWhiteSpace(settings?.InstallRoot)) installRoot=ValidateInstallRoot(settings.InstallRoot);
+            inquiryReceipt=settings?.InquiryReceipt??string.Empty;
         }
         catch { }
     }
@@ -671,7 +677,7 @@ internal sealed class LauncherForm : Form
     {
         Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
         File.WriteAllText(settingsPath,
-            JsonSerializer.Serialize(new LauncherSettings(serverAddress.Text.Trim()), JsonOptions));
+            JsonSerializer.Serialize(new LauncherSettings(serverAddress.Text.Trim(),installRoot,inquiryReceipt), JsonOptions));
     }
 
     private void SetProgress(long completed, long total, string message)
@@ -724,7 +730,7 @@ internal sealed class LauncherForm : Form
     };
 }
 
-internal sealed record LauncherSettings(string ServerAddress);
+internal sealed record LauncherSettings(string ServerAddress,string? InstallRoot=null,string? InquiryReceipt=null);
 internal sealed record ClientUpdateBlock(long Offset, int Size, string Sha256);
 internal sealed record ClientUpdateFile(
     string Path,

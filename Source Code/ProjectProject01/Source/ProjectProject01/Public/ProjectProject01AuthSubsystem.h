@@ -42,6 +42,7 @@ class PROJECTPROJECT01_API UProjectProject01AuthSubsystem final : public UGameIn
 	GENERATED_BODY()
 
 public:
+    FSimpleMulticastDelegate OnLocalSessionCleared;
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
@@ -118,6 +119,7 @@ public:
 
 private:
 	friend class FProjectStaleFrontendResponseTest;
+	friend class FProjectSocialWidgetLayoutTest;
 	enum class EAuthOperation : uint8
 	{
 		Register,
@@ -141,6 +143,9 @@ private:
 		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,
 		bool bConnectedSuccessfully);
 	bool TickSessionMonitor(float DeltaSeconds);
+	void LogoutOnExit();
+	FDelegateHandle ExitLogoutHandle;
+	bool bExitLogoutSent = false;
 	void CheckAuthenticatedSession();
 	void HandleSessionValidationComplete(
 		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,

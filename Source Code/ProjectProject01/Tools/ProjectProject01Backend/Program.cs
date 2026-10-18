@@ -57,6 +57,8 @@ var administratorOptions = AdministratorOptions.FromConfiguration(builder.Config
 builder.Services.AddSingleton(administratorOptions);
 builder.Services.AddSingleton<ServiceControlState>();
 builder.Services.AddHostedService<ServiceControlScheduleWorker>();
+builder.Services.AddHostedService<ClientSessionLivenessWorker>();
+builder.Services.AddHostedService<MatchSearchCleanupWorker>();
 builder.Services.AddSingleton<GameServerPresenceState>();
 builder.Services.AddSingleton<IGameServerProcessFactory,GameServerProcessFactory>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -129,6 +131,22 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+    // Social polling must not consume the shared classroom/VPN IP's lobby request budget.
+    options.AddPolicy("social", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString()[..Math.Min(context.Request.Headers.Authorization.ToString().Length,600)]))),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 240,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    // A crowded school/VPN address must not exhaust login liveness checks for everyone.
+    options.AddPolicy("session-heartbeat", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString()[..Math.Min(context.Request.Headers.Authorization.ToString().Length,600)]))),
+            _ => new FixedWindowRateLimiterOptions { PermitLimit=30,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true }));
     options.AddPolicy("game-server", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             RequestSecurity.GetClientAddress(context) + (
@@ -260,6 +278,7 @@ app.MapGet("/health", async (AuthDatabase database, EosVoiceTokenService eosVoic
 app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
     Results.Ok(contract.ToResponse()));
 app.MapProjectProject01ClientUpdates();
+app.MapCommunity();
 app.MapProjectProject01ServiceAdministration();
 app.MapProjectProject01Surveys();
 app.MapProjectProject01Voice();
@@ -451,6 +470,7 @@ app.MapPost("/api/auth/refresh", async (
             WHERE s.refresh_token_hash = @refreshHash
               AND s.revoked_at_utc IS NULL
               AND s.refresh_expires_at_utc > UTC_TIMESTAMP(6)
+              AND NOT EXISTS(SELECT 1 FROM auth_session_liveness l WHERE l.session_id=s.id AND l.deadline_utc<=UTC_TIMESTAMP(6))
               AND NOT EXISTS (SELECT 1 FROM account_restrictions r WHERE r.user_id=u.id AND r.lifted_at_utc IS NULL
                   AND (r.expires_at_utc IS NULL OR r.expires_at_utc>UTC_TIMESTAMP(6)))
             FOR UPDATE;
@@ -489,6 +509,7 @@ app.MapPost("/api/auth/refresh", async (
 
 // 로그인 이후 어느 화면에 있든 관리자 강제 로그아웃과 백엔드 단절을 빠르게 감지하기 위한
 // 가벼운 세션 확인 경로입니다. 유효한 액세스 토큰만 성공하며 상태를 변경하지 않습니다.
+app.MapClientLiveness();
 app.MapGet("/api/auth/session", async (
     HttpRequest request,
     AuthDatabase database,
@@ -762,6 +783,7 @@ static async Task<TokenPair> CreateSessionAsync(
     command.Parameters.AddWithValue("@accessExpires", accessExpiresAtUtc);
     command.Parameters.AddWithValue("@refreshExpires", refreshExpiresAtUtc);
     await command.ExecuteNonQueryAsync(cancellationToken);
+    await CommunityEndpoints.Exec(connection,transaction,$"INSERT INTO auth_session_liveness(session_id,deadline_utc) VALUES(@id,UTC_TIMESTAMP(6)+INTERVAL {ClientSessionLiveness.GraceSeconds} SECOND)",cancellationToken,("id",command.LastInsertedId));
     return new TokenPair(accessToken, refreshToken, accessExpiresAtUtc, refreshExpiresAtUtc);
 }
 
@@ -889,6 +911,15 @@ internal sealed class AuthDatabase
         await connection.OpenAsync(cancellationToken);
         await using var command = new MySqlCommand(schemaSql, connection) { CommandTimeout = 15 };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        var communitySql = await File.ReadAllTextAsync(Path.Combine(contentRootPath, "Database", "002_Community.sql"), cancellationToken);
+        await using var communityCommand = new MySqlCommand(communitySql, connection) { CommandTimeout = 15 };
+        await communityCommand.ExecuteNonQueryAsync(cancellationToken);
+        await using var previewColumn = new MySqlCommand("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='projectproject01' AND table_name='launcher_posts' AND column_name='preview_image_id'", connection);
+        if (Convert.ToInt32(await previewColumn.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addPreview = new MySqlCommand("ALTER TABLE projectproject01.launcher_posts ADD COLUMN preview_image_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL", connection);
+            await addPreview.ExecuteNonQueryAsync(cancellationToken);
+        }
         await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
         await EnsureSecuritySchemaAsync(connection, cancellationToken);
         await EnsureGuideProgressSchemaAsync(connection, cancellationToken);

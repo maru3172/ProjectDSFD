@@ -204,7 +204,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
                         string match=Guid.NewGuid().ToString("D");
                         if(!await GameServerSlots.ConfirmAsync(connection,tx,entry.Room,match,ct)){await tx.RollbackAsync(ct);continue;}
                         await using var start=new MySqlCommand("UPDATE room_members SET assigned_role=IF(user_id=@mannequin,'Mannequin','Survivor'),returned_to_room=FALSE WHERE room_id=@room; UPDATE game_rooms SET status='Started',match_id=@match,started_at_utc=UTC_TIMESTAMP(6) WHERE id=@room AND status='Preparing';",connection,tx);
-                        start.Parameters.AddWithValue("@room",entry.Room);start.Parameters.AddWithValue("@match",match);start.Parameters.AddWithValue("@mannequin",memberIds[RandomNumberGenerator.GetInt32(memberIds.Count)]);
+                        start.Parameters.AddWithValue("@room",entry.Room);start.Parameters.AddWithValue("@match",match);start.Parameters.AddWithValue("@mannequin",await LobbyEndpoints.ChooseMatchMannequinAsync(connection,tx,entry.Room,memberIds,ct));
                         await start.ExecuteNonQueryAsync(ct);
                         await tx.CommitAsync(ct);logger.LogInformation("경기 세션 준비 완료: 방 {Room}, 역할 배정 및 입장 허용",entry.Room);
                     }
@@ -242,6 +242,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     {
         await using var reset=new MySqlCommand("DELETE FROM game_join_tickets WHERE room_id=@room; UPDATE room_members SET assigned_role=NULL,returned_to_room=FALSE,is_ready=FALSE WHERE room_id=@room; UPDATE game_rooms SET status='Waiting',match_id=NULL,travel_url=NULL,started_at_utc=NULL WHERE id=@room AND status IN ('Starting','Queued','Preparing');",connection,tx);
         reset.Parameters.AddWithValue("@room",room);await reset.ExecuteNonQueryAsync(ct);
+        await LobbyEndpoints.RestoreRandomPartiesAsync(connection,tx,room,ct);
     }
     private async Task AllocateQueuedRoomsAsync(CancellationToken ct)
     {
@@ -282,6 +283,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
         {
             await using var room=new MySqlCommand("SELECT id FROM game_rooms WHERE id=@room FOR UPDATE;",connection,tx);room.Parameters.AddWithValue("@room",entry.Room);await room.ExecuteScalarAsync(ct);
             await using var command=new MySqlCommand("DELETE FROM game_join_tickets WHERE room_id=@room; UPDATE room_members SET assigned_role=NULL,returned_to_room=FALSE,is_ready=FALSE WHERE room_id=@room; UPDATE game_rooms SET status='Waiting',match_id=NULL,travel_url=NULL,started_at_utc=NULL WHERE id=@room;",connection,tx);command.Parameters.AddWithValue("@room",entry.Room);await command.ExecuteNonQueryAsync(ct);
+            await LobbyEndpoints.RestoreRandomPartiesAsync(connection,tx,entry.Room,ct);
         }
         await using(var release=new MySqlCommand("UPDATE game_server_slots SET ready=FALSE,last_heartbeat_utc='2000-01-01',reported_match_id=NULL,assigned_room_id=NULL,assigned_match_id=NULL,has_started=FALSE WHERE port=@port;",connection,tx)){release.Parameters.AddWithValue("@port",entry.Port);await release.ExecuteNonQueryAsync(ct);}
         await tx.CommitAsync(ct);lock(gate)entries.Remove(entry.Room);

@@ -6,5 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ProjectProject01BuildServerHelper</AssemblyName>
+    <DefineConstants>$(DefineConstants);PROJECT_SERVER_HELPER</DefineConstants>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\ProjectProject01ClientLauncher\LauncherPostView.cs" Link="Shared\LauncherPostView.cs" />
+  </ItemGroup>
 </Project>
