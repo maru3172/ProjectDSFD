@@ -7,6 +7,10 @@
 #include "Components/OverlaySlot.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/SlateRenderer.h"
+#include "Rendering/RenderingCommon.h"
+#include "ProjectProject01GameInstance.h"
 
 void UProjectProject01MannequinCaptureCameraModifier::PlayCaptureShake(
 	const float InDurationSeconds, const float InYawAmplitudeDegrees)
@@ -55,14 +59,25 @@ void UProjectProject01DamageFeedbackWidget::BuildWidgetTree()
 	WidgetTree->RootWidget = Canvas;
 }
 
+float UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(
+	const int32 RemainingDeathCount, const int32 StartingDeathCount)
+{
+	const int32 Starting = FMath::Max(StartingDeathCount, 0);
+	const int32 Remaining = FMath::Clamp(RemainingDeathCount, 0, Starting);
+	if (Starting <= 1) return Remaining == 0 ? 1.0f : 0.0f;
+	// Normalize from the first lost count to zero remaining, not from hits since spawning/loading.
+	return FMath::Clamp(static_cast<float>(Starting - Remaining - 1) / static_cast<float>(Starting - 1), 0.0f, 1.0f);
+}
+
 void UProjectProject01DamageFeedbackWidget::Configure(
 	const float InIntroSeconds, const float InFadeSeconds, const float InMaxOpacity,
-	const float InMaxThicknessPixels)
+	const float InMaxThicknessPixels, const float DamageSeverity)
 {
+	const float Severity = FMath::IsFinite(DamageSeverity) ? FMath::Clamp(DamageSeverity, 0.0f, 1.0f) : 0.0f;
 	IntroSeconds = FMath::Max(InIntroSeconds, 0.01f);
 	FadeSeconds = FMath::Max(InFadeSeconds, 0.01f);
-	MaxOpacity = FMath::Clamp(InMaxOpacity, 0.0f, 1.0f);
-	MaxThicknessPixels = FMath::Max(InMaxThicknessPixels, 1.0f);
+	MaxOpacity = FMath::Clamp(InMaxOpacity * FMath::Lerp(1.0f, 1.3f, Severity), 0.0f, 1.0f);
+	MaxThicknessPixels = FMath::Max(InMaxThicknessPixels, 1.0f) * FMath::Lerp(1.0f, 1.35f, Severity);
 	ElapsedSeconds = 0.0f;
 	ApplyFrame(0.0f, 0.0f);
 }
@@ -74,6 +89,7 @@ void UProjectProject01DamageFeedbackWidget::NativeTick(const FGeometry& MyGeomet
 	const float TotalSeconds = IntroSeconds + FadeSeconds;
 	if (ElapsedSeconds >= TotalSeconds)
 	{
+		ApplyFrame(0.0f, 0.0f);
 		RemoveFromParent();
 		return;
 	}
@@ -124,60 +140,58 @@ int32 UProjectProject01DamageFeedbackWidget::NativePaint(
 		return BaseLayer;
 	}
 
-	// 네 개의 사각형을 포개지 않고, 세로 조각마다 타원 바깥쪽만 정확히 한 번 그린다.
-	// 따라서 중앙 시야는 화면 비율에 맞는 원형(타원형)이 되고 모서리의 중첩 면도 생기지 않는다.
-	const FVector2D Center = Size * 0.5f;
-	const float RadiusX = FMath::Max(Center.X - CurrentThicknessPixels, 1.0f);
-	const float RadiusY = FMath::Max(Center.Y - CurrentThicknessPixels, 1.0f);
-	const int32 StripCount = FMath::Clamp(FMath::CeilToInt(Size.X / 8.0f), 96, 320);
-	const float StripWidth = Size.X / static_cast<float>(StripCount);
-	const FSlateBrush* WhiteBrush = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
-	const FLinearColor MainColor(0.72f, 0.0f, 0.0f, CurrentOpacity);
-	const FLinearColor FeatherColor(0.72f, 0.0f, 0.0f, CurrentOpacity * 0.32f);
-	const float FeatherPixels = FMath::Min(18.0f, CurrentThicknessPixels * 0.2f);
-	const int32 PaintLayer = BaseLayer + 1;
-
-	auto DrawRect = [&](const float X, const float Y, const float Width, const float Height, const FLinearColor& Color)
+	// One non-overlapping elliptical mesh: transparent sight -> blood-red pressure -> dark outer rim.
+	// No repeated overlay planes, flashing, blur, or new camera movement.
+	const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	const float AccessibilityScale = Settings ? Settings->GetLocalFlashScale() : 1.0f;
+	const float Opacity = CurrentOpacity * AccessibilityScale * InWidgetStyle.GetColorAndOpacityTint().A;
+	if (Opacity <= UE_KINDA_SMALL_NUMBER || !FSlateApplication::IsInitialized()) return BaseLayer;
+	const FVector2f Center(Size.X * 0.5f, Size.Y * 0.5f);
+	const float RadiusX = FMath::Max(Center.X - CurrentThicknessPixels * 1.12f, Center.X * 0.24f);
+	const float RadiusY = FMath::Max(Center.Y - CurrentThicknessPixels * 1.12f, Center.Y * 0.30f);
+	constexpr int32 Segments = 160;
+	constexpr float RingFractions[] = {0.0f, 0.10f, 0.26f, 0.48f, 0.72f, 1.0f};
+	constexpr int32 RingCount = UE_ARRAY_COUNT(RingFractions);
+	TArray<float> Angles;
+	for (int32 Index = 0; Index < Segments; ++Index) Angles.Add(2.0f * UE_PI * Index / Segments);
+	// Include exact corner rays so no tiny uncovered triangles remain at screen corners.
+	const float CornerAngle = FMath::Atan2(Center.Y, Center.X);
+	Angles.Append({CornerAngle, UE_PI - CornerAngle, UE_PI + CornerAngle, 2.0f * UE_PI - CornerAngle, 2.0f * UE_PI});
+	Angles.Sort();
+	TArray<FSlateVertex> Vertices;
+	TArray<SlateIndex> Indices;
+	Vertices.Reserve(Angles.Num() * RingCount);
+	Indices.Reserve((Angles.Num() - 1) * (RingCount - 1) * 6);
+	for (const float Angle : Angles)
 	{
-		if (Width <= 0.0f || Height <= 0.0f)
+		const FVector2f Direction(FMath::Cos(Angle), FMath::Sin(Angle));
+		const float OuterDistance = FMath::Min(Center.X / FMath::Max(FMath::Abs(Direction.X), 0.00001f),
+			Center.Y / FMath::Max(FMath::Abs(Direction.Y), 0.00001f));
+		const float OrganicEdge = 1.0f + 0.012f * FMath::Sin(Angle * 5.0f) + 0.006f * FMath::Sin(Angle * 9.0f);
+		const float InnerDistance = FMath::Min(OuterDistance, OrganicEdge / FMath::Sqrt(
+			FMath::Square(Direction.X / RadiusX) + FMath::Square(Direction.Y / RadiusY)));
+		for (const float Fraction : RingFractions)
 		{
-			return;
+			const FVector2f Position = Center + Direction * FMath::Lerp(InnerDistance, OuterDistance, Fraction);
+			const float Density = 0.45f * FMath::SmoothStep(0.0f, 0.55f, Fraction) + 0.55f * FMath::Pow(Fraction, 0.7f);
+			const float Red = FMath::Lerp(0.60f, 0.20f, FMath::Pow(Fraction, 0.8f)) *
+				(0.95f + 0.05f * FMath::Sin(Angle * 7.0f + Fraction));
+			const FLinearColor Color(Red, 0.006f, 0.012f, Opacity * Density);
+			Vertices.Add(FSlateVertex::Make<ESlateVertexRounding::Disabled>(
+				AllottedGeometry.GetAccumulatedRenderTransform(), Position, FVector2f(0.5f, 0.5f), Color.ToFColorSRGB()));
 		}
-		FSlateDrawElement::MakeBox(
-			OutDrawElements,
-			PaintLayer,
-			AllottedGeometry.ToPaintGeometry(FVector2D(Width, Height), FSlateLayoutTransform(FVector2D(X, Y))),
-			WhiteBrush,
-			ESlateDrawEffect::None,
-			Color);
-	};
-
-	for (int32 StripIndex = 0; StripIndex < StripCount; ++StripIndex)
-	{
-		const float X0 = StripWidth * static_cast<float>(StripIndex);
-		const float X1 = StripIndex + 1 == StripCount
-			? Size.X
-			: StripWidth * static_cast<float>(StripIndex + 1);
-		const float SampleX = (X0 + X1) * 0.5f;
-		const float NormalizedX = (SampleX - Center.X) / RadiusX;
-		if (FMath::Abs(NormalizedX) >= 1.0f)
-		{
-			DrawRect(X0, 0.0f, X1 - X0, Size.Y, MainColor);
-			continue;
-		}
-
-		const float HalfOpeningHeight = RadiusY * FMath::Sqrt(FMath::Max(0.0f, 1.0f - FMath::Square(NormalizedX)));
-		const float OpeningTop = Center.Y - HalfOpeningHeight;
-		const float OpeningBottom = Center.Y + HalfOpeningHeight;
-		const float OpeningHeight = OpeningBottom - OpeningTop;
-		const float SafeFeatherPixels = FMath::Min(FeatherPixels, OpeningHeight * 0.5f);
-		DrawRect(X0, 0.0f, X1 - X0, OpeningTop, MainColor);
-		DrawRect(X0, OpeningBottom, X1 - X0, Size.Y - OpeningBottom, MainColor);
-		DrawRect(X0, OpeningTop, X1 - X0, SafeFeatherPixels, FeatherColor);
-		DrawRect(X0, OpeningBottom - SafeFeatherPixels, X1 - X0, SafeFeatherPixels, FeatherColor);
 	}
-
-	return PaintLayer;
+	for (int32 Segment = 0; Segment + 1 < Angles.Num(); ++Segment)
+		for (int32 Ring = 0; Ring + 1 < RingCount; ++Ring)
+		{
+			const SlateIndex A = Segment * RingCount + Ring;
+			const SlateIndex B = A + RingCount;
+			Indices.Append({A, B, static_cast<SlateIndex>(A + 1), B, static_cast<SlateIndex>(B + 1), static_cast<SlateIndex>(A + 1)});
+		}
+	const FSlateBrush* WhiteBrush = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
+	const auto Resource = FSlateApplication::Get().GetRenderer()->GetResourceHandle(*WhiteBrush);
+	FSlateDrawElement::MakeCustomVerts(OutDrawElements, BaseLayer + 1, Resource, Vertices, Indices, nullptr, 0, 0);
+	return BaseLayer + 1;
 }
 
 bool UProjectProject01DeathFeedbackWidget::Initialize()

@@ -42,6 +42,7 @@
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "ProjectProject01VoiceSettingsWidget.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Engine/Texture2D.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -511,6 +512,7 @@ void UProjectProject01MannequinStatusWidget::BuildWidgetTree()
 	}
 	StatusText = WidgetTree->ConstructWidget<UTextBlock>();
 	StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	StatusText->SetWrapTextAt(560.0f);
 	FSlateFontInfo Font = StatusText->GetFont();
 	Font.Size = 16;
 	StatusText->SetFont(Font);
@@ -525,12 +527,38 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	}
 	const AMultiplayTestPlayerController* Controller =
 		Cast<AMultiplayTestPlayerController>(GetOwningPlayer());
+	// This tactical information belongs only to the local mannequin player.
+	if (!IsValid(Controller) || !Controller->IsLocalMannequinPlayer())
+	{
+		StatusText->SetText(FText::GetEmpty());
+		if (UPanelWidget* Background = StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	TArray<int32> ChasingSlots;
+	TArray<int32> FrozenSlots;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		if (!IsValid(*It) || It->GetControlSlot() < 1) continue;
+		if (It->IsFrozenBySurvivorVision() || It->GetMultiplayActivity() == EMultiplayMannequinActivity::FrozenByVision)
+			FrozenSlots.AddUnique(It->GetControlSlot());
+		else if (It->GetMultiplayActivity() == EMultiplayMannequinActivity::Chasing)
+			ChasingSlots.AddUnique(It->GetControlSlot());
+	}
+	auto FormatSlots = [](TArray<int32>& Slots)
+	{
+		Slots.Sort();
+		TArray<FString> Labels;
+		for (const int32 Slot : Slots) Labels.Add(FString::Printf(TEXT("%d번"), Slot));
+		return Labels.IsEmpty() ? FString(TEXT("없음")) : FString::Join(Labels, TEXT(", "));
+	};
+	const FString Alerts = FString::Printf(TEXT("생존자 추격 중: %s\n생존자 시야로 정지: %s"),
+		*FormatSlots(ChasingSlots), *FormatSlots(FrozenSlots));
 	const AMannequinAICharacter* Mannequin = IsValid(Controller)
 		? Controller->GetViewedMannequin() : nullptr;
 	if (!IsValid(Mannequin))
 	{
-		StatusText->SetText(FText::GetEmpty());
-		if (UPanelWidget* Background=StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::Collapsed);
+		StatusText->SetText(FProjectProject01Localization::Text(Alerts));
+		if (UPanelWidget* Background = StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		return;
 	}
 	if (UPanelWidget* Background=StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -546,7 +574,6 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	case EMultiplayMannequinActivity::ManualControl: Activity = TEXT("직접 조작"); break;
 	case EMultiplayMannequinActivity::FrozenByVision: Activity = TEXT("생존자 시야로 정지"); break;
 	case EMultiplayMannequinActivity::Searching: Activity = TEXT("마지막 목격 지점 수색"); break;
-	case EMultiplayMannequinActivity::Disguised: Activity = TEXT("전시물 위장"); break;
 	default: Activity = TEXT("확인 중"); break;
 	}
 	if (Mannequin->IsManualControlEnabled() && IsValid(Controller) &&
@@ -574,8 +601,8 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	StatusText->SetText(FProjectProject01Localization::Text(FString::Printf(
 		TEXT("현재 빙의한 마네킹: %d번\n")
 		TEXT("현재 상태: %s\n")
-		TEXT("전체 AI 데스카운트 소모: %s"),
-		Mannequin->GetControlSlot(), *Activity, *CatchDamageState)));
+		TEXT("전체 AI 데스카운트 소모: %s\n\n%s"),
+		Mannequin->GetControlSlot(), *Activity, *CatchDamageState, *Alerts)));
 }
 
 bool UProjectProject01VoiceStatusWidget::Initialize()
@@ -2370,6 +2397,11 @@ void UProjectProject01GameGuideWidget::RefreshGuideText()
 			*KeyName(Sprint), *KeyName(Help), *KeyName(Danger), *KeyName(Location),
 			*KeyName(PushToTalk), *KeyName(VoiceToggle))));
 	}
+    if(IsValid(Settings))
+    {
+        const FString Movement=KeyName(Settings->GetMoveForwardKey())+TEXT("/")+KeyName(Settings->GetMoveLeftKey())+TEXT("/")+KeyName(Settings->GetMoveBackwardKey())+TEXT("/")+KeyName(Settings->GetMoveRightKey());
+        ControlsText->SetText(FText::FromString(ControlsText->GetText().ToString().Replace(TEXT("W/A/S/D"),*Movement)));
+    }
 }
 
 void UProjectProject01GameGuideWidget::BuildWidgetTree()
@@ -4315,7 +4347,8 @@ void UProjectProject01SettingsWidget::RefreshAllControls()
 	SubtitlesCheckBox->SetIsChecked(bPendingSubtitles);
 	EnhancedVisualCuesCheckBox->SetIsChecked(bPendingEnhancedVisualCues);
 	DirectServerAddressInput->SetText(FText::FromString(PendingDirectServerAddress));
-	DirectServerAddressInput->SetIsEnabled(true);
+    const auto* Auth=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>():nullptr;
+    DirectServerAddressInput->SetIsEnabled(!Auth||Auth->GetAuthState()==EProjectProject01AuthState::SignedOut);
 	DirectServerAddressInput->SetVisibility(ESlateVisibility::Visible);
 	WindowModeComboBox->SetSelectedOption(PendingWindowMode == EWindowMode::Fullscreen
 		? TEXT("전체화면") : PendingWindowMode == EWindowMode::WindowedFullscreen
@@ -4448,6 +4481,13 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	}
 	const bool bVideoModeChanged = Settings->GetScreenResolution() != PendingResolution ||
 		Settings->GetFullscreenMode() != PendingWindowMode;
+    if(PendingDirectServerAddress!=Settings->GetDirectServerAddress())
+    {
+        FString ConnectionError;
+        auto* Project=Cast<UProjectProject01GameInstance>(GetGameInstance());
+        if(PendingDirectServerAddress.IsEmpty()||!Project||!Project->ConfigureMultiplayerServerAddress(PendingDirectServerAddress,ConnectionError))
+        {SetStatus(ConnectionError.IsEmpty()?TEXT("서버 IP를 입력하고 로그인 전에 적용하세요."):ConnectionError,true);return;}
+    }
 	Settings->SetMasterVolume(PendingMasterVolume);
 	Settings->SetSFXVolume(PendingSFXVolume);
 	Settings->SetMusicVolume(PendingMusicVolume);
@@ -4492,22 +4532,6 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetScreenResolution(PendingResolution);
 	Settings->SetFullscreenMode(PendingWindowMode);
 	Settings->ApplyNonResolutionSettings();
-	if (UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
-		IsValid(ProjectGameInstance) && !PendingDirectServerAddress.IsEmpty())
-	{
-		FString ConnectionError;
-		if (!ProjectGameInstance->ConfigureMultiplayerServerAddress(
-			PendingDirectServerAddress, ConnectionError))
-		{
-			if (const UProjectProject01AuthSubsystem* Auth =
-				ProjectGameInstance->GetSubsystem<UProjectProject01AuthSubsystem>();
-				!IsValid(Auth) || !Auth->IsSignedIn())
-			{
-				SetStatus(ConnectionError, true);
-				return;
-			}
-		}
-	}
 	RefreshLocalPlayerInput();
 	if (bVideoModeChanged)
 	{
@@ -5098,6 +5122,7 @@ void UProjectProject01LobbyWidget::NativeDestruct()
 void UProjectProject01LobbyWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+    ContinueGameAdmission(InDeltaTime);
 	if (!bGameStartFadeActive || !IsValid(StartCountdownPanel))
 	{
 		return;
@@ -5866,6 +5891,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		if (bGameStartCountdownComplete)
 		{
 			BeginGameStartFade(Room);
+            ContinueGameAdmission(0);
 		}
 	}
 	else if (Room.bStarted && Room.bReturnedToRoom)
@@ -6032,6 +6058,7 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 		return;
 	}
 	bGameStartFadeActive = true;
+    AdmissionRoomId=RoomState.RoomId;AdmissionWaitSeconds=0;
 	GameStartFadeElapsedSeconds = 0.0f;
 	bStartConfirmationRequested = true;
 	const FString RoleText = RoomState.AssignedRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
@@ -6092,10 +6119,24 @@ void UProjectProject01LobbyWidget::CompleteGameStartFade()
 	{
 		TravelToStartedGame(Lobby->GetCurrentRoom());
 	}
-	else if (!Lobby->IsRequestInFlight())
-	{
-		Lobby->RequestGameJoinTicket();
-	}
+    else ContinueGameAdmission(0);
+}
+
+void UProjectProject01LobbyWidget::ContinueGameAdmission(float DeltaSeconds)
+{
+    if(!bGameStartFadeComplete||bTravelRequested)return;
+    auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+    if(!Lobby||!Lobby->HasCurrentRoom()||!Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bReturnedToRoom||Lobby->GetCurrentRoom().RoomId!=AdmissionRoomId)
+    {CancelGameStartCountdown();return;}
+    AdmissionWaitSeconds+=FMath::Max(0.f,DeltaSeconds);
+    if(AdmissionWaitSeconds>=15)
+    {
+        CancelGameStartCountdown();
+        if(auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>())Auth->InvalidateSessionFromServerFailure(TEXT("경기 접속 허가 대기 시간이 초과되었습니다. 다시 로그인하세요."));
+        return;
+    }
+    if(Lobby->HasPendingGameJoinTicket())TravelToStartedGame(Lobby->GetCurrentRoom());
+    else if(!Lobby->IsRequestInFlight())Lobby->RequestGameJoinTicket();
 }
 
 void UProjectProject01LobbyWidget::CancelGameStartCountdown()
@@ -6106,6 +6147,7 @@ void UProjectProject01LobbyWidget::CancelGameStartCountdown()
 	bGameStartCountdownComplete = false;
 	bGameStartFadeActive = false;
 	bGameStartFadeComplete = false;
+    AdmissionWaitSeconds=0;AdmissionRoomId.Reset();
 	bStartConfirmationRequested = false;
 	GameStartFadeElapsedSeconds = 0.0f;
 	GameStartCountdownNumber = 0;

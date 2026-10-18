@@ -5,6 +5,8 @@
 #include "ProjectProject01LoginWidget.h"
 #include "AIController.h"
 #include "Engine/World.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/Engine.h"
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "Camera/CameraTypes.h"
@@ -73,6 +75,25 @@ bool FProjectMannequinCameraTest::RunTest(const FString&)
     UUserWidget* Base=NewObject<UProjectProject01MannequinStatusWidget>();Base->Initialize();
     auto* HUD=CastChecked<UProjectProject01MannequinStatusWidget>(Base);HUD->RefreshMannequinStates();
     TestTrue(TEXT("Unresolved identity does not flash a misleading checking panel"),HUD->StatusText->GetText().IsEmpty()&&HUD->StatusText->GetParent()->GetVisibility()==ESlateVisibility::Collapsed);
+    Pawn->SetControlSlotForGameMode(3);Pawn->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);
+    FActorSpawnParameters AlertSpawn;AlertSpawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* Chaser=World->SpawnActor<AMannequinAICharacter>(AlertSpawn);Chaser->SetControlSlotForGameMode(1);
+    Chaser->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);
+    auto* Frozen=World->SpawnActor<AMannequinAICharacter>(AlertSpawn);Frozen->SetControlSlotForGameMode(2);
+    Frozen->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);Frozen->SetFrozenBySurvivorVision(true);
+    PC->bLocalMultiplayerRoleKnown=true;PC->bLocalMultiplayerMannequinRole=true;
+    auto* LocalPlayer=NewObject<ULocalPlayer>(GEngine);LocalPlayer->PlayerController=PC;PC->Player=LocalPlayer;
+    HUD->SetOwningPlayer(PC);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("HUD preserves possessed mannequin identity"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 빙의한 마네킹: 3번")));
+    TestTrue(TEXT("All chasing IDs are sorted and displayed"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 추격 중: 1번, 3번")));
+    TestTrue(TEXT("Frozen IDs appear separately, never as moving chasers"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 시야로 정지: 2번")));
+    Chaser->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
+    Pawn->SetMultiplayActivity(EMultiplayMannequinActivity::Searching);Frozen->SetFrozenBySurvivorVision(false);
+    Frozen->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("Stale chase and freeze alerts clear automatically"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 추격 중: 없음\n생존자 시야로 정지: 없음")));
+    PC->bLocalMultiplayerMannequinRole=false;HUD->RefreshMannequinStates();
+    TestTrue(TEXT("Survivors cannot see mannequin tactical HUD even if widget remains"),HUD->StatusText->GetText().IsEmpty()&&HUD->StatusText->GetParent()->GetVisibility()==ESlateVisibility::Collapsed);
+    TestEqual(TEXT("Removed disguise is no longer an AI activity"),StaticEnum<EMultiplayMannequinActivity>()->GetIndexByNameString(TEXT("Disguised")),INDEX_NONE);
     World->DestroyWorld(false);return true;
 }
 #endif

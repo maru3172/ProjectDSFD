@@ -145,6 +145,15 @@ CREATE TABLE IF NOT EXISTS game_join_tickets
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- Session-bound admission: old unbound tickets fail closed after an upgrade.
+CREATE TABLE IF NOT EXISTS game_ticket_sessions
+(
+    ticket_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    auth_session_id BIGINT UNSIGNED NOT NULL,
+    CONSTRAINT fk_ticket_session_ticket FOREIGN KEY(ticket_id) REFERENCES game_join_tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ticket_session_auth FOREIGN KEY(auth_session_id) REFERENCES auth_sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS verified_match_results
 (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

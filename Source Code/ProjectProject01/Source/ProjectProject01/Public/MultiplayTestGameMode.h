@@ -36,6 +36,13 @@ struct FMultiplayTestServerPlayerRecord
 	double ReconnectDeadlineWorldSeconds = 0.0;
 };
 
+struct FMultiplayTestMatchCarryover
+{
+    FString MatchId;
+    TMap<FString,FMultiplayTestServerPlayerRecord> Players,Disconnected;
+    double ElapsedSeconds=0,PreparedRealSeconds=0,PreparedWorldSeconds=0;
+};
+
 /**
  * MultiplayTest 전용 게임 모드입니다.
  * 기존 AProjectPracticeGameModeBase를 상속하지 않으므로 조력자를 자동 생성하지 않습니다.
@@ -112,28 +119,12 @@ private:
 	void BeginMatchTimeline();
 	double GetTimelineElapsedSeconds() const;
 	TSharedPtr<FProjectMatchTimelineLog> TimelineLog;
+    TSharedPtr<FMultiplayTestMatchCarryover> MatchCarryover;
+    double PreviousMatchSeconds=0;
 	double TimelineLevelStartWorldSeconds = 0.0;
 	bool bTimelineTravelPrepared = false;
 	friend class FProjectMatchTimelineServerTest;
 	friend class FProjectMannequinSearchTest;
-	friend class FProjectMannequinDisguiseTest;
-	bool TryBeginPatrolDisguise(class AMannequinAICharacter* Mannequin, double Now);
-	bool ContinuePatrolDisguise(class AMannequinAICharacter* Mannequin);
-	bool SelectAutomaticDisguiseLocation(class AMannequinAICharacter* Mannequin, FVector& OutDestination, float& OutYaw) const;
-	bool IsDisguiseLocationHidden(const class AMannequinAICharacter* Mannequin, const FVector& CapsuleCenter) const;
-	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FMultiplayMannequinDisguiseState> MultiplayerDisguiseStates;
-	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="0",ClampMax="1"))
-	float MultiplayerDisguiseChance = 0.12f;
-	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="0.1",Units="s"))
-	float MultiplayerDisguiseMinSeconds = 3.0f;
-	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="0.1",Units="s"))
-	float MultiplayerDisguiseMaxSeconds = 6.0f;
-	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="1",Units="s"))
-	float MultiplayerDisguiseCooldownSeconds = 20.0f;
-	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="250",Units="cm"))
-	float MultiplayerDisguiseSearchRadius = 1200.0f;
-	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Disguise", meta=(ClampMin="1",Units="s"))
-	float MultiplayerDisguiseApproachTimeoutSeconds = 15.0f;
 	bool ContinueLastSeenSearch(class AMannequinAICharacter* Mannequin, class AAIController* Controller, double Now);
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FMultiplayMannequinSearchState> MultiplayerSearchStates;
 	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Search", meta=(ClampMin="1.0",Units="s"))

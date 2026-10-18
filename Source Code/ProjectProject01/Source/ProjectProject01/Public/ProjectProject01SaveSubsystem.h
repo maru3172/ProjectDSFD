@@ -127,6 +127,7 @@ private:
 
 	bool bSaveInProgress = false;
 	FString PendingSaveSuccessMessage;
+    FString PendingPrimarySaveSlot;
 	int32 CurrentSlotIndex = 1;
 	int32 PreviousSlotIndexBeforeSave = 1;
 	FDelegateHandle PostLoadMapHandle;

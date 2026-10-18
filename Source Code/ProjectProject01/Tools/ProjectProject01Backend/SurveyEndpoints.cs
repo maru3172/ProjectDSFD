@@ -95,7 +95,7 @@ internal static class SurveyEndpoints
                 command.Parameters.AddWithValue("@reviewReason", string.Join(" / ", failedTraps));
                 command.Parameters.AddWithValue("@surveyId", surveyId);
                 command.Parameters.AddWithValue("@userId", (object?)userId ?? DBNull.Value);
-                command.Parameters.AddWithValue("@submittedAt", body.SubmittedAtUtc.ToUniversalTime());
+                command.Parameters.AddWithValue("@submittedAt", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@answers", answersJson);
                 command.Parameters.AddWithValue("@buildVersion", body.BuildVersion.Trim());
                 command.Parameters.AddWithValue("@mapName", body.MapName.Trim());
@@ -538,11 +538,17 @@ internal static class SurveyEndpoints
     internal static IReadOnlyList<SurveyDailyStatistics> FillDailyGaps(IReadOnlyList<SurveyDailyStatistics> daily)
     {
         if(daily.Count==0)return [];
-        var byDate=daily.ToDictionary(point=>DateOnly.ParseExact(point.Date,"yyyy-MM-dd"));
+        var byDate=daily.GroupBy(point=>DateOnly.ParseExact(point.Date,"yyyy-MM-dd")).ToDictionary(group=>group.Key,group=>group.Last());
         var result=new List<SurveyDailyStatistics>();
         DateOnly last=byDate.Keys.Max();
-        for(DateOnly date=byDate.Keys.Min();date<=last;date=date.AddDays(1))
+        // Historical outliers must not expand millions of dates or overflow DateOnly.MaxValue.
+        DateOnly first=byDate.Keys.Min();
+        if(last.DayNumber-first.DayNumber>3659)first=DateOnly.FromDayNumber(last.DayNumber-3659);
+        for(int day=first.DayNumber;day<=last.DayNumber;++day)
+        {
+            DateOnly date=DateOnly.FromDayNumber(day);
             result.Add(byDate.TryGetValue(date,out var point) ? point : new(date.ToString("yyyy-MM-dd"),0,0,0));
+        }
         return result;
     }
 

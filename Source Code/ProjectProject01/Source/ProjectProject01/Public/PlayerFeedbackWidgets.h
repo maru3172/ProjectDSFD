@@ -27,9 +27,13 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01DamageFeedbackWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectDamageFeedbackRenderTest;
 
 public:
-	void Configure(float InIntroSeconds, float InFadeSeconds, float InMaxOpacity, float InMaxThicknessPixels);
+	/** The server's post-hit count snapshot determines severity; first of several hits keeps the base look. */
+	static float CalculateDamageSeverity(int32 RemainingDeathCount, int32 StartingDeathCount);
+	void Configure(float InIntroSeconds, float InFadeSeconds, float InMaxOpacity, float InMaxThicknessPixels,
+		float DamageSeverity = 0.0f);
 
 protected:
 	virtual bool Initialize() override;

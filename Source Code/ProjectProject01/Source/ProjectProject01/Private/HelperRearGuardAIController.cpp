@@ -116,7 +116,7 @@ void AHelperRearGuardAIController::Tick(float DeltaSeconds)
 			LastProgressLocation = CurrentLocation;
 			LastProgressTime = CurrentTime;
 		}
-		else if (LastProgressTime > 0.0 && CurrentTime - LastProgressTime >= StuckTimeout)
+		else if (CurrentTime - LastProgressTime >= StuckTimeout)
 		{
 			StopMovement();
 			bWaitingForRepath = true;
@@ -149,8 +149,8 @@ void AHelperRearGuardAIController::Tick(float DeltaSeconds)
 		FollowTarget.X, FollowTarget.Y, FollowTarget.Z, EffectiveAcceptanceRadius), ControlledHelper.Get());
 
 	LastMoveTarget = FollowTarget;
-	LastProgressLocation = CurrentLocation;
-	LastProgressTime = CurrentTime;
+    if(!bHasMoveTarget||RequestResult==EPathFollowingRequestResult::AlreadyAtGoal)
+    {LastProgressLocation=CurrentLocation;LastProgressTime=CurrentTime;}
 	TimeSinceLastPathRequest = 0.0f;
 	bHasMoveTarget = true;
 }

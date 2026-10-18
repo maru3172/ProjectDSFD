@@ -2,6 +2,9 @@
 // Target: ProjectProject01 / ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 
 #include "PlayerHeartbeatComponent.h"
+#include "TensionBreathingSynthComponent.h"
+#include "PlayerCharacter.h"
+#include "Async/Async.h"
 #include "ProjectProject01GameInstance.h"
 
 #include "Camera/CameraComponent.h"
@@ -48,20 +51,25 @@ namespace ProjectProject01HeartbeatVFX
 
 namespace ProjectProject01PainVoice
 {
-	constexpr float GroanEndSeconds = 0.42f;
-	constexpr float PantStartSeconds = 0.70f;
+	constexpr float GroanEndSeconds = 0.34f;
+	constexpr float PantStartSeconds = 0.85f;
 	constexpr float PantCount = 3.0f;
-	constexpr float PostPantPauseSeconds = 0.45f;
-	constexpr float RecoveryDurationSeconds = 1.45f;
+	constexpr float ExhaleDurationSeconds = 0.42f;
+	constexpr float BetweenExhalesPauseSeconds = 0.38f;
+	constexpr float PostPantPauseSeconds = 0.50f;
+	constexpr float RecoveryDurationSeconds = 0.65f;
+	constexpr float BreathAmplitudeScale = 0.32f;
+	constexpr float FatalGroanSeconds = 0.38f;
 
-	float GetPantRate(const float Intensity)
+	float GetPantRate(const float /*Intensity*/)
 	{
-		return FMath::Lerp(1.10f, 1.65f, FMath::Clamp(Intensity, 0.35f, 1.0f));
+		// Repeated hits increase strain/volume, never rush the pauses between exhalations.
+		return 1.0f / (ExhaleDurationSeconds + BetweenExhalesPauseSeconds);
 	}
 
 	float GetPantEndSeconds(const float Intensity)
 	{
-		return PantStartSeconds + (PantCount / GetPantRate(Intensity));
+		return PantStartSeconds + (PantCount - 1.0f) / GetPantRate(Intensity) + ExhaleDurationSeconds;
 	}
 
 	float GetRecoveryStartSeconds(const float Intensity)
@@ -119,8 +127,9 @@ int32 UHeartbeatSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 	FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 	const int32 ChannelCount = FMath::Max(NumChannels, 1);
 	const int32 FrameCount = NumSamples / ChannelCount;
-	constexpr float PulseDurationSeconds = 0.22f;
-	constexpr float AttackSeconds = 0.006f;
+	// Exactly one rounded thump per existing heartbeat-system event. No extra closing beat or local timer.
+	constexpr float PulseDurationSeconds = 0.30f;
+	constexpr float AttackSeconds = 0.004f;
 	const int32 PulseFrameCount = FMath::Max(1, FMath::RoundToInt(PulseDurationSeconds * SynthSampleRate));
 	for (int32 FrameIndex = 0; FrameIndex < FrameCount; ++FrameIndex)
 	{
@@ -130,14 +139,15 @@ int32 UHeartbeatSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 			const float TimeSeconds = static_cast<float>(PulseFrameIndex) / static_cast<float>(SynthSampleRate);
 			const float Progress = FMath::Clamp(TimeSeconds / PulseDurationSeconds, 0.0f, 1.0f);
 			const float Attack = FMath::Clamp(TimeSeconds / AttackSeconds, 0.0f, 1.0f);
-			const float Envelope = Attack * FMath::Exp(-18.0f * TimeSeconds);
-			const float Frequency = FMath::Lerp(82.0f, 48.0f, Progress);
+			const float Envelope = Attack * FMath::Exp(-25.0f * TimeSeconds);
+			const float Frequency = FMath::Lerp(72.0f, 43.0f, FMath::Min(1.0f, Progress * 2.5f));
 			PulsePhase = FMath::Fmod(
 				PulsePhase + (2.0f * UE_PI * Frequency / static_cast<float>(SynthSampleRate)),
 				2.0f * UE_PI);
 			const float Fundamental = FMath::Sin(PulsePhase);
-			const float LowHarmonic = FMath::Sin(PulsePhase * 2.0f) * 0.18f;
-			Sample = FMath::Clamp((Fundamental + LowHarmonic) * Envelope * PulseStrength, -1.0f, 1.0f);
+			const float LowHarmonic = FMath::Sin(PulsePhase * 1.92f) * 0.12f;
+			const float Release = FMath::Clamp((PulseDurationSeconds - TimeSeconds) / 0.025f, 0.0f, 1.0f);
+			Sample = FMath::Clamp((Fundamental + LowHarmonic) * Envelope * PulseStrength * Release, -0.95f, 0.95f);
 			++PulseFrameIndex;
 			if (PulseFrameIndex >= PulseFrameCount)
 			{
@@ -165,24 +175,31 @@ UPainGroanSynthComponent::UPainGroanSynthComponent(const FObjectInitializer& Obj
 	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 }
 
+float UPainGroanSynthComponent::GetReactionDuration(const bool bFatal, const float Intensity)
+{
+	return bFatal ? ProjectProject01PainVoice::FatalGroanSeconds :
+		ProjectProject01PainVoice::GetNonFatalDurationSeconds(FMath::Clamp(Intensity, 0.35f, 1.0f));
+}
+
 void UPainGroanSynthComponent::TriggerPain(const bool bFatal, const float Intensity)
 {
 	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
 	const float SafeIntensity = FMath::Clamp(Intensity, 0.35f, 1.0f);
-	SynthCommand([this, bFatal, SafeIntensity]()
+    const int32 Generation=PlaybackGeneration.Increment();
+	SynthCommand([this, bFatal, SafeIntensity,Generation]()
 	{
+        AudioGeneration=Generation;
 		VoiceFrameIndex = 0;
 		VoicePhase = 0.0f;
 		FlutterPhase = 0.0f;
+		BreathNoiseFiltered = BreathNoiseLow = 0.0f;
 		VoiceIntensity = SafeIntensity;
 		bFatalVoice = bFatal;
 		// 살아남은 피격은 짧은 고통 신음 뒤 정확히 세 번 헐떡이고,
 		// 잠깐 쉰 다음 긴 날숨으로 호흡을 고르는 한 묶음으로 재생한다.
-		// Fatal hits end with the initial scream/groan only. Panting and the recovery
+		// Fatal hits end with a short strained grunt only. Panting and the recovery
 		// exhale below are deliberately reserved for survivors of non-fatal hits.
-		VoiceDurationSeconds = bFatal
-			? 1.15f
-			: ProjectProject01PainVoice::GetNonFatalDurationSeconds(SafeIntensity);
+		VoiceDurationSeconds = GetReactionDuration(bFatal, SafeIntensity);
 		NoiseState ^= bFatal ? 0xA511E9B3u : 0x63D83595u;
 		bVoiceActive = true;
 	});
@@ -199,6 +216,7 @@ bool UPainGroanSynthComponent::Init(int32& SampleRate)
 	VoiceFrameIndex = 0;
 	VoicePhase = 0.0f;
 	FlutterPhase = 0.0f;
+	BreathNoiseFiltered = BreathNoiseLow = 0.0f;
 	VoiceIntensity = 1.0f;
 	bFatalVoice = false;
 	bVoiceActive = false;
@@ -226,7 +244,17 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 			float Envelope = FMath::Pow(FMath::Max(0.0f, 1.0f - Progress), 1.45f);
 			float Frequency = FMath::Lerp(132.0f, 72.0f, FMath::SmoothStep(0.0f, 1.0f, Progress));
 			float NoiseAmount = 0.12f;
-			if (!bFatalVoice)
+			float VoiceAmount = 0.48f;
+			if (bFatalVoice)
+			{
+				// Low, choked "ugh" with no upward open-vowel scream or recovery tail.
+				Frequency = FMath::Lerp(155.0f, 82.0f, FMath::Sqrt(Progress));
+				Envelope = FMath::Clamp(TimeSeconds / 0.009f, 0.0f, 1.0f) *
+					FMath::Exp(-4.0f * TimeSeconds) * FMath::Clamp((VoiceDurationSeconds - TimeSeconds) / 0.045f, 0.0f, 1.0f);
+				VoiceAmount = 0.46f;
+				NoiseAmount = 0.22f;
+			}
+			else
 			{
 				using namespace ProjectProject01PainVoice;
 				// 신음과 헐떡임을 한 덩어리로 이어 붙이면 동시에 재생되는 것처럼 들린다.
@@ -238,9 +266,11 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 				{
 					// 피격 직후 숨이 턱 막히는 낮은 신음/들이마심.
 					const float Segment = TimeSeconds / GroanEndSeconds;
-					Envelope = FMath::Sin(PI * FMath::Clamp(Segment, 0.0f, 1.0f));
-					Frequency = FMath::Lerp(148.0f, 102.0f, Segment);
-					NoiseAmount = 0.18f;
+					Envelope = FMath::Clamp(TimeSeconds / 0.009f, 0.0f, 1.0f) *
+						FMath::Exp(-5.5f * TimeSeconds) * FMath::Clamp((GroanEndSeconds - TimeSeconds) / 0.035f, 0.0f, 1.0f);
+					Frequency = FMath::Lerp(164.0f, 92.0f, FMath::Sqrt(Segment));
+					VoiceAmount = 0.43f;
+					NoiseAmount = 0.28f;
 				}
 				else if (TimeSeconds < PantStartSeconds)
 				{
@@ -255,15 +285,13 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 					// 합성음이 연속 톤처럼 들리지 않게 한다.
 					const float PantProgress = (TimeSeconds - PantStartSeconds) /
 						FMath::Max(0.01f, PantEnd - PantStartSeconds);
-					// 한 번 맞았을 때는 약 0.9초, 반복 피격으로 불안이 커져도 약 0.6초에
-					// 한 호흡을 넘지 않게 해 "후후"가 지나치게 급하게 반복되지 않도록 한다.
-					const float PantCycle = FMath::Fmod((TimeSeconds - PantStartSeconds) * PantRate, 1.0f);
-					const float PantPulse = PantCycle < 0.72f
-						? FMath::Sin(PI * PantCycle / 0.72f)
-						: 0.0f;
-					Envelope = PantPulse * FMath::Lerp(0.9f, 0.28f, PantProgress);
-					Frequency = FMath::Lerp(112.0f, 82.0f, PantProgress);
-					NoiseAmount = FMath::Lerp(0.25f, 0.13f, PantProgress);
+					const float CycleTime = FMath::Fmod(TimeSeconds - PantStartSeconds, 1.0f / PantRate);
+					const float PantPulse = CycleTime < ExhaleDurationSeconds
+						? FMath::Pow(FMath::Max(0.0f, FMath::Sin(PI * CycleTime / ExhaleDurationSeconds)), 0.8f) : 0.0f;
+					Envelope = PantPulse * FMath::Lerp(0.85f, 0.42f, PantProgress) * BreathAmplitudeScale;
+					Frequency = FMath::Lerp(104.0f, 78.0f, PantProgress);
+					VoiceAmount = 0.035f;
+					NoiseAmount = FMath::Lerp(1.0f, 0.72f, PantProgress);
 				}
 				else if (TimeSeconds < RecoveryStart)
 				{
@@ -273,28 +301,39 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 				}
 				else
 				{
-					// 마지막에는 약 1.45초 동안 "후우..." 하고 길게 내쉬며 호흡을 고른다.
+					// 세 날숨 뒤에도 한 박자 쉬고 마지막 긴 한숨을 낸다.
 					const float Recovery = (TimeSeconds - RecoveryStart) /
 						FMath::Max(0.01f, VoiceDurationSeconds - RecoveryStart);
-					Envelope = FMath::Sin(PI * FMath::Clamp(Recovery, 0.0f, 1.0f)) * 0.42f;
+					Envelope = FMath::Pow(FMath::Max(0.0f, FMath::Sin(PI * FMath::Clamp(Recovery, 0.0f, 1.0f))), 0.9f) * 0.46f * BreathAmplitudeScale;
 					Frequency = FMath::Lerp(86.0f, 62.0f, Recovery);
-					NoiseAmount = FMath::Lerp(0.15f, 0.06f, Recovery);
+					VoiceAmount = 0.015f;
+					NoiseAmount = FMath::Lerp(0.78f, 0.38f, Recovery);
 				}
 			}
 			FlutterPhase = FMath::Fmod(FlutterPhase + (2.0f * UE_PI * 5.2f / SynthSampleRate), 2.0f * UE_PI);
-			const float Flutter = FMath::Sin(FlutterPhase) * FMath::Lerp(1.8f, 4.2f, VoiceIntensity);
+			const float Flutter = FMath::Sin(FlutterPhase) * (bFatalVoice ? 3.0f : FMath::Lerp(1.8f, 4.2f, VoiceIntensity));
 			VoicePhase = FMath::Fmod(VoicePhase + (2.0f * UE_PI * (Frequency + Flutter) / SynthSampleRate), 2.0f * UE_PI);
 			NoiseState = (NoiseState * 1664525u) + 1013904223u;
-			const float BreathNoise = (static_cast<float>((NoiseState >> 8) & 0xFFFFu) / 32767.5f) - 1.0f;
-			const float Voice = FMath::Sin(VoicePhase) + (0.28f * FMath::Sin(VoicePhase * 2.0f)) +
+			float BreathNoise = (static_cast<float>((NoiseState >> 8) & 0xFFFFu) / 32767.5f) - 1.0f;
+			BreathNoiseFiltered += (BreathNoise - BreathNoiseFiltered) * (bFatalVoice ? 0.25f : 0.18f);
+			BreathNoiseLow += (BreathNoise - BreathNoiseLow) * 0.018f;
+			BreathNoise = (BreathNoiseFiltered - BreathNoiseLow) * (bFatalVoice ? 1.7f : 2.0f);
+			float Voice = FMath::Sin(VoicePhase) + (0.28f * FMath::Sin(VoicePhase * 2.0f)) +
 				(0.11f * FMath::Sin(VoicePhase * 3.0f));
+			if (bFatalVoice)
+			{
+				Voice = 0.75f * FMath::Sin(VoicePhase) + 0.24f * FMath::Sin(VoicePhase * 2.0f) +
+					0.11f * FMath::Sin(VoicePhase * 3.0f) + 0.08f * FMath::Sin(VoicePhase * 0.5f);
+			}
 			const float Strength = FMath::Lerp(0.62f, 1.0f, VoiceIntensity);
-			Sample = FMath::Clamp((Voice * 0.48f + BreathNoise * NoiseAmount) * Attack * Envelope * Strength,
+			Sample = FMath::Clamp((Voice * VoiceAmount + BreathNoise * NoiseAmount) * Attack * Envelope * Strength,
 				-0.88f, 0.88f);
 			++VoiceFrameIndex;
 			if (VoiceFrameIndex >= VoiceFrameCount)
 			{
 				bVoiceActive = false;
+                AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UPainGroanSynthComponent>(this),Generation=AudioGeneration]
+                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation)Self->Stop();});
 			}
 		}
 		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
@@ -320,8 +359,10 @@ UBodyFallSynthComponent::UBodyFallSynthComponent(const FObjectInitializer& Objec
 void UBodyFallSynthComponent::TriggerBodyFall()
 {
 	ProjectProject01SpatialAudio::ConfigureWorldSynth(*this);
-	SynthCommand([this]()
+    const int32 Generation=PlaybackGeneration.Increment();
+	SynthCommand([this,Generation]()
 	{
+        AudioGeneration=Generation;
 		ImpactFrameIndex = 0;
 		LowPhase = 0.0f;
 		NoiseState ^= 0x7F4A7C15u;
@@ -378,6 +419,8 @@ int32 UBodyFallSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 			if (ImpactFrameIndex >= ImpactFrameCount)
 			{
 				bImpactActive = false;
+                AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UBodyFallSynthComponent>(this),Generation=AudioGeneration]
+                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation)Self->Stop();});
 			}
 		}
 		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
@@ -402,8 +445,10 @@ UMannequinCaptureSynthComponent::UMannequinCaptureSynthComponent(
 
 void UMannequinCaptureSynthComponent::TriggerImpact(const bool bElimination)
 {
-	SynthCommand([this, bElimination]()
+    const int32 Generation=PlaybackGeneration.Increment();
+	SynthCommand([this, bElimination,Generation]()
 	{
+        AudioGeneration=Generation;
 		ImpactFrameIndex = 0;
 		LowPhase = 0.0f;
 		PlasticPhase = 0.0f;
@@ -458,6 +503,8 @@ int32 UMannequinCaptureSynthComponent::OnGenerateAudio(float* OutAudio, const in
 			if (ImpactFrameIndex >= ImpactFrameCount)
 			{
 				bImpactActive = false;
+                AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UMannequinCaptureSynthComponent>(this),Generation=AudioGeneration]
+                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation)Self->Stop();});
 			}
 		}
 		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
@@ -487,9 +534,9 @@ bool FProjectProject01HeartbeatVFXMappingTest::RunTest(const FString& Parameters
 	const float PantRate = ProjectProject01PainVoice::GetPantRate(TestIntensity);
 	const float GeneratedPantCount =
 		(ProjectProject01PainVoice::GetPantEndSeconds(TestIntensity) -
-		 ProjectProject01PainVoice::PantStartSeconds) * PantRate;
+		 ProjectProject01PainVoice::PantStartSeconds - ProjectProject01PainVoice::ExhaleDurationSeconds) * PantRate + 1.0f;
 	TestTrue(TEXT("Non-fatal pain voice contains exactly three pant cycles"),
-		FMath::IsNearlyEqual(GeneratedPantCount, ProjectProject01PainVoice::PantCount));
+		FMath::IsNearlyEqual(GeneratedPantCount, ProjectProject01PainVoice::PantCount, 0.001f));
 	TestTrue(TEXT("Recovery exhale begins after the post-pant pause"),
 		FMath::IsNearlyEqual(
 			ProjectProject01PainVoice::GetRecoveryStartSeconds(TestIntensity) -
@@ -613,6 +660,7 @@ void UPlayerHeartbeatComponent::BeginPlay()
 
 void UPlayerHeartbeatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ReleaseBreathingSFX();
 	ReleaseHeartbeatVFX();
 	ReleaseHeartbeatSFX();
 	Super::EndPlay(EndPlayReason);
@@ -626,6 +674,8 @@ void UPlayerHeartbeatComponent::TickComponent(
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	if (!IsValid(OwnerPawn) || !OwnerPawn->IsLocallyControlled())
 	{
+		ReleaseBreathingSFX();
+		ClearReliefBreathState();
 		ReleaseHeartbeatVFX();
 		ReleaseHeartbeatSFX();
 		return;
@@ -647,12 +697,14 @@ void UPlayerHeartbeatComponent::TickComponent(
 	}
 
 	UpdateBPM(DeltaTime, *OwnerPawn);
+	UpdateBreathingOutput(DeltaTime, *OwnerPawn);
 	UpdateHeartbeatVFX(DeltaTime, *OwnerPawn);
 	UpdateBeatOutput(DeltaTime, *OwnerPawn);
 }
 
 void UPlayerHeartbeatComponent::ResetHeartbeatState()
 {
+	ResetTensionBreathing();
 	CachedMannequins.Reset();
 	MannequinStates.Reset();
 	CurrentBPM = 0.0f;
@@ -863,7 +915,6 @@ void UPlayerHeartbeatComponent::UpdateBPM(float DeltaTime, const APawn& OwnerPaw
 		CurrentBPM = 0.0f;
 		DistanceBPM = 0.0f;
 		EncounterBPM = 0.0f;
-		BeatAccumulator = 0.0f;
 		if (bWasActive && bEnableHeartbeatLog)
 		{
 			UE_LOG(LogTemp, Log, TEXT("[Heartbeat] STOP | Base and encounter BPM reached zero"));
@@ -891,12 +942,8 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 	}
 
 	using namespace ProjectProject01HeartbeatVFX;
-	const bool bHasNearbyTarget = CurrentVFXNearbyMannequinCount > 0 &&
-		FMath::IsFinite(NearestVFXMannequinDistance);
-	const float SafeHeartbeatRange = FMath::Max(HeartbeatRange, 0.0f);
-	// 범위 밖은 보간 잔상을 남기지 않고 즉시 완전 투명(효과 미부착) 상태로 만든다.
-	if (!bHasNearbyTarget || SafeHeartbeatRange <= UE_SMALL_NUMBER ||
-		NearestVFXMannequinDistance >= SafeHeartbeatRange)
+	// Shared presentation can retain the episode peak while sprinting outside the raw threat range.
+	if (PresentedVFXProximity <= UE_SMALL_NUMBER && PresentedVFXDensity <= UE_SMALL_NUMBER)
 	{
 		HeartbeatVFXProximityAlpha = 0.0f;
 		HeartbeatVFXDensityAlpha = 0.0f;
@@ -904,16 +951,16 @@ void UPlayerHeartbeatComponent::UpdateHeartbeatVFX(float DeltaTime, APawn& Owner
 		return;
 	}
 
-	const float TargetProximity = CalculateProximityAlpha(NearestVFXMannequinDistance, SafeHeartbeatRange);
-	const float TargetDensity = CalculateDensityAlpha(
-		CurrentVFXNearbyMannequinCount, HeartbeatVFXDensityCountForMax);
+	const float TargetProximity = PresentedVFXProximity;
+	const float TargetDensity = PresentedVFXDensity;
 	const float BlendSpeed = TargetProximity > HeartbeatVFXProximityAlpha
 		? HeartbeatVFXBlendInSpeed
 		: HeartbeatVFXBlendOutSpeed;
 
-	HeartbeatVFXProximityAlpha = InterpAlpha(
+	const bool bCalming = BreathingCalmEndWorldSeconds > World->GetTimeSeconds();
+	HeartbeatVFXProximityAlpha = bCalming ? TargetProximity : InterpAlpha(
 		HeartbeatVFXProximityAlpha, TargetProximity, DeltaTime, BlendSpeed);
-	HeartbeatVFXDensityAlpha = InterpAlpha(
+	HeartbeatVFXDensityAlpha = bCalming ? TargetDensity : InterpAlpha(
 		HeartbeatVFXDensityAlpha, TargetDensity, DeltaTime, BlendSpeed);
 
 	const UProjectProject01GameUserSettings* UserSettings = UProjectProject01GameUserSettings::Get();
@@ -1074,7 +1121,7 @@ bool UPlayerHeartbeatComponent::EnsureHeartbeatSFX(APawn& OwnerPawn)
 	{
 		Synth->SoundClass = UserSettings->GetSFXSoundClass();
 	}
-	Synth->SetVolumeMultiplier(HeartbeatSFXVolumeMultiplier);
+	Synth->SetVolumeMultiplier(HeartbeatSFXVolumeMultiplier * PresentedHeartbeatGain);
 	if (!Synth->IsPlaying())
 	{
 		Synth->Start();
@@ -1093,15 +1140,18 @@ void UPlayerHeartbeatComponent::ReleaseHeartbeatSFX()
 
 void UPlayerHeartbeatComponent::UpdateBeatOutput(float DeltaTime, APawn& OwnerPawn)
 {
-	if (!bHeartbeatActive || CurrentBPM <= 0.0f)
+	if (auto* Synth = HeartbeatSFXSynth.Get(); IsValid(Synth))
+		Synth->SetVolumeMultiplier(HeartbeatSFXVolumeMultiplier * PresentedHeartbeatGain);
+	if (PresentedBPM <= UE_SMALL_NUMBER)
 	{
+		BeatAccumulator = 0.0f;
 		ReleaseHeartbeatSFX();
 		return;
 	}
 
 	// BPM을 박동 간격(60 / BPM)으로 변환한다.
 	BeatAccumulator += DeltaTime;
-	const float BeatIntervalSeconds = 60.0f / FMath::Max(CurrentBPM, 1.0f);
+	const float BeatIntervalSeconds = 60.0f / FMath::Max(PresentedBPM, 1.0f);
 	if (BeatAccumulator >= BeatIntervalSeconds)
 	{
 		BeatAccumulator = FMath::Fmod(BeatAccumulator, BeatIntervalSeconds);
@@ -1109,15 +1159,243 @@ void UPlayerHeartbeatComponent::UpdateBeatOutput(float DeltaTime, APawn& OwnerPa
 		{
 			const float MinimumReferenceBPM = FMath::Max(BaseMinBPM, 1.0f);
 			const float MaximumReferenceBPM = FMath::Max3(BaseMaxBPM, EncounterMaxBPM, MinimumReferenceBPM + 1.0f);
-			const float BPMAlpha = FMath::GetRangePct(MinimumReferenceBPM, MaximumReferenceBPM, CurrentBPM);
+			const float BPMAlpha = FMath::GetRangePct(MinimumReferenceBPM, MaximumReferenceBPM, PresentedBPM);
 			const float Strength = FMath::Lerp(0.48f, 0.82f, FMath::Clamp(BPMAlpha, 0.0f, 1.0f));
 			HeartbeatSFXSynth->TriggerHeartbeat(Strength);
 		}
 		if (bEnableHeartbeatLog)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[Heartbeat] THUMP | BPM=%.1f | Interval=%.3fs"),
-				CurrentBPM, BeatIntervalSeconds);
+				PresentedBPM, BeatIntervalSeconds);
 		}
+	}
+}
+
+void UPlayerHeartbeatComponent::SuspendTensionBreathingForPain(const bool bFatal, const float DurationSeconds)
+{
+	bFatalBreathingSuppression |= bFatal;
+	if (const UWorld* World = GetWorld())
+	{
+		BreathingResumeWorldSeconds = FMath::Max(BreathingResumeWorldSeconds,
+			World->GetTimeSeconds() + static_cast<double>(FMath::Max(DurationSeconds, 0.0f)));
+		if (ReliefBreathEndWorldSeconds > World->GetTimeSeconds())
+		{
+			bReliefBreathQueued = true;
+			ReliefBreathEndWorldSeconds = -1.0;
+		}
+	}
+	if (bFatal) ClearReliefBreathState();
+	if (auto* Synth = BreathingSFXSynth.Get(); IsValid(Synth)) Synth->Stop();
+}
+
+void UPlayerHeartbeatComponent::ResetTensionBreathing()
+{
+	ReleaseBreathingSFX();
+	BreathingResumeWorldSeconds = -1.0;
+	bFatalBreathingSuppression = false;
+	ClearReliefBreathState();
+}
+
+bool UPlayerHeartbeatComponent::CanResumeTensionBreathing(const double WorldSeconds) const
+{
+	return !bFatalBreathingSuppression && FMath::IsFinite(WorldSeconds) && WorldSeconds >= BreathingResumeWorldSeconds;
+}
+
+bool UPlayerHeartbeatComponent::ShouldPlayTensionBreathing() const
+{
+	// Share the actual heartbeat activation/memory/decay rules. No independent idle breath loop.
+	return bHeartbeatActive && FMath::IsFinite(CurrentBPM) && CurrentBPM > UE_SMALL_NUMBER &&
+		CurrentVFXNearbyMannequinCount > 0;
+}
+
+float UPlayerHeartbeatComponent::CalculateBreathingTension() const
+{
+	if (!ShouldPlayTensionBreathing()) return 0.0f;
+	const float Minimum = FMath::Max(BaseMinBPM, 1.0f);
+	const float Maximum = FMath::Max3(BaseMaxBPM, EncounterMaxBPM, Minimum + 1.0f);
+	return FMath::Clamp(FMath::GetRangePct(Minimum, Maximum, CurrentBPM), 0.0f, 1.0f);
+}
+
+void UPlayerHeartbeatComponent::ReleaseBreathingSFX()
+{
+	if (auto* Synth = BreathingSFXSynth.Get(); IsValid(Synth))
+	{
+		Synth->Stop();
+		Synth->DestroyComponent();
+	}
+	BreathingSFXSynth.Reset();
+}
+
+void UPlayerHeartbeatComponent::ClearReliefBreathState()
+{
+	bHadBreathingThreat = bReliefBreathQueued = bRanInsideBreathingThreat = bHadTensionInsideBreathingThreat = false;
+	LastThreatBreathingTension = 0.0f;
+	PeakThreatBPM = PresentedBPM = 0.0f;
+	PeakThreatVFXProximity = PeakThreatVFXDensity = PresentedVFXProximity = PresentedVFXDensity = 0.0f;
+	CalmStartVFXProximity = CalmStartVFXDensity = 0.0f;
+	PresentedHeartbeatGain = 1.0f;
+	bCarriedTensionOutOfThreat = false;
+	BreathingCalmEndWorldSeconds = -1.0;
+	ReliefBreathEndWorldSeconds = -1.0;
+}
+
+bool UPlayerHeartbeatComponent::UpdateReliefBreathState(const bool bSprinting, const double WorldSeconds)
+{
+	if (WorldSeconds >= ReliefBreathEndWorldSeconds) ReliefBreathEndWorldSeconds = -1.0;
+	if (CurrentVFXNearbyMannequinCount > 0)
+	{
+		// One threat episode, regardless of how many times sprint is pressed inside it.
+		bHadBreathingThreat = true;
+		bReliefBreathQueued = false;
+		ReliefBreathEndWorldSeconds = -1.0;
+		BreathingCalmEndWorldSeconds = -1.0;
+		bCarriedTensionOutOfThreat = false;
+		bRanInsideBreathingThreat |= bSprinting;
+		PeakThreatVFXProximity = FMath::Max(PeakThreatVFXProximity,
+			ProjectProject01HeartbeatVFX::CalculateProximityAlpha(NearestVFXMannequinDistance, HeartbeatRange));
+		PeakThreatVFXDensity = FMath::Max(PeakThreatVFXDensity,
+			ProjectProject01HeartbeatVFX::CalculateDensityAlpha(CurrentVFXNearbyMannequinCount, HeartbeatVFXDensityCountForMax));
+		if (ShouldPlayTensionBreathing())
+		{
+			bHadTensionInsideBreathingThreat = true;
+			LastThreatBreathingTension = FMath::Max(LastThreatBreathingTension, CalculateBreathingTension());
+			PeakThreatBPM = FMath::Max(PeakThreatBPM, CurrentBPM);
+		}
+		return false;
+	}
+	if (bHadBreathingThreat)
+	{
+		bHadBreathingThreat = false;
+		bReliefBreathQueued = true;
+		bCarriedTensionOutOfThreat = bSprinting && bRanInsideBreathingThreat;
+	}
+	if (bSprinting)
+	{
+		// Only a run carried out of the threat episode may re-hold its peak.
+		// Starting a new run outside during a walking exit must not restart the calm-down.
+		if (bCarriedTensionOutOfThreat) BreathingCalmEndWorldSeconds = -1.0;
+		if (ReliefBreathEndWorldSeconds > WorldSeconds)
+		{
+			bReliefBreathQueued = true;
+			ReliefBreathEndWorldSeconds = -1.0;
+		}
+		return false;
+	}
+	if (bReliefBreathQueued && (bHadTensionInsideBreathingThreat ||
+		PeakThreatVFXProximity > UE_SMALL_NUMBER || PeakThreatVFXDensity > UE_SMALL_NUMBER))
+	{
+		if (BreathingCalmEndWorldSeconds < 0.0)
+		{
+			BreathingCalmEndWorldSeconds = WorldSeconds + BreathingCalmDownSeconds;
+			CalmStartVFXProximity = HeartbeatVFXProximityAlpha;
+			CalmStartVFXDensity = HeartbeatVFXDensityAlpha;
+		}
+		if (WorldSeconds < BreathingCalmEndWorldSeconds) return false;
+	}
+	return bReliefBreathQueued;
+}
+
+bool UPlayerHeartbeatComponent::ShouldCarryTensionWhileSprinting(const bool bSprinting) const
+{
+	return bHadTensionInsideBreathingThreat && ShouldHoldThreatWhileSprinting(bSprinting);
+}
+
+bool UPlayerHeartbeatComponent::ShouldHoldThreatWhileSprinting(const bool bSprinting) const
+{
+	return bSprinting && bRanInsideBreathingThreat &&
+		(bHadBreathingThreat || (bReliefBreathQueued && bCarriedTensionOutOfThreat));
+}
+
+float UPlayerHeartbeatComponent::GetBreathingCalmAlpha(const double WorldSeconds) const
+{
+	if (BreathingCalmEndWorldSeconds < 0.0) return 0.0f;
+	return FMath::SmoothStep(0.0f, 1.0f, FMath::Clamp(
+		static_cast<float>((BreathingCalmEndWorldSeconds - WorldSeconds) / BreathingCalmDownSeconds), 0.0f, 1.0f));
+}
+
+void UPlayerHeartbeatComponent::UpdatePresentedHeartbeat(const bool bSprinting, const double WorldSeconds, const float DeltaTime)
+{
+	const bool bCalming = BreathingCalmEndWorldSeconds > WorldSeconds;
+	const bool bHoldingPeak = ShouldCarryTensionWhileSprinting(bSprinting);
+	const bool bHoldingVFX = ShouldHoldThreatWhileSprinting(bSprinting);
+	PresentedHeartbeatGain = bCalming ? GetBreathingCalmAlpha(WorldSeconds) : 1.0f;
+	const float ActualProximity = CurrentVFXNearbyMannequinCount > 0 ?
+		ProjectProject01HeartbeatVFX::CalculateProximityAlpha(NearestVFXMannequinDistance, HeartbeatRange) : 0.0f;
+	const float ActualDensity = ProjectProject01HeartbeatVFX::CalculateDensityAlpha(
+		CurrentVFXNearbyMannequinCount, HeartbeatVFXDensityCountForMax);
+	PresentedVFXProximity = bHoldingVFX ? PeakThreatVFXProximity : bCalming ?
+		CalmStartVFXProximity * PresentedHeartbeatGain : ActualProximity;
+	PresentedVFXDensity = bHoldingVFX ? PeakThreatVFXDensity : bCalming ?
+		CalmStartVFXDensity * PresentedHeartbeatGain : ActualDensity;
+	const float TargetBPM = bHoldingPeak ? PeakThreatBPM : bCalming ? PeakThreatBPM * PresentedHeartbeatGain :
+		ShouldPlayTensionBreathing() ? CurrentBPM : 0.0f;
+	// Raw recognition/encounter logic remains independent of this presentation hold.
+	if (CurrentVFXNearbyMannequinCount > 0 && !bSprinting && TargetBPM < PresentedBPM)
+		PresentedBPM = FMath::FInterpTo(PresentedBPM, TargetBPM, FMath::Max(DeltaTime, 0.0f), 2.3f);
+	else
+		PresentedBPM = TargetBPM;
+}
+
+void UPlayerHeartbeatComponent::MarkReliefBreathStarted(const double WorldSeconds)
+{
+	bReliefBreathQueued = false;
+	ReliefBreathEndWorldSeconds = WorldSeconds + UTensionBreathingSynthComponent::ReliefDurationSeconds;
+	bRanInsideBreathingThreat = bHadTensionInsideBreathingThreat = false;
+	LastThreatBreathingTension = 0.0f;
+	PeakThreatBPM = 0.0f;
+	PeakThreatVFXProximity = PeakThreatVFXDensity = 0.0f;
+	BreathingCalmEndWorldSeconds = -1.0;
+	bCarriedTensionOutOfThreat = false;
+}
+
+void UPlayerHeartbeatComponent::UpdateBreathingOutput(const float DeltaTime, APawn& OwnerPawn)
+{
+	const UWorld* World = GetWorld();
+	const auto* Player = Cast<APlayerCharacter>(&OwnerPawn);
+	if (!World || World->GetNetMode() == NM_DedicatedServer || !Player || !Player->CanPlayTensionBreathing())
+	{
+		ReleaseBreathingSFX();
+		ClearReliefBreathState();
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	const bool bSprinting = Player->IsSprintingForBreathing();
+	const bool bReliefReady = UpdateReliefBreathState(bSprinting, Now);
+	UpdatePresentedHeartbeat(bSprinting, Now, DeltaTime);
+	const bool bTensionActive = ShouldPlayTensionBreathing() ||
+		(CurrentVFXNearbyMannequinCount > 0 && bHadTensionInsideBreathingThreat);
+	const bool bCarryTension = ShouldCarryTensionWhileSprinting(bSprinting);
+	const bool bCalming = BreathingCalmEndWorldSeconds > Now && bHadTensionInsideBreathingThreat;
+	if (!bTensionActive && !bCarryTension && !bCalming && !bReliefReady)
+	{
+		if (ReliefBreathEndWorldSeconds <= Now) ReleaseBreathingSFX();
+		return;
+	}
+	// The synth's queued Stop may lag a game-thread duration by an audio buffer: wait for both.
+	const auto* Pain = OwnerPawn.FindComponentByClass<UPainGroanSynthComponent>();
+	if (!CanResumeTensionBreathing(Now) || (IsValid(Pain) && Pain->IsPlaying()))
+	{
+		if (auto* Synth = BreathingSFXSynth.Get(); IsValid(Synth) && Synth->IsPlaying()) Synth->Stop();
+		return;
+	}
+	auto* Synth = BreathingSFXSynth.Get();
+	if (!IsValid(Synth))
+	{
+		Synth = NewObject<UTensionBreathingSynthComponent>(&OwnerPawn);
+		Synth->SetupAttachment(OwnerPawn.GetRootComponent());
+		Synth->RegisterComponent();
+		BreathingSFXSynth = Synth;
+	}
+	if (auto* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+		Synth->SoundClass = Settings->GetSFXSoundClass();
+	Synth->SetVolumeMultiplier(bCalming ? GetBreathingCalmAlpha(Now) : 1.0f);
+	if (bTensionActive || bCarryTension || bCalming)
+		Synth->SetTension(bCarryTension ? LastThreatBreathingTension : bCalming ?
+			LastThreatBreathingTension * GetBreathingCalmAlpha(Now) : CalculateBreathingTension());
+	else
+	{
+		Synth->PlayReliefBreath();
+		MarkReliefBreathStarted(Now);
 	}
 }
 

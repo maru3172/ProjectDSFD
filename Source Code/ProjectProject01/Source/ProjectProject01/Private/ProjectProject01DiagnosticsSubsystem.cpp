@@ -326,7 +326,13 @@ void UProjectProject01DiagnosticsSubsystem::StopCapture(const FString& Outcome)
 	}
 	RecordEvent(bCriteriaRecognized && bCriteriaPassed ? EProjectProject01DiagnosticSeverity::Normal : EProjectProject01DiagnosticSeverity::Inconclusive,
 		TEXT("FailureCriteriaEvaluation"), FString::Join(CriteriaDetails, TEXT("; ")));
-	if (TestDefinition.TimeoutSeconds > 0.0f && ElapsedSeconds >= TestDefinition.TimeoutSeconds)
+    const bool bCompletedNormally=Outcome.StartsWith(TEXT("Manual capture completed"))||Outcome.Equals(TEXT("Completed"),ESearchCase::IgnoreCase);
+    if(!bCompletedNormally)
+    {
+        FinalOutcome=TEXT("Inconclusive");
+        RecordEvent(EProjectProject01DiagnosticSeverity::Inconclusive,TEXT("CaptureInterrupted"),Outcome);
+    }
+	else if (TestDefinition.TimeoutSeconds > 0.0f && ElapsedSeconds >= TestDefinition.TimeoutSeconds)
 	{
 		FinalOutcome = TEXT("TimedOut");
 	}

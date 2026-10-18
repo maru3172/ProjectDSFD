@@ -116,7 +116,8 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 		FString ExistingError;
 		if (UProjectProject01SinglePlayerSaveGame* Existing = LoadValidatedSlot(PrimarySlot, ExistingError))
 		{
-			UGameplayStatics::SaveGameToSlot(Existing, BackupSlot, UserIndex);
+            if(!UGameplayStatics::SaveGameToSlot(Existing,BackupSlot,UserIndex)||!LoadValidatedSlot(BackupSlot,ExistingError))
+            {OnSaveOperationCompleted.Broadcast(false,TEXT("기존 저장의 백업을 확인하지 못해 원본을 덮어쓰지 않았습니다."));return false;}
 		}
 	}
 
@@ -157,7 +158,8 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	bSaveInProgress = true;
 	FAsyncSaveGameToSlotDelegate Delegate;
 	Delegate.BindUObject(this, &UProjectProject01SaveSubsystem::HandleAsyncSaveComplete);
-	UGameplayStatics::AsyncSaveGameToSlot(Save, PrimarySlot, UserIndex, Delegate);
+    PendingPrimarySaveSlot=PrimarySlot;
+	UGameplayStatics::AsyncSaveGameToSlot(Save, PrimarySlot+TEXT("_Pending"), UserIndex, Delegate);
 	return true;
 }
 
@@ -206,7 +208,10 @@ bool UProjectProject01SaveSubsystem::LoadCheckpointFromSlot(const int32 SlotInde
 	CurrentSlotIndex = SlotIndex;
 	PendingLoad->LastPlayedAtUtc = FDateTime::UtcNow();
 	PendingLoad->IntegrityHash = PendingLoad->CalculateIntegrityHash();
-	if (!UGameplayStatics::SaveGameToSlot(PendingLoad, PrimarySlot, UserIndex))
+    FString BackupError;bool BackupReady=false;
+    if(auto* Previous=LoadValidatedSlot(PrimarySlot,BackupError))BackupReady=UGameplayStatics::SaveGameToSlot(Previous,BackupSlot,UserIndex)&&LoadValidatedSlot(BackupSlot,BackupError);
+    else BackupReady=LoadValidatedSlot(BackupSlot,BackupError)!=nullptr;
+	if (!BackupReady||!UGameplayStatics::SaveGameToSlot(PendingLoad, PrimarySlot, UserIndex))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Could not persist last-played metadata for single-player slot %d."), SlotIndex);
 	}
@@ -295,12 +300,14 @@ bool UProjectProject01SaveSubsystem::DeleteSaveSlot(const int32 SlotIndex)
 		UGameplayStatics::DeleteGameInSlot(PrimarySlot, UserIndex);
 	const bool bBackupDeleted = !UGameplayStatics::DoesSaveGameExist(BackupSlot, UserIndex) ||
 		UGameplayStatics::DeleteGameInSlot(BackupSlot, UserIndex);
+    const FString Temporary=PrimarySlot+TEXT("_Pending");
+    const bool bTemporaryDeleted=!UGameplayStatics::DoesSaveGameExist(Temporary,UserIndex)||UGameplayStatics::DeleteGameInSlot(Temporary,UserIndex);
 	if (SlotIndex == CurrentSlotIndex && bPrimaryDeleted && bBackupDeleted)
 	{
 		PendingLoad = nullptr;
 		RuntimeProgressState.Reset();
 	}
-	return bPrimaryDeleted && bBackupDeleted;
+	return bPrimaryDeleted && bBackupDeleted&&bTemporaryDeleted;
 }
 
 bool UProjectProject01SaveSubsystem::StartNewGameInSlot(const int32 SlotIndex)
@@ -382,16 +389,21 @@ void UProjectProject01SaveSubsystem::HandleAsyncSaveComplete(
 	const int32 InUserIndex,
 	const bool bSucceeded)
 {
-	bSaveInProgress = false;
-	if (!bSucceeded)
+    bool bCommitted=false;
+    FString ValidationError;
+    if(bSucceeded&&SlotName==PendingPrimarySaveSlot+TEXT("_Pending"))
+        if(auto* Verified=LoadValidatedSlot(SlotName,ValidationError))bCommitted=UGameplayStatics::SaveGameToSlot(Verified,PendingPrimarySaveSlot,InUserIndex);
+    if(bCommitted)UGameplayStatics::DeleteGameInSlot(SlotName,InUserIndex);
+    PendingPrimarySaveSlot.Reset();bSaveInProgress = false;
+	if (!bCommitted)
 	{
 		CurrentSlotIndex = PreviousSlotIndexBeforeSave;
 	}
-	const FString CompletionMessage = bSucceeded && !PendingSaveSuccessMessage.IsEmpty()
+	const FString CompletionMessage = bCommitted && !PendingSaveSuccessMessage.IsEmpty()
 		? PendingSaveSuccessMessage
 		: TEXT("체크포인트 저장에 실패했습니다.");
 	PendingSaveSuccessMessage.Reset();
-	OnSaveOperationCompleted.Broadcast(bSucceeded, CompletionMessage);
+	OnSaveOperationCompleted.Broadcast(bCommitted, CompletionMessage);
 }
 
 void UProjectProject01SaveSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)

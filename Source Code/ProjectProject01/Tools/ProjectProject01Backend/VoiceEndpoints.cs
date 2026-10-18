@@ -55,7 +55,7 @@ internal static class VoiceEndpoints
                 {
                     await SecurityAudit.WriteAsync(database, request, "VoiceToken", "RejectedMembership",
                         user.Id, $"MatchId={matchId:D}", cancellationToken);
-                    return Results.Forbid();
+                    return Results.Json(new VoiceTokenFailure("현재 경기의 생존자만 음성을 사용할 수 있습니다."),statusCode:403);
                 }
 
                 var channelName = $"pp01-survivors-{matchId:N}";
@@ -67,7 +67,7 @@ internal static class VoiceEndpoints
                     RequestSecurity.GetClientAddress(request.HttpContext),
                     cancellationToken);
                 var currentSurvivors=await ReadSurvivors(connection,matchId,cancellationToken);
-                if (!currentSurvivors.ContainsKey(user.Id)) return Results.Forbid();
+                if (!currentSurvivors.ContainsKey(user.Id)) return Results.Json(new VoiceTokenFailure("현재 경기의 생존자만 음성을 사용할 수 있습니다."),statusCode:403);
                 if (!directory.TryBind(matchId, user.Id, body.ProductUserId, user.DisplayName))
                     return Results.Conflict(new VoiceTokenFailure("음성 참가자 식별자가 충돌하거나 현재 등록 한도를 초과했습니다."));
                 await SecurityAudit.WriteAsync(database, request, "VoiceToken", "Issued",
@@ -103,7 +103,7 @@ internal static class VoiceEndpoints
             {
                 await using var connection=await database.OpenConnectionAsync(cancellationToken);
                 var survivors=await ReadSurvivors(connection,match,cancellationToken);
-                if (!survivors.ContainsKey(user.Id)) return Results.Forbid();
+                if (!survivors.ContainsKey(user.Id)) return Results.Json(new VoiceTokenFailure("현재 경기의 생존자만 음성을 사용할 수 있습니다."),statusCode:403);
                 return Results.Ok(directory.Read(match,user.Id,survivors));
             }
             catch (MySqlException) { return Results.StatusCode(503); }

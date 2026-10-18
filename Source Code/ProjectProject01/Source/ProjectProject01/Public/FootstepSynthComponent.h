@@ -16,6 +16,7 @@ enum class EProjectProject01FootstepStyle : uint8
 // 사운드 관련 클래스 전방 선언
 class USoundBase;
 class USoundAttenuation;
+class UPlasticJointSynthComponent;
 
 /**
  * 외부 음원 없이 대리석 위 플라스틱·운동화 발소리를 만드는 경량 공간 음향 컴포넌트입니다.
@@ -26,6 +27,7 @@ UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UFootstepSynthComponent final : public USynthComponent
 {
 	GENERATED_BODY()
+	friend class FProjectFootstepTimbreTest;
 
 public:
 	UFootstepSynthComponent(const FObjectInitializer& ObjectInitializer);
@@ -49,6 +51,10 @@ protected:
 private:
 	void UpdateAutomaticCadence(float DeltaTime);
 	bool CanProduceLocalAudio() const;
+	void TryTriggerPlasticBodyMotion(bool bRunning, bool bTurning);
+	UPlasticJointSynthComponent* GetOrCreatePlasticJointSynth();
+	UPROPERTY(Transient)
+	TObjectPtr<UPlasticJointSynthComponent> PlasticJointSynth;
 
 	UPROPERTY(EditAnywhere, Category="Footstep")
 	EProjectProject01FootstepStyle FootstepStyle = EProjectProject01FootstepStyle::MarbleSneaker;
@@ -83,6 +89,11 @@ private:
 	float PreviousHorizontalSpeed = 0.0f;
 	bool bSkidArmed = false;
 	bool bLocationInitialized = false;
+	double NextPlasticMotionTimeSeconds = -1.0;
+	double LastPlasticMotionTimeSeconds = -1.0;
+	float PreviousPlasticYaw = 0.0f;
+	float AccumulatedPlasticTurnDegrees = 0.0f;
+	bool bPlasticYawInitialized = false;
 
 	// 아래 상태는 SynthCommand를 통해서만 오디오 스레드에서 변경합니다.
 	int32 SynthSampleRate = 48000;
@@ -90,6 +101,7 @@ private:
 	uint32 NoiseState = 0x12345678u;
 	float PulsePhaseLow = 0.0f;
 	float PulsePhaseHigh = 0.0f;
+	float PlasticWeightPhase = 0.0f;
 	float FilteredNoise = 0.0f;
 	float FilteredNoiseSlow = 0.0f;
 	float PulsePitch = 1.0f;
@@ -100,6 +112,10 @@ private:
 	EProjectProject01FootstepStyle ActiveStyle = EProjectProject01FootstepStyle::MarbleSneaker;
 	
 	// 관련 변수
+	/** 기본은 재질별 합성음. 기존 WAV를 명시적으로 사용하려는 경우에만 켭니다. */
+	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
+	bool bUseAssignedSoundAssets = false;
+
 	UPROPERTY(EditAnywhere, Category = "Footstep|Sounds")
 	TArray<TObjectPtr<USoundBase>> WalkSounds;
 	

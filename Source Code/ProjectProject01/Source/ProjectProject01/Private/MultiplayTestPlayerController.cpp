@@ -383,13 +383,18 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 {
 	const bool bAllowSurvivorVoice = ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
 	if (!InRole.Equals(TEXT("Mannequin"),ESearchCase::IgnoreCase)) RemoveMannequinLookBinding();
-	SetSurvivorVoiceStatusVisible(bAllowSurvivorVoice);
-	SetMannequinStatusVisible(InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase));
 	if (bAllowSurvivorVoice || InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
 	{
 		bLocalMultiplayerRoleKnown = true;
 		bLocalMultiplayerMannequinRole = !bAllowSurvivorVoice;
 	}
+	else
+	{
+		bLocalMultiplayerRoleKnown = false;
+		bLocalMultiplayerMannequinRole = false;
+	}
+	SetSurvivorVoiceStatusVisible(bAllowSurvivorVoice);
+	SetMannequinStatusVisible(InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase));
 
 	if (UGameInstance* GI = GetGameInstance())
 	{

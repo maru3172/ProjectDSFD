@@ -238,6 +238,7 @@ internal sealed partial class MainForm : Form
 
     private async Task PackageAsync(bool server)
     {
+        using var operation=TryBeginProjectOperation();if(operation is null)return;
         SaveHelperSettings();
         string uat = Path.Combine(engineRoot.Text.Trim(), "Build", "BatchFiles", "RunUAT.bat");
         if (!File.Exists(uat) || !File.Exists(projectFile.Text.Trim())) { Append("[실패] 먼저 환경 경로를 확인하세요."); return; }
@@ -270,13 +271,36 @@ internal sealed partial class MainForm : Form
         if (code == 0 && !server)
         {
             Append("[OK] 클라이언트 패키징 성공. 업데이트 게시를 이어서 진행합니다.");
-            await PublishClientUpdateAsync();
+            await PublishClientUpdateCoreAsync();
             return;
         }
         SetStatus(code == 0 ? $"{role} 패키징 성공" : $"{role} 패키징 실패 (코드 {code})");
     }
 
     private async Task PublishClientUpdateAsync()
+    {
+        using var operation=TryBeginProjectOperation();if(operation is null)return;
+        await PublishClientUpdateCoreAsync();
+    }
+
+    private IDisposable? TryBeginProjectOperation()
+    {
+        string saved=Path.Combine(ProjectRoot(),"Saved");Directory.CreateDirectory(saved);
+        try
+        {
+            var file=new FileStream(Path.Combine(saved,"BuildPublish.operation.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+            var inputs=new Control[]{engineRoot,projectFile,archiveRoot,serverArgs};
+            foreach(var input in inputs)input.Enabled=false;
+            return new ProjectOperationLease(file,()=>{foreach(var input in inputs)if(!input.IsDisposed)input.Enabled=true;});
+        }
+        catch(IOException){Append("[차단] 이 프로젝트의 패키징 또는 게시 작업이 진행 중입니다. 완료 후 다시 실행하세요.");return null;}
+    }
+    private sealed class ProjectOperationLease(FileStream file,Action release):IDisposable
+    {
+        public void Dispose(){try{file.Dispose();}finally{release();}}
+    }
+
+    private async Task PublishClientUpdateCoreAsync()
     {
         string clientArchive = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string? gameExecutable = Directory.Exists(clientArchive)
@@ -505,6 +529,9 @@ internal sealed partial class MainForm : Form
         string extension = Path.GetExtension(relative);
         return relative.Equals("client-update-manifest.json", StringComparison.OrdinalIgnoreCase) ||
             relative.Equals(".projectproject01-update.json", StringComparison.OrdinalIgnoreCase) ||
+            relative.StartsWith(".update-transaction", StringComparison.OrdinalIgnoreCase) ||
+            relative.Equals(".update-install.lock", StringComparison.OrdinalIgnoreCase) ||
+            relative.StartsWith(".update-cache/", StringComparison.OrdinalIgnoreCase) ||
             relative.StartsWith(".update-temp/", StringComparison.OrdinalIgnoreCase) ||
             relative.StartsWith(".update-backup/", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith("ProjectProject01ClientLauncher", StringComparison.OrdinalIgnoreCase) ||
@@ -580,6 +607,8 @@ internal sealed partial class MainForm : Form
             return;
         }
         string urls = GetBackendListenUrls(backend);
+        string? configuredAddress=GetConfiguredVpnHost(backend);
+        if(configuredAddress is not null&&!IsLocalIpv4Address(configuredAddress))Append("[주의] 저장된 가상 네트워크 주소가 현재 PC에 없어 해당 주소는 제외했습니다. 활성 LAN/로컬 주소로 시작합니다.");
         Append($"[정보] 백엔드 수신 주소: {urls}");
         backendProcess = StartStreamingProcess("dotnet", $"run --urls \"{urls}\"", backend, "BACKEND",
             new Dictionary<string, string>
@@ -619,7 +648,7 @@ internal sealed partial class MainForm : Form
         const string loopbackUrl = "http://127.0.0.1:5080";
         string? host = GetConfiguredVpnHost(backendDirectory);
         var urls = new List<string> { loopbackUrl };
-        if (host is not null) urls.Add($"http://{host}:5080");
+        if (host is not null&&IsLocalIpv4Address(host)) urls.Add($"http://{host}:5080");
         urls.AddRange(GetLocalLanAddresses().Select(item => $"http://{item.Address}:5080"));
         return string.Join(';', urls.Distinct(StringComparer.OrdinalIgnoreCase));
     }

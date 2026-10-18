@@ -67,6 +67,8 @@ internal static class FeatureChecks
             Check(!CrashArtifactEndpoints.Names.Contains("../secret.txt") && !CrashArtifactEndpoints.Names.Contains("password.json"),"덤프 첨부 경로 및 확장자 제한");
             var daily=SurveyEndpoints.FillDailyGaps([new("2026-10-01",2,1,1),new("2026-10-03",3,3,0)]);
             Check(daily.Count==3 && daily[1].Date=="2026-10-02" && daily[1].ResponseCount==0,"꺾은선 무응답 날짜 0건 처리");
+            var extreme=SurveyEndpoints.FillDailyGaps([new("0001-01-01",1,1,0),new("9999-12-31",1,1,0)]);
+            Check(extreme.Count==3660&&extreme[^1].Date=="9999-12-31","극단 설문 날짜도 날짜 overflow 없이 기간 상한 적용");
             ResumeDownloadChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/ResumeDownloads")).GetAwaiter().GetResult();
             UpdateInstallChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/UpdateInstall")).GetAwaiter().GetResult();
             if(args.Length>0) CheckLayouts(args[0]);

@@ -947,6 +947,9 @@ internal static partial class LobbyEndpoints
                     insert.Parameters.AddWithValue("@role", role);
                     insert.Parameters.AddWithValue("@expiresAtUtc", expiresAtUtc);
                     await insert.ExecuteNonQueryAsync(ct);
+                    await using var bind=new MySqlCommand("INSERT INTO game_ticket_sessions(ticket_id,auth_session_id) SELECT @ticket,id FROM auth_sessions WHERE id=@session AND user_id=@user AND revoked_at_utc IS NULL AND access_expires_at_utc>UTC_TIMESTAMP(6);",connection,transaction);
+                    bind.Parameters.AddWithValue("@ticket",insert.LastInsertedId);bind.Parameters.AddWithValue("@session",user.SessionId);bind.Parameters.AddWithValue("@user",user.Id);
+                    if(await bind.ExecuteNonQueryAsync(ct)!=1)return Results.Unauthorized();
                 }
                 await transaction.CommitAsync(ct);
                 // 각 클라이언트 연결마다 서로 다른 256비트 키를 파생한다. 원본 키와 티켓은 DB에 저장하지 않는다.
@@ -998,18 +1001,22 @@ internal static partial class LobbyEndpoints
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
                 await using var transaction = await connection.BeginTransactionAsync(ct);
-                ulong ticketId;
-                ulong userId;
-                string displayName;
-                string roomId;
-                string matchId;
-                string role;
+                ulong ticketId=0,userId=0;
+                string displayName="",roomId="",matchId="",role="";
                 await using (var select = new MySqlCommand(
                     """
                     SELECT t.id, t.user_id, u.display_name, t.room_id, t.match_id, t.role
                     FROM game_join_tickets t
                     INNER JOIN users u ON u.id = t.user_id
+                    INNER JOIN game_ticket_sessions binding ON binding.ticket_id=t.id
+                    INNER JOIN auth_sessions session ON session.id=binding.auth_session_id AND session.user_id=t.user_id
+                    INNER JOIN room_members member ON member.user_id=t.user_id AND member.room_id=t.room_id
+                    INNER JOIN game_rooms room ON room.id=t.room_id AND room.match_id=t.match_id
                     WHERE t.ticket_hash = @ticketHash
+                      AND session.revoked_at_utc IS NULL AND session.access_expires_at_utc>UTC_TIMESTAMP(6)
+                      AND NOT EXISTS(SELECT 1 FROM auth_session_liveness l WHERE l.session_id=session.id AND l.deadline_utc<=UTC_TIMESTAMP(6))
+                      AND NOT EXISTS(SELECT 1 FROM account_restrictions restriction WHERE restriction.user_id=t.user_id AND restriction.lifted_at_utc IS NULL AND (restriction.expires_at_utc IS NULL OR restriction.expires_at_utc>UTC_TIMESTAMP(6)))
+                      AND room.status='Started' AND member.returned_to_room=FALSE AND member.assigned_role=t.role
                       AND t.consumed_at_utc IS NULL
                       AND t.expires_at_utc > UTC_TIMESTAMP(6)
                     LIMIT 1
@@ -1019,18 +1026,21 @@ internal static partial class LobbyEndpoints
                     select.Parameters.Add("@ticketHash", MySqlDbType.Binary, 32).Value =
                         SHA256.HashData(Encoding.UTF8.GetBytes(ticket));
                     await using var reader = await select.ExecuteReaderAsync(ct);
-                    if (!await reader.ReadAsync(ct))
+                    if (await reader.ReadAsync(ct))
                     {
-                        await transaction.RollbackAsync(ct);
-                        await SecurityAudit.WriteAsync(database, request, "GameTicketConsume", "InvalidExpiredOrUsed", null, null, ct);
-                        return Results.Unauthorized();
+                        ticketId = reader.GetUInt64(0);
+                        userId = reader.GetUInt64(1);
+                        displayName = reader.GetString(2);
+                        roomId = ReadRoomId(reader, 3);
+                        matchId = ReadRoomId(reader, 4);
+                        role = reader.GetString(5);
                     }
-                    ticketId = reader.GetUInt64(0);
-                    userId = reader.GetUInt64(1);
-                    displayName = reader.GetString(2);
-                    roomId = ReadRoomId(reader, 3);
-                    matchId = ReadRoomId(reader, 4);
-                    role = reader.GetString(5);
+                }
+                if(ticketId==0)
+                {
+                    await transaction.RollbackAsync(ct);
+                    await SecurityAudit.WriteAsync(database,request,"GameTicketConsume","InvalidExpiredOrUsed",null,null,ct);
+                    return Results.Unauthorized();
                 }
                 if(!await GameServerSlots.IsAssignedAsync(connection,transaction,roomId,matchId,GameServerSlots.RequestPort(request),ct))
                     return Results.Conflict(new LobbyFailure("이 티켓은 다른 게임 서버에 배정되었습니다."));
@@ -1353,7 +1363,8 @@ internal static partial class LobbyEndpoints
 
                 var remoteIpAddress = request.HttpContext.Connection.RemoteIpAddress;
                 var isLoopbackDevelopment = remoteIpAddress is not null &&
-                    System.Net.IPAddress.IsLoopback(remoteIpAddress);
+                    System.Net.IPAddress.IsLoopback(remoteIpAddress) &&
+                    !request.Headers.ContainsKey("X-Forwarded-For") && !request.Headers.ContainsKey("Forwarded") && !request.Headers.ContainsKey("X-Real-IP");
                 if (!hasVerifiedResult && !(securityOptions.AllowUnverifiedLeaderboardSubmissions && isLoopbackDevelopment))
                 {
                     await SecurityAudit.WriteAsync(database, request, "LeaderboardPublish", "UnverifiedResultRejected", user.Id,
@@ -1740,7 +1751,7 @@ internal static partial class LobbyEndpoints
         await using var connection = await database.OpenConnectionAsync(ct);
         await using var command = new MySqlCommand(
             """
-            SELECT u.id, u.display_name
+            SELECT u.id, u.display_name, s.id
             FROM auth_sessions s
             INNER JOIN users u ON u.id = s.user_id
             WHERE s.access_token_hash = @accessHash
@@ -1751,7 +1762,7 @@ internal static partial class LobbyEndpoints
             """, connection) { CommandTimeout = 5 };
         command.Parameters.Add("@accessHash", MySqlDbType.Binary, 32).Value = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         await using var reader = await command.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? new LobbyUser(reader.GetUInt64(0), reader.GetString(1)) : null;
+        return await reader.ReadAsync(ct) ? new LobbyUser(reader.GetUInt64(0), reader.GetString(1),reader.GetUInt64(2)) : null;
     }
 
     internal static async Task<RoomExitResult> RemoveUserFromCurrentRoomAsync(
@@ -1761,6 +1772,7 @@ internal static partial class LobbyEndpoints
         CancellationToken ct)
     {
         await CancelUserSearchesAsync(connection,transaction,userId,ct);
+        await ExecuteAsync(connection,transaction,"DELETE FROM game_join_tickets WHERE user_id=@userId;",("@userId",userId),ct);
         var membership = await LoadMembershipAsync(connection, transaction, userId, true, ct);
         if (membership is null)
         {
@@ -2267,7 +2279,7 @@ internal sealed record SubmitLeaderboardRecordRequest(
     int? RescueCount,
     double? EscapeSeconds);
 internal sealed record LobbyFailure(string Message);
-internal sealed record LobbyUser(ulong Id, string DisplayName);
+internal sealed record LobbyUser(ulong Id, string DisplayName,ulong SessionId);
 internal sealed record Membership(string RoomId, bool IsHost, string Status);
 internal sealed record RoomExitResult(bool HadMembership, bool HostTransferred, bool RoomDeleted);
 internal sealed record RoomSummary(

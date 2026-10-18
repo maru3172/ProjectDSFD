@@ -121,6 +121,7 @@ public:
 	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
 	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
+	bool IsLocalMannequinPlayer() const { return IsLocalController() && bLocalMultiplayerRoleKnown && bLocalMultiplayerMannequinRole; }
 	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	bool HasQueuedManualMannequinCommand() const { return bManualMannequinCommandIssued; }

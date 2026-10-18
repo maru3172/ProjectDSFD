@@ -39,25 +39,6 @@ DEFINE_LOG_CATEGORY(LogProjectProject01Multiplayer);
 
 namespace
 {
-	bool ResolveDisguisePlacementGeometry(const float* Distances, float Radius, FVector& Offset, float& Yaw)
-	{
-		const FVector Axes[]={FVector::ForwardVector,FVector::RightVector};
-		for(int32 Axis=0;Axis<2;++Axis)
-			if(Distances[Axis*2]<600 && Distances[Axis*2+1]<600 && Distances[Axis*2]+Distances[Axis*2+1]<Radius*2+180) return false;
-		FVector NearWalls=FVector::ZeroVector;
-		for(int32 Index=0;Index<4;++Index)
-			if(Distances[Index]<170) NearWalls+=Axes[Index/2]*(Index%2 ? -1:1);
-		Offset=FVector::ZeroVector;
-		if(!NearWalls.IsNearlyZero()) {Yaw=(-NearWalls).Rotation().Yaw;return true;}
-		int32 Pair=-1;float Width=1200;
-		for(int32 Axis=0;Axis<2;++Axis)
-			if(Distances[Axis*2]<600 && Distances[Axis*2+1]<600 && Distances[Axis*2]+Distances[Axis*2+1]<Width)
-			{Pair=Axis;Width=Distances[Axis*2]+Distances[Axis*2+1];}
-		if(Pair<0 || Width<Radius*2+180) return false;
-		Offset=Axes[Pair]*(Distances[Pair*2]-Distances[Pair*2+1])*0.5;
-		Yaw=Axes[1-Pair].Rotation().Yaw;
-		return true;
-	}
 	float PatrolHandoffDistance(float Configured, float Acceptance, float CapsuleRadius, float Speed, float Interval, float Braking)
 	{
 		const float TravelBeforeNextCheck = FMath::Max(0.0f, Speed) * FMath::Max(0.01f, Interval) * 2.0f;
@@ -216,24 +197,6 @@ bool FProjectProject01SurvivorVisionConeTest::RunTest(const FString& Parameters)
 		IsPointInsideVisionCone(FVector::ZeroVector, FVector::ForwardVector, FVector(-100.0f, 0.0f, 0.0f), 55.0f));
 	TestFalse(TEXT("An invalid zero-distance target is rejected"),
 		IsPointInsideVisionCone(FVector::ZeroVector, FVector::ForwardVector, FVector::ZeroVector, 55.0f));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMannequinDisguisePlacementGeometryTest,
-	"ProjectProject01.Multiplayer.DisguisePlacementGeometry",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
-bool FProjectMannequinDisguisePlacementGeometryTest::RunTest(const FString&)
-{
-	FVector Offset;float Yaw=0;
-	const float Corner[]={100,600,100,600};
-	TestTrue(TEXT("Corner geometry provides an open-space facing pose"),ResolveDisguisePlacementGeometry(Corner,42,Offset,Yaw));
-	TestTrue(TEXT("Corner pose faces away from both nearby walls"),FRotator(0,Yaw,0).Vector().X<0 && FRotator(0,Yaw,0).Vector().Y<0);
-	const float Corridor[]={250,350,600,600};
-	TestTrue(TEXT("Wide aisle has a centerline pose"),ResolveDisguisePlacementGeometry(Corridor,42,Offset,Yaw));
-	TestTrue(TEXT("Aisle placement centers and faces along corridor"),Offset.Equals(FVector(-50,0,0)) && FMath::IsNearlyEqual(Yaw,90.0f));
-	const float Narrow[]={70,100,100,600};
-	TestFalse(TEXT("Narrow doorway is rejected even near another wall"),ResolveDisguisePlacementGeometry(Narrow,42,Offset,Yaw));
-	const float Empty[]={600,600,600,600};
-	TestFalse(TEXT("Unclassified open space is not an arbitrary stop"),ResolveDisguisePlacementGeometry(Empty,42,Offset,Yaw));
 	return true;
 }
 
@@ -685,7 +648,6 @@ void AMultiplayTestGameMode::StopAllMannequinsForMatchEnd()
 	MultiplayerPatrolTargetHistory.Reset();
 	MultiplayerObservedChaseTargets.Reset();
 	MultiplayerSearchStates.Reset();
-	MultiplayerDisguiseStates.Reset();
 }
 
 bool AMultiplayTestGameMode::SelectNextPatrolTarget(
@@ -916,8 +878,6 @@ void AMultiplayTestGameMode::MoveMannequinToPatrolTarget(
 			}
 		}
 		if (MultiplayerPatrolNextTargets.Contains(Mannequin) &&
-			TryBeginPatrolDisguise(Mannequin, GetWorld()->GetTimeSeconds())) return;
-		if (MultiplayerPatrolNextTargets.Contains(Mannequin) &&
 			FMath::FRand() < FMath::Clamp(MultiplayerObservationChance, 0.0f, 1.0f))
 		{
 			const float MinSeconds = FMath::Max(0.1f, MultiplayerObservationMinSeconds);
@@ -1023,134 +983,6 @@ void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
 		true, true, true, true, nullptr, true);
 }
 
-bool AMultiplayTestGameMode::TryBeginPatrolDisguise(AMannequinAICharacter* Mannequin, double Now)
-{
-	if (!HasAuthority() || !IsValid(Mannequin) || Mannequin->IsManualControlEnabled() ||
-		Mannequin->GetMultiplayCommand()!=EMultiplayMannequinCommand::Patrol || Mannequin->IsFrozenBySurvivorVision()) return false;
-	FMultiplayMannequinDisguiseState& State=MultiplayerDisguiseStates.FindOrAdd(Mannequin);
-	if (Now<State.NextAllowedSeconds || FMath::FRand()>=FMath::Clamp(MultiplayerDisguiseChance,0.0f,1.0f)) return false;
-	// Never stop where the random roll occurred. Choose a hidden, reachable display space first.
-	FVector Destination;float FacingYaw=0;
-	State.NextAllowedSeconds=Now+5.0;
-	if (!IsDisguiseLocationHidden(Mannequin,Mannequin->GetActorLocation()) ||
-		!SelectAutomaticDisguiseLocation(Mannequin,Destination,FacingYaw)) return false;
-	AAIController* Controller=Cast<AAIController>(Mannequin->GetController());
-	if (!Controller || Controller->MoveToLocation(Destination,25,false,true,false,true,nullptr,false)==EPathFollowingRequestResult::Failed) return false;
-	const float Min=FMath::Max(0.1f,MultiplayerDisguiseMinSeconds);
-	State.RemainingSeconds=FMath::FRandRange(Min,FMath::Max(Min,MultiplayerDisguiseMaxSeconds));
-	State.NextAllowedSeconds=Now+State.RemainingSeconds+FMath::Max(1.0f,MultiplayerDisguiseCooldownSeconds);
-	State.bWasObserved=false;
-	State.bApproaching=true;State.Destination=Destination;State.FacingYaw=FacingYaw;State.ApproachSeconds=0;
-	Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
-	return true;
-}
-
-bool AMultiplayTestGameMode::ContinuePatrolDisguise(AMannequinAICharacter* Mannequin)
-{
-	FMultiplayMannequinDisguiseState* State=MultiplayerDisguiseStates.Find(Mannequin);
-	if (!State || State->RemainingSeconds<=0) return false;
-	const float Delta=FMath::Max(0.01f,MultiplayerRepathInterval);
-	if (State->bApproaching)
-	{
-		State->ApproachSeconds+=Delta;
-		AAIController* Controller=Cast<AAIController>(Mannequin->GetController());
-		const float HalfHeight=Mannequin->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-		if (!Controller || State->ApproachSeconds>FMath::Max(1.0f,MultiplayerDisguiseApproachTimeoutSeconds) ||
-			!IsDisguiseLocationHidden(Mannequin,State->Destination+FVector(0,0,HalfHeight+2)))
-		{State->Cancel();return false;}
-		const bool bArrived=FVector::DistSquared2D(Mannequin->GetActorLocation(),State->Destination)<=FMath::Square(35.0) &&
-			FMath::Abs(Mannequin->GetActorLocation().Z-State->Destination.Z)<=HalfHeight+30;
-		if (!bArrived)
-		{
-			if (Controller->GetMoveStatus()!=EPathFollowingStatus::Moving &&
-				Controller->MoveToLocation(State->Destination,25,false,true,false,true,nullptr,false)!=EPathFollowingRequestResult::RequestSuccessful)
-			{State->Cancel();return false;}
-			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);return true;
-		}
-		// Pose formation is allowed only while nobody can see the actual body, too.
-		if (!IsDisguiseLocationHidden(Mannequin,Mannequin->GetActorLocation())) {State->Cancel();return false;}
-		StopMannequinAI(Mannequin);
-		const FRotator Facing(0,State->FacingYaw,0);
-		Mannequin->SetActorRotation(FMath::RInterpConstantTo(Mannequin->GetActorRotation(),Facing,Delta,90));
-		if (FMath::Abs(FMath::FindDeltaAngleDegrees(Mannequin->GetActorRotation().Yaw,State->FacingYaw))>3)
-		{Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Observing);return true;}
-		State->bApproaching=false;
-		State->NextAllowedSeconds=FMath::Max(State->NextAllowedSeconds,
-			GetWorld()->GetTimeSeconds()+State->RemainingSeconds+FMath::Max(1.0f,MultiplayerDisguiseCooldownSeconds));
-	}
-	else if (!State->Advance(Delta)) {State->Cancel();return false;}
-	StopMannequinAI(Mannequin);
-	Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Disguised);
-	return true;
-}
-
-bool AMultiplayTestGameMode::IsDisguiseLocationHidden(const AMannequinAICharacter* Mannequin, const FVector& Center) const
-{
-	if (!IsValid(Mannequin) || Center.ContainsNaN() || !GetWorld()) return false;
-	const float Height=Mannequin->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-	const float Radius=Mannequin->GetCapsuleComponent()->GetScaledCapsuleRadius();
-	for (TActorIterator<APlayerCharacter> It(GetWorld());It;++It)
-	{
-		if (!IsActiveSurvivorTarget(*It)) continue;
-		const auto* PC=Cast<APlayerController>(It->GetController());
-		FVector Eye;FRotator View;PC->GetPlayerViewPoint(Eye,View);
-		if (Eye.ContainsNaN() || View.ContainsNaN()) return false;
-		FCollisionQueryParams Query(SCENE_QUERY_STAT(DisguiseVisibility),true,*It);Query.AddIgnoredActor(Mannequin);
-		const FVector Side=View.RotateVector(FVector::RightVector)*Radius;
-		const FVector Samples[]={Center,Center+FVector(0,0,Height*0.65f),Center-FVector(0,0,Height*0.4f),Center+Side,Center-Side};
-		for (const FVector& Sample:Samples)
-			if (IsPointInsideVisionCone(Eye,View.Vector(),Sample,SurvivorVisionHalfAngleDegrees) &&
-				!GetWorld()->LineTraceTestByChannel(Eye,Sample,ECC_GameTraceChannel1,Query)) return false;
-	}
-	return true;
-}
-
-bool AMultiplayTestGameMode::SelectAutomaticDisguiseLocation(AMannequinAICharacter* Mannequin, FVector& OutDestination, float& OutYaw) const
-{
-	UNavigationSystemV1* Nav=UNavigationSystemV1::GetCurrent(GetWorld());
-	if (!Nav || !IsValid(Mannequin)) return false;
-	const float Radius=Mannequin->GetCapsuleComponent()->GetScaledCapsuleRadius();
-	const float HalfHeight=Mannequin->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-	const FVector Axes[]={FVector::ForwardVector,FVector::RightVector};
-	FCollisionQueryParams Query(SCENE_QUERY_STAT(DisguisePlacement),true,Mannequin);
-	for (int32 Attempt=0;Attempt<8;++Attempt)
-	{
-		FNavLocation Sample;
-		if (!Nav->GetRandomReachablePointInRadius(Mannequin->GetActorLocation(),FMath::Max(250.0f,MultiplayerDisguiseSearchRadius),Sample)) continue;
-		FVector Point=Sample.Location;
-		float Distances[4];
-		for (int32 Direction=0;Direction<4;++Direction)
-		{
-			const FVector Axis=Axes[Direction/2]*(Direction%2 ? -1:1);FHitResult Wall;
-			const FVector Center=Point+FVector(0,0,HalfHeight);
-			Distances[Direction]=GetWorld()->LineTraceSingleByChannel(Wall,Center,Center+Axis*600,ECC_Visibility,Query) ? Wall.Distance:600;
-		}
-		// Corners face into open space; paired walls center a wide aisle, facing along it.
-		float Yaw=0;FVector Offset;
-		if(!ResolveDisguisePlacementGeometry(Distances,Radius,Offset,Yaw)) continue;
-		Point+=Offset;
-		FNavLocation Projected;
-		if (!Nav->ProjectPointToNavigation(Point,Projected,FVector(80,80,150)) || FVector::DistSquared2D(Point,Projected.Location)>FMath::Square(80.0)) continue;
-		FHitResult Floor;
-		if (!GetWorld()->LineTraceSingleByChannel(Floor,Projected.Location+FVector(0,0,50),Projected.Location-FVector(0,0,150),ECC_Visibility,Query) || Floor.ImpactNormal.Z<0.9f) continue;
-		Point=Floor.ImpactPoint;
-		const FVector Center=Point+FVector(0,0,HalfHeight+2);
-		if (FVector::DistSquared2D(Mannequin->GetActorLocation(),Point)<FMath::Square(250.0) ||
-			GetWorld()->OverlapBlockingTestByChannel(Center,FQuat::Identity,ECC_Pawn,
-				FCollisionShape::MakeCapsule(Radius+35,FMath::Max(HalfHeight,Radius+35)),Query) ||
-			!IsDisguiseLocationHidden(Mannequin,Center)) continue;
-		bool bOccupied=false;
-		for (const auto& Pair:MultiplayerDisguiseStates)
-			if (Pair.Key!=Mannequin && Pair.Key.IsValid() && Pair.Value.RemainingSeconds>0 &&
-				FVector::DistSquared2D(Pair.Value.Destination,Point)<FMath::Square(250.0)) {bOccupied=true;break;}
-		if (bOccupied) continue;
-		UNavigationPath* Path=Nav->FindPathToLocationSynchronously(GetWorld(),Mannequin->GetActorLocation(),Point,Mannequin);
-		if (!IsValid(Path) || !Path->IsValid() || Path->IsPartial()) continue;
-		OutDestination=Point;OutYaw=Yaw;return true;
-	}
-	return false;
-}
-
 bool AMultiplayTestGameMode::ContinueLastSeenSearch(AMannequinAICharacter* Mannequin, AAIController* Controller, double Now)
 {
 	FMultiplayMannequinSearchState* State = MultiplayerSearchStates.Find(Mannequin);
@@ -1236,7 +1068,6 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		if (Mannequin->IsManualControlEnabled())
 		{
 			MultiplayerSearchStates.Remove(Mannequin);
-			if (auto* State=MultiplayerDisguiseStates.Find(Mannequin)) State->Cancel();
 			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::ManualControl);
 			continue;
 		}
@@ -1256,15 +1087,6 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 
 		const EMultiplayMannequinCommand Command = Mannequin->GetMultiplayCommand();
-		if (auto* State=MultiplayerDisguiseStates.Find(Mannequin))
-		{
-			if (Command!=EMultiplayMannequinCommand::Patrol) State->Cancel();
-			else if (Mannequin->IsFrozenBySurvivorVision() && State->RemainingSeconds>0)
-			{
-				if (State->bApproaching) State->Cancel();
-				else State->bWasObserved=true;
-			}
-		}
 		if (Mannequin->IsFrozenBySurvivorVision() || Command == EMultiplayMannequinCommand::HoldPosition)
 		{
 			if (Command == EMultiplayMannequinCommand::HoldPosition) MultiplayerSearchStates.Remove(Mannequin);
@@ -1292,7 +1114,6 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 		if (IsValid(ChaseTarget))
 		{
-			if (auto* State=MultiplayerDisguiseStates.Find(Mannequin)) State->Cancel();
 			FMultiplayMannequinSearchState& Memory = MultiplayerSearchStates.FindOrAdd(Mannequin);
 			Memory.Target = ChaseTarget;
 			Memory.LastSeenLocation = ChaseTarget->GetActorLocation();
@@ -1308,7 +1129,6 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 			continue;
 		}
 		if (ContinueLastSeenSearch(Mannequin, AIController, GetWorld()->GetTimeSeconds())) continue;
-		if (Command==EMultiplayMannequinCommand::Patrol && ContinuePatrolDisguise(Mannequin)) continue;
 
 		switch (Command)
 		{
@@ -1395,8 +1215,6 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 	}
 	for (auto It = MultiplayerSearchStates.CreateIterator(); It; ++It)
-		if (!It.Key().IsValid()) It.RemoveCurrent();
-	for (auto It = MultiplayerDisguiseStates.CreateIterator(); It; ++It)
 		if (!It.Key().IsValid()) It.RemoveCurrent();
 }
 
@@ -1503,7 +1321,8 @@ void AMultiplayTestGameMode::PreLogin(
 	const FString Ticket = UGameplayStatics::ParseOption(Options, TEXT("GameTicket"));
 	const FString RequestedRoomId = UGameplayStatics::ParseOption(Options, TEXT("LobbyRoomId"));
 	FProjectProject01ValidatedJoinClaim Claim;
-	if (Ticket.IsEmpty() || !UProjectProject01GameInstance::ConsumeValidatedJoinClaim(Ticket, Claim))
+    auto* SecurityInstance=GetGameInstance<UProjectProject01GameInstance>();
+	if (Ticket.IsEmpty() || !SecurityInstance || !SecurityInstance->ConsumeValidatedJoinClaim(Ticket, Claim))
 	{
 		ErrorMessage = TEXT("A valid one-time game connection ticket is required.");
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
@@ -1910,6 +1729,20 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 		? Cast<APlayerCharacter>(Controller->GetPawn())
 		: nullptr;
 	if (Record.SurvivorPawn.IsValid()) Record.RemainingDeathCount = Record.SurvivorPawn->GetRemainingDeathCount();
+    if(Controller->IsLevelTransitionCarryover())
+    {
+        const auto* Instance=GetGameInstance<UProjectProject01GameInstance>();
+        const auto Carry=Instance?Instance->ServerMatchCarryover:nullptr;
+        if(Carry&&Carry->MatchId==Record.MatchId)
+        {
+            if(const auto* Previous=Carry->Players.Find(Record.UserId);Previous&&Previous->Role==Record.Role)
+            {
+                const auto Pawn=Record.SurvivorPawn;const auto State=Record.SurvivorState;
+                Record=*Previous;Record.SurvivorPawn=Pawn;Record.SurvivorState=State;Record.bDisconnected=false;
+                MatchCarryover=Carry;ExpectedMatchPlayers=Carry->Players.Num();
+            }
+        }
+    }
 
 	if (AuthoritativeMatchId.IsEmpty() && !Record.MatchId.IsEmpty())
 	{
@@ -2172,6 +2005,7 @@ void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
 		? FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower)
 		: ValidatedMatchId;
 	MatchStartWorldSeconds = GetWorld()->GetTimeSeconds();
+    PreviousMatchSeconds=MatchCarryover?MatchCarryover->ElapsedSeconds+FMath::Max(0.,FPlatformTime::Seconds()-MatchCarryover->PreparedRealSeconds):0;
 	MatchEndWorldSeconds = 0.0;
 	bFinishCommitted = false;
 	bMatchEndedByForfeit = false;
@@ -2180,6 +2014,15 @@ void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
 	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
 		if (IsValid(*It)) It->SetCatchDamageEnabled(true);
 	DisconnectedMatchRecords.Reset();
+    if(MatchCarryover)
+    {
+        DisconnectedMatchRecords=MatchCarryover->Disconnected;
+        for(auto& Pair:DisconnectedMatchRecords)
+        {
+            Pair.Value.SurvivorPawn.Reset();
+            if(Pair.Value.bDisconnected)Pair.Value.ReconnectDeadlineWorldSeconds=MatchStartWorldSeconds+FMath::Max(0.,Pair.Value.ReconnectDeadlineWorldSeconds-MatchCarryover->PreparedWorldSeconds-(FPlatformTime::Seconds()-MatchCarryover->PreparedRealSeconds));
+        }
+    }
 	CompletedResultsByUserId.Reset();
 	ResultVerificationStatus.Reset();
 	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
@@ -2580,6 +2423,17 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
 		bTimelineTravelPrepared = true;
 	}
 
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
+    {
+        auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
+        Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
+        Carry->Disconnected=DisconnectedMatchRecords;
+        for(const auto& Pair:MatchPlayerRecords)if(Pair.Key.IsValid())Carry->Players.Add(Pair.Value.UserId,Pair.Value);
+        for(auto& Pair:Carry->Players)Pair.Value.SurvivorPawn.Reset();
+        for(auto& Pair:Carry->Disconnected)Pair.Value.SurvivorPawn.Reset();
+        Instance->ServerMatchCarryover=Carry;
+    }
+
 	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair :
 		MatchPlayerRecords)
 	{
@@ -2587,7 +2441,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
 		{
 			const bool bSpawnInNextLevel = Pair.Value.Role == TEXT("Survivor") &&
 				Pair.Value.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting;
-			Controller->PrepareLevelTransitionCarryover(bSpawnInNextLevel);
+			if(!Controller->IsLevelTransitionCarryover())Controller->PrepareLevelTransitionCarryover(bSpawnInNextLevel);
 		}
 	}
 }
@@ -2646,14 +2500,14 @@ void AMultiplayTestGameMode::CheckForMatchCompletion()
 double AMultiplayTestGameMode::GetElapsedMatchSeconds() const
 {
 	const UWorld* World = GetWorld();
-	if (!IsValid(World) || MatchStartWorldSeconds <= 0.0)
+	if (!IsValid(World) || AuthoritativeMatchPhase==EMultiplayTestMatchPhase::Waiting || AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment)
 	{
 		return 0.001;
 	}
 	const double EndSeconds = MatchEndWorldSeconds > 0.0
 		? MatchEndWorldSeconds
 		: static_cast<double>(World->GetTimeSeconds());
-	return FMath::Max(0.001, EndSeconds - MatchStartWorldSeconds);
+	return FMath::Max(0.001, PreviousMatchSeconds+EndSeconds-MatchStartWorldSeconds);
 }
 
 void AMultiplayTestGameMode::FinishAuthoritativeMatch(const FString& Reason)
@@ -2664,6 +2518,7 @@ void AMultiplayTestGameMode::FinishAuthoritativeMatch(const FString& Reason)
 	}
 
 	bFinishCommitted = true;
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->ServerMatchCarryover.Reset();
 	RecordTimeline(EProjectMatchEvent::Ended, {}, Reason);
 	MatchEndWorldSeconds = GetWorld()->GetTimeSeconds();
 	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending);
@@ -3055,7 +2910,6 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 	MultiplayerObservationBaseYaw.Remove(Target);
 	MultiplayerObservedChaseTargets.Remove(Target);
 	MultiplayerSearchStates.Remove(Target);
-	if (auto* State=MultiplayerDisguiseStates.Find(Target)) State->Cancel();
 	RequestingController->bManualMannequinCommandIssued = true;
 	RequestingController->ForceNetUpdate();
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
@@ -3085,7 +2939,6 @@ bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerCon
 			MultiplayerPatrolTargets.Remove(Mannequin);
 			MultiplayerObservedChaseTargets.Remove(Mannequin);
 			MultiplayerSearchStates.Remove(Mannequin);
-			if (auto* State=MultiplayerDisguiseStates.Find(Mannequin)) State->Cancel();
 			bChangedAny = true;
 		}
 	}

@@ -330,6 +330,7 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 	}
 
 	// 서버 이동은 현재 접속한 모든 클라이언트를 같은 목적지로 함께 전환합니다.
+    if(auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>())Mode->PrepareLevelTransitionTravel();
 	if (!World->ServerTravel(DestinationPackage, false))
 	{
 		bTransitionStarted = false;

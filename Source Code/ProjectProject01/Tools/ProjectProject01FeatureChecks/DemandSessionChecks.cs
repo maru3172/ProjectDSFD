@@ -142,6 +142,14 @@ internal static class DemandSessionChecks
             foreach(var running in factory.Started.Where(p=>!p.Process.HasExited))await Read(server.PostAsJsonAsync("/api/server/heartbeat",new {port=running.Port,bootId="boot-"+running.Instance,ready=true,managedId=running.Instance}));
             await manager.TickAsync(default);var one=await State();var other=await State(1);
             Check(one.GetProperty("started").GetBoolean()&&other.GetProperty("started").GetBoolean()&&one.GetProperty("travelUrl").GetString()!=other.GetProperty("travelUrl").GetString(),"두 방의 실제 시작·접속 포트 분리");
+            foreach(var running in factory.Started.Where(p=>!p.Process.HasExited))
+            {
+                await OperationsIntegration.Execute(database,$"UPDATE game_server_slots SET ready=FALSE,reported_match_id=assigned_match_id WHERE port={running.Port};");
+            }
+            await manager.TickAsync(default);
+            await OperationsIntegration.Execute(database,"UPDATE game_server_slots SET last_heartbeat_utc=UTC_TIMESTAMP()-INTERVAL 45 SECOND;");
+            clock.Advance(29);await manager.TickAsync(default);Check(factory.Live==2,"진행 경기 heartbeat 유예 중 정상 프로세스 보존");
+            clock.Advance(2);await manager.TickAsync(default);Check(factory.Live==0&&!(await State()).GetProperty("started").GetBoolean(),"살아 있어도 heartbeat 멈춘 경기 회수·방 복구");
             await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new {enabled=false}));await manager.TickAsync(default);
             await Configure(2);var changed=await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand/capacity",new {maximumConcurrent=1}));
             Check(changed.GetProperty("enabled").GetBoolean()&&changed.GetProperty("maximumConcurrent").GetInt32()==1&&factory.Live==0,"유휴 중 한도 적용은 운영 상태 유지");

@@ -245,7 +245,7 @@ function Save-LocalSecrets {
             ApiKey = $AdministratorApiKey
         }
         Security = [ordered]@{
-            AllowUnverifiedLeaderboardSubmissions = $true
+            AllowUnverifiedLeaderboardSubmissions = $false
         }
     }
     New-Item -ItemType Directory -Path $instanceDirectory -Force | Out-Null

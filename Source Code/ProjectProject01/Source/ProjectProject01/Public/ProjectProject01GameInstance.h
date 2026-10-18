@@ -14,6 +14,7 @@
 
 class SBorder;
 struct FProjectMatchTimelineLog;
+struct FMultiplayTestMatchCarryover;
 
 UENUM(BlueprintType)
 enum class EProjectProject01VFXIntensity : uint8
@@ -312,6 +313,7 @@ class PROJECTPROJECT01_API UProjectProject01GameInstance final : public UGameIns
 public:
 	/** Server-only transient history; never replicated and never written to account/save data. */
 	TSharedPtr<FProjectMatchTimelineLog> ServerMatchTimeline;
+    TSharedPtr<FMultiplayTestMatchCarryover> ServerMatchCarryover;
 	virtual void Init() override;
 	virtual void Shutdown() override;
 	virtual void ReceivedNetworkEncryptionToken(
@@ -337,7 +339,7 @@ public:
 	void ClearPendingGameConnection();
 
 	/** PreLogin이 암호화 핸드셰이크에서 검증된 claim을 한 번 가져옵니다. */
-	static bool ConsumeValidatedJoinClaim(
+	bool ConsumeValidatedJoinClaim(
 		const FString& Ticket,
 		FProjectProject01ValidatedJoinClaim& OutClaim);
 
@@ -467,5 +469,9 @@ private:
 	FString PendingCrashMatchId;
 	FString PendingCrashPlayerRole;
 	bool bHandlingFailedGameConnection = false;
+    friend class FProjectNetworkIsolationTest;
+    TArray<uint8> PendingClientEncryptionKey;
+    FString PendingClientTicket;
+    TMap<FString,FProjectProject01ValidatedJoinClaim> ValidatedClaims;
 	bool bHandlingSessionInvalidation = false;
 };

@@ -240,6 +240,7 @@ if (startupDatabase.IsConfigured)
     try
     {
         await startupDatabase.InitializeSchemaAsync(app.Environment.ContentRootPath, app.Lifetime.ApplicationStopping);
+        await app.Services.GetRequiredService<GameServerDemandManager>().ReconcileStartupAsync(app.Lifetime.ApplicationStopping);
         var startupServiceState = app.Services.GetRequiredService<ServiceControlState>();
         startupServiceState.Set(await ServiceControlStore.LoadAsync(
             startupDatabase, app.Lifetime.ApplicationStopping));
@@ -302,7 +303,8 @@ app.MapPost("/api/auth/register", async (
     }
 
     var accountId = request.AccountId.Trim();
-    var displayName = request.DisplayName.Trim();
+    var displayName = request.DisplayName?.Trim() ?? string.Empty;
+    if(displayName.Length is <2 or >32)return Results.BadRequest(new AuthFailure("표시 이름은 2~32자로 입력하세요."));
     var user = new AuthUser(0, accountId, displayName, string.Empty, 0, null, false, false);
     var passwordHash = passwordHasher.HashPassword(user, request.Password);
 
@@ -378,9 +380,9 @@ app.MapPost("/api/auth/login", async (
         var verifyResult = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (verifyResult == PasswordVerificationResult.Failed)
         {
-            await RecordFailedLoginAsync(connection, user.Id, user.FailedLoginCount + 1, cancellationToken);
+            await RecordFailedLoginAsync(connection, user.Id, cancellationToken);
             await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "InvalidCredentials", user.Id,
-                $"FailedCount={user.FailedLoginCount + 1}", cancellationToken);
+                "FailureCountIncrementedAtomically", cancellationToken);
             return InvalidCredentials();
         }
 
@@ -736,22 +738,19 @@ static async Task<AuthUser?> LoadUserAsync(
 static async Task RecordFailedLoginAsync(
     MySqlConnection connection,
     ulong userId,
-    uint failedLoginCount,
     CancellationToken cancellationToken)
 {
-    var shouldLock = failedLoginCount >= MaximumFailedLoginCount;
     await using var command = new MySqlCommand(
         """
         UPDATE users
-        SET failed_login_count = @failedLoginCount,
-            locked_until_utc = CASE WHEN @shouldLock THEN @lockedUntilUtc ELSE locked_until_utc END
+        SET locked_until_utc = CASE WHEN failed_login_count + 1 >= @maximum THEN @lockedUntilUtc ELSE locked_until_utc END,
+            failed_login_count = LEAST(failed_login_count + 1, 4294967295)
         WHERE id = @userId;
         """, connection)
     {
         CommandTimeout = 5
     };
-    command.Parameters.AddWithValue("@failedLoginCount", failedLoginCount);
-    command.Parameters.AddWithValue("@shouldLock", shouldLock);
+    command.Parameters.AddWithValue("@maximum", MaximumFailedLoginCount);
     command.Parameters.AddWithValue("@lockedUntilUtc", DateTime.UtcNow.AddMinutes(AccountLockMinutes));
     command.Parameters.AddWithValue("@userId", userId);
     await command.ExecuteNonQueryAsync(cancellationToken);

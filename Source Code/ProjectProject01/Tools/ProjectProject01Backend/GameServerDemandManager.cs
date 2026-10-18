@@ -59,6 +59,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     {
         public string Room=room,Instance=Guid.NewGuid().ToString("N");public int Port=port;
         public DateTimeOffset Created=created;public bool Committed,ObservedMatch;
+        public DateTimeOffset LastHealthy=created;
         public IManagedGameProcess? Process;
     }
     internal bool Enabled {get{lock(gate)return configuration.Enabled;}}
@@ -68,6 +69,20 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
         sessions=entries.Values.Select(e=>new {roomId=e.Room,port=e.Port,phase=e.ObservedMatch?"Playing":"Preparing"}).ToArray()};}
     internal bool OwnsHeartbeat(int port,string instance){lock(gate)return entries.Values.Any(e=>e.Port==port&&e.Instance==instance&&e.Committed);}
     internal bool HasManagedPort(int port){lock(gate)return entries.Values.Any(e=>e.Port==port);}
+    internal async Task ReconcileStartupAsync(CancellationToken ct)
+    {
+        await using var c=await database.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
+        await LobbyEndpoints.LockLobbyStateAsync(c,tx,ct);
+        // No in-memory owner survives a backend restart. Abort interrupted sessions, not waiting rooms.
+        await CommunityEndpoints.Exec(c,tx,"""
+            UPDATE auth_sessions s JOIN room_members m ON m.user_id=s.user_id JOIN game_rooms r ON r.id=m.room_id
+            SET s.revoked_at_utc=UTC_TIMESTAMP(6) WHERE r.status<>'Waiting' AND s.revoked_at_utc IS NULL;
+            DELETE FROM game_rooms WHERE status<>'Waiting';
+            UPDATE game_server_slots SET ready=FALSE,last_heartbeat_utc='2000-01-01',reported_match_id=NULL,assigned_room_id=NULL,assigned_match_id=NULL,has_started=FALSE;
+            """,ct);
+        await tx.CommitAsync(ct);
+        logger.LogInformation("백엔드 시작 복구: 소유권을 잃은 진행/준비 경기 정리, 대기방 보존");
+    }
     internal sealed class Reservation(GameServerDemandManager owner,string room,int port) : IDisposable
     {
         public int Port {get;}=port;private bool committed;
@@ -170,13 +185,13 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
                 {
                     if(!settings.Enabled){await RemoveAsync(entry,true,ct);continue;}
                     await using var connection=await database.OpenConnectionAsync(ct);
-                    string? status;bool ready=false;string? reported=null;
-                    await using(var select=new MySqlCommand("SELECT r.status,s.ready AND s.last_heartbeat_utc>UTC_TIMESTAMP(6)-INTERVAL 10 SECOND,s.reported_match_id FROM game_rooms r LEFT JOIN game_server_slots s ON s.port=@port WHERE r.id=@room;",connection))
+                    string? status;bool ready=false,healthy=false;string? reported=null;
+                    await using(var select=new MySqlCommand("SELECT r.status,s.ready AND s.last_heartbeat_utc>UTC_TIMESTAMP(6)-INTERVAL 10 SECOND,s.reported_match_id,s.last_heartbeat_utc>UTC_TIMESTAMP(6)-INTERVAL 10 SECOND FROM game_rooms r LEFT JOIN game_server_slots s ON s.port=@port WHERE r.id=@room;",connection))
                     {
                         select.Parameters.AddWithValue("@room",entry.Room);select.Parameters.AddWithValue("@port",entry.Port);
                         await using var reader=await select.ExecuteReaderAsync(ct);
                         status=await reader.ReadAsync(ct)?reader.GetString(0):null;
-                        if(status is not null){ready=!reader.IsDBNull(1)&&reader.GetBoolean(1);reported=reader.IsDBNull(2)?null:Convert.ToString(reader.GetValue(2));}
+                        if(status is not null){ready=!reader.IsDBNull(1)&&reader.GetBoolean(1);reported=reader.IsDBNull(2)?null:Convert.ToString(reader.GetValue(2));healthy=!reader.IsDBNull(3)&&reader.GetBoolean(3);}
                     }
                     if(status is null or "Waiting"){await RemoveAsync(entry,false,ct);continue;}
                     if(entry.Process is null)
@@ -189,6 +204,9 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
                     }
                     if(entry.Process.HasExited){logger.LogWarning("경기 세션 프로세스 종료: 방 {Room}",entry.Room);await RemoveAsync(entry,true,ct);continue;}
                     entry.ObservedMatch|=reported is not null;
+                    if(healthy)entry.LastHealthy=clock.GetUtcNow();
+                    if(entry.ObservedMatch&&clock.GetUtcNow()-entry.LastHealthy>TimeSpan.FromSeconds(30))
+                    {logger.LogWarning("진행 경기 heartbeat 유예 만료: 방 {Room}",entry.Room);await RemoveAsync(entry,true,ct);continue;}
                     if(!entry.ObservedMatch&&clock.GetUtcNow()-entry.Created>TimeSpan.FromSeconds(status=="Preparing"?90:150))
                     {logger.LogWarning("경기 세션 준비/입장 시간 초과: 방 {Room}",entry.Room);await RemoveAsync(entry,true,ct);continue;}
                     if(status=="Preparing"&&ready)

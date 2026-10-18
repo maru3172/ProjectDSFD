@@ -1303,13 +1303,15 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 				0.55f, 1.0f)
 			: 1.0f;
 		MulticastPlayPainAndDeathWorldSFX(false, PainIntensity);
+		const float DamageSeverity = UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(
+			RemainingDeathCount, StartingDeathCount);
 		if (IsLocallyControlled())
 		{
-			PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
+			PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 		}
 		else
 		{
-			ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection);
+			ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 		}
 		if (AMultiplayTestGameMode* MultiplayGameMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
 			IsValid(MultiplayGameMode))
@@ -1345,6 +1347,17 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	UE_LOG(LogTemp, Warning, TEXT("Player %s reached game over after being caught by mannequin %s."),
 		*GetName(), *CatchingMannequin->GetName());
 	return true;
+}
+
+bool APlayerCharacter::CanPlayTensionBreathing() const
+{
+	if (!IsLocallyControlled() || bGameOver || bSinglePlayerResultPresented || bCameraDeathFeedbackActive || IsHidden()) return false;
+	const UWorld* World = GetWorld();
+	if (!World || World->GetNetMode() == NM_DedicatedServer) return false;
+	if (const auto* Multiplayer = Cast<AMultiplayTestPlayerController>(GetController()))
+		return !Multiplayer->IsLocalMannequinPlayer() && Multiplayer->GetMatchPhase() == EMultiplayTestMatchPhase::InProgress &&
+			Multiplayer->GetSurvivorState() == EMultiplayTestSurvivorState::Active;
+	return UsesSinglePlayerRules(World);
 }
 
 void APlayerCharacter::SetRemainingDeathCountForGameMode(int32 NewDeathCount)
@@ -1390,6 +1403,7 @@ void APlayerCharacter::RestoreSinglePlayerState(
 	NextDeathCountDamageAllowedWorldSeconds = -1.0;
 	World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
 	RestoreFeedbackCamera();
+	if (IsValid(HeartbeatComponent)) HeartbeatComponent->ResetTensionBreathing();
 	if (IsValid(DamageFeedbackWidget)) DamageFeedbackWidget->RemoveFromParent();
 	if (IsValid(DeathFeedbackWidget)) DeathFeedbackWidget->RemoveFromParent();
 	DamageFeedbackWidget = nullptr;
@@ -1523,13 +1537,15 @@ bool APlayerCharacter::HandlePartnerPushDeath(AHelperRearGuardCharacter* Pushing
 			0.55f, 1.0f)
 		: 1.0f;
 	MulticastPlayPainAndDeathWorldSFX(false, PainIntensity);
+	const float DamageSeverity = UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(
+		RemainingDeathCount, StartingDeathCount);
 	if (IsLocallyControlled())
 	{
-		PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
+		PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 	}
 	else
 	{
-		ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection);
+		ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 	}
 	UE_LOG(LogTemp, Warning, TEXT("Player %s lost one death count after being pushed by helper %s. Remaining death count: %d."),
 		*GetName(), *PushingHelper->GetName(), RemainingDeathCount);
@@ -1560,9 +1576,9 @@ void APlayerCharacter::ResolveFallDirection(
 }
 
 void APlayerCharacter::ClientPlayDamageFeedback_Implementation(
-	const float FallPitchDirection, const float FallRollDirection)
+	const float FallPitchDirection, const float FallRollDirection, const float DamageSeverity)
 {
-	PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection);
+	PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 }
 
 void APlayerCharacter::ClientPlayDeathSequence_Implementation(
@@ -1582,6 +1598,8 @@ void APlayerCharacter::PlayPainSFX(const bool bFatal, const float Intensity)
 		PainGroanSFXComponent->SoundClass = Settings->GetSFXSoundClass();
 	}
 	PainGroanSFXComponent->SetVolumeMultiplier(PainGroanSFXVolume);
+	if (IsValid(HeartbeatComponent))
+		HeartbeatComponent->SuspendTensionBreathingForPain(bFatal, UPainGroanSynthComponent::GetReactionDuration(bFatal, Intensity));
 	PainGroanSFXComponent->TriggerPain(bFatal, Intensity);
 }
 
@@ -1621,7 +1639,7 @@ void APlayerCharacter::MulticastPlayPainAndDeathWorldSFX_Implementation(
 }
 
 void APlayerCharacter::PlayLocalDamageFeedback(
-	const float FallPitchDirection, const float FallRollDirection, const bool bAlsoShowVFX)
+	const float FallPitchDirection, const float FallRollDirection, const float DamageSeverity, const bool bAlsoShowVFX)
 {
 	APlayerController* PlayerController = Cast<APlayerController>(GetController());
 	if (!IsLocallyControlled() || !IsValid(PlayerController) || bCameraDeathFeedbackActive)
@@ -1637,7 +1655,7 @@ void APlayerCharacter::PlayLocalDamageFeedback(
 		{
 			DamageFeedbackWidget->Configure(
 				DamageFeedbackIntroSeconds, DamageFeedbackFadeSeconds,
-				DamageFeedbackMaxOpacity, DamageFeedbackMaxThicknessPixels);
+				DamageFeedbackMaxOpacity, DamageFeedbackMaxThicknessPixels, DamageSeverity);
 			DamageFeedbackWidget->AddToViewport(850);
 		}
 	}
@@ -1671,7 +1689,7 @@ void APlayerCharacter::PlayLocalDeathSequence(
 		Settings->FadeGameplaySFX(0.12f, GetDeathSequenceHandoffDelaySeconds());
 	}
 
-	// 최종 사망도 피격이므로 붉은 테두리와 더 긴 신음을 동시에 시작한다.
+	// 최종 사망도 피격이므로 최대 강도의 붉은 테두리와 짧은 사망 신음을 동시에 시작한다.
 	if (IsValid(DamageFeedbackWidget)) DamageFeedbackWidget->RemoveFromParent();
 	DamageFeedbackWidget = CreateWidget<UProjectProject01DamageFeedbackWidget>(
 		PlayerController, UProjectProject01DamageFeedbackWidget::StaticClass());
@@ -1679,7 +1697,7 @@ void APlayerCharacter::PlayLocalDeathSequence(
 	{
 		DamageFeedbackWidget->Configure(
 			DamageFeedbackIntroSeconds, DamageFeedbackFadeSeconds,
-			DamageFeedbackMaxOpacity, DamageFeedbackMaxThicknessPixels);
+			DamageFeedbackMaxOpacity, DamageFeedbackMaxThicknessPixels, 1.0f);
 		DamageFeedbackWidget->AddToViewport(850);
 	}
 	if (IsValid(DeathFeedbackWidget)) DeathFeedbackWidget->RemoveFromParent();

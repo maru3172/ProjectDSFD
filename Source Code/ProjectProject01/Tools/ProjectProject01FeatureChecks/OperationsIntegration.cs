@@ -154,6 +154,16 @@ internal static class OperationsIntegration
                 }
             }
             Check(matches[0]!=matches[1],"동시 경기 MatchId 완전 분리");
+            var revokedTicket=await Read(await clients[0].PostAsJsonAsync("/api/game-tickets",new{}));
+            await using(var c=await database.OpenConnectionAsync(default))
+            {
+                var tokenHash=SHA256.HashData(Encoding.UTF8.GetBytes(clients[0].DefaultRequestHeaders.Authorization!.Parameter!));
+                await using var revoke=new MySqlCommand("UPDATE auth_sessions SET revoked_at_utc=UTC_TIMESTAMP(6) WHERE access_token_hash=@hash",c);revoke.Parameters.AddWithValue("@hash",tokenHash);await revoke.ExecuteNonQueryAsync();
+            }
+            await Status(server.PostAsJsonAsync("/api/server/game-tickets/consume",new{ticket=revokedTicket.GetProperty("ticket").GetString()}),HttpStatusCode.Unauthorized,"세션 폐기 후 미사용 티켓 소비 차단");
+            var departing=await Read(await clients[1].PostAsJsonAsync("/api/game-tickets",new{}));
+            await Read(await clients[1].PostAsJsonAsync("/api/rooms/current/leave",new{}));
+            await Status(server.PostAsJsonAsync("/api/server/game-tickets/consume",new{ticket=departing.GetProperty("ticket").GetString()}),HttpStatusCode.Unauthorized,"퇴장과 티켓 폐기가 같은 트랜잭션으로 적용");
         }
         finally
         {

@@ -65,6 +65,9 @@ public:
 	/** 데스카운트가 0인 상태에서 다시 포획돼 게임 오버가 되었는지 반환합니다. */
 	UFUNCTION(BlueprintPure, Category = "Player|Death")
 	bool IsGameOver() const { return bGameOver; }
+	/** Only the active local survivor hears their own ambient breathing, never title/results/spectating. */
+	bool CanPlayTensionBreathing() const;
+	bool IsSprintingForBreathing() const { return bIsSprinting && GetVelocity().SizeSquared2D() > 400.0f; }
 
 	/** 마네킹 서버가 물리 접촉 포획을 확정할 때만 호출합니다. */
 	bool HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin);
@@ -121,7 +124,7 @@ private:
 	void ClientApplyPlayerTuning(const FPlayerTuningRow& Tuning);
 
 	UFUNCTION(Client, Reliable)
-	void ClientPlayDamageFeedback(float FallPitchDirection, float FallRollDirection);
+	void ClientPlayDamageFeedback(float FallPitchDirection, float FallRollDirection, float DamageSeverity);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayDeathSequence(float FallPitchDirection, float FallRollDirection);
@@ -274,7 +277,8 @@ private:
 	void ApplyGameOverState();
 	void RemoveGuardingHelpers();
 	void ResolveFallDirection(const FVector& HitSourceLocation, float& OutPitchDirection, float& OutRollDirection) const;
-	void PlayLocalDamageFeedback(float FallPitchDirection, float FallRollDirection, bool bAlsoShowVFX = true);
+	void PlayLocalDamageFeedback(float FallPitchDirection, float FallRollDirection, float DamageSeverity,
+		bool bAlsoShowVFX = true);
 	void PlayLocalDeathSequence(float FallPitchDirection, float FallRollDirection);
 	void UpdateCameraFeedback(float DeltaTime);
 	void RestoreFeedbackCamera();

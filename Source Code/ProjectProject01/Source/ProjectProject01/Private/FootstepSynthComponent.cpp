@@ -1,6 +1,7 @@
 // File: Source/ProjectProject01/Private/FootstepSynthComponent.cpp
 
 #include "FootstepSynthComponent.h"
+#include "PlasticJointSynthComponent.h"
 
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -24,6 +25,12 @@ namespace ProjectProject01Footstep
 	float ResolveCharacterVolume(const bool bPartner)
 	{
 		return bPartner ? 0.5f : 1.0f;
+	}
+
+	bool CanTriggerPlasticMotion(EProjectProject01FootstepStyle Style, bool bMoving, bool bGrounded, double Now, double NextAllowed)
+	{
+		return Style == EProjectProject01FootstepStyle::MarblePlastic && bMoving && bGrounded &&
+			FMath::IsFinite(Now) && Now >= NextAllowed;
 	}
 
 	bool ShouldTriggerSkid(
@@ -83,6 +90,7 @@ void UFootstepSynthComponent::BeginPlay()
 		PreviousOwnerLocation = Owner->GetActorLocation();
 		bLocationInitialized = true;
 	}
+	if (GetWorld()) NextPlasticMotionTimeSeconds = GetWorld()->GetTimeSeconds() + FMath::FRandRange(1.5f, 3.5f);
 	if (UProjectProject01GameUserSettings* UserSettings = UProjectProject01GameUserSettings::Get(); IsValid(UserSettings))
 	{
 		SoundClass = UserSettings->GetSFXSoundClass();
@@ -91,6 +99,12 @@ void UFootstepSynthComponent::BeginPlay()
 
 void UFootstepSynthComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(PlasticJointSynth))
+	{
+		PlasticJointSynth->Stop();
+		PlasticJointSynth->DestroyComponent();
+		PlasticJointSynth = nullptr;
+	}
 	if (IsPlaying())
 	{
 		Stop();
@@ -104,6 +118,25 @@ void UFootstepSynthComponent::UpdateFootsteps(const float DeltaTime)
 	{
 		return;
 	}
+	if (FootstepStyle == EProjectProject01FootstepStyle::MarblePlastic)
+	{
+		const ACharacter* Character = Cast<ACharacter>(GetOwner());
+		if (IsValid(Character))
+		{
+			const float Yaw = Character->GetActorRotation().Yaw;
+			const float Turn = bPlasticYawInitialized ? FMath::Abs(FMath::FindDeltaAngleDegrees(PreviousPlasticYaw, Yaw)) : 0.0f;
+			PreviousPlasticYaw = Yaw;
+			bPlasticYawInitialized = true;
+			const float Speed = Character->GetVelocity().Size2D();
+			if (Speed < MinimumMovingSpeed || Turn > 120.0f) AccumulatedPlasticTurnDegrees = 0.0f;
+			else AccumulatedPlasticTurnDegrees += Turn;
+			if (AccumulatedPlasticTurnDegrees >= 40.0f)
+			{
+				AccumulatedPlasticTurnDegrees = 0.0f;
+				TryTriggerPlasticBodyMotion(Speed >= RunningSpeedThreshold, true);
+			}
+		}
+	}
 
 	if (bAutomaticCadence)
 	{
@@ -111,6 +144,11 @@ void UFootstepSynthComponent::UpdateFootsteps(const float DeltaTime)
 	}
 
 	const UWorld* World = GetWorld();
+	if (IsValid(PlasticJointSynth) && PlasticJointSynth->IsPlaying() && IsValid(World) &&
+		World->GetTimeSeconds() - LastPlasticMotionTimeSeconds > ProjectProject01Footstep::IdleStopDelaySeconds)
+	{
+		PlasticJointSynth->Stop();
+	}
 	if (IsPlaying() && IsValid(World) && LastTriggerTimeSeconds >= 0.0 &&
 		World->GetTimeSeconds() - LastTriggerTimeSeconds > ProjectProject01Footstep::IdleStopDelaySeconds)
 	{
@@ -219,14 +257,15 @@ void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 		return;
 	}
 	LastTriggerTimeSeconds = CurrentTime;
+	TryTriggerPlasticBodyMotion(bRunning, false);
 	
-	// WAV 가 지정되어 있으면 WAV 를 재생한다.
+	// Explicit opt-in only: older Blueprint WAV assignments must not hide the material mix.
 	if (PlaySoundAsset(bRunning))
 	{
 		return;
 	}
 
-	// WAV 가 없을 때만 기존 합성물을 사용한다.
+	// Default material-specific synthesis (also used when the opted-in asset list is empty).
 	if (!IsPlaying())
 	{
 		Start();
@@ -241,6 +280,7 @@ void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 		PulseFrameIndex = 0;
 		PulsePhaseLow = 0.0f;
 		PulsePhaseHigh = 0.0f;
+		PlasticWeightPhase = 0.0f;
 		FilteredNoise = 0.0f;
 		FilteredNoiseSlow = 0.0f;
 		PulsePitch = Pitch;
@@ -288,12 +328,52 @@ void UFootstepSynthComponent::TriggerSkidStop()
 	});
 }
 
+void UFootstepSynthComponent::TryTriggerPlasticBodyMotion(const bool bRunning, const bool bTurning)
+{
+	const UWorld* World = GetWorld();
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = IsValid(Character) ? Character->GetCharacterMovement() : nullptr;
+	if (!CanProduceLocalAudio() || !World || !Movement || FootstepVolumeScale <= UE_SMALL_NUMBER ||
+		!ProjectProject01Footstep::CanTriggerPlasticMotion(FootstepStyle,
+			Character->GetVelocity().Size2D() >= MinimumMovingSpeed, Movement->IsMovingOnGround(),
+			World->GetTimeSeconds(), NextPlasticMotionTimeSeconds)) return;
+	const double Now = World->GetTimeSeconds();
+	// Failed rolls also wait. Repeated animation notifies cannot turn this into a constant loop.
+	NextPlasticMotionTimeSeconds = Now + (bRunning ? FMath::FRandRange(1.8f, 3.6f) : FMath::FRandRange(2.8f, 5.2f));
+	if (FMath::FRand() >= (bTurning ? 0.72f : bRunning ? 0.55f : 0.32f)) return;
+	UPlasticJointSynthComponent* Joint = GetOrCreatePlasticJointSynth();
+	if (!IsValid(Joint)) return;
+	LastPlasticMotionTimeSeconds = Now;
+	const uint32 Seed = FMath::Rand();
+	const float Delay = FMath::FRandRange(0.025f, 0.075f);
+	const float Duration = bRunning ? FMath::FRandRange(0.16f, 0.24f) : FMath::FRandRange(0.21f, 0.32f);
+	const float Gain = FootstepVolumeScale * FMath::FRandRange(0.16f, 0.22f);
+	Joint->TriggerMotion(Seed, Delay, Duration, Gain, bRunning);
+}
+
+UPlasticJointSynthComponent* UFootstepSynthComponent::GetOrCreatePlasticJointSynth()
+{
+	if (!CanProduceLocalAudio() || FootstepStyle != EProjectProject01FootstepStyle::MarblePlastic) return nullptr;
+	if (IsValid(PlasticJointSynth)) return PlasticJointSynth;
+	AActor* Owner = GetOwner();
+	if (!IsValid(Owner) || !IsValid(Owner->GetRootComponent())) return nullptr;
+	PlasticJointSynth = NewObject<UPlasticJointSynthComponent>(Owner);
+	// Follow the body, not this component: foot notifies move this component down to the floor.
+	PlasticJointSynth->SetupAttachment(Owner->GetRootComponent());
+	PlasticJointSynth->SetRelativeLocation(FVector::ZeroVector);
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+		PlasticJointSynth->SoundClass = Settings->GetSFXSoundClass();
+	PlasticJointSynth->RegisterComponent();
+	return PlasticJointSynth;
+}
+
 bool UFootstepSynthComponent::Init(int32& SampleRate)
 {
 	NumChannels = 1;
 	SynthSampleRate = FMath::Max(SampleRate, 8000);
 	PulseFrameIndex = 0;
 	bPulseActive = false;
+	PlasticWeightPhase = 0.0f;
 	return true;
 }
 
@@ -308,7 +388,7 @@ int32 UFootstepSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 	const bool bPlastic = ActiveStyle == EProjectProject01FootstepStyle::MarblePlastic;
 	const float Duration = bSkidPulse
 		? 0.34f
-		: (bPlastic ? (bPulseRunning ? 0.13f : 0.16f) : (bPulseRunning ? 0.17f : 0.20f));
+		: (bPlastic ? (bPulseRunning ? 0.14f : 0.16f) : (bPulseRunning ? 0.15f : 0.18f));
 	const int32 PulseFrames = FMath::Max(1, FMath::RoundToInt(Duration * SynthSampleRate));
 
 	for (int32 SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
@@ -336,59 +416,44 @@ int32 UFootstepSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 			}
 			else
 			{
-			// 날카로운 백색 잡음을 그대로 쓰지 않고 저역 통과시켜 '픽' 소리를 없앱니다.
-			FilteredNoise += (WhiteNoise - FilteredNoise) * (bPlastic ? 0.11f : 0.07f);
-
-			if (bPlastic)
-			{
+				// Polished department-store stone: dry, rigid contact, not a sustained granular scrape.
+				// Friction is a very quiet, brief sole slip; the impact carries the material identity.
 				const float Progress = FMath::Clamp(Time / Duration, 0.0f, 1.0f);
-				const float ImpactEnvelope = FMath::Exp(-29.0f * Time);
-				const float BodyEnvelope = FMath::Exp(-18.0f * Time);
-				const float LowFrequency = FMath::Lerp(
-					bPulseRunning ? 138.0f : 118.0f,
-					bPulseRunning ? 88.0f : 76.0f,
-					Progress) * PulsePitch;
-				const float BodyFrequency = FMath::Lerp(
-					bPulseRunning ? 285.0f : 245.0f,
-					bPulseRunning ? 175.0f : 155.0f,
-					Progress) * PulsePitch;
+				const float Attack = FMath::Clamp(Time / 0.0025f, 0.0f, 1.0f);
+				const float Release = FMath::Clamp((Duration - Time) / 0.025f, 0.0f, 1.0f);
+				FilteredNoise += (WhiteNoise - FilteredNoise) * (bPlastic ? 0.26f : 0.20f);
+				FilteredNoiseSlow += (WhiteNoise - FilteredNoiseSlow) * 0.035f;
+				const float FrictionNoise = FilteredNoise - FilteredNoiseSlow;
+				const float ToeContact = FMath::Exp(-FMath::Square((Time - (bPulseRunning ? 0.014f : 0.020f)) / 0.005f));
+				const float FrictionTime = FMath::Max(0.0f, Time - 0.006f);
+				const float FrictionEnvelope = (1.0f - FMath::Exp(-180.0f * FrictionTime)) * FMath::Exp(-125.0f * FrictionTime);
+				const float ImpactEnvelope = Attack * FMath::Exp(-210.0f * Time);
+				const float BodyEnvelope = Attack * FMath::Exp(-(bPlastic ? 58.0f : 48.0f) * Time);
+				const float LowFrequency = FMath::Lerp(bPlastic ? 142.0f : 105.0f, bPlastic ? 112.0f : 84.0f, Progress) * PulsePitch;
+				const float BodyFrequency = FMath::Lerp(bPlastic ? 340.0f : 210.0f, bPlastic ? 265.0f : 164.0f, Progress) * PulsePitch;
 				PulsePhaseLow = FMath::Fmod(PulsePhaseLow + 2.0f * UE_PI * LowFrequency / SynthSampleRate, 2.0f * UE_PI);
 				PulsePhaseHigh = FMath::Fmod(PulsePhaseHigh + 2.0f * UE_PI * BodyFrequency / SynthSampleRate, 2.0f * UE_PI);
-				const float HeavyKnock = FMath::Sin(PulsePhaseLow) * 0.62f * BodyEnvelope;
-				const float DampedPlasticBody = FMath::Sin(PulsePhaseHigh) * 0.13f * ImpactEnvelope;
-				const float ContactThump = FilteredNoise * 0.18f * ImpactEnvelope;
-				Sample = HeavyKnock + DampedPlasticBody + ContactThump;
+				const float Body = FMath::Sin(PulsePhaseLow) * (bPlastic ? 0.48f : 0.54f) * BodyEnvelope;
+				const float DampedContact = FMath::Sin(PulsePhaseHigh) * (bPlastic ? 0.18f : 0.075f) * Attack * FMath::Exp(-90.0f * Time);
+				const float FloorImpact = FilteredNoise * (bPlastic ? 0.55f : 0.40f) * (ImpactEnvelope + ToeContact * 0.12f);
+				const float FloorFriction = FrictionNoise * (bPlastic ? 0.065f : 0.085f) * FrictionEnvelope;
+				Sample = (Body + DampedContact + FloorImpact + FloorFriction) * Attack * Release;
+				if (bPlastic)
+				{
+					// Add weight below the existing plastic contact without brightening it into metal.
+					const float WeightFrequency = FMath::Lerp(78.0f, 54.0f, Progress) * PulsePitch;
+					PlasticWeightPhase = FMath::Fmod(PlasticWeightPhase + 2.0f * UE_PI * WeightFrequency / SynthSampleRate, 2.0f * UE_PI);
+					Sample += FMath::Sin(PlasticWeightPhase) * 0.23f * Attack * FMath::Exp(-38.0f * Time) * Release;
+				}
 			}
-			else
-			{
-				const float Progress = FMath::Clamp(Time / Duration, 0.0f, 1.0f);
-				const float SoleEnvelope = FMath::Exp(-(bPulseRunning ? 18.0f : 15.0f) * Time);
-				const float ScuffEnvelope = FMath::Exp(-16.0f * Time);
-				const float LowFrequency = FMath::Lerp(
-					bPulseRunning ? 102.0f : 86.0f,
-					bPulseRunning ? 62.0f : 54.0f,
-					Progress) * PulsePitch;
-				const float SoleFrequency = FMath::Lerp(
-					bPulseRunning ? 178.0f : 148.0f,
-					bPulseRunning ? 112.0f : 96.0f,
-					Progress) * PulsePitch;
-				PulsePhaseLow = FMath::Fmod(PulsePhaseLow + 2.0f * UE_PI * LowFrequency / SynthSampleRate, 2.0f * UE_PI);
-				PulsePhaseHigh = FMath::Fmod(PulsePhaseHigh + 2.0f * UE_PI * SoleFrequency / SynthSampleRate, 2.0f * UE_PI);
-				const float HeelThump = FMath::Sin(PulsePhaseLow) * 0.66f * SoleEnvelope;
-				const float RubberContact = FMath::Sin(PulsePhaseHigh) * 0.09f * SoleEnvelope;
-				const float MarbleScuff = FilteredNoise * 0.16f * ScuffEnvelope;
-				Sample = HeelThump + RubberContact + MarbleScuff;
-			}
-			}
-
-			Sample = FMath::Clamp(Sample * PulseGain, -0.95f, 0.95f);
+			Sample *= PulseGain;
 			++PulseFrameIndex;
 			if (PulseFrameIndex >= PulseFrames)
 			{
 				bPulseActive = false;
 			}
 		}
-		OutAudio[SampleIndex] = Sample;
+		OutAudio[SampleIndex] = FMath::Clamp(Sample, -0.95f, 0.95f);
 	}
 	return NumSamples;
 }
@@ -396,6 +461,7 @@ int32 UFootstepSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 // 사운드 재생 함수
 bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning)
 {
+	if (!bUseAssignedSoundAssets) return false;
 	const TArray<TObjectPtr<USoundBase>>& SelectedSounds =
 		bRunning && !RunSounds.IsEmpty()
 			? RunSounds
@@ -493,6 +559,16 @@ bool FProjectProject01FootstepMixTest::RunTest(const FString& Parameters)
 		ProjectProject01Footstep::ShouldTriggerSkid(
 			EProjectProject01FootstepStyle::MarblePlastic, true, true,
 			900.0f, 850.0f, 0.0f, 0.0f, 1.0f / 60.0f, 700.0f, 250.0f));
+	TestTrue(TEXT("Moving grounded plastic can emit a body creak after cooldown"),
+		ProjectProject01Footstep::CanTriggerPlasticMotion(EProjectProject01FootstepStyle::MarblePlastic,true,true,5,4));
+	TestFalse(TEXT("A stopped mannequin cannot start a new joint sound"),
+		ProjectProject01Footstep::CanTriggerPlasticMotion(EProjectProject01FootstepStyle::MarblePlastic,false,true,5,4));
+	TestFalse(TEXT("Airborne mannequins cannot start body creaks"),
+		ProjectProject01Footstep::CanTriggerPlasticMotion(EProjectProject01FootstepStyle::MarblePlastic,true,false,5,4));
+	TestFalse(TEXT("Animation notifies cannot bypass the body sound cooldown"),
+		ProjectProject01Footstep::CanTriggerPlasticMotion(EProjectProject01FootstepStyle::MarblePlastic,true,true,3,4));
+	TestFalse(TEXT("Sneakers never use mannequin body sounds"),
+		ProjectProject01Footstep::CanTriggerPlasticMotion(EProjectProject01FootstepStyle::MarbleSneaker,true,true,5,4));
 	return true;
 }
 #endif

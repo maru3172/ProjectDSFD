@@ -179,6 +179,7 @@ internal sealed partial class LauncherForm : Form
         try
         {
             using var targetLock=AcquireInstallLock();
+            RecoverInterruptedInstall();
             SaveSettings();
             await action();
         }
@@ -265,12 +266,12 @@ internal sealed partial class LauncherForm : Form
         string baseUrl,ClientUpdateManifest manifest,IReadOnlyList<ClientFileUpdatePlan> plans,IReadOnlyList<string> stalePaths)
     {
         string operationId=Guid.NewGuid().ToString("N");
-        string tempRoot=Path.Combine(installRoot,".update-temp",operationId);
-        string backupRoot=Path.Combine(installRoot,".update-backup",operationId);
+        string tempRoot=ResolveInsideRoot(installRoot,Path.Combine(".update-temp",operationId));
+        string backupRoot=ResolveInsideRoot(installRoot,Path.Combine(".update-backup",operationId));
         Directory.CreateDirectory(tempRoot);
         long totalBytes=Math.Max(1,plans.Sum(plan=>plan.DownloadBytes)),downloadedBytes=0;
         var completedCache=new List<(string Url,ClientUpdateFile File)>();
-        var downloader=new ResumableUpdateDownloader(Path.Combine(installRoot,".update-cache"),bytes=>
+        var downloader=new ResumableUpdateDownloader(ResolveInsideRoot(installRoot,".update-cache"),bytes=>
         {
             downloadedBytes=Math.Max(0,downloadedBytes+bytes);
             SetProgress(downloadedBytes,totalBytes,"다운로드/이어받기 중");
@@ -295,7 +296,9 @@ internal sealed partial class LauncherForm : Form
             EnsureGameIsNotRunning(manifest.ExecutablePath);
             // Once replacement begins, cancellation cannot leave a half-installed client.
             pauseButton.Enabled=false;SetStatus("다운로드 검증 완료 — 안전하게 적용 중...");
-            var committed=new List<(string Target,string Backup,bool HadOriginal)>();
+            var changes=plans.Select(plan=>NormalizeRelativePath(plan.File.Path)).Concat(stalePaths).Append(LocalManifestFileName)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Select(path=>new InstallChange(path,File.Exists(ResolveInsideRoot(installRoot,path)))).ToList();
+            var transaction=new InstallTransaction(operationId,changes);WriteInstallTransaction(transaction);
             try
             {
                 foreach(var plan in plans)
@@ -304,27 +307,26 @@ internal sealed partial class LauncherForm : Form
                     string source=ResolveInsideRoot(tempRoot,relative),target=ResolveInsideRoot(installRoot,relative),backup=ResolveInsideRoot(backupRoot,relative);
                     bool existed=File.Exists(target);Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                     if(existed){Directory.CreateDirectory(Path.GetDirectoryName(backup)!);File.Move(target,backup,true);}
-                    committed.Add((target,backup,existed));File.Move(source,target,true);
+                    File.Move(source,target,true);
                 }
                 foreach(string relative in stalePaths)
                 {
                     string target=ResolveInsideRoot(installRoot,relative);
                     if(!File.Exists(target))continue;
                     string backup=ResolveInsideRoot(backupRoot,relative);Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
-                    File.Move(target,backup,true);committed.Add((target,backup,true));
+                    File.Move(target,backup,true);
                 }
+                string localManifest=ResolveInsideRoot(installRoot,LocalManifestFileName),manifestBackup=ResolveInsideRoot(backupRoot,LocalManifestFileName);
+                if(File.Exists(localManifest)){Directory.CreateDirectory(Path.GetDirectoryName(manifestBackup)!);File.Move(localManifest,manifestBackup,true);}
+                await WriteLocalManifestAsync(manifest);
+                WriteInstallTransaction(transaction with{Committed=true});
             }
             catch
             {
-                foreach(var item in committed.AsEnumerable().Reverse())
-                {
-                    if(File.Exists(item.Target))File.Delete(item.Target);
-                    if(item.HadOriginal&&File.Exists(item.Backup))
-                    {Directory.CreateDirectory(Path.GetDirectoryName(item.Target)!);File.Move(item.Backup,item.Target,true);}
-                }
+                RecoverInterruptedInstall();
                 throw;
             }
-            TryDeleteDirectory(backupRoot,"업데이트 백업 폴더");
+            RecoverInterruptedInstall();
             foreach(var item in completedCache)
             {
                 try{downloader.Forget(item.Url,item.File);}
@@ -531,6 +533,7 @@ internal sealed partial class LauncherForm : Form
         {
             string path = NormalizeRelativePath(file.Path);
             string first=path.Split(Path.DirectorySeparatorChar)[0];
+            if(first.StartsWith(".update-transaction",StringComparison.OrdinalIgnoreCase)||first.Equals(".update-install.lock",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("업데이트 복구 기록은 배포 파일이 될 수 없습니다.");
             if(first.Equals(".update-cache",StringComparison.OrdinalIgnoreCase)||first.Equals(".update-temp",StringComparison.OrdinalIgnoreCase)||first.Equals(".update-backup",StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("런처 전용 작업 폴더는 업데이트 대상이 될 수 없습니다.");
             if (!paths.Add(path) || file.Size < 0 ||
@@ -599,7 +602,6 @@ internal sealed partial class LauncherForm : Form
         {
             if((File.Exists(check)||Directory.Exists(check))&&(File.GetAttributes(check)&FileAttributes.ReparsePoint)!=0)
                 throw new InvalidDataException("업데이트 경로에 연결 파일 또는 연결 폴더가 있습니다.");
-            if(string.Equals(Path.TrimEndingDirectorySeparator(check),Path.TrimEndingDirectorySeparator(fullRoot),StringComparison.OrdinalIgnoreCase))break;
         }
         return fullPath;
     }
@@ -627,6 +629,7 @@ internal sealed partial class LauncherForm : Form
     {
         try
         {
+            using var targetLock=AcquireInstallLock();RecoverInterruptedInstall();
             SaveSettings();
             string? resolvedExecutable = executablePath;
             if (string.IsNullOrWhiteSpace(resolvedExecutable))

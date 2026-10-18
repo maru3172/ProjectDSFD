@@ -105,6 +105,7 @@ void UProjectProject01LobbySubsystem::ForceClearLocalSession()
     bMatchmaking=false;bCancelMatchmaking=false;MatchSearchId.Reset();MatchmakingMessage.Reset();MatchmakingWaiting=0;MatchmakingPosition=0;MatchmakingSeconds=0;
 	CurrentRoom = FProjectProject01RoomState();
 	LeaderboardEntries.Reset();
+    DesiredLeaderboardEndpoint.Reset();bLeaderboardRefreshQueued=false;
 	ClearGameJoinTicket();
 	ClearPendingLeaderboardRecord();
 	bLeaderboardOpenedFromMatchResult = false;
@@ -326,6 +327,10 @@ void UProjectProject01LobbySubsystem::RefreshLeaderboard(
 	const FString Endpoint = FString::Printf(TEXT("/api/leaderboards/%s?sort=%s&scope=%s"),
 		ProjectProject01Lobby::RoleToString(Role), ProjectProject01Lobby::SortToString(Sort),
 		ProjectProject01Lobby::ScopeToString(Scope));
+    DesiredLeaderboardEndpoint=Endpoint;
+    LeaderboardEntries.Reset();OnLeaderboardChanged.Broadcast();
+    if(IsRequestInFlight()){bLeaderboardRefreshQueued=true;return;}
+    bLeaderboardRefreshQueued=false;
 	SendRequest(EProjectProject01LobbyOperation::RefreshLeaderboard, TEXT("GET"), Endpoint, FString());
 }
 
@@ -596,6 +601,7 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	}
 	else if (Operation == EProjectProject01LobbyOperation::RefreshLeaderboard)
 	{
+        if(Endpoint!=DesiredLeaderboardEndpoint){Complete(Operation,true,TEXT("선택한 리더보드를 다시 불러오는 중입니다."));return;}
 		bParsed = ParseLeaderboard(Json, ParseError);
 	}
 	else if (Operation == EProjectProject01LobbyOperation::RequestGameTicket)
@@ -848,4 +854,9 @@ void UProjectProject01LobbySubsystem::Complete(
 	const FString& Message)
 {
 	OnRequestCompleted.Broadcast(Operation, bSuccess, Message);
+    if(bLeaderboardRefreshQueued&&!IsRequestInFlight()&&!DesiredLeaderboardEndpoint.IsEmpty())
+    {
+        bLeaderboardRefreshQueued=false;
+        SendRequest(EProjectProject01LobbyOperation::RefreshLeaderboard,TEXT("GET"),DesiredLeaderboardEndpoint,FString());
+    }
 }

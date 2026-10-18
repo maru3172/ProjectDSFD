@@ -204,6 +204,11 @@ internal sealed class TrendChart : Control
 
 internal sealed class DashboardForm : Form
 {
+    private readonly CancellationTokenSource windowLifetime=new();
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);if(!e.Cancel)windowLifetime.Cancel();
+    }
     private readonly TextBox rootPath = new() { ReadOnly = true, Width = 330 };
     private readonly TextBox searchBox = new() { Width = 180, PlaceholderText = "TestRunId / 맵 / 게임모드" };
     private readonly ComboBox mapFilter = new() { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
@@ -872,13 +877,13 @@ internal sealed class DashboardForm : Form
             Directory.CreateDirectory(verificationDirectory);
             const string buildTool = @"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat";
             const string editorCmd = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe";
-            var build = await RunProcessAsync(buildTool, ["ProjectProject01Editor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReload"]);
+            var build = await RunProcessAsync(buildTool, ["ProjectProject01Editor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReload"],windowLifetime.Token);
             File.WriteAllText(Path.Combine(verificationDirectory, "Build.log"), build.Output, Encoding.UTF8);
             ProcessResult automation = new(-1, "Automation was not started because the build failed.");
             var automationReport = Path.Combine(verificationDirectory, "AutomationReport");
             if (build.ExitCode == 0)
             {
-                automation = await RunProcessAsync(editorCmd, [projectFile, "-unattended", "-nop4", "-nosplash", "-nullrhi", "-TestExit=Automation Test Queue Empty", "-ExecCmds=Automation RunTests ProjectProject01.;Quit", $"-ReportOutputPath={automationReport}"]);
+                automation = await RunProcessAsync(editorCmd, [projectFile, "-unattended", "-nop4", "-nosplash", "-nullrhi", "-TestExit=Automation Test Queue Empty", "-ExecCmds=Automation RunTests ProjectProject01.;Quit", $"-ReportOutputPath={automationReport}"],windowLifetime.Token);
             }
             File.WriteAllText(Path.Combine(verificationDirectory, "Automation.log"), automation.Output, Encoding.UTF8);
             var automationErrors = -1;
@@ -909,7 +914,7 @@ internal sealed class DashboardForm : Form
         finally { button.Enabled = true; }
     }
 
-    internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments)
+    internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments,CancellationToken cancellationToken=default)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         if (Path.GetExtension(fileName).Equals(".bat", StringComparison.OrdinalIgnoreCase))
@@ -927,13 +932,17 @@ internal sealed class DashboardForm : Form
             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         }
         using var process = new Process { StartInfo = startInfo };
-        var output = new StringBuilder();
-        process.OutputDataReceived += (_, args) => { if (args.Data is not null) output.AppendLine(args.Data); };
-        process.ErrorDataReceived += (_, args) => { if (args.Data is not null) output.AppendLine(args.Data); };
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);deadline.CancelAfter(TimeSpan.FromMinutes(30));
         if (!process.Start()) return new ProcessResult(-1, "Process could not be started.");
-        process.BeginOutputReadLine(); process.BeginErrorReadLine();
-        await process.WaitForExitAsync();
-        return new ProcessResult(process.ExitCode, output.ToString());
+        var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
+        try{await process.WaitForExitAsync(deadline.Token);}
+        catch(OperationCanceledException)
+        {
+            if(!process.HasExited)process.Kill(entireProcessTree:true);
+            await process.WaitForExitAsync();await Task.WhenAll(stdout,stderr);throw;
+        }
+        await Task.WhenAll(stdout,stderr);
+        return new ProcessResult(process.ExitCode,await stdout+Environment.NewLine+await stderr);
     }
 
     private static string QuoteCommandArgument(string value) => $"\"{value.Replace("\"", "\"\"")}\"";

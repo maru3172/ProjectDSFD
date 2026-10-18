@@ -43,6 +43,17 @@ internal static class UpdateInstallChecks
                 foreach(var item in files)if(!(await File.ReadAllBytesAsync(Path.Combine(fixture,item.Key))).SequenceEqual(item.Value))throw new Exception("Installed file mismatch");
                 if(File.Exists(Path.Combine(fixture,"stale.txt")))throw new Exception("Stale fixture not removed");
                 Console.WriteLine("PASS 성공한 업데이트만 새 파일 적용·이전 목록 파일 정리");
+                string operation=Guid.NewGuid().ToString("N"),backup=Path.Combine(fixture,".update-backup",operation,"Content");Directory.CreateDirectory(backup);
+                var journal=new InstallTransaction(operation,[new("Content/first.bin",true),new("Content/new.bin",false)]);
+                typeof(LauncherForm).GetMethod("WriteInstallTransaction",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(launcher,[journal]);
+                File.Move(Path.Combine(fixture,"Content/first.bin"),Path.Combine(backup,"first.bin"));
+                await File.WriteAllTextAsync(Path.Combine(fixture,"Content/first.bin"),"interrupted replacement");
+                await File.WriteAllTextAsync(Path.Combine(fixture,"Content/new.bin"),"interrupted new file");
+                // A new form simulates the next process reading only durable journal/backup state.
+                using var restarted=new LauncherForm(fixture);
+                typeof(LauncherForm).GetMethod("RecoverInterruptedInstall",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(restarted,[]);
+                if(!(await File.ReadAllBytesAsync(Path.Combine(fixture,"Content/first.bin"))).SequenceEqual(files["Content/first.bin"])||File.Exists(Path.Combine(fixture,"Content/new.bin")))throw new Exception("Durable crash recovery failed");
+                Console.WriteLine("PASS 다음 런처 인스턴스가 영속 기록으로 중단된 파일 교체 복구");
             });
         }
         finally{await app.StopAsync();}

@@ -13,6 +13,7 @@ class APawn;
 class UCameraComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UTensionBreathingSynthComponent;
 struct FPlayerTuningRow;
 
 // 외부 음원 없이 낮고 둔한 단일 심장 박동을 생성하는 로컬 전용 신시사이저다.
@@ -20,6 +21,7 @@ UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UHeartbeatSynthComponent final : public USynthComponent
 {
 	GENERATED_BODY()
+	friend class FProjectHeartbeatTimbreTest;
 
 public:
 	UHeartbeatSynthComponent(const FObjectInitializer& ObjectInitializer);
@@ -44,20 +46,26 @@ UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UPainGroanSynthComponent final : public USynthComponent
 {
 	GENERATED_BODY()
+	friend class FProjectPainBreathingTest;
 
 public:
 	UPainGroanSynthComponent(const FObjectInitializer& ObjectInitializer);
 	void TriggerPain(bool bFatal, float Intensity = 1.0f);
+	static float GetReactionDuration(bool bFatal, float Intensity = 1.0f);
 
 protected:
 	virtual bool Init(int32& SampleRate) override;
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
 
 private:
+    FThreadSafeCounter PlaybackGeneration;
+    int32 AudioGeneration=0;
 	int32 SynthSampleRate = 48000;
 	int32 VoiceFrameIndex = 0;
 	float VoicePhase = 0.0f;
 	float FlutterPhase = 0.0f;
+	float BreathNoiseFiltered = 0.0f;
+	float BreathNoiseLow = 0.0f;
 	float VoiceDurationSeconds = 0.75f;
 	float VoiceIntensity = 1.0f;
 	uint32 NoiseState = 0x91E10DA5u;
@@ -80,6 +88,8 @@ protected:
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
 
 private:
+    FThreadSafeCounter PlaybackGeneration;
+    int32 AudioGeneration=0;
 	int32 SynthSampleRate = 48000;
 	int32 ImpactFrameIndex = 0;
 	float LowPhase = 0.0f;
@@ -102,6 +112,8 @@ protected:
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
 
 private:
+    FThreadSafeCounter PlaybackGeneration;
+    int32 AudioGeneration=0;
 	int32 SynthSampleRate = 48000;
 	int32 ImpactFrameIndex = 0;
 	float LowPhase = 0.0f;
@@ -131,13 +143,14 @@ UCLASS(ClassGroup=(Player), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UPlayerHeartbeatComponent : public UActorComponent
 {
 	GENERATED_BODY()
+	friend class FProjectTensionBreathingTest;
 
 public:
 	UPlayerHeartbeatComponent();
 
 	// 현재 로그 박동에 사용하는 최종 BPM이다. 비활성 상태에서는 0이다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
-	float GetCurrentBPM() const { return CurrentBPM; }
+	float GetCurrentBPM() const { return PresentedBPM; }
 
 	// 이번 플레이에서 한 번이라도 직접 본 마네킹 수다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
@@ -149,7 +162,7 @@ public:
 
 	// 현재 심박 로그가 재생 중인지 반환한다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|Runtime")
-	bool IsHeartbeatActive() const { return bHeartbeatActive; }
+	bool IsHeartbeatActive() const { return PresentedBPM > UE_SMALL_NUMBER; }
 
 	// 심박 VFX의 거리·밀집도 계산에 사용하는 최대 거리다.
 	UFUNCTION(BlueprintPure, Category="Heartbeat|VFX")
@@ -176,6 +189,9 @@ public:
 	// 최초 인지 기록과 현재 심박 상태를 모두 초기화한다.
 	UFUNCTION(BlueprintCallable, Category="Heartbeat|Runtime")
 	void ResetHeartbeatState();
+	/** Pain reaction owns the breathing channel until its entire recovery sequence ends. */
+	void SuspendTensionBreathingForPain(bool bFatal, float DurationSeconds);
+	void ResetTensionBreathing();
 
 	/** 서버가 검증한 DataTable의 심박 설정을 로컬 생존자에게 적용합니다. */
 	void ApplyHeartbeatTuning(const FPlayerTuningRow& Tuning);
@@ -209,6 +225,19 @@ private:
 	void UpdateBeatOutput(float DeltaTime, APawn& OwnerPawn);
 	bool EnsureHeartbeatSFX(APawn& OwnerPawn);
 	void ReleaseHeartbeatSFX();
+	void UpdateBreathingOutput(float DeltaTime, APawn& OwnerPawn);
+	void ReleaseBreathingSFX();
+	bool CanResumeTensionBreathing(double WorldSeconds) const;
+	bool ShouldPlayTensionBreathing() const;
+	float CalculateBreathingTension() const;
+	bool UpdateReliefBreathState(bool bSprinting, double WorldSeconds);
+	bool ShouldCarryTensionWhileSprinting(bool bSprinting) const;
+	bool ShouldHoldThreatWhileSprinting(bool bSprinting) const;
+	void MarkReliefBreathStarted(double WorldSeconds);
+	void ClearReliefBreathState();
+	float GetBreathingCalmAlpha(double WorldSeconds) const;
+	void UpdatePresentedHeartbeat(bool bSprinting, double WorldSeconds, float DeltaTime);
+	static constexpr float BreathingCalmDownSeconds = 2.0f;
 	// 파괴된 마네킹의 약한 참조를 내부 상태에서 제거한다.
 	void RemoveInvalidMannequins();
 	// 소유 Pawn의 실제 플레이 시점과 정면 방향을 가져온다.
@@ -375,6 +404,26 @@ private:
 
 	TWeakObjectPtr<UCameraComponent> HeartbeatVFXCamera;
 	TWeakObjectPtr<UHeartbeatSynthComponent> HeartbeatSFXSynth;
+	TWeakObjectPtr<UTensionBreathingSynthComponent> BreathingSFXSynth;
+	double BreathingResumeWorldSeconds = -1.0;
+	bool bFatalBreathingSuppression = false;
+	bool bHadBreathingThreat = false;
+	bool bReliefBreathQueued = false;
+	bool bRanInsideBreathingThreat = false;
+	bool bHadTensionInsideBreathingThreat = false;
+	float LastThreatBreathingTension = 0.0f;
+	float PeakThreatBPM = 0.0f;
+	float PeakThreatVFXProximity = 0.0f;
+	float PeakThreatVFXDensity = 0.0f;
+	float PresentedVFXProximity = 0.0f;
+	float PresentedVFXDensity = 0.0f;
+	float CalmStartVFXProximity = 0.0f;
+	float CalmStartVFXDensity = 0.0f;
+	float PresentedBPM = 0.0f;
+	float PresentedHeartbeatGain = 1.0f;
+	bool bCarriedTensionOutOfThreat = false;
+	double BreathingCalmEndWorldSeconds = -1.0;
+	double ReliefBreathEndWorldSeconds = -1.0;
 	bool bHeartbeatVFXBlendableAttached = false;
 	bool bHeartbeatVFXLoadFailureLogged = false;
 	int32 CurrentVFXNearbyMannequinCount = 0;

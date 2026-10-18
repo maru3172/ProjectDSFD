@@ -104,6 +104,7 @@ public:
 
 private:
 	friend class AMultiplayTestGameMode;
+	friend class FProjectMannequinCameraTest;
 	void SetControlSlotForGameMode(int32 InControlSlot);
 
 	UPROPERTY(ReplicatedUsing = OnRep_ControlSlot, EditInstanceOnly, BlueprintReadOnly, Category = "Multiplayer|Mannequin",

@@ -392,6 +392,8 @@ public:
 	const FString& GetGameTicketRole() const { return GameTicketRole; }
 
 private:
+    FString DesiredLeaderboardEndpoint;
+    bool bLeaderboardRefreshQueued=false;
 	friend class FProjectStaleFrontendResponseTest;
     friend class FProjectLobbyReadabilityTest;
 	uint64 RequestGeneration=0;

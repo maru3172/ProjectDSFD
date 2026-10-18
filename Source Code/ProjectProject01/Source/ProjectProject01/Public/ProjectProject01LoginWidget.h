@@ -1117,6 +1117,9 @@ private:
 	void AdvanceGameStartCountdown();
 	void BeginGameStartFade(const FProjectProject01RoomState& RoomState);
 	void CompleteGameStartFade();
+    void ContinueGameAdmission(float DeltaSeconds);
+    FString AdmissionRoomId;
+    float AdmissionWaitSeconds=0;
 	void CancelGameStartCountdown();
 	void TravelToStartedGame(const FProjectProject01RoomState& RoomState);
 	void ShowLobbyView(int32 ViewIndex);

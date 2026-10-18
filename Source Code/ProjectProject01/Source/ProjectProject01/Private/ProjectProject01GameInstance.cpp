@@ -390,9 +390,6 @@ USoundClass* UProjectProject01GameUserSettings::GetUISoundClass()
 namespace ProjectProject01NetworkSecurity
 {
 	constexpr int32 Aes256KeyBytes = 32;
-	TArray<uint8> PendingClientEncryptionKey;
-	FString PendingClientTicket;
-	TMap<FString, FProjectProject01ValidatedJoinClaim> ValidatedClaims;
 
 	FString NormalizeBaseUrl(FString Url)
 	{
@@ -1276,8 +1273,9 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 		ClearPendingGameConnection();
 		return;
 	}
-	const bool bWasMultiplayerTravel = World->GetMapName().Contains(TEXT("MultiplayTest")) ||
-		!ProjectProject01NetworkSecurity::PendingClientTicket.IsEmpty();
+    const auto* Lobby=GetSubsystem<UProjectProject01LobbySubsystem>();
+    const bool bWasMultiplayerTravel=World->GetNetMode()==NM_Client||!PendingClientTicket.IsEmpty()||
+        (Lobby&&Lobby->HasCurrentRoom()&&(Lobby->GetCurrentRoom().bStarting||Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bServerPreparing));
 	if (!bWasMultiplayerTravel)
 	{
 		return;
@@ -1481,8 +1479,8 @@ bool UProjectProject01GameInstance::ConfigurePendingGameConnection(
 		return false;
 	}
 
-	ProjectProject01NetworkSecurity::PendingClientTicket = Ticket;
-	ProjectProject01NetworkSecurity::PendingClientEncryptionKey = MoveTemp(Key);
+	PendingClientTicket = Ticket;
+	PendingClientEncryptionKey = MoveTemp(Key);
 	PendingCrashMatchId = MatchId.Left(ProjectProject01CrashReports::MaxShortFieldLength);
 	PendingCrashPlayerRole = Role.Left(ProjectProject01CrashReports::MaxShortFieldLength);
 	RefreshCrashReportContext(GetWorld());
@@ -1491,8 +1489,8 @@ bool UProjectProject01GameInstance::ConfigurePendingGameConnection(
 
 void UProjectProject01GameInstance::ClearPendingGameConnection()
 {
-	ProjectProject01NetworkSecurity::PendingClientTicket.Reset();
-	ProjectProject01NetworkSecurity::PendingClientEncryptionKey.Reset();
+	PendingClientTicket.Reset();
+	PendingClientEncryptionKey.Reset();
 	PendingCrashMatchId.Reset();
 	PendingCrashPlayerRole.Reset();
 	RefreshCrashReportContext(GetWorld());
@@ -1598,7 +1596,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 			}
 
 			const FDateTime NowUtc = FDateTime::UtcNow();
-			for (auto It = ProjectProject01NetworkSecurity::ValidatedClaims.CreateIterator(); It; ++It)
+			for (auto It = ValidatedClaims.CreateIterator(); It; ++It)
 			{
 				if (It.Value().ValidUntilUtc <= NowUtc)
 				{
@@ -1606,7 +1604,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 				}
 			}
 			Claim.ValidUntilUtc = NowUtc + FTimespan::FromSeconds(30.0);
-			ProjectProject01NetworkSecurity::ValidatedClaims.Add(EncryptionToken, MoveTemp(Claim));
+			ValidatedClaims.Add(EncryptionToken, MoveTemp(Claim));
 			FEncryptionKeyResponse KeyResponse;
 			KeyResponse.Response = EEncryptionResponse::Success;
 			KeyResponse.EncryptionData.Key = MoveTemp(Key);
@@ -1625,7 +1623,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 
 void UProjectProject01GameInstance::ReceivedNetworkEncryptionAck(const FOnEncryptionKeyResponse& Delegate)
 {
-	if (ProjectProject01NetworkSecurity::PendingClientEncryptionKey.Num() !=
+	if (PendingClientEncryptionKey.Num() !=
 		ProjectProject01NetworkSecurity::Aes256KeyBytes)
 	{
 		ProjectProject01NetworkSecurity::CompleteEncryptionFailure(
@@ -1635,7 +1633,7 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionAck(const FOnEncryp
 
 	FEncryptionKeyResponse Response;
 	Response.Response = EEncryptionResponse::Success;
-	Response.EncryptionData.Key = ProjectProject01NetworkSecurity::PendingClientEncryptionKey;
+	Response.EncryptionData.Key = PendingClientEncryptionKey;
 	Response.EncryptionData.Identifier = TEXT("ProjectProject01Match");
 	Delegate.ExecuteIfBound(Response);
 	ClearPendingGameConnection();
@@ -1645,15 +1643,15 @@ bool UProjectProject01GameInstance::ConsumeValidatedJoinClaim(
 	const FString& Ticket,
 	FProjectProject01ValidatedJoinClaim& OutClaim)
 {
-	if (FProjectProject01ValidatedJoinClaim* Claim = ProjectProject01NetworkSecurity::ValidatedClaims.Find(Ticket))
+	if (FProjectProject01ValidatedJoinClaim* Claim = ValidatedClaims.Find(Ticket))
 	{
 		if (Claim->ValidUntilUtc <= FDateTime::UtcNow())
 		{
-			ProjectProject01NetworkSecurity::ValidatedClaims.Remove(Ticket);
+			ValidatedClaims.Remove(Ticket);
 			return false;
 		}
 		OutClaim = MoveTemp(*Claim);
-		ProjectProject01NetworkSecurity::ValidatedClaims.Remove(Ticket);
+		ValidatedClaims.Remove(Ticket);
 		return true;
 	}
 	return false;
