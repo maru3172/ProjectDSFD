@@ -631,21 +631,7 @@ internal sealed partial class LauncherForm : Form
         {
             using var targetLock=AcquireInstallLock();RecoverInterruptedInstall();
             SaveSettings();
-            string? resolvedExecutable = executablePath;
-            if (string.IsNullOrWhiteSpace(resolvedExecutable))
-            {
-                ClientUpdateManifest? local = File.Exists(Path.Combine(installRoot, LocalManifestFileName))
-                    ? JsonSerializer.Deserialize<ClientUpdateManifest>(
-                        File.ReadAllText(Path.Combine(installRoot, LocalManifestFileName)), JsonOptions)
-                    : null;
-                resolvedExecutable = local?.ExecutablePath ?? Directory
-                    .EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.TopDirectoryOnly)
-                    .Select(path=>Path.GetRelativePath(installRoot,path)).FirstOrDefault();
-            }
-            if (string.IsNullOrWhiteSpace(resolvedExecutable))
-                throw new FileNotFoundException("ProjectProject01.exe를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
-            string gamePath = ResolveInsideRoot(installRoot, NormalizeRelativePath(resolvedExecutable));
-            if (!File.Exists(gamePath)) throw new FileNotFoundException("게임 실행 파일이 없습니다.", gamePath);
+            string gamePath = ResolveInstalledExecutable(installRoot, executablePath);
             string address = serverAddress.Text.Trim();
             GetBackendBaseUrl();
             Process.Start(new ProcessStartInfo(gamePath)
@@ -661,6 +647,26 @@ internal sealed partial class LauncherForm : Form
             Append("[실패] " + exception.Message);
             SetStatus("게임을 실행하지 못했습니다.");
         }
+    }
+
+    internal static string ResolveInstalledExecutable(string installRoot, string? executablePath = null)
+    {
+            string? resolvedExecutable = executablePath;
+            if (string.IsNullOrWhiteSpace(resolvedExecutable))
+            {
+                ClientUpdateManifest? local = File.Exists(Path.Combine(installRoot, LocalManifestFileName))
+                    ? JsonSerializer.Deserialize<ClientUpdateManifest>(
+                        File.ReadAllText(ResolveInsideRoot(installRoot, LocalManifestFileName)), JsonOptions)
+                    : null;
+                resolvedExecutable = local?.ExecutablePath ?? Directory
+                    .EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.TopDirectoryOnly)
+                    .Select(path=>Path.GetRelativePath(installRoot,path)).FirstOrDefault();
+            }
+            if (string.IsNullOrWhiteSpace(resolvedExecutable))
+                throw new FileNotFoundException("ProjectProject01.exe를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
+            string gamePath = ResolveInsideRoot(installRoot, NormalizeRelativePath(resolvedExecutable));
+            if (!File.Exists(gamePath)) throw new FileNotFoundException("게임 실행 파일이 없습니다.", gamePath);
+            return gamePath;
     }
 
     private void LoadSettings()

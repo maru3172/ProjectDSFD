@@ -28,13 +28,6 @@ internal static class VoiceEndpoints
             {
                 return Results.BadRequest(new VoiceTokenFailure("매치 ID 또는 EOS Product User ID 형식이 올바르지 않습니다."));
             }
-            if (!eosVoice.IsReady)
-            {
-                return Results.Json(
-                    new VoiceTokenFailure("EOS 음성 서버 자격 증명이 아직 구성되지 않았습니다."),
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-
             try
             {
                 await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -58,6 +51,10 @@ internal static class VoiceEndpoints
                     return Results.Json(new VoiceTokenFailure("현재 경기의 생존자만 음성을 사용할 수 있습니다."),statusCode:403);
                 }
 
+                // Authorize first: non-members always receive a structured 403, even when EOS is offline.
+                if (!eosVoice.IsReady)
+                    return Results.Json(new VoiceTokenFailure("EOS 음성 서버 자격 증명이 아직 구성되지 않았습니다."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
                 var channelName = $"pp01-survivors-{matchId:N}";
                 if(!await eosVoice.VerifyIdentityAsync(body.ProductUserId,body.ProductUserIdToken,cancellationToken))
                     return Results.Json(new VoiceTokenFailure("EOS 사용자 증명을 확인하지 못했습니다. 최신 클라이언트에서 음성을 다시 연결하세요."),statusCode:403);

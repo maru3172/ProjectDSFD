@@ -9,6 +9,7 @@
 #include "Components/BoxComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
@@ -43,6 +44,8 @@ void AProjectProject01LevelTransitionTrigger::BeginPlay()
 		this, &AProjectProject01LevelTransitionTrigger::HandleBeginOverlap);
 	TransitionVolume->OnComponentEndOverlap.AddUniqueDynamic(
 		this, &AProjectProject01LevelTransitionTrigger::HandleEndOverlap);
+	if (GEngine) TravelFailureHandle = GEngine->OnTravelFailure().AddUObject(
+		this, &AProjectProject01LevelTransitionTrigger::HandleTravelFailure);
 
 	if (DestinationLevel.IsNull())
 	{
@@ -58,7 +61,9 @@ void AProjectProject01LevelTransitionTrigger::EndPlay(const EEndPlayReason::Type
 	{
 		World->GetTimerManager().ClearTimer(EvaluationTimer);
 		World->GetTimerManager().ClearTimer(TravelTimer);
+		World->GetTimerManager().ClearTimer(TravelWatchdogTimer);
 	}
+	if (GEngine) GEngine->OnTravelFailure().Remove(TravelFailureHandle);
 
 	if (IsValid(TransitionVolume))
 	{
@@ -86,7 +91,7 @@ void AProjectProject01LevelTransitionTrigger::HandleBeginOverlap(
 	(void)SweepResult;
 
 	APlayerCharacter* Survivor = Cast<APlayerCharacter>(OtherActor);
-	if (bTransitionStarted || !IsEligibleLivingPlayer(Survivor))
+	if (bTransitionStarted || !IsEligibleLivingPlayer(Survivor) || !IsDestinationAvailable())
 	{
 		return;
 	}
@@ -247,11 +252,9 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 	}
 
 	const FString DestinationPackage = GetDestinationPackageName();
-	if (DestinationPackage.IsEmpty())
+	if (!IsDestinationAvailable())
 	{
-		UE_LOG(LogTemp, Error,
-			TEXT("Level transition trigger '%s' has an invalid DestinationLevel."),
-			*GetActorNameOrLabel());
+		RollbackTransition(TEXT("DestinationLevel is unset or its map package is unavailable"));
 		return;
 	}
 
@@ -270,6 +273,9 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 			if (APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
 				IsValid(PlayerController))
 			{
+				SingleTransitionController = PlayerController;
+				bSingleMoveIgnored = PlayerController->IsMoveInputIgnored();
+				bSingleLookIgnored = PlayerController->IsLookInputIgnored();
 				PlayerController->SetIgnoreMoveInput(true);
 				PlayerController->SetIgnoreLookInput(true);
 			}
@@ -309,14 +315,88 @@ FString AProjectProject01LevelTransitionTrigger::GetDestinationPackageName() con
 	return FPackageName::ObjectPathToPackageName(ObjectPath);
 }
 
+bool AProjectProject01LevelTransitionTrigger::IsDestinationAvailable() const
+{
+	const FString Package = GetDestinationPackageName();
+	return FPackageName::IsValidLongPackageName(Package) && FPackageName::DoesPackageExist(Package);
+}
+
+void AProjectProject01LevelTransitionTrigger::HandleTravelFailure(
+	UWorld* World, ETravelFailure::Type FailureType, const FString& Error)
+{
+	if (!bTransitionStarted || World != GetWorld()) return;
+	// Engine broadcasts some failures before it cancels its async travel handler.
+	// Restore on the next tick, never while that handler still owns the old world.
+	const FString Reason = FString::Printf(TEXT("Travel failure %d: %s"), static_cast<int32>(FailureType), *Error);
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this, Reason]()
+	{
+		const auto* Context = GEngine ? GEngine->GetWorldContextFromWorld(GetWorld()) : nullptr;
+		if (bTransitionStarted && (!Context || !Context->SeamlessTravelHandler.IsInTransition())) RollbackTransition(Reason);
+	}));
+}
+
+void AProjectProject01LevelTransitionTrigger::HandleTravelTimeout()
+{
+	// A valid async load can exceed this deadline on slow disks. Its engine-owned
+	// world switch cannot safely be rolled back by simply revealing the old pawn.
+	const auto* Context = GEngine ? GEngine->GetWorldContextFromWorld(GetWorld()) : nullptr;
+	if (Context && Context->SeamlessTravelHandler.IsInTransition()) return;
+	RollbackTransition(TEXT("No level replacement within the 30-second travel deadline"));
+}
+
+void AProjectProject01LevelTransitionTrigger::RollbackTransition(const FString& Reason)
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !IsValid(World)) return;
+	World->GetTimerManager().ClearTimer(EvaluationTimer);
+	World->GetTimerManager().ClearTimer(TravelTimer);
+	World->GetTimerManager().ClearTimer(TravelWatchdogTimer);
+	// Keep overlap acceptance blocked until pawn and volume collisions are restored.
+	bTransitionStarted = true;
+	AcceptedSurvivors.Reset();
+	World->NextURL.Reset();
+	if (GEngine)
+	{
+		if (auto* Context = GEngine->GetWorldContextFromWorld(World)) Context->TravelURL.Reset();
+	}
+	if (World->GetNetMode() == NM_Standalone)
+	{
+		if (auto* Controller = SingleTransitionController.Get())
+		{
+			Controller->ResetIgnoreMoveInput();
+			Controller->ResetIgnoreLookInput();
+			Controller->SetIgnoreMoveInput(bSingleMoveIgnored);
+			Controller->SetIgnoreLookInput(bSingleLookIgnored);
+		}
+		SingleTransitionController.Reset();
+		if (auto* Instance = GetGameInstance<UProjectProject01GameInstance>())
+		{
+			Instance->ConsumePendingSinglePlayerLevelTransitionFade();
+			Instance->FadeEntireScreenFromBlack(0.6f);
+		}
+	}
+	else if (auto* Mode = World->GetAuthGameMode<AMultiplayTestGameMode>()) Mode->CancelLevelTransitionTravel();
+	if (IsValid(TransitionVolume)) TransitionVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	bTransitionStarted = false;
+	UE_LOG(LogTemp, Warning, TEXT("Level transition '%s' cancelled: %s"), *GetActorNameOrLabel(), *Reason);
+}
+
 void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 {
 	UWorld* World = GetWorld();
 	const FString DestinationPackage = GetDestinationPackageName();
-	if (!HasAuthority() || !IsValid(World) || DestinationPackage.IsEmpty())
+	if (!HasAuthority() || !IsValid(World))
 	{
 		return;
 	}
+	// Recheck after the fade delay (editor asset changes / uncooked destinations).
+	if (!IsDestinationAvailable())
+	{
+		RollbackTransition(TEXT("Destination disappeared before travel"));
+		return;
+	}
+	World->GetTimerManager().SetTimer(TravelWatchdogTimer, this,
+		&AProjectProject01LevelTransitionTrigger::HandleTravelTimeout, 30.0f, false);
 
 	if (World->GetNetMode() == NM_Standalone)
 	{
@@ -333,8 +413,6 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
     if(auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>())Mode->PrepareLevelTransitionTravel();
 	if (!World->ServerTravel(DestinationPackage, false))
 	{
-		bTransitionStarted = false;
-		TransitionVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		UE_LOG(LogTemp, Error, TEXT("ServerTravel failed for destination '%s'."), *DestinationPackage);
+		RollbackTransition(FString::Printf(TEXT("ServerTravel rejected destination '%s'"), *DestinationPackage));
 	}
 }

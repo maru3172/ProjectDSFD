@@ -13,8 +13,6 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
 using MySqlConnector;
 
-const int MaximumFailedLoginCount = 5;
-const int AccountLockMinutes = 15;
 const int AccessTokenMinutes = 30;
 const int RefreshTokenDays = 30;
 
@@ -284,65 +282,7 @@ app.MapProjectProject01ServiceAdministration();
 app.MapProjectProject01Surveys();
 app.MapProjectProject01Voice();
 
-app.MapPost("/api/auth/register", async (
-    HttpRequest httpRequest,
-    RegisterRequest request,
-    AuthDatabase database,
-    IPasswordHasher<AuthUser> passwordHasher,
-    CancellationToken cancellationToken) =>
-{
-    var validationError = AuthValidation.Validate(request.AccountId, request.Password, request.DisplayName);
-    if (validationError is not null)
-    {
-        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "RejectedInput", null, validationError, cancellationToken);
-        return Results.BadRequest(new AuthFailure(validationError));
-    }
-    if (!database.IsConfigured)
-    {
-        return DatabaseUnavailable();
-    }
-
-    var accountId = request.AccountId.Trim();
-    var displayName = request.DisplayName?.Trim() ?? string.Empty;
-    if(displayName.Length is <2 or >32)return Results.BadRequest(new AuthFailure("표시 이름은 2~32자로 입력하세요."));
-    var user = new AuthUser(0, accountId, displayName, string.Empty, 0, null, false, false);
-    var passwordHash = passwordHasher.HashPassword(user, request.Password);
-
-    try
-    {
-        await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var insertUser = new MySqlCommand(
-            """
-            INSERT INTO users (account_id, display_name, password_hash)
-            VALUES (@accountId, @displayName, @passwordHash);
-            """, connection, transaction)
-        {
-            CommandTimeout = 5
-        };
-        insertUser.Parameters.AddWithValue("@accountId", accountId);
-        insertUser.Parameters.AddWithValue("@displayName", displayName);
-        insertUser.Parameters.AddWithValue("@passwordHash", passwordHash);
-        await insertUser.ExecuteNonQueryAsync(cancellationToken);
-
-        var userId = checked((ulong)insertUser.LastInsertedId);
-        var tokens = await CreateSessionAsync(connection, transaction, userId, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "Success", userId, null, cancellationToken);
-        return Results.Created("/api/auth/me", new AuthSuccess(
-            "계정이 생성되었습니다.", displayName, tokens.AccessToken, tokens.RefreshToken,
-            tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc, false, false));
-    }
-    catch (MySqlException exception) when (exception.Number == 1062)
-    {
-        await SecurityAudit.WriteAsync(database, httpRequest, "AuthRegister", "DuplicateAccount", null, null, cancellationToken);
-        return Results.Conflict(new AuthFailure("이미 사용 중인 계정 ID입니다."));
-    }
-    catch (MySqlException)
-    {
-        return DatabaseUnavailable();
-    }
-}).RequireRateLimiting("auth");
+app.MapRegistration(CreateSessionAsync);
 
 app.MapPost("/api/auth/login", async (
     HttpRequest httpRequest,
@@ -380,7 +320,7 @@ app.MapPost("/api/auth/login", async (
         var verifyResult = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (verifyResult == PasswordVerificationResult.Failed)
         {
-            await RecordFailedLoginAsync(connection, user.Id, cancellationToken);
+            await LoginFailurePolicy.RecordAsync(connection, user.Id, cancellationToken);
             await SecurityAudit.WriteAsync(database, httpRequest, "AuthLogin", "InvalidCredentials", user.Id,
                 "FailureCountIncrementedAtomically", cancellationToken);
             return InvalidCredentials();
@@ -733,27 +673,6 @@ static async Task<AuthUser?> LoadUserAsync(
         reader.IsDBNull(5) ? null : DateTime.SpecifyKind(reader.GetDateTime(5), DateTimeKind.Utc),
         reader.GetBoolean(6),
         reader.GetBoolean(7));
-}
-
-static async Task RecordFailedLoginAsync(
-    MySqlConnection connection,
-    ulong userId,
-    CancellationToken cancellationToken)
-{
-    await using var command = new MySqlCommand(
-        """
-        UPDATE users
-        SET locked_until_utc = CASE WHEN failed_login_count + 1 >= @maximum THEN @lockedUntilUtc ELSE locked_until_utc END,
-            failed_login_count = LEAST(failed_login_count + 1, 4294967295)
-        WHERE id = @userId;
-        """, connection)
-    {
-        CommandTimeout = 5
-    };
-    command.Parameters.AddWithValue("@maximum", MaximumFailedLoginCount);
-    command.Parameters.AddWithValue("@lockedUntilUtc", DateTime.UtcNow.AddMinutes(AccountLockMinutes));
-    command.Parameters.AddWithValue("@userId", userId);
-    await command.ExecuteNonQueryAsync(cancellationToken);
 }
 
 static async Task<TokenPair> CreateSessionAsync(
@@ -1192,7 +1111,7 @@ internal sealed class AuthDatabase
     }
 }
 
-internal sealed record RegisterRequest(string AccountId, string Password, string DisplayName);
+internal sealed record RegisterRequest(string AccountId, string Password, string? DisplayName);
 internal sealed record LoginRequest(string AccountId, string Password);
 internal sealed record RefreshRequest(string RefreshToken);
 internal sealed record GuideProgressRequest(string? Role);

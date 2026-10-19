@@ -285,10 +285,9 @@ internal sealed partial class MainForm : Form
 
     private IDisposable? TryBeginProjectOperation()
     {
-        string saved=Path.Combine(ProjectRoot(),"Saved");Directory.CreateDirectory(saved);
         try
         {
-            var file=new FileStream(Path.Combine(saved,"BuildPublish.operation.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+            var file=ProjectOperationLock.Acquire(ProjectRoot());
             var inputs=new Control[]{engineRoot,projectFile,archiveRoot,serverArgs};
             foreach(var input in inputs)input.Enabled=false;
             return new ProjectOperationLease(file,()=>{foreach(var input in inputs)if(!input.IsDisposed)input.Enabled=true;});
@@ -304,7 +303,7 @@ internal sealed partial class MainForm : Form
     {
         string clientArchive = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string? gameExecutable = Directory.Exists(clientArchive)
-            ? Directory.EnumerateFiles(clientArchive, "ProjectProject01.exe", SearchOption.AllDirectories)
+            ? EnumerateSafePackageFiles(clientArchive).Where(path=>Path.GetFileName(path).Equals("ProjectProject01.exe",StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault()
             : null;
@@ -358,7 +357,7 @@ internal sealed partial class MainForm : Form
         SetStatus("클라이언트 파일 해시 계산 중...");
         string manifestPath = Path.Combine(publishedRoot, "client-update-manifest.json");
         var files = new List<PublishedClientUpdateFile>();
-        string[] packageFiles = Directory.EnumerateFiles(publishedRoot, "*", SearchOption.AllDirectories)
+        string[] packageFiles = EnumerateSafePackageFiles(publishedRoot)
             .Where(path => !ShouldExcludeFromClientUpdate(publishedRoot, path))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -507,8 +506,8 @@ internal sealed partial class MainForm : Form
     {
         if (!Directory.Exists(searchRoot)) return;
 
-        foreach (string manifestPath in Directory.EnumerateFiles(
-            searchRoot, "client-update-manifest.json", SearchOption.AllDirectories))
+        foreach (string manifestPath in EnumerateSafePackageFiles(searchRoot)
+            .Where(path=>Path.GetFileName(path).Equals("client-update-manifest.json",StringComparison.OrdinalIgnoreCase)))
         {
             try
             {
@@ -522,12 +521,13 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    private static bool ShouldExcludeFromClientUpdate(string publishedRoot, string path)
+    internal static bool ShouldExcludeFromClientUpdate(string publishedRoot, string path)
     {
         string relative = Path.GetRelativePath(publishedRoot, path).Replace('\\', '/');
         string fileName = Path.GetFileName(relative);
         string extension = Path.GetExtension(relative);
         return relative.Equals("client-update-manifest.json", StringComparison.OrdinalIgnoreCase) ||
+            relative.Equals("client-update-manifest.json.publishing", StringComparison.OrdinalIgnoreCase) ||
             relative.Equals(".projectproject01-update.json", StringComparison.OrdinalIgnoreCase) ||
             relative.StartsWith(".update-transaction", StringComparison.OrdinalIgnoreCase) ||
             relative.Equals(".update-install.lock", StringComparison.OrdinalIgnoreCase) ||
@@ -538,6 +538,23 @@ internal sealed partial class MainForm : Form
             fileName.StartsWith("Manifest_DebugFiles_", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".pdb", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".map", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static IEnumerable<string> EnumerateSafePackageFiles(string root)
+    {
+        root=Path.GetFullPath(root);
+        if(!IsSafePackagePath(root,root))throw new InvalidDataException("연결 폴더를 게시 루트로 사용할 수 없습니다.");
+        return Directory.EnumerateFiles(root,"*",new EnumerationOptions{RecurseSubdirectories=true,AttributesToSkip=FileAttributes.ReparsePoint,MaxRecursionDepth=64})
+            .Where(path=>IsSafePackagePath(root,path));
+    }
+
+    private static bool IsSafePackagePath(string root,string path)
+    {
+        string normalizedRoot=Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)),full=Path.GetFullPath(path);
+        if(!full.Equals(normalizedRoot,StringComparison.OrdinalIgnoreCase)&&!full.StartsWith(normalizedRoot+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))return false;
+        for(string? item=full;item is not null;item=Path.GetDirectoryName(item))
+            if((File.Exists(item)||Directory.Exists(item))&&(File.GetAttributes(item)&FileAttributes.ReparsePoint)!=0)return false;
+        return true;
     }
 
     private string ReadClientVersion()

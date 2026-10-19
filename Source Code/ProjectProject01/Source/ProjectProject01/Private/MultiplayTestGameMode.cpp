@@ -2372,6 +2372,16 @@ bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharac
 		return false;
 	}
 
+	FTransitionPawnSnapshot Snapshot;
+	Snapshot.bHidden = Survivor->IsHidden();
+	Snapshot.bCollision = Survivor->GetActorEnableCollision();
+	if (const auto* Movement = Survivor->GetCharacterMovement())
+	{
+		Snapshot.MovementMode = Movement->MovementMode;
+		Snapshot.CustomMovementMode = Movement->CustomMovementMode;
+	}
+	TransitionPawnSnapshots.Add(Survivor, Snapshot);
+	if (auto* Controller = Cast<AMultiplayTestPlayerController>(Survivor->GetController())) Controller->CaptureLevelTransitionState();
 	Record->SurvivorState = EMultiplayTestSurvivorState::TransitionWaiting;
 	RecordTimeline(EProjectMatchEvent::LevelTravel, Record->DisplayName);
 	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
@@ -2418,6 +2428,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
 	}
 	if (TimelineLog && !bTimelineTravelPrepared)
 	{
+		TimelineSecondsBeforeTravel = TimelineLog->PreviousLevelsSeconds;
 		TimelineLog->PreviousLevelsSeconds = GetTimelineElapsedSeconds();
 		TimelineLog->bAwaitingNextLevel = true;
 		bTimelineTravelPrepared = true;
@@ -2444,6 +2455,44 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
 			if(!Controller->IsLevelTransitionCarryover())Controller->PrepareLevelTransitionCarryover(bSpawnInNextLevel);
 		}
 	}
+}
+
+void AMultiplayTestGameMode::CancelLevelTransitionTravel()
+{
+	if (!HasAuthority()) return;
+	const bool bRestoreGameplay = AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress;
+	for (auto& Pair : MatchPlayerRecords)
+	{
+		auto* Controller = Pair.Key.Get();
+		auto& Record = Pair.Value;
+		if (bRestoreGameplay && Record.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting)
+		{
+			Record.SurvivorState = EMultiplayTestSurvivorState::Active;
+			if (auto* Pawn = Record.SurvivorPawn.Get())
+			{
+				if (const auto* Snapshot = TransitionPawnSnapshots.Find(Pawn))
+				{
+					Pawn->SetActorHiddenInGame(Snapshot->bHidden);
+					Pawn->SetActorEnableCollision(Snapshot->bCollision);
+					if (auto* Movement = Pawn->GetCharacterMovement()) Movement->SetMovementMode(
+						static_cast<EMovementMode>(Snapshot->MovementMode), Snapshot->CustomMovementMode);
+				}
+			}
+			if (IsValid(Controller)) Controller->SetServerMatchState(AuthoritativeMatchPhase, Record.SurvivorState);
+		}
+		if (IsValid(Controller)) Controller->CancelLevelTransitionCarryover(bRestoreGameplay);
+	}
+	TransitionPawnSnapshots.Reset();
+	if (auto* Instance = GetGameInstance<UProjectProject01GameInstance>(); Instance &&
+		Instance->ServerMatchCarryover && Instance->ServerMatchCarryover->MatchId == AuthoritativeMatchId)
+		Instance->ServerMatchCarryover.Reset();
+	if (TimelineLog && bTimelineTravelPrepared)
+	{
+		TimelineLog->PreviousLevelsSeconds = TimelineSecondsBeforeTravel;
+		TimelineLog->bAwaitingNextLevel = false;
+	}
+	bTimelineTravelPrepared = false;
+	RecordTimeline(EProjectMatchEvent::LevelTravel, {}, TEXT("이동 실패: 현재 맵 복구"));
 }
 
 void AMultiplayTestGameMode::CheckForMatchCompletion()

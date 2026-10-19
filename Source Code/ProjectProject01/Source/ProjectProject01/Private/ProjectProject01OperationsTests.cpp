@@ -54,6 +54,30 @@ bool FProjectRoomPreparationStateTest::RunTest(const FString&)
 	Room->RemoveField(TEXT("serverPreparing"));
 	TestTrue(TEXT("Legacy room JSON remains supported"),Lobby->ParseRoomState(Response,Error));
 	TestFalse(TEXT("Absent preparation flag defaults to false"),Lobby->GetCurrentRoom().bServerPreparing);
+	Room->SetBoolField(TEXT("started"),true);
+	Room->SetStringField(TEXT("matchId"),TEXT("match-a"));
+	Room->SetStringField(TEXT("assignedRole"),TEXT("Survivor"));
+	Room->SetStringField(TEXT("travelUrl"),TEXT("127.0.0.1:7777"));
+	TestTrue(TEXT("Room exposes current authoritative match identity"),Lobby->ParseRoomState(Response,Error));
+	Lobby->GameJoinTicket=TEXT("fixture-ticket");Lobby->GameEncryptionKeyBase64=TEXT("fixture-key");
+	Lobby->GameTicketRoomId=TEXT("test-room");Lobby->GameTicketMatchId=TEXT("match-a");
+	Lobby->GameTicketRole=TEXT("Survivor");Lobby->GameTicketTravelUrl=TEXT("127.0.0.1:7777");
+	TestTrue(TEXT("Only the current room/match/role/server ticket is usable"),Lobby->HasGameJoinTicketForCurrentRoom());
+	Lobby->GameTicketMatchId=TEXT("match-old");
+	TestFalse(TEXT("A ticket from the previous match in the same room is rejected"),Lobby->HasGameJoinTicketForCurrentRoom());
+	Lobby->GameTicketMatchId=TEXT("match-a");Lobby->GameTicketRole=TEXT("Mannequin");
+	TestFalse(TEXT("A ticket for another role is rejected"),Lobby->HasGameJoinTicketForCurrentRoom());
+	Lobby->GameTicketRole=TEXT("Survivor");Lobby->GameTicketTravelUrl=TEXT("127.0.0.1:7778");
+	TestFalse(TEXT("A ticket for another server is rejected"),Lobby->HasGameJoinTicketForCurrentRoom());
+	Lobby->GameTicketTravelUrl=TEXT("127.0.0.1:7777");Room->SetStringField(TEXT("matchId"),TEXT("match-b"));
+	TestTrue(TEXT("A new match in the same room parses"),Lobby->ParseRoomState(Response,Error));
+	TestFalse(TEXT("Changing MatchId clears the cached ticket and key"),Lobby->HasPendingGameJoinTicket());
+	auto Ticket=MakeShared<FJsonObject>();
+	Ticket->SetStringField(TEXT("ticket"),TEXT("old-ticket"));Ticket->SetStringField(TEXT("encryptionKey"),TEXT("old-key"));
+	Ticket->SetStringField(TEXT("travelUrl"),TEXT("127.0.0.1:7777"));Ticket->SetStringField(TEXT("roomId"),TEXT("test-room"));
+	Ticket->SetStringField(TEXT("matchId"),TEXT("match-a"));Ticket->SetStringField(TEXT("role"),TEXT("Survivor"));
+	TestFalse(TEXT("Late previous-match response is rejected before configuring encryption"),Lobby->ParseGameJoinTicket(Ticket,Error));
+	TestTrue(TEXT("Late response reports stale admission rather than a crypto error"),Error.Contains(TEXT("일치하지")));
 	return true;
 }
 

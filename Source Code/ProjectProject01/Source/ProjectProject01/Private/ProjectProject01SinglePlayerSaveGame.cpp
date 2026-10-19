@@ -92,6 +92,7 @@ uint32 UProjectProject01SinglePlayerSaveGame::CalculateIntegrityHash() const
 	{
 		Payload += FString::Printf(TEXT("|LP=%s"), *LastPlayedAtUtc.ToIso8601());
 	}
+	if (SchemaVersion >= 6) Payload += FString::Printf(TEXT("|REV=%lld"), SaveRevision);
 	return FCrc::StrCrc32(*Payload);
 }
 
@@ -130,15 +131,24 @@ bool UProjectProject01SinglePlayerSaveGame::MigrateToCurrentVersion(FString& Out
 	{
 		LastPlayedAtUtc = SavedAtUtc;
 	}
+	if (SchemaVersion <= 5) SaveRevision = 0;
 	if (SchemaVersion < CurrentSchemaVersion)
 	{
-		PreviewPng.Reset();
-		PreviewCrc = 0;
+		if (SchemaVersion < 5)
+		{
+			PreviewPng.Reset();
+			PreviewCrc = 0;
+		}
 		SchemaVersion = CurrentSchemaVersion;
 		IntegrityHash = CalculateIntegrityHash();
 	}
 	OutError.Reset();
 	return true;
+}
+
+uint32 UProjectProject01CheckpointRecency::CalculateChecksum() const
+{
+	return FCrc::StrCrc32(*FString::Printf(TEXT("%08X|%s"), SnapshotHash, *LastPlayedAtUtc.ToIso8601()));
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

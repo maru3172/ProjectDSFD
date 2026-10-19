@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Engine/EngineBaseTypes.h"
 #include "ProjectProject01LevelTransitionTrigger.generated.h"
 
 class APlayerCharacter;
@@ -20,6 +21,7 @@ UCLASS(BlueprintType, Blueprintable)
 class PROJECTPROJECT01_API AProjectProject01LevelTransitionTrigger final : public AActor
 {
 	GENERATED_BODY()
+	friend class FProjectReviewTravelRollbackTest;
 
 public:
 	AProjectProject01LevelTransitionTrigger();
@@ -47,6 +49,10 @@ private:
 	void ExecuteTransition();
 	bool IsEligibleLivingPlayer(const APlayerCharacter* Player) const;
 	FString GetDestinationPackageName() const;
+	bool IsDestinationAvailable() const;
+	void RollbackTransition(const FString& Reason);
+	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& Error);
+	void HandleTravelTimeout();
 
 	/** 맵에서 크기와 위치를 조절하는 진입 영역입니다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Level Transition", meta = (AllowPrivateAccess = "true"))
@@ -72,4 +78,9 @@ private:
 	TSet<TWeakObjectPtr<AMultiplayTestPlayerController>> AcceptedSurvivors;
 	FTimerHandle EvaluationTimer;
 	FTimerHandle TravelTimer;
+	FTimerHandle TravelWatchdogTimer;
+	FDelegateHandle TravelFailureHandle;
+	TWeakObjectPtr<class APlayerController> SingleTransitionController;
+	bool bSingleMoveIgnored = false;
+	bool bSingleLookIgnored = false;
 };

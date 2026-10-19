@@ -49,6 +49,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01GameGuideWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectReviewRoleGuideKeysTest;
 
 public:
 	void Configure(bool bInMannequinRole, bool bInMultiplayer,
@@ -1119,7 +1120,10 @@ private:
 	void CompleteGameStartFade();
     void ContinueGameAdmission(float DeltaSeconds);
     FString AdmissionRoomId;
+	FString AdmissionMatchId;
     float AdmissionWaitSeconds=0;
+	float AdmissionRetrySeconds=0;
+	int32 AdmissionTicketAttempts=0;
 	void CancelGameStartCountdown();
 	void TravelToStartedGame(const FProjectProject01RoomState& RoomState);
 	void ShowLobbyView(int32 ViewIndex);

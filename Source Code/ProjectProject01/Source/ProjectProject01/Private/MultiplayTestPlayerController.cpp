@@ -794,6 +794,7 @@ void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
 		return;
 	}
 
+	CaptureLevelTransitionState();
 	bLevelTransitionCarryover = true;
 	bSpawnAfterLevelTransition = bSpawnInNextLevel;
 	SetIgnoreMoveInput(true);
@@ -810,8 +811,9 @@ void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
 		return;
 	}
 
+	ResetIgnoreMoveInput();
+	ResetIgnoreLookInput();
 	SetIgnoreMoveInput(!bCanPlay);
-	SetIgnoreLookInput(false);
 	if (IsValid(InitialViewTarget))
 	{
 		SetViewTarget(InitialViewTarget);
@@ -819,6 +821,66 @@ void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
 	ClientCompleteLevelTransition(InitialViewTarget, bCanPlay);
 	bLevelTransitionCarryover = false;
 	bSpawnAfterLevelTransition = false;
+	ServerTransitionSnapshot = {};
+}
+
+void AMultiplayTestPlayerController::FTransitionInputSnapshot::Capture(APlayerController* Controller)
+{
+	if (bCaptured) return;
+	bCaptured = true;
+	bMoveIgnored = Controller->IsMoveInputIgnored();
+	bLookIgnored = Controller->IsLookInputIgnored();
+	ViewTarget = Controller->GetViewTarget();
+}
+
+void AMultiplayTestPlayerController::FTransitionInputSnapshot::Restore(APlayerController* Controller)
+{
+	if (!bCaptured) return;
+	// Spectating and preparing travel can each add an input lock. A single false
+	// only decrements that stack and leaves the survivor permanently blocked.
+	Controller->ResetIgnoreMoveInput();
+	Controller->ResetIgnoreLookInput();
+	Controller->SetIgnoreMoveInput(bMoveIgnored);
+	Controller->SetIgnoreLookInput(bLookIgnored);
+	if (ViewTarget.IsValid()) Controller->SetViewTarget(ViewTarget.Get());
+	bCaptured = false;
+}
+
+void AMultiplayTestPlayerController::CaptureLevelTransitionState()
+{
+	if (!HasAuthority() || ServerTransitionSnapshot.bCaptured) return;
+	ServerTransitionSnapshot.Capture(this);
+	ClientCaptureLevelTransitionState();
+}
+
+void AMultiplayTestPlayerController::ClientCaptureLevelTransitionState_Implementation()
+{
+	if (IsLocalController()) LocalTransitionSnapshot.Capture(this);
+}
+
+void AMultiplayTestPlayerController::CancelLevelTransitionCarryover(const bool bRestoreGameplay)
+{
+	if (!HasAuthority()) return;
+	if (bRestoreGameplay) ServerTransitionSnapshot.Restore(this);
+	ServerTransitionSnapshot = {};
+	bLevelTransitionCarryover = false;
+	bSpawnAfterLevelTransition = false;
+	ClientCancelLevelTransition(bRestoreGameplay);
+}
+
+void AMultiplayTestPlayerController::ClientCancelLevelTransition_Implementation(const bool bRestoreGameplay)
+{
+	if (!IsLocalController()) return;
+	if (!LocalTransitionSnapshot.bCaptured && !bLocalLevelTransitionFadeHeld) return;
+	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
+	bLocalLevelTransitionFadeHeld = false;
+	if (bRestoreGameplay)
+	{
+		LocalTransitionSnapshot.Restore(this);
+		if (IsValid(PlayerCameraManager)) PlayerCameraManager->StopCameraFade();
+		if (auto* Instance = GetGameInstance<UProjectProject01GameInstance>()) Instance->FadeEntireScreenFromBlack(0.6f);
+	}
+	LocalTransitionSnapshot = {};
 }
 
 void AMultiplayTestPlayerController::OnRep_Pawn()
@@ -984,7 +1046,7 @@ void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation
 	}
 	const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(this);
 	const TWeakObjectPtr<AActor> WeakTarget(InitialTarget);
-	FTimerHandle SpectatorFadeTimer;
+	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
 	GetWorld()->GetTimerManager().SetTimer(SpectatorFadeTimer, [WeakController, WeakTarget]()
 	{
 		AMultiplayTestPlayerController* Controller = WeakController.Get();
@@ -1045,8 +1107,11 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 	{
 		SetViewTarget(InitialViewTarget);
 	}
+	ResetIgnoreMoveInput();
+	ResetIgnoreLookInput();
 	SetIgnoreMoveInput(!bCanPlay);
-	SetIgnoreLookInput(false);
+	LocalTransitionSnapshot = {};
+	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
 	bInitialGameplayFadePending = false;

@@ -118,6 +118,8 @@ public:
 	bool IsLevelTransitionCarryover() const { return bLevelTransitionCarryover; }
 	bool ShouldSpawnAfterLevelTransition() const { return bSpawnAfterLevelTransition; }
 	void CompleteLevelTransitionCarryover(class AActor* InitialViewTarget, bool bCanPlay);
+	void CaptureLevelTransitionState();
+	void CancelLevelTransitionCarryover(bool bRestoreGameplay);
 	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
 	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
@@ -232,6 +234,11 @@ private:
 	UFUNCTION(Client, Reliable)
 	void ClientCompleteLevelTransition(class AActor* InitialViewTarget, bool bCanPlay);
 
+	UFUNCTION(Client, Reliable)
+	void ClientCaptureLevelTransitionState();
+	UFUNCTION(Client, Reliable)
+	void ClientCancelLevelTransition(bool bRestoreGameplay);
+
 	UFUNCTION(Client, Unreliable)
 	void ClientReceiveTeamPing(EProjectProject01PingType Type, FVector_NetQuantize Location, const FString& SenderName);
 
@@ -298,6 +305,18 @@ private:
 	/** 서버에서 seamless travel 동안만 유지되는 다음 맵 진입 정보입니다. */
 	bool bLevelTransitionCarryover = false;
 	bool bSpawnAfterLevelTransition = false;
+	struct FTransitionInputSnapshot
+	{
+		bool bCaptured = false;
+		bool bMoveIgnored = false;
+		bool bLookIgnored = false;
+		TWeakObjectPtr<AActor> ViewTarget;
+		void Capture(APlayerController* Controller);
+		void Restore(APlayerController* Controller);
+	};
+	FTransitionInputSnapshot ServerTransitionSnapshot;
+	FTransitionInputSnapshot LocalTransitionSnapshot;
+	FTimerHandle SpectatorFadeTimer;
 	/** 클라이언트 카메라가 맵 로딩 중 검은 화면을 유지해야 하는지 나타냅니다. */
 	bool bLocalLevelTransitionFadeHeld = false;
 	/** 새 경기 첫 화면이 Pawn/마네킹 시점 준비 전에 노출되는 것을 막는다. */

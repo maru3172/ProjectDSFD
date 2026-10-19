@@ -5936,7 +5936,8 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 	{
 		return;
 	}
-	if (!bGameStartFadeComplete || !Lobby->HasPendingGameJoinTicket())
+	if (!bGameStartFadeComplete || !Lobby->HasGameJoinTicketForCurrentRoom() ||
+		RoomState.RoomId != AdmissionRoomId || RoomState.MatchId != AdmissionMatchId)
 	{
 		return;
 	}
@@ -6058,7 +6059,7 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 		return;
 	}
 	bGameStartFadeActive = true;
-    AdmissionRoomId=RoomState.RoomId;AdmissionWaitSeconds=0;
+    AdmissionRoomId=RoomState.RoomId;AdmissionMatchId=RoomState.MatchId;AdmissionWaitSeconds=0;AdmissionRetrySeconds=0;AdmissionTicketAttempts=0;
 	GameStartFadeElapsedSeconds = 0.0f;
 	bStartConfirmationRequested = true;
 	const FString RoleText = RoomState.AssignedRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
@@ -6115,7 +6116,7 @@ void UProjectProject01LobbyWidget::CompleteGameStartFade()
 		CancelGameStartCountdown();
 		return;
 	}
-	if (Lobby->HasPendingGameJoinTicket())
+	if (Lobby->HasGameJoinTicketForCurrentRoom())
 	{
 		TravelToStartedGame(Lobby->GetCurrentRoom());
 	}
@@ -6126,17 +6127,19 @@ void UProjectProject01LobbyWidget::ContinueGameAdmission(float DeltaSeconds)
 {
     if(!bGameStartFadeComplete||bTravelRequested)return;
     auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
-    if(!Lobby||!Lobby->HasCurrentRoom()||!Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bReturnedToRoom||Lobby->GetCurrentRoom().RoomId!=AdmissionRoomId)
+    if(!Lobby||!Lobby->HasCurrentRoom()||!Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bReturnedToRoom||Lobby->GetCurrentRoom().RoomId!=AdmissionRoomId||Lobby->GetCurrentRoom().MatchId!=AdmissionMatchId)
     {CancelGameStartCountdown();return;}
     AdmissionWaitSeconds+=FMath::Max(0.f,DeltaSeconds);
-    if(AdmissionWaitSeconds>=15)
+	AdmissionRetrySeconds=FMath::Max(0.f,AdmissionRetrySeconds-FMath::Max(0.f,DeltaSeconds));
+    if(AdmissionWaitSeconds>=15 || (!Lobby->IsRequestInFlight() && AdmissionTicketAttempts>=3 && !Lobby->HasGameJoinTicketForCurrentRoom()))
     {
         CancelGameStartCountdown();
         if(auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>())Auth->InvalidateSessionFromServerFailure(TEXT("경기 접속 허가 대기 시간이 초과되었습니다. 다시 로그인하세요."));
         return;
     }
-    if(Lobby->HasPendingGameJoinTicket())TravelToStartedGame(Lobby->GetCurrentRoom());
-    else if(!Lobby->IsRequestInFlight())Lobby->RequestGameJoinTicket();
+    if(Lobby->HasGameJoinTicketForCurrentRoom())TravelToStartedGame(Lobby->GetCurrentRoom());
+    else if(!Lobby->IsRequestInFlight() && AdmissionRetrySeconds<=0)
+	{++AdmissionTicketAttempts;AdmissionRetrySeconds=1.0f;Lobby->RequestGameJoinTicket();}
 }
 
 void UProjectProject01LobbyWidget::CancelGameStartCountdown()
@@ -6147,7 +6150,7 @@ void UProjectProject01LobbyWidget::CancelGameStartCountdown()
 	bGameStartCountdownComplete = false;
 	bGameStartFadeActive = false;
 	bGameStartFadeComplete = false;
-    AdmissionWaitSeconds=0;AdmissionRoomId.Reset();
+    AdmissionWaitSeconds=0;AdmissionRoomId.Reset();AdmissionMatchId.Reset();AdmissionRetrySeconds=0;AdmissionTicketAttempts=0;
 	bStartConfirmationRequested = false;
 	GameStartFadeElapsedSeconds = 0.0f;
 	GameStartCountdownNumber = 0;

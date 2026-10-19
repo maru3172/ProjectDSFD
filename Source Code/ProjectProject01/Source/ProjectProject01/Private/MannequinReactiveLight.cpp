@@ -2,6 +2,7 @@
 // Target: ProjectProject01 / ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 
 #include "MannequinReactiveLight.h"
+#include "ProjectProject01GameInstance.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
@@ -290,6 +291,8 @@ void AMannequinReactiveLight::UpdateBlinkingFromDetectedCount()
 	const bool bNeedsTimerRestart = !World->GetTimerManager().IsTimerActive(BlinkTimerHandle) ||
 		!FMath::IsNearlyEqual(CurrentBlinkIntervalSeconds, NewInterval);
 	CurrentBlinkIntervalSeconds = NewInterval;
+	// Re-read local accessibility settings even when the detected count has not changed.
+	ApplyLightState(bLightOn);
 
 	if (PreviousCount <= 0)
 	{
@@ -338,14 +341,19 @@ void AMannequinReactiveLight::ApplyLightState(const bool bNewLightOn)
 	bLightOn = bNewLightOn;
 	if (IsValid(ReactiveSpotLight))
 	{
-		ReactiveSpotLight->SetIntensity(bLightOn ? FMath::Max(LightOnIntensity, 0.0f) : 0.0f);
-		ReactiveSpotLight->SetVisibility(bLightOn, false);
+		const auto* Settings = UProjectProject01GameUserSettings::Get();
+		const float FlashScale = IsValid(Settings) ? FMath::Clamp(Settings->GetScreenFlashScale()*Settings->GetLocalVFXScale(),0.0f,1.0f) : 1.0f;
+		const float Brightness = bLightOn ? 1.0f : 1.0f-FlashScale;
+		ReactiveSpotLight->SetIntensity(FMath::Max(LightOnIntensity, 0.0f)*Brightness);
+		ReactiveSpotLight->SetVisibility(Brightness > UE_SMALL_NUMBER, false);
 	}
 	if (IsValid(BulbMesh) && !EmissiveParameterName.IsNone())
 	{
+		const auto* Settings = UProjectProject01GameUserSettings::Get();
+		const float FlashScale = IsValid(Settings) ? FMath::Clamp(Settings->GetScreenFlashScale()*Settings->GetLocalVFXScale(),0.0f,1.0f) : 1.0f;
 		BulbMesh->SetScalarParameterValueOnMaterials(
 			EmissiveParameterName,
-			bLightOn ? FMath::Max(EmissiveOnValue, 0.0f) : FMath::Max(EmissiveOffValue, 0.0f));
+			FMath::Lerp(FMath::Max(EmissiveOffValue,0.0f),FMath::Max(EmissiveOnValue,0.0f),bLightOn?1.0f:1.0f-FlashScale));
 	}
 }
 

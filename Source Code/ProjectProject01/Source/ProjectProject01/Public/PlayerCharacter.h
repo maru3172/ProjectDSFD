@@ -288,6 +288,7 @@ private:
 	void HandleFootContact(bool bRunning, bool bRightFoot);
 	FProjectProject01LocomotionFeedback LocomotionCameraFeedback;
 	friend class FProjectLocomotionFeedbackTest;
+	friend class FProjectReviewRuntimeRegressionTest;
 	void PlayPainSFX(bool bFatal, float Intensity);
 	void PlayBodyFallSFX();
 

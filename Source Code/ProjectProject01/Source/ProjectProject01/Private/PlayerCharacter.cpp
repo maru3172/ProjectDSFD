@@ -1762,6 +1762,8 @@ void APlayerCharacter::UpdateCameraFeedback(const float DeltaTime)
 		return;
 	}
 	CameraFeedbackElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+	const auto* Accessibility = UProjectProject01GameUserSettings::Get();
+	const float MotionScale = IsValid(Accessibility) ? FMath::Clamp(Accessibility->GetScreenShakeScale(), 0.0f, 1.0f) : 1.0f;
 	if (bCameraHitFeedbackActive)
 	{
 		const float TotalSeconds = DamageCameraStumbleSeconds + DamageCameraRecoverySeconds;
@@ -1782,6 +1784,7 @@ void APlayerCharacter::UpdateCameraFeedback(const float DeltaTime)
 				DamageCameraRecoverySeconds;
 			Strength = 1.0f - FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
 		}
+		Strength *= MotionScale;
 		Camera->SetRelativeLocation(FeedbackCameraStartLocation + FVector(
 			-CameraFallPitchDirection * 2.5f * Strength,
 			CameraFallRollDirection * 3.5f * Strength,
@@ -1828,6 +1831,10 @@ void APlayerCharacter::UpdateCameraFeedback(const float DeltaTime)
 		SideShift = FMath::Lerp(5.0f, 13.0f, LimpAlpha);
 		NeckYawDegrees = 180.0f * NeckTurnDirection;
 	}
+	DropCentimeters *= MotionScale;
+	TiltDegrees *= MotionScale;
+	SideShift *= MotionScale;
+	NeckYawDegrees *= MotionScale;
 	Camera->SetRelativeLocation(FeedbackCameraStartLocation + FVector(
 		-CameraFallPitchDirection * SideShift,
 		CameraFallRollDirection * SideShift,

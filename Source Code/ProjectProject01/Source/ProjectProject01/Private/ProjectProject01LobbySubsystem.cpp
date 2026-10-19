@@ -688,6 +688,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		return false;
 	}
 	StateJson->TryGetBoolField(TEXT("returnedToRoom"), Parsed.bReturnedToRoom);
+	StateJson->TryGetStringField(TEXT("matchId"), Parsed.MatchId);
 	StateJson->TryGetBoolField(TEXT("serverPreparing"), Parsed.bServerPreparing);
     StateJson->TryGetBoolField(TEXT("randomMatch"),Parsed.bRandomMatch);
     StateJson->TryGetBoolField(TEXT("randomParty"),Parsed.bRandomParty);
@@ -738,6 +739,8 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	}
 
     const bool bPreviouslyConfirmed=CurrentRoom.bRandomMatch;
+	if (CurrentRoom.RoomId != Parsed.RoomId || CurrentRoom.MatchId != Parsed.MatchId ||
+		!Parsed.bStarted || Parsed.bReturnedToRoom) ClearGameJoinTicket();
 	CurrentRoom = MoveTemp(Parsed);
     bMatchmaking=CurrentRoom.bRandomParty&&!CurrentRoom.MatchSearchId.IsEmpty();
     if(bMatchmaking)MatchSearchId=CurrentRoom.MatchSearchId;else bCancelMatchmaking=false;
@@ -815,6 +818,14 @@ bool UProjectProject01LobbySubsystem::ParseGameJoinTicket(
 		return false;
 	}
 
+	if (!CurrentRoom.IsValid() || !CurrentRoom.bStarted || CurrentRoom.bReturnedToRoom ||
+		CurrentRoom.RoomId != ParsedRoomId || (!CurrentRoom.MatchId.IsEmpty() && CurrentRoom.MatchId != ParsedMatchId) ||
+		!CurrentRoom.AssignedRole.Equals(ParsedRole, ESearchCase::IgnoreCase) || CurrentRoom.TravelUrl != ParsedTravelUrl)
+	{
+		OutError = TEXT("현재 방·경기와 일치하지 않는 접속 허가를 폐기했습니다.");
+		ClearGameJoinTicket();
+		return false;
+	}
 	UProjectProject01GameInstance* ProjectGameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance());
 	if (!IsValid(ProjectGameInstance) || !ProjectGameInstance->ConfigurePendingGameConnection(
 		ParsedTicket, ParsedKey, ParsedRoomId, ParsedMatchId, ParsedRole))
@@ -832,6 +843,13 @@ bool UProjectProject01LobbySubsystem::ParseGameJoinTicket(
 	GameTicketRole = MoveTemp(ParsedRole);
 	OutError.Reset();
 	return true;
+}
+
+bool UProjectProject01LobbySubsystem::HasGameJoinTicketForCurrentRoom() const
+{
+	return HasPendingGameJoinTicket() && CurrentRoom.IsValid() && CurrentRoom.bStarted && !CurrentRoom.bReturnedToRoom &&
+		CurrentRoom.RoomId == GameTicketRoomId && (CurrentRoom.MatchId.IsEmpty() || CurrentRoom.MatchId == GameTicketMatchId) &&
+		CurrentRoom.AssignedRole.Equals(GameTicketRole, ESearchCase::IgnoreCase) && CurrentRoom.TravelUrl == GameTicketTravelUrl;
 }
 
 void UProjectProject01LobbySubsystem::ClearGameJoinTicket()

@@ -103,10 +103,17 @@ public:
 	FProjectProject01SaveOperationCompleted OnSaveOperationCompleted;
 
 private:
+	friend class FProjectReviewCheckpointStoreTest;
 	static constexpr int32 UserIndex = 0;
 	static bool IsValidSlotIndex(int32 SlotIndex);
-	static FString GetPrimarySlotName(int32 SlotIndex);
-	static FString GetBackupSlotName(int32 SlotIndex);
+	FString GetPrimarySlotName(int32 SlotIndex) const;
+	class UProjectProject01SinglePlayerSaveGame* LoadBestSlot(int32 SlotIndex, FString& OutError) const;
+	FDateTime ReadLastPlayed(int32 SlotIndex, const class UProjectProject01SinglePlayerSaveGame* Save) const;
+	bool RecordLastPlayed(int32 SlotIndex, const class UProjectProject01SinglePlayerSaveGame* Save);
+#if WITH_DEV_AUTOMATION_TESTS
+	// A UUID-only test namespace, never assigned by game/UI code or editor settings.
+	FString TestSlotNamespace;
+#endif
 
 	class UProjectProject01SinglePlayerSaveGame* LoadValidatedSlot(const FString& SlotName, FString& OutError) const;
 	void HandleAsyncSaveComplete(const FString& SlotName, int32 InUserIndex, bool bSucceeded);
@@ -127,7 +134,9 @@ private:
 
 	bool bSaveInProgress = false;
 	FString PendingSaveSuccessMessage;
-    FString PendingPrimarySaveSlot;
+	FString PendingWriteSlot;
+	int64 PendingSaveRevision = 0;
+	uint32 PendingSaveHash = 0;
 	int32 CurrentSlotIndex = 1;
 	int32 PreviousSlotIndexBeforeSave = 1;
 	FDelegateHandle PostLoadMapHandle;

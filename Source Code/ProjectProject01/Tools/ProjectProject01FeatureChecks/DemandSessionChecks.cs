@@ -98,6 +98,7 @@ internal static class DemandSessionChecks
             var repeated=await Read(clients[0].PostAsJsonAsync("/api/rooms/current/confirm-start",new {}));
             Check(repeated.GetProperty("room").GetProperty("members").GetRawText()==roleJson,"중복 확정이 역할을 재배정하지 않음");
             var ticket=await Read(clients[0].PostAsJsonAsync("/api/game-tickets",new {}));string match=ticket.GetProperty("matchId").GetString()!;
+            Check(started.GetProperty("matchId").GetString()==match,"방 상태와 접속 티켓의 권위적 MatchId 일치");
             using(var consume=new HttpRequestMessage(HttpMethod.Post,"/api/server/game-tickets/consume") {Content=JsonContent.Create(new {ticket=ticket.GetProperty("ticket").GetString()})})
             {consume.Headers.Add("X-ProjectProject01-Server-Port","24577");await Read(server.SendAsync(consume));Check(true,"준비 완료된 세션에서 티켓 소비");}
             await Heartbeat(false,match);await manager.TickAsync(default);

@@ -79,7 +79,7 @@ class PROJECTPROJECT01_API UProjectProject01SinglePlayerSaveGame final : public 
 	GENERATED_BODY()
 
 public:
-	static constexpr int32 CurrentSchemaVersion = 5;
+	static constexpr int32 CurrentSchemaVersion = 6;
 	static constexpr int32 MinimumSupportedSchemaVersion = 1;
 
 	UPROPERTY()
@@ -131,6 +131,10 @@ public:
 	UPROPERTY()
 	FDateTime LastPlayedAtUtc;
 
+	/** Monotonic disk generation; independent of wall-clock changes. v1-v5 use zero. */
+	UPROPERTY()
+	int64 SaveRevision = 0;
+
 	UPROPERTY()
 	uint32 IntegrityHash = 0;
 
@@ -144,4 +148,16 @@ public:
 	uint32 CalculateIntegrityHash() const;
 	bool HasValidIntegrity() const;
 	bool MigrateToCurrentVersion(FString& OutError);
+};
+
+/** Recency is expendable metadata, never a reason to rewrite a world snapshot. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectProject01CheckpointRecency final : public USaveGame
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY() uint32 SnapshotHash = 0;
+	UPROPERTY() FDateTime LastPlayedAtUtc;
+	UPROPERTY() uint32 Checksum = 0;
+	uint32 CalculateChecksum() const;
 };

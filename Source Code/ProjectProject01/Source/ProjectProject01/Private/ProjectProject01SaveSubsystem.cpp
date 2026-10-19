@@ -8,6 +8,7 @@
 #include "ProjectProject01CheckpointSaveable.h"
 #include "ProjectProject01SinglePlayerSaveGame.h"
 #include "ProjectProject01CheckpointPreview.h"
+#include "ProjectProject01CheckpointStore.h"
 #include "ProjectProject01TuningData.h"
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -23,11 +24,14 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/Crc.h"
+#include "Misc/PackageName.h"
 #include "JsonObjectConverter.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "TimerManager.h"
+#include "PlatformFeatures.h"
+#include "SaveGameSystem.h"
 
 namespace ProjectProject01CheckpointSave
 {
@@ -109,16 +113,15 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 		Player->ResetDeathCountAtCheckpoint();
 	}
 	const FString PrimarySlot = GetPrimarySlotName(SlotIndex);
-	const FString BackupSlot = GetBackupSlotName(SlotIndex);
-
-	if (UGameplayStatics::DoesSaveGameExist(PrimarySlot, UserIndex))
+	const auto Current = ProjectCheckpointStore::SelectNewest(PrimarySlot, [this](const FString& Slot)
 	{
-		FString ExistingError;
-		if (UProjectProject01SinglePlayerSaveGame* Existing = LoadValidatedSlot(PrimarySlot, ExistingError))
-		{
-            if(!UGameplayStatics::SaveGameToSlot(Existing,BackupSlot,UserIndex)||!LoadValidatedSlot(BackupSlot,ExistingError))
-            {OnSaveOperationCompleted.Broadcast(false,TEXT("기존 저장의 백업을 확인하지 못해 원본을 덮어쓰지 않았습니다."));return false;}
-		}
+		FString Error;
+		return LoadValidatedSlot(Slot, Error);
+	});
+	if (Current.Save && Current.Save->SaveRevision == MAX_int64)
+	{
+		OnSaveOperationCompleted.Broadcast(false, TEXT("저장 세대 번호를 갱신할 수 없습니다. 기존 저장은 보존했습니다."));
+		return false;
 	}
 
 	UProjectProject01SinglePlayerSaveGame* Save = Cast<UProjectProject01SinglePlayerSaveGame>(
@@ -146,6 +149,7 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	const FDateTime SaveTimeUtc = FDateTime::UtcNow();
 	Save->SavedAtUtc = SaveTimeUtc;
 	Save->LastPlayedAtUtc = SaveTimeUtc;
+	Save->SaveRevision = Current.Save ? Current.Save->SaveRevision + 1 : 1;
 	ProjectCheckpointPreview::Capture(World, Cast<APlayerController>(Player->GetController()), Save->PreviewPng);
 	Save->PreviewCrc = Save->PreviewPng.IsEmpty() ? 0 : FCrc::MemCrc32(Save->PreviewPng.GetData(), Save->PreviewPng.Num());
 	Save->IntegrityHash = Save->CalculateIntegrityHash();
@@ -158,8 +162,21 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	bSaveInProgress = true;
 	FAsyncSaveGameToSlotDelegate Delegate;
 	Delegate.BindUObject(this, &UProjectProject01SaveSubsystem::HandleAsyncSaveComplete);
-    PendingPrimarySaveSlot=PrimarySlot;
-	UGameplayStatics::AsyncSaveGameToSlot(Save, PrimarySlot+TEXT("_Pending"), UserIndex, Delegate);
+	PendingWriteSlot = ProjectCheckpointStore::NextWriteSlot(PrimarySlot, Current);
+	PendingSaveRevision = Save->SaveRevision;
+	PendingSaveHash = Save->IntegrityHash;
+	auto Bytes = MakeShared<TArray<uint8>>();
+	auto* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
+	if (SaveSystem && ProjectCheckpointStore::Encode(Save, *Bytes))
+	{
+		SaveSystem->SaveGameAsync(false, *PendingWriteSlot, FPlatformMisc::GetPlatformUserForUserIndex(UserIndex), Bytes.ToSharedRef(),
+			[Delegate](const FString& Slot, FPlatformUserId, const bool bSucceeded)
+			{
+				check(IsInGameThread());
+				Delegate.ExecuteIfBound(Slot, UserIndex, bSucceeded);
+			});
+	}
+	else Delegate.ExecuteIfBound(PendingWriteSlot, UserIndex, false);
 	return true;
 }
 
@@ -187,33 +204,19 @@ bool UProjectProject01SaveSubsystem::LoadCheckpointFromSlot(const int32 SlotInde
 		return false;
 	}
 
-	const FString PrimarySlot = GetPrimarySlotName(SlotIndex);
-	const FString BackupSlot = GetBackupSlotName(SlotIndex);
 	FString Error;
-	PendingLoad = LoadValidatedSlot(PrimarySlot, Error);
+	PendingLoad = LoadBestSlot(SlotIndex, Error);
 	if (!IsValid(PendingLoad))
 	{
-		const FString PrimaryError = Error;
-		PendingLoad = LoadValidatedSlot(BackupSlot, Error);
-		if (!IsValid(PendingLoad))
-		{
-			OnSaveOperationCompleted.Broadcast(false,
-				FString::Printf(TEXT("저장 파일을 복구하지 못했습니다. 주 슬롯: %s / 백업: %s"),
-					*PrimaryError, *Error));
-			return false;
-		}
+		OnSaveOperationCompleted.Broadcast(false, FString::Printf(TEXT("저장 파일을 복구하지 못했습니다. %s"), *Error));
+		return false;
 	}
-
-	RuntimeProgressState = PendingLoad->ProgressState;
-	CurrentSlotIndex = SlotIndex;
-	PendingLoad->LastPlayedAtUtc = FDateTime::UtcNow();
-	PendingLoad->IntegrityHash = PendingLoad->CalculateIntegrityHash();
-    FString BackupError;bool BackupReady=false;
-    if(auto* Previous=LoadValidatedSlot(PrimarySlot,BackupError))BackupReady=UGameplayStatics::SaveGameToSlot(Previous,BackupSlot,UserIndex)&&LoadValidatedSlot(BackupSlot,BackupError);
-    else BackupReady=LoadValidatedSlot(BackupSlot,BackupError)!=nullptr;
-	if (!BackupReady||!UGameplayStatics::SaveGameToSlot(PendingLoad, PrimarySlot, UserIndex))
+	if (!FPackageName::IsValidLongPackageName(PendingLoad->SavedMapPackageName) ||
+		!FPackageName::DoesPackageExist(PendingLoad->SavedMapPackageName))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Could not persist last-played metadata for single-player slot %d."), SlotIndex);
+		PendingLoad = nullptr;
+		OnSaveOperationCompleted.Broadcast(false, TEXT("저장된 맵을 찾지 못했습니다. 저장 파일은 변경하지 않았습니다."));
+		return false;
 	}
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
@@ -222,6 +225,8 @@ bool UProjectProject01SaveSubsystem::LoadCheckpointFromSlot(const int32 SlotInde
 		OnSaveOperationCompleted.Broadcast(false, TEXT("현재 월드를 찾지 못했습니다."));
 		return false;
 	}
+	RuntimeProgressState = PendingLoad->ProgressState;
+	CurrentSlotIndex = SlotIndex;
 
 	// 같은 맵이어도 다시 열어 파괴된 액터, AI 트리, 타이머를 깨끗한 기준 상태로 만든 뒤
 	// 저장 스냅샷을 적용한다. 일부만 덮어써서 이전 플레이 상태가 섞이는 것을 막는다.
@@ -265,8 +270,7 @@ bool UProjectProject01SaveSubsystem::HasRecoverableSaveInSlot(const int32 SlotIn
 {
 	if (!IsValidSlotIndex(SlotIndex)) return false;
 	FString Ignored;
-	return IsValid(LoadValidatedSlot(GetPrimarySlotName(SlotIndex), Ignored)) ||
-		IsValid(LoadValidatedSlot(GetBackupSlotName(SlotIndex), Ignored));
+	return IsValid(LoadBestSlot(SlotIndex, Ignored));
 }
 
 FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(const int32 SlotIndex, const bool bIncludePreview) const
@@ -275,18 +279,14 @@ FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(co
 	Info.SlotIndex = SlotIndex;
 	if (!IsValidSlotIndex(SlotIndex)) return Info;
 	FString Ignored;
-	UProjectProject01SinglePlayerSaveGame* Save = LoadValidatedSlot(GetPrimarySlotName(SlotIndex), Ignored);
-	if (!IsValid(Save))
-	{
-		Save = LoadValidatedSlot(GetBackupSlotName(SlotIndex), Ignored);
-	}
+	UProjectProject01SinglePlayerSaveGame* Save = LoadBestSlot(SlotIndex, Ignored);
 	if (!IsValid(Save)) return Info;
 	Info.bHasSave = true;
 	Info.CheckpointId = Save->CheckpointId;
 	Info.SavedMapPackageName = Save->SavedMapPackageName;
 	Info.RemainingDeathCount = Save->RemainingDeathCount;
 	Info.SavedAtUtc = Save->SavedAtUtc;
-	Info.LastPlayedAtUtc = Save->LastPlayedAtUtc;
+	Info.LastPlayedAtUtc = ReadLastPlayed(SlotIndex, Save);
 	if (bIncludePreview) Info.PreviewTexture = ProjectCheckpointPreview::Decode(Save->PreviewPng, Save->PreviewCrc);
 	return Info;
 }
@@ -294,20 +294,17 @@ FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(co
 bool UProjectProject01SaveSubsystem::DeleteSaveSlot(const int32 SlotIndex)
 {
 	if (!IsValidSlotIndex(SlotIndex) || bSaveInProgress) return false;
-	const FString PrimarySlot = GetPrimarySlotName(SlotIndex);
-	const FString BackupSlot = GetBackupSlotName(SlotIndex);
-	const bool bPrimaryDeleted = !UGameplayStatics::DoesSaveGameExist(PrimarySlot, UserIndex) ||
-		UGameplayStatics::DeleteGameInSlot(PrimarySlot, UserIndex);
-	const bool bBackupDeleted = !UGameplayStatics::DoesSaveGameExist(BackupSlot, UserIndex) ||
-		UGameplayStatics::DeleteGameInSlot(BackupSlot, UserIndex);
-    const FString Temporary=PrimarySlot+TEXT("_Pending");
-    const bool bTemporaryDeleted=!UGameplayStatics::DoesSaveGameExist(Temporary,UserIndex)||UGameplayStatics::DeleteGameInSlot(Temporary,UserIndex);
-	if (SlotIndex == CurrentSlotIndex && bPrimaryDeleted && bBackupDeleted)
+	bool bDeleted = true;
+	for (const FString& Slot : ProjectCheckpointStore::AllSlots(GetPrimarySlotName(SlotIndex)))
+	{
+		if (UGameplayStatics::DoesSaveGameExist(Slot, UserIndex) && !UGameplayStatics::DeleteGameInSlot(Slot, UserIndex)) bDeleted = false;
+	}
+	if (SlotIndex == CurrentSlotIndex && bDeleted)
 	{
 		PendingLoad = nullptr;
 		RuntimeProgressState.Reset();
 	}
-	return bPrimaryDeleted && bBackupDeleted&&bTemporaryDeleted;
+	return bDeleted;
 }
 
 bool UProjectProject01SaveSubsystem::StartNewGameInSlot(const int32 SlotIndex)
@@ -324,16 +321,43 @@ bool UProjectProject01SaveSubsystem::IsValidSlotIndex(const int32 SlotIndex)
 	return SlotIndex >= 1 && SlotIndex <= SaveSlotCount;
 }
 
-FString UProjectProject01SaveSubsystem::GetPrimarySlotName(const int32 SlotIndex)
+FString UProjectProject01SaveSubsystem::GetPrimarySlotName(const int32 SlotIndex) const
 {
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!TestSlotNamespace.IsEmpty()) return FString::Printf(TEXT("ReviewCheckpoint_%s_%d"), *TestSlotNamespace, SlotIndex);
+#endif
 	// 1번은 기존 단일 저장 파일과 호환되도록 이름을 유지한다.
 	return SlotIndex == 1 ? TEXT("SinglePlayerCheckpoint") :
 		FString::Printf(TEXT("SinglePlayerCheckpoint_%d"), SlotIndex);
 }
 
-FString UProjectProject01SaveSubsystem::GetBackupSlotName(const int32 SlotIndex)
+UProjectProject01SinglePlayerSaveGame* UProjectProject01SaveSubsystem::LoadBestSlot(const int32 SlotIndex, FString& OutError) const
 {
-	return GetPrimarySlotName(SlotIndex) + TEXT("_Backup");
+	const auto Best = ProjectCheckpointStore::SelectNewest(GetPrimarySlotName(SlotIndex), [this, &OutError](const FString& Slot)
+	{
+		return LoadValidatedSlot(Slot, OutError);
+	});
+	if (Best.Save) OutError.Reset();
+	return Best.Save;
+}
+
+FDateTime UProjectProject01SaveSubsystem::ReadLastPlayed(const int32 SlotIndex, const UProjectProject01SinglePlayerSaveGame* Save) const
+{
+	TArray<uint8> Bytes;
+	UGameplayStatics::LoadDataFromSlot(Bytes, GetPrimarySlotName(SlotIndex) + TEXT("_Recent"), UserIndex);
+	auto* Metadata = Cast<UProjectProject01CheckpointRecency>(ProjectCheckpointStore::Decode(Bytes));
+	return Metadata && Metadata->SnapshotHash == Save->IntegrityHash && Metadata->Checksum == Metadata->CalculateChecksum()
+		? FMath::Max(Metadata->LastPlayedAtUtc, Save->LastPlayedAtUtc) : Save->LastPlayedAtUtc;
+}
+
+bool UProjectProject01SaveSubsystem::RecordLastPlayed(const int32 SlotIndex, const UProjectProject01SinglePlayerSaveGame* Save)
+{
+	auto* Metadata = NewObject<UProjectProject01CheckpointRecency>();
+	Metadata->SnapshotHash = Save->IntegrityHash;
+	Metadata->LastPlayedAtUtc = FDateTime::UtcNow();
+	Metadata->Checksum = Metadata->CalculateChecksum();
+	TArray<uint8> Bytes;
+	return ProjectCheckpointStore::Encode(Metadata, Bytes) && UGameplayStatics::SaveDataToSlot(Bytes, GetPrimarySlotName(SlotIndex) + TEXT("_Recent"), UserIndex);
 }
 
 void UProjectProject01SaveSubsystem::SetProgressValue(const FName Key, const int32 Value)
@@ -359,8 +383,11 @@ UProjectProject01SinglePlayerSaveGame* UProjectProject01SaveSubsystem::LoadValid
 		OutError = TEXT("파일 없음");
 		return nullptr;
 	}
+	TArray<uint8> Bytes;
+	UGameplayStatics::LoadDataFromSlot(Bytes, SlotName, UserIndex);
+	const bool bGeneration = SlotName.EndsWith(TEXT("_GenerationA")) || SlotName.EndsWith(TEXT("_GenerationB"));
 	UProjectProject01SinglePlayerSaveGame* Save = Cast<UProjectProject01SinglePlayerSaveGame>(
-		UGameplayStatics::LoadGameFromSlot(SlotName, UserIndex));
+		bGeneration ? ProjectCheckpointStore::Decode(Bytes) : UGameplayStatics::LoadGameFromMemory(Bytes));
 	if (!IsValid(Save))
 	{
 		OutError = TEXT("형식 손상");
@@ -389,12 +416,14 @@ void UProjectProject01SaveSubsystem::HandleAsyncSaveComplete(
 	const int32 InUserIndex,
 	const bool bSucceeded)
 {
-    bool bCommitted=false;
-    FString ValidationError;
-    if(bSucceeded&&SlotName==PendingPrimarySaveSlot+TEXT("_Pending"))
-        if(auto* Verified=LoadValidatedSlot(SlotName,ValidationError))bCommitted=UGameplayStatics::SaveGameToSlot(Verified,PendingPrimarySaveSlot,InUserIndex);
-    if(bCommitted)UGameplayStatics::DeleteGameInSlot(SlotName,InUserIndex);
-    PendingPrimarySaveSlot.Reset();bSaveInProgress = false;
+	if (!bSaveInProgress || SlotName != PendingWriteSlot || InUserIndex != UserIndex) return;
+	FString ValidationError;
+	const auto* Verified = bSucceeded ? LoadValidatedSlot(SlotName, ValidationError) : nullptr;
+	const bool bCommitted = Verified && Verified->SaveRevision == PendingSaveRevision && Verified->IntegrityHash == PendingSaveHash;
+	PendingWriteSlot.Reset();
+	PendingSaveRevision = 0;
+	PendingSaveHash = 0;
+	bSaveInProgress = false;
 	if (!bCommitted)
 	{
 		CurrentSlotIndex = PreviousSlotIndexBeforeSave;
@@ -448,6 +477,9 @@ bool UProjectProject01SaveSubsystem::ApplyPendingSave(UWorld* World, FString& Ou
 		PendingLoad->RemainingDeathCount, PendingLoad->CurrentStamina,
 		PendingLoad->PlayerVelocity, PendingLoad->PlayerControlRotation);
 	RuntimeProgressState = PendingLoad->ProgressState;
+	// Failure here only loses recency; it can never damage the world snapshot.
+	if (!RecordLastPlayed(CurrentSlotIndex, PendingLoad))
+		UE_LOG(LogTemp, Warning, TEXT("Could not persist last-played metadata for single-player slot %d."), CurrentSlotIndex);
 	PendingLoad = nullptr;
 	OutError.Reset();
 	return true;

@@ -51,6 +51,8 @@ UCLASS(Config=Game)
 class PROJECTPROJECT01_API AMultiplayTestGameMode final : public AGameModeBase
 {
 	GENERATED_BODY()
+	friend class FProjectReviewMatchCarryoverTest;
+	friend class FProjectReviewTravelRollbackTest;
 
 public:
 	const FString& GetServerMatchId() const { return AuthoritativeMatchId; }
@@ -83,6 +85,8 @@ public:
 	bool CanCommitLevelTransition() const;
 	/** seamless travel 직전 각 컨트롤러의 다음 맵 스폰 여부와 암전을 준비합니다. */
 	void PrepareLevelTransitionTravel();
+	/** Old-world travel rejection/timeout: undo only transition-owned state. */
+	void CancelLevelTransitionTravel();
 
 	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
 	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
@@ -123,6 +127,15 @@ private:
     double PreviousMatchSeconds=0;
 	double TimelineLevelStartWorldSeconds = 0.0;
 	bool bTimelineTravelPrepared = false;
+	double TimelineSecondsBeforeTravel = 0.0;
+	struct FTransitionPawnSnapshot
+	{
+		bool bHidden = false;
+		bool bCollision = true;
+		uint8 MovementMode = 0;
+		uint8 CustomMovementMode = 0;
+	};
+	TMap<TWeakObjectPtr<APlayerCharacter>, FTransitionPawnSnapshot> TransitionPawnSnapshots;
 	friend class FProjectMatchTimelineServerTest;
 	friend class FProjectMannequinSearchTest;
 	bool ContinueLastSeenSearch(class AMannequinAICharacter* Mannequin, class AAIController* Controller, double Now);

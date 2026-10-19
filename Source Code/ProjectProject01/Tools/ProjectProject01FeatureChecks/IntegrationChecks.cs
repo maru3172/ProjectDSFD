@@ -39,11 +39,17 @@ internal static class IntegrationChecks
         builder.Services.AddSingleton(database);
         builder.Services.AddSingleton(new CrashArtifactStore(Path.Combine(output,"CrashArtifactsFixture",Guid.NewGuid().ToString("N")),TimeProvider.System));
         builder.Services.AddSingleton<ServiceControlState>();
+        builder.Services.AddHostedService<ServiceControlScheduleWorker>();
+        // Never start the SDK or read operator credentials in this isolated HTTP fixture.
+        builder.Services.AddSingleton(_=>new EosVoiceTokenService(Microsoft.Extensions.Logging.Abstractions.NullLogger<EosVoiceTokenService>.Instance,new ConfigurationBuilder().Build()));
+        builder.Services.AddSingleton(new VoiceParticipantDirectory(TimeProvider.System));
+        builder.Services.AddSingleton(new VoiceAccountRateLimit(TimeProvider.System));
         builder.Services.AddSingleton<Microsoft.AspNetCore.Identity.IPasswordHasher<RoomPasswordRecord>,Microsoft.AspNetCore.Identity.PasswordHasher<RoomPasswordRecord>>();
+        builder.Services.AddSingleton<Microsoft.AspNetCore.Identity.IPasswordHasher<AuthUser>,Microsoft.AspNetCore.Identity.PasswordHasher<AuthUser>>();
         builder.Services.AddSingleton(AdministratorOptions.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string,string?>{{"Administrator:ApiKey",new string('a',48)}}).Build()));
         builder.Services.AddRateLimiter(options=>{
-            foreach(string policy in new[]{"admin","survey","survey-read","crash-report","lobby","social","session-heartbeat","game-server","game-ticket"})
+            foreach(string policy in new[]{"admin","auth","survey","survey-read","crash-report","lobby","social","session-heartbeat","game-server","game-ticket","voice-token","voice-roster"})
                 options.AddFixedWindowLimiter(policy,limit=>{limit.PermitLimit=1000;limit.Window=TimeSpan.FromMinutes(1);});
         });
         var testConfig=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
@@ -56,6 +62,10 @@ internal static class IntegrationChecks
         await using var app=builder.Build();
         app.Urls.Add("http://127.0.0.1:0");app.UseRateLimiter();
         app.MapProjectProject01Surveys();app.MapProjectProject01CrashArtifacts();
+        app.MapProjectProject01Voice();
+        // Invalid registration must be rejected by the real shared handler before
+        // it can issue tokens. No substitute validation/HTTP route is tested here.
+        app.MapRegistration((_,_,_,_)=>throw new InvalidOperationException("Invalid input reached session issuance."));
         app.MapProjectProject01ServiceAdministration();
         app.MapCommunity();
         app.MapClientLiveness();
@@ -68,6 +78,10 @@ internal static class IntegrationChecks
             using var admin=new HttpClient{BaseAddress=new Uri(app.Urls.Single())};
             admin.DefaultRequestHeaders.Add("X-ProjectProject01-Admin-Key",new string('a',48));
             using var player=new HttpClient{BaseAddress=admin.BaseAddress};
+            await AdminScriptChecks.RunAsync(projectRoot,admin,database,Check);
+            await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null01",password="ReviewPassword123!",displayName=(string?)null}),HttpStatusCode.BadRequest,"F29 null 표시 이름 회원가입은 실제 HTTP에서 400");
+            await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null02",password="ReviewPassword123!"}),HttpStatusCode.BadRequest,"F29 누락된 표시 이름도 400");
+            await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null03",password="ReviewPassword123!",displayName="   "}),HttpStatusCode.BadRequest,"F29 공백 표시 이름도 400");
             await Expect(await player.GetAsync("/api/surveys/active"),HttpStatusCode.Unauthorized,"미로그인 설문 조회 차단");
             string questionId=Guid.NewGuid().ToString("D");
             var question=new {id=questionId,type="Choice",prompt="두 개 선택",options=new[]{"A","B","C"},required=true,allowMultiple=true,maxSelections=2,isTrap=true,expectedAnswers=new[]{"A","B"}};
@@ -80,16 +94,30 @@ internal static class IntegrationChecks
             await Expect(await admin.PostAsync($"/api/admin/surveys/{id}/activate",null),HttpStatusCode.OK,"설문 배포");
             await Expect(await admin.PutAsJsonAsync($"/api/admin/surveys/{id}",definition),HttpStatusCode.Conflict,"배포된 설문 응답 구조 보호");
             string token=await CreatePlayer(database);
+            await VerifyConcurrentLoginFailures(database,token);
             player.DefaultRequestHeaders.Authorization=new("Bearer",token);
+            using(var denied=await player.PostAsJsonAsync("/api/voice/token",new {matchId=Guid.NewGuid().ToString("D"),productUserId=new string('a',32),productUserIdToken="unused-fixture"}))
+            {
+                string errorBody=await denied.Content.ReadAsStringAsync();
+                await Expect(denied,HttpStatusCode.Forbidden,"실제 음성 API의 비참가자 권한 거부는 500 대신 403");
+                Check(errorBody.Contains("message",StringComparison.OrdinalIgnoreCase),"음성 권한 오류도 JSON 메시지 계약 유지");
+            }
             var active=await Read(await player.GetAsync("/api/surveys/active"));
             string activeJson=active.GetRawText();
             Check(!activeJson.Contains("ExpectedAnswers")&&!activeJson.Contains("expectedAnswers"),"실제 API 함정 정답 미노출");
             Check(active.GetProperty("questions")[0].GetProperty("allowMultiple").GetBoolean(),"수정 이후 복수 응답 JSON 전달");
             await Expect(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["A","B","C"])),HttpStatusCode.BadRequest,"실제 API 최대 응답 수 검증");
-            await Expect(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["A","B"])),HttpStatusCode.Created,"정답 응답 저장");
+            await Expect(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["A","B"],DateTime.MinValue)),HttpStatusCode.BadRequest,"누락과 동일한 기본 제출 시각은 거부");
+            await Expect(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["A","B"],new DateTime(1,1,2,0,0,0,DateTimeKind.Utc))),HttpStatusCode.Created,"클라이언트 극단 과거 시각 입력도 서버 시각으로 응답 저장");
             await Expect(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["A","B"])),HttpStatusCode.Conflict,"계정당 중복 응답 차단");
             player.DefaultRequestHeaders.Authorization=new("Bearer",await CreatePlayer(database));
-            var pending=await Read(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["B","C"])));
+            var pending=await Read(await player.PostAsJsonAsync($"/api/surveys/{id}/responses",Response(questionId,["B","C"],DateTime.MaxValue)));
+            await using(var connection=await database.OpenConnectionAsync(CancellationToken.None))
+            await using(var command=new MySqlCommand("SELECT COUNT(*) FROM player_survey_responses WHERE survey_id=@id AND submitted_at_utc BETWEEN DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) AND DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE);",connection))
+            {
+                command.Parameters.AddWithValue("@id",id);
+                Check(Convert.ToInt32(await command.ExecuteScalarAsync())==2,"변조된 최소/최대 클라이언트 시각이 DB·통계 시각에 반영되지 않음");
+            }
             string responseId=pending.GetProperty("responseId").GetString()!;
             var result=await Read(await admin.GetAsync($"/api/admin/surveys/{id}/results"));
             Check(result.GetProperty("acceptedCount").GetInt32()==1 && result.GetProperty("pendingCount").GetInt32()==1,"오답 보류 및 통계 분리");
@@ -158,8 +186,40 @@ internal static class IntegrationChecks
         }
         finally{await app.StopAsync();}
     }
-    private static object Response(string id,string[] values)=>new {responseId=Guid.NewGuid().ToString("D"),submittedAtUtc=DateTime.UtcNow,
+    private static object Response(string id,string[] values,DateTime? submittedAt=null)=>new {responseId=Guid.NewGuid().ToString("D"),submittedAtUtc=submittedAt??DateTime.UtcNow,
         answers=new[]{new {questionId=id,value=string.Join(", ",values),values}},buildVersion="test",mapName="Test",processRole="Client",playerRole="Survivor"};
+    private static async Task VerifyConcurrentLoginFailures(AuthDatabase database,string token)
+    {
+        ulong userId;
+        await using(var connection=await database.OpenConnectionAsync(CancellationToken.None))
+        await using(var command=new MySqlCommand("SELECT user_id FROM auth_sessions WHERE access_token_hash=@hash;",connection))
+        {
+            command.Parameters.AddWithValue("@hash",SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+            userId=Convert.ToUInt64(await command.ExecuteScalarAsync());
+        }
+        var gate=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failures=Enumerable.Range(0,16).Select(async _=>
+        {
+            await gate.Task;
+            await using var connection=await database.OpenConnectionAsync(CancellationToken.None);
+            await LoginFailurePolicy.RecordAsync(connection,userId,CancellationToken.None);
+        }).ToArray();
+        gate.SetResult();await Task.WhenAll(failures);
+        await using var verify=await database.OpenConnectionAsync(CancellationToken.None);
+        await using(var command=new MySqlCommand("SELECT failed_login_count,locked_until_utc>UTC_TIMESTAMP() FROM users WHERE id=@id;",verify))
+        {
+            command.Parameters.AddWithValue("@id",userId);await using var reader=await command.ExecuteReaderAsync();await reader.ReadAsync();
+            Check(reader.GetUInt32(0)==16,"F28 동시 실패 16개가 유실 없이 원자적으로 누적");
+            Check(reader.GetBoolean(1),"F28 동시 실패 중 임계값 도달 시 계정 잠금 유지");
+        }
+        await using(var seed=new MySqlCommand("UPDATE users SET failed_login_count=4294967294 WHERE id=@id;",verify))
+        {seed.Parameters.AddWithValue("@id",userId);await seed.ExecuteNonQueryAsync();}
+        await LoginFailurePolicy.RecordAsync(verify,userId,CancellationToken.None);await LoginFailurePolicy.RecordAsync(verify,userId,CancellationToken.None);
+        await using(var command=new MySqlCommand("SELECT failed_login_count FROM users WHERE id=@id;",verify))
+        {command.Parameters.AddWithValue("@id",userId);Check(Convert.ToUInt32(await command.ExecuteScalarAsync())==uint.MaxValue,"F28 실패 횟수 자료형 상한에서도 overflow 없이 유지");}
+        await using var reset=new MySqlCommand("UPDATE users SET failed_login_count=0,locked_until_utc=NULL WHERE id=@id;",verify);
+        reset.Parameters.AddWithValue("@id",userId);await reset.ExecuteNonQueryAsync();
+    }
     private static async Task<string> CreatePlayer(AuthDatabase database)
     {
         string suffix=Guid.NewGuid().ToString("N")[..16],token=Guid.NewGuid().ToString("N");

@@ -22,6 +22,7 @@ UCLASS(Blueprintable)
 class PROJECTPROJECT01_API AMannequinReactiveLight final : public AActor
 {
 	GENERATED_BODY()
+	friend class FProjectReviewRuntimeRegressionTest;
 
 public:
 	AMannequinReactiveLight();

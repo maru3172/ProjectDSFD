@@ -10,6 +10,14 @@ internal static class FeatureChecks
     {
         try
         {
+            if(args.Length==2&&args[0]=="--check-project-lock")
+            {
+                // Invoked only by an isolated review fixture, never by the helper UI.
+                string root=Path.GetFullPath(args[1]);
+                string reviewRoot=Path.GetFullPath(Path.Combine("Saved","ReviewRemediation","Launcher"))+Path.DirectorySeparatorChar;
+                if(!root.StartsWith(reviewRoot,StringComparison.OrdinalIgnoreCase))return 24;
+                try{using var lease=ProjectOperationLock.Acquire(root);return 0;}catch(IOException){return 23;}
+            }
             if (args.Length > 0 && args[0] == "--integration")
             {
                 IntegrationChecks.RunAsync(args[1],int.Parse(args[2])).GetAwaiter().GetResult();
@@ -69,6 +77,7 @@ internal static class FeatureChecks
             Check(daily.Count==3 && daily[1].Date=="2026-10-02" && daily[1].ResponseCount==0,"꺾은선 무응답 날짜 0건 처리");
             var extreme=SurveyEndpoints.FillDailyGaps([new("0001-01-01",1,1,0),new("9999-12-31",1,1,0)]);
             Check(extreme.Count==3660&&extreme[^1].Date=="9999-12-31","극단 설문 날짜도 날짜 overflow 없이 기간 상한 적용");
+            ReviewLauncherChecks.RunAsync(Check).GetAwaiter().GetResult();
             ResumeDownloadChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/ResumeDownloads")).GetAwaiter().GetResult();
             UpdateInstallChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/UpdateInstall")).GetAwaiter().GetResult();
             if(args.Length>0) CheckLayouts(args[0]);

@@ -2099,10 +2099,11 @@ internal static partial class LobbyEndpoints
         bool isReady;
         bool returnedToRoom;
         string? assignedRole;
+        string matchId;
         await using (var roomCommand = new MySqlCommand(
             """
             SELECT r.id, r.join_code, r.name, r.status, r.travel_url, r.host_user_id = m.user_id AS is_host,
-                   m.is_ready, m.assigned_role, m.returned_to_room
+                   m.is_ready, m.assigned_role, m.returned_to_room, r.match_id
             FROM room_members m
             INNER JOIN game_rooms r ON r.id = m.room_id
             WHERE m.user_id = @userId
@@ -2124,6 +2125,7 @@ internal static partial class LobbyEndpoints
             isReady = reader.GetBoolean(6);
             assignedRole = reader.IsDBNull(7) ? null : reader.GetString(7);
             returnedToRoom = reader.GetBoolean(8);
+            matchId = reader.IsDBNull(9) ? string.Empty : ReadRoomId(reader, 9);
         }
 
         var members = new List<RoomMember>();
@@ -2188,7 +2190,7 @@ internal static partial class LobbyEndpoints
             string.Equals(status, "Starting", StringComparison.Ordinal),
             string.Equals(status, "Started", StringComparison.Ordinal),
             returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages,status is "Queued" or "Preparing",
-            random.Count>0&&status!="Waiting"&&!string.IsNullOrEmpty(assignedRole),party.Count>0,party.Count>0?Convert.ToString(party[0]["search_id"])??"":"");
+            random.Count>0&&status!="Waiting"&&!string.IsNullOrEmpty(assignedRole),party.Count>0,party.Count>0?Convert.ToString(party[0]["search_id"])??"":"",matchId);
     }
 
     private static async Task ExecuteAsync(
@@ -2305,7 +2307,8 @@ internal sealed record RoomState(
     bool ServerPreparing=false,
     bool RandomMatch=false,
     bool RandomParty=false,
-    string MatchSearchId="");
+    string MatchSearchId="",
+    string MatchId="");
 internal sealed record RoomPasswordRecord(string RoomId);
 internal sealed record LeaderboardEntry(
     int Rank,

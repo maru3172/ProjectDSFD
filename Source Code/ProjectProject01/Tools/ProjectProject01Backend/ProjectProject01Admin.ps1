@@ -11,6 +11,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($null -ne $MaintenanceStartAtUtc -and $null -eq $ShutdownAtUtc) {
+    throw '예약 점검 시작 시각을 지정했다면 종료 시각도 지정하세요.'
+}
 $configurationPath = Join-Path $PSScriptRoot 'LocalMySql\ProjectProject01Backend.local.json'
 if ([string]::IsNullOrWhiteSpace($AdminKey) -and (Test-Path -LiteralPath $configurationPath)) {
     $configuration = Get-Content -LiteralPath $configurationPath -Raw | ConvertFrom-Json
