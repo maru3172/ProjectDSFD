@@ -837,6 +837,7 @@ internal static partial class LobbyEndpoints
                 await ExecuteAsync(connection, transaction,
                     "UPDATE game_rooms SET status = 'Started', match_id = @matchId, started_at_utc = UTC_TIMESTAMP(6) WHERE id = @roomId AND status = 'Starting';",
                     ("@matchId", matchId), ("@roomId", membership.RoomId), ct);
+                await AuthoritativeMatchLedger.CaptureAsync(connection,transaction,matchId,ct);
                 await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(
                     connection, null, user.Id,
@@ -1073,6 +1074,20 @@ internal static partial class LobbyEndpoints
             }
         }).RequireRateLimiting("game-server");
 
+        app.MapPost("/api/server/matches/complete", async (HttpRequest request,CompleteAuthoritativeMatchRequest body,AuthDatabase database,CancellationToken ct)=>
+        {
+            if(!securityOptions.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))return Results.Unauthorized();
+            if(!Guid.TryParse(body.MatchId,out var match))return Results.BadRequest();
+            try
+            {
+                await using var connection=await database.OpenConnectionAsync(ct);
+                await using var transaction=await connection.BeginTransactionAsync(ct);
+                if(!await AuthoritativeMatchLedger.EndAsync(connection,transaction,match.ToString("D"),ct))return Results.NotFound();
+                await transaction.CommitAsync(ct);return Results.Ok(new {message="경기 종료를 확인했습니다."});
+            }
+            catch(MySqlException){return DatabaseUnavailable();}
+        }).RequireRateLimiting("game-server");
+
         app.MapPost("/api/server/matches/results", async (
             HttpRequest request,
             SubmitVerifiedMatchResultRequest body,
@@ -1106,15 +1121,16 @@ internal static partial class LobbyEndpoints
             try
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction=await connection.BeginTransactionAsync(ct);
+                await AuthoritativeMatchLedger.CaptureAsync(connection,transaction,matchId.ToString("D"),ct);
                 string roomId;
                 await using (var membership = new MySqlCommand(
                     """
-                    SELECT r.id
-                    FROM game_rooms r
-                    INNER JOIN room_members m ON m.room_id = r.id
-                    WHERE r.match_id = @matchId AND m.user_id = @userId AND m.assigned_role = @role
-                    LIMIT 1;
-                    """, connection) { CommandTimeout = 5 })
+                    SELECT a.room_id
+                    FROM authoritative_matches a JOIN authoritative_match_players m ON m.match_id=a.match_id
+                    WHERE a.match_id = @matchId AND m.user_id = @userId AND m.role = @role
+                    LIMIT 1 FOR UPDATE;
+                    """, connection,transaction) { CommandTimeout = 5 })
                 {
                     membership.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
                     membership.Parameters.AddWithValue("@userId", userId);
@@ -1133,6 +1149,22 @@ internal static partial class LobbyEndpoints
                     };
                 }
 
+                // Database times use millisecond precision. Retries must be idempotent, not overwrite a verified result.
+                static decimal? Seconds(double? value)=>value is null?null:Math.Round((decimal)value.Value,3,MidpointRounding.AwayFromZero);
+                string digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+                    System.Text.Json.JsonSerializer.Serialize(new {normalizedRole,body.Success,
+                        Capture=normalizedRole=="Mannequin"&&body.Success?body.CaptureCount:null,
+                        First=normalizedRole=="Mannequin"&&body.Success?Seconds(body.FirstCaptureSeconds):null,
+                        All=normalizedRole=="Mannequin"&&body.Success?Seconds(body.AllCapturedSeconds):null,
+                        Rescue=normalizedRole=="Survivor"&&body.Success?body.RescueCount:null,
+                        Escape=normalizedRole=="Survivor"&&body.Success?Seconds(body.EscapeSeconds):null}))));
+                await using(var receipt=new MySqlCommand("SELECT result_digest FROM authoritative_match_players WHERE match_id=@match AND user_id=@user FOR UPDATE;",connection,transaction))
+                {
+                    receipt.Parameters.AddWithValue("@match",matchId.ToString("D"));receipt.Parameters.AddWithValue("@user",userId);
+                    object? previous=await receipt.ExecuteScalarAsync(ct);
+                    if(previous is string known && known!=digest)return Results.Conflict(new LobbyFailure("이미 검증한 경기 결과와 다릅니다."));
+                }
+
                 await using var command = new MySqlCommand(
                     """
                     INSERT INTO verified_match_results
@@ -1142,11 +1174,8 @@ internal static partial class LobbyEndpoints
                         (@matchId, @roomId, @userId, @role, @success, @captureCount, @firstCaptureSeconds,
                          @allCapturedSeconds, @rescueCount, @escapeSeconds)
                     ON DUPLICATE KEY UPDATE
-                        success = VALUES(success), capture_count = VALUES(capture_count),
-                        first_capture_seconds = VALUES(first_capture_seconds),
-                        all_captured_seconds = VALUES(all_captured_seconds), rescue_count = VALUES(rescue_count),
-                        escape_seconds = VALUES(escape_seconds), verified_at_utc = UTC_TIMESTAMP(6);
-                    """, connection) { CommandTimeout = 5 };
+                        match_id = VALUES(match_id);
+                    """, connection,transaction) { CommandTimeout = 5 };
                 command.Parameters.AddWithValue("@matchId", matchId.ToString("D"));
                 command.Parameters.AddWithValue("@roomId", roomId);
                 command.Parameters.AddWithValue("@userId", userId);
@@ -1158,6 +1187,10 @@ internal static partial class LobbyEndpoints
                 command.Parameters.AddWithValue("@rescueCount", normalizedRole == "Survivor" && body.Success ? body.RescueCount : DBNull.Value);
                 command.Parameters.AddWithValue("@escapeSeconds", normalizedRole == "Survivor" && body.Success ? body.EscapeSeconds : DBNull.Value);
                 await command.ExecuteNonQueryAsync(ct);
+                await using(var receipt=new MySqlCommand("UPDATE authoritative_match_players SET result_digest=@digest WHERE match_id=@match AND user_id=@user;",connection,transaction))
+                {receipt.Parameters.AddWithValue("@match",matchId.ToString("D"));receipt.Parameters.AddWithValue("@user",userId);receipt.Parameters.AddWithValue("@digest",digest);await receipt.ExecuteNonQueryAsync(ct);}
+                await AuthoritativeMatchLedger.EndAsync(connection,transaction,matchId.ToString("D"),ct);
+                await transaction.CommitAsync(ct);
                 if (normalizedRole == "Survivor" && body.Success)
                 {
                     await RefreshExistingSurvivorTeamRecordAsync(
@@ -1302,6 +1335,27 @@ internal static partial class LobbyEndpoints
             }
         }).RequireRateLimiting("lobby");
 
+        // Exact, account-scoped receipt lookup; never search a global top-50 list for publication evidence.
+        app.MapGet("/api/leaderboards/records/{matchId}",async(string matchId,HttpRequest request,AuthDatabase database,CancellationToken ct)=>
+        {
+            var user=await AuthenticateAsync(request,database,ct);if(user is null)return Results.Unauthorized();
+            if(!Guid.TryParse(matchId,out var match))return Results.BadRequest();
+            try
+            {
+                await using var connection=await database.OpenConnectionAsync(ct);
+                await using var command=new MySqlCommand("""
+                    SELECT lr.id,lr.room_name,lr.role,tr.survivor_count,tr.average_rescue_count,tr.average_escape_seconds
+                    FROM leaderboard_records lr LEFT JOIN leaderboard_survivor_team_records tr ON tr.match_id=lr.match_id
+                    WHERE lr.match_id=@match AND lr.user_id=@user LIMIT 1;
+                    """,connection);
+                command.Parameters.AddWithValue("@match",match.ToString("D"));command.Parameters.AddWithValue("@user",user.Id);
+                await using var reader=await command.ExecuteReaderAsync(ct);if(!await reader.ReadAsync(ct))return Results.NotFound();
+                return Results.Ok(new {recordId=reader.GetUInt64(0).ToString(),matchId=match.ToString("D"),roomName=reader.GetString(1),role=reader.GetString(2),
+                    survivorCount=reader.IsDBNull(3)?0:reader.GetInt32(3),teamRescueCount=reader.IsDBNull(4)?0:reader.GetDouble(4),teamEscapeSeconds=reader.IsDBNull(5)?0:reader.GetDouble(5)});
+            }
+            catch(MySqlException){return DatabaseUnavailable();}
+        }).RequireRateLimiting("lobby");
+
         app.MapPost("/api/leaderboards/records", async (
             HttpRequest request, SubmitLeaderboardRecordRequest body, AuthDatabase database, CancellationToken ct) =>
         {
@@ -1337,8 +1391,9 @@ internal static partial class LobbyEndpoints
                 await using (var verified = new MySqlCommand(
                     """
                     SELECT vr.capture_count, vr.first_capture_seconds, vr.all_captured_seconds,
-                           vr.rescue_count, vr.escape_seconds, COALESCE(r.name, '알 수 없는 방')
+                           vr.rescue_count, vr.escape_seconds, COALESCE(a.room_name,r.name, '알 수 없는 방')
                     FROM verified_match_results vr
+                    LEFT JOIN authoritative_matches a ON a.match_id=vr.match_id
                     LEFT JOIN game_rooms r ON r.id = vr.room_id
                     WHERE vr.match_id = @matchId AND vr.user_id = @userId
                       AND vr.role = @role AND vr.success = TRUE
@@ -1362,7 +1417,7 @@ internal static partial class LobbyEndpoints
                 }
 
                 var remoteIpAddress = request.HttpContext.Connection.RemoteIpAddress;
-                var isLoopbackDevelopment = remoteIpAddress is not null &&
+                var isLoopbackDevelopment = app.Environment.IsDevelopment() && remoteIpAddress is not null &&
                     System.Net.IPAddress.IsLoopback(remoteIpAddress) &&
                     !request.Headers.ContainsKey("X-Forwarded-For") && !request.Headers.ContainsKey("Forwarded") && !request.Headers.ContainsKey("X-Real-IP");
                 if (!hasVerifiedResult && !(securityOptions.AllowUnverifiedLeaderboardSubmissions && isLoopbackDevelopment))
@@ -1534,9 +1589,10 @@ internal static partial class LobbyEndpoints
             INSERT INTO leaderboard_survivor_team_records
                 (match_id, room_name, survivor_count, average_rescue_count,
                  average_escape_seconds, submitted_by_user_id)
-            SELECT @matchId, COALESCE(MAX(r.name), @fallbackRoomName), COUNT(*),
+            SELECT @matchId, COALESCE(MAX(a.room_name),MAX(r.name), @fallbackRoomName), COUNT(*),
                    SUM(vr.rescue_count), MAX(vr.escape_seconds), @submittedByUserId
             FROM verified_match_results vr
+            LEFT JOIN authoritative_matches a ON a.match_id=vr.match_id
             LEFT JOIN game_rooms r ON r.id = vr.room_id
             WHERE vr.match_id = @matchId AND vr.role = 'Survivor' AND vr.success = TRUE
             HAVING COUNT(*) > 0
@@ -1562,10 +1618,11 @@ internal static partial class LobbyEndpoints
             UPDATE leaderboard_survivor_team_records team
             INNER JOIN
             (
-                SELECT vr.match_id, COALESCE(MAX(r.name), '알 수 없는 방') AS room_name,
+                SELECT vr.match_id, COALESCE(MAX(a.room_name),MAX(r.name), '알 수 없는 방') AS room_name,
                        COUNT(*) AS survivor_count, SUM(vr.rescue_count) AS average_rescue_count,
                        MAX(vr.escape_seconds) AS average_escape_seconds
                 FROM verified_match_results vr
+                LEFT JOIN authoritative_matches a ON a.match_id=vr.match_id
                 LEFT JOIN game_rooms r ON r.id = vr.room_id
                 WHERE vr.match_id = @matchId AND vr.role = 'Survivor' AND vr.success = TRUE
                 GROUP BY vr.match_id
@@ -2013,12 +2070,15 @@ internal static partial class LobbyEndpoints
         return value is null or DBNull ? null : Convert.ToUInt64(value);
     }
 
-    private static async Task<bool> ResetStartedRoomIfAllMembersReturnedAsync(
+    internal static async Task<bool> ResetStartedRoomIfAllMembersReturnedAsync(
         MySqlConnection connection,
         MySqlTransaction transaction,
         string roomId,
         CancellationToken ct)
     {
+        // Client return flags are not authority to terminate an active match.
+        await using(var ended=new MySqlCommand("SELECT 1 FROM game_rooms r JOIN authoritative_matches a ON a.match_id=r.match_id WHERE r.id=@room AND r.status='Started' AND a.ended_at_utc IS NOT NULL FOR UPDATE;",connection,transaction))
+        {ended.Parameters.AddWithValue("@room",roomId);if(await ended.ExecuteScalarAsync(ct) is null)return false;}
         var returnedStates = new List<bool>();
         await using (var command = new MySqlCommand(
             "SELECT returned_to_room FROM room_members WHERE room_id = @roomId FOR UPDATE;",
@@ -2271,6 +2331,7 @@ internal sealed record SubmitVerifiedMatchResultRequest(
     int? RescueCount,
     double? EscapeSeconds);
 internal sealed record AuthoritativeForfeitRequest(string? MatchId, string? UserId, string? Role);
+internal sealed record CompleteAuthoritativeMatchRequest(string? MatchId);
 internal sealed record SubmitLeaderboardRecordRequest(
     string? MatchId,
     string? Role,

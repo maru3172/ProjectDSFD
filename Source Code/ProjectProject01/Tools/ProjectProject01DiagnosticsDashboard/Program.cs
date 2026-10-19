@@ -84,6 +84,23 @@ internal static class DashboardSelfTest
         File.WriteAllText(batchPath, "@echo off\r\nif \"%~1\"==\"argument with spaces\" exit /b 0\r\nexit /b 9\r\n", Encoding.ASCII);
         var batchResult = DashboardForm.RunProcessAsync(batchPath, ["argument with spaces"]).GetAwaiter().GetResult();
         if (batchResult.ExitCode != 0) return 4;
+        var streams=Path.Combine(batchDirectory,"streams.cmd");
+        File.WriteAllText(streams,"@echo off\r\nfor /l %%i in (1,1,6000) do @echo stderr-%%i-012345678901234567890123456789012345678901234567890123456789 1>&2\r\nfor /l %%i in (1,1,6000) do @echo stdout-%%i-012345678901234567890123456789012345678901234567890123456789\r\n",Encoding.ASCII);
+        using(var limit=new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+        {
+            var result=DashboardForm.RunProcessAsync(streams,[],limit.Token).GetAwaiter().GetResult();
+            if(result.ExitCode!=0||!result.Output.Contains("stdout-6000")||!result.Output.Contains("stderr-6000"))return 13;
+        }
+        // Exercise the actual form-close cancellation source without displaying a window.
+        using(var form=new DashboardForm())
+        {
+            var sleep=Path.Combine(batchDirectory,"owned-sleep.cmd");
+            File.WriteAllText(sleep,"@echo off\r\necho started\r\npowershell.exe -NoProfile -Command \"Start-Sleep -Seconds 30\"\r\n",Encoding.ASCII);
+            var task=DashboardForm.RunProcessAsync(sleep,[],form.LifetimeTokenForTest);
+            form.CloseForTest();
+            try{task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();return 14;}
+            catch(OperationCanceledException){}
+        }
         Console.WriteLine("ProjectProject01 diagnostics dashboard self-test passed.");
         return 0;
     }
@@ -205,6 +222,8 @@ internal sealed class TrendChart : Control
 internal sealed class DashboardForm : Form
 {
     private readonly CancellationTokenSource windowLifetime=new();
+    internal CancellationToken LifetimeTokenForTest=>windowLifetime.Token;
+    internal void CloseForTest()=>OnFormClosing(new FormClosingEventArgs(CloseReason.UserClosing,false));
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         base.OnFormClosing(e);if(!e.Cancel)windowLifetime.Cancel();
@@ -917,7 +936,7 @@ internal sealed class DashboardForm : Form
     internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments,CancellationToken cancellationToken=default)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-        if (Path.GetExtension(fileName).Equals(".bat", StringComparison.OrdinalIgnoreCase))
+        if (Path.GetExtension(fileName).Equals(".bat", StringComparison.OrdinalIgnoreCase)||Path.GetExtension(fileName).Equals(".cmd",StringComparison.OrdinalIgnoreCase))
         {
             startInfo.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
             var command = string.Join(' ', new[] { fileName }.Concat(arguments).Select(QuoteCommandArgument));
@@ -934,15 +953,19 @@ internal sealed class DashboardForm : Form
         using var process = new Process { StartInfo = startInfo };
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);deadline.CancelAfter(TimeSpan.FromMinutes(30));
         if (!process.Start()) return new ProcessResult(-1, "Process could not be started.");
-        var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
-        try{await process.WaitForExitAsync(deadline.Token);}
+        var stdout=process.StandardOutput.ReadToEndAsync(deadline.Token);var stderr=process.StandardError.ReadToEndAsync(deadline.Token);
+        try{await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);}
         catch(OperationCanceledException)
         {
-            if(!process.HasExited)process.Kill(entireProcessTree:true);
-            await process.WaitForExitAsync();await Task.WhenAll(stdout,stderr);throw;
+            try{if(!process.HasExited)process.Kill(entireProcessTree:true);}catch(InvalidOperationException){}
+            // A racing child can inherit a pipe while its parent is being terminated.
+            // Never await unbounded EOF during window close; both reads share the cancellation token.
+            try{await Task.WhenAll(stdout,stderr).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);}
+            catch(Exception ex) when(ex is OperationCanceledException or TimeoutException or IOException){}
+            throw;
         }
-        await Task.WhenAll(stdout,stderr);
-        return new ProcessResult(process.ExitCode,await stdout+Environment.NewLine+await stderr);
+        await Task.WhenAll(stdout,stderr).ConfigureAwait(false);
+        return new ProcessResult(process.ExitCode,await stdout.ConfigureAwait(false)+Environment.NewLine+await stderr.ConfigureAwait(false));
     }
 
     private static string QuoteCommandArgument(string value) => $"\"{value.Replace("\"", "\"\"")}\"";

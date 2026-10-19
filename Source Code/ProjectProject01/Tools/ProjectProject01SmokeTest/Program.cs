@@ -221,7 +221,7 @@ internal sealed class SmokeRunner(SmokeOptions options)
                 });
             }
 
-            await StepAsync("AuthoritativeEscapeAndWinLoss", async ct =>
+            await StepAsync("SimulateAuthoritativeResultContract_NotUnrealGameplay", async ct =>
             {
                 var survivorResultIndex = 0;
                 foreach (var client in clients)
@@ -262,25 +262,12 @@ internal sealed class SmokeRunner(SmokeOptions options)
             {
                 var survivor = clients.First(item => item.Role == "Survivor");
                 var expectedRoomName = $"Smoke-{suffix}";
-                var individual = await SendAsync(HttpMethod.Get,
-                    "api/leaderboards/Survivor?sort=overall&scope=individual",
-                    survivor.AccessToken, null, true, ct);
-                var individualEntries = RequiredArray(individual, "entries");
-                if (!individualEntries.Any(item =>
-                    RequiredString(item!, "displayName") == survivor.DisplayName &&
-                    RequiredString(item!, "roomName") == expectedRoomName))
-                    throw new InvalidOperationException("등록한 생존자 개인 기록 또는 방 이름을 찾지 못했습니다.");
-
-                var team = await SendAsync(HttpMethod.Get,
-                    "api/leaderboards/Survivor?sort=overall&scope=team",
-                    survivor.AccessToken, null, true, ct);
-                var teamEntries = RequiredArray(team, "entries");
-                var teamEntry = teamEntries.FirstOrDefault(item =>
-                    RequiredString(item, "roomName") == expectedRoomName);
-                if (teamEntry.ValueKind != JsonValueKind.Object || !teamEntry.GetProperty("isTeam").GetBoolean() ||
-                    teamEntry.GetProperty("survivorCount").GetInt32() != 2 ||
-                    Math.Abs(teamEntry.GetProperty("averageRescueCount").GetDouble() - 2.0) > 0.001 ||
-                    Math.Abs(teamEntry.GetProperty("averageEscapeSeconds").GetDouble() - 60.0) > 0.001)
+                var receipt = await SendAsync(HttpMethod.Get,$"api/leaderboards/records/{matchId}",survivor.AccessToken,null,true,ct);
+                if(RequiredString(receipt,"matchId")!=matchId||RequiredString(receipt,"roomName")!=expectedRoomName||string.IsNullOrEmpty(RequiredString(receipt,"recordId")))
+                    throw new InvalidOperationException("현재 경기의 게시 영수증을 찾지 못했습니다.");
+                if (receipt.GetProperty("survivorCount").GetInt32() != 2 ||
+                    Math.Abs(receipt.GetProperty("teamRescueCount").GetDouble() - 2.0) > 0.001 ||
+                    Math.Abs(receipt.GetProperty("teamEscapeSeconds").GetDouble() - 60.0) > 0.001)
                     throw new InvalidOperationException(
                         "생존자 한 명의 등록으로 생성된 팀 기록, 전체 구출 횟수 또는 마지막 탈출 시간이 올바르지 않습니다.");
             });
@@ -418,6 +405,7 @@ internal sealed class SmokeRunner(SmokeOptions options)
                 new XAttribute("TestRunId", testRunId),
                 new XAttribute("TestName", "FullGameFlowSmoke"),
                 new XAttribute("Outcome", outcome),
+                new XAttribute("EvidenceScope", "BackendContractSimulation;NotUnrealGameplay;NotMultiPCOrEOS"),
                 new XAttribute("Role", "SmokeTest"),
                 new XAttribute("NetMode", "External"),
                 new XAttribute("Map", "Login-Lobby-MultiplayTest"),

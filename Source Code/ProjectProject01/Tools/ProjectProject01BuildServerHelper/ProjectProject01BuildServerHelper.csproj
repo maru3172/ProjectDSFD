@@ -10,5 +10,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\ProjectProject01ClientLauncher\LauncherPostView.cs" Link="Shared\LauncherPostView.cs" />
+    <Compile Include="..\ProjectProject01Backend\EosRuntimeBundle.cs" Link="Shared\EosRuntimeBundle.cs" />
   </ItemGroup>
 </Project>

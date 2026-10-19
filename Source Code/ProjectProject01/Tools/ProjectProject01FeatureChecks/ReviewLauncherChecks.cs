@@ -11,6 +11,11 @@ internal static class ReviewLauncherChecks
         string fixture=Path.GetFullPath(Path.Combine("Saved","ReviewRemediation","Launcher",Guid.NewGuid().ToString("N")));
         string root=Path.Combine(fixture,"Client"),outside=Path.Combine(fixture,"Outside");
         Directory.CreateDirectory(root);Directory.CreateDirectory(outside);
+        var local=new HashSet<string>{"192.168.1.12","25.1.2.3"};
+        string urls=MainForm.BuildBackendListenUrls(new[]{"192.168.1.12","192.168.1.12"},"25.9.9.9",local.Contains);
+        check(urls=="http://127.0.0.1:5080;http://192.168.1.12:5080","F18 외부 PC/분리된 VPN의 저장 주소를 바인딩하지 않고 현재 LAN과 루프백 유지");
+        check(MainForm.BuildBackendListenUrls(Array.Empty<string>(),"25.1.2.3",local.Contains).Contains("http://25.1.2.3:5080"),"F18 실제 로컬 인터페이스에 할당된 VPN 주소만 바인딩");
+        check(MainForm.BuildBackendListenUrls(Array.Empty<string>(),"25.1.2.3",_=>false)=="http://127.0.0.1:5080","F18 인터페이스가 사라진 뒤에도 루프백으로 백엔드 시작 가능");
         string executable=Path.Combine(root,"ProjectProject01.exe");
         await File.WriteAllTextAsync(executable,"fixture only; never executed");
         check(LauncherForm.ResolveInstalledExecutable(root)==executable,"F09 매니페스트 없는 첫 배포의 실행 파일은 설치 루트 안으로 해석");

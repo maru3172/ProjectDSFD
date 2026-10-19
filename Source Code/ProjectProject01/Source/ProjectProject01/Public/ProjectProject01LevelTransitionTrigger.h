@@ -53,6 +53,9 @@ private:
 	void RollbackTransition(const FString& Reason);
 	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& Error);
 	void HandleTravelTimeout();
+    bool ExtendAsyncTravelGrace(bool bEngineOwnsTransition);
+    void AbortUnresponsiveTravel();
+    int32 AsyncTravelWatchdogChecks=0;
 
 	/** 맵에서 크기와 위치를 조절하는 진입 영역입니다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Level Transition", meta = (AllowPrivateAccess = "true"))

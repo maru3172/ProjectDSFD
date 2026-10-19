@@ -397,6 +397,10 @@ private:
     FString DesiredLeaderboardEndpoint;
     bool bLeaderboardRefreshQueued=false;
 	friend class FProjectStaleFrontendResponseTest;
+	friend class FProjectReviewAsyncStateTest;
+#if WITH_DEV_AUTOMATION_TESTS
+    TFunction<void(const FString&)> ReviewRequestSink;
+#endif
     friend class FProjectLobbyReadabilityTest;
 	uint64 RequestGeneration=0;
     bool bMatchmaking=false,bCancelMatchmaking=false;

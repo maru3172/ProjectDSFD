@@ -15,6 +15,9 @@ UCLASS()
 class PROJECTPROJECT01_API AHelperRearGuardAIController : public AAIController
 {
 	GENERATED_BODY()
+	friend struct FProjectCheckpointAI;
+	friend class FProjectReviewSingleAIStateTest;
+	friend class FProjectReviewAsyncStateTest;
 
 public:
 	AHelperRearGuardAIController();

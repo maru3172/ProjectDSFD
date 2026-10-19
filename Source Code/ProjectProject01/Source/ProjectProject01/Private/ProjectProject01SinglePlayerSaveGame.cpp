@@ -57,6 +57,8 @@ uint32 UProjectProject01SinglePlayerSaveGame::CalculateIntegrityHash() const
 			Actor.bTickEnabled ? 1 : 0,
 			Actor.SaveGameData.Num(),
 			ActorDataCrc);
+		if (SchemaVersion >= 7)
+			Payload += FString::Printf(TEXT("|AI:%d:%08X"), Actor.SinglePlayerAIData.Num(), Actor.SinglePlayerAIData.IsEmpty() ? 0 : FCrc::MemCrc32(Actor.SinglePlayerAIData.GetData(), Actor.SinglePlayerAIData.Num()));
 
 		TArray<FProjectProject01SavedComponentState> SortedComponents = Actor.Components;
 		SortedComponents.Sort([](const FProjectProject01SavedComponentState& Left,

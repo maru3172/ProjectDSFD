@@ -262,7 +262,7 @@ function Save-LocalSecrets {
         'GameServer:SharedSecret' = $GameServerSharedSecret
         'GameServer:TicketKey' = $TicketKey
         'Administrator:ApiKey' = $AdministratorApiKey
-        'Security:AllowUnverifiedLeaderboardSubmissions' = 'true'
+        'Security:AllowUnverifiedLeaderboardSubmissions' = 'false'
     }
     $json = $secretObject | ConvertTo-Json -Compress
 
@@ -351,7 +351,7 @@ function Sync-LocalConfiguration {
             ApiKey = $administratorApiKey
         }
         Security = [ordered]@{
-            AllowUnverifiedLeaderboardSubmissions = $true
+            AllowUnverifiedLeaderboardSubmissions = $false
         }
     }
     $localConfigurationJson = $localConfiguration | ConvertTo-Json -Depth 4

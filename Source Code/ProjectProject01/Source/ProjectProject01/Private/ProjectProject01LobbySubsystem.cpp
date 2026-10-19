@@ -417,6 +417,9 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	const FString& JsonBody,
 	const int32 RetryIndex)
 {
+#if WITH_DEV_AUTOMATION_TESTS
+    if(ReviewRequestSink){ReviewRequestSink(Endpoint);return;}
+#endif
 	if (ActiveRequest.IsValid())
 	{
 		if (!ProjectProject01Lobby::IsReadOperation(Operation))

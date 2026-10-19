@@ -21,6 +21,8 @@ UCLASS()
 class PROJECTPROJECT01_API AMannequinAICharacter : public ACharacter
 {
 	GENERATED_BODY()
+	friend struct FProjectCheckpointAI;
+	friend class FProjectReviewSingleAIStateTest;
 
 public:
 	// Sets default values for this character's properties

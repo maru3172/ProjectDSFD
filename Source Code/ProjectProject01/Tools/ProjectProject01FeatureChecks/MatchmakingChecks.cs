@@ -91,6 +91,7 @@ internal static class MatchmakingChecks
             await Read(server.PostAsJsonAsync("/api/server/heartbeat",new{port=process.Port,bootId="mm-boot",ready=true,managedId=process.Instance}));await manager.TickAsync(default);
             foreach(int i in new[]{0,1,2}){var r=await Room(i);Check(r.GetProperty("started").GetBoolean()&&r.GetProperty("assignedRole").GetString()==roles[i],"실제 시작 후 역할 재배정 없이 유지 "+i);}
             foreach(int i in new[]{0,1,2})await Read(clients[i].Client.PostAsJsonAsync("/api/rooms/current/return",new{}));
+            await Read(server.PostAsJsonAsync("/api/server/matches/complete",new {matchId=(await Room(0)).GetProperty("matchId").GetString()}));
             var returned=new HashSet<string>();
             foreach(int i in new[]{0,1,2})
             {

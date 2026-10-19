@@ -2642,6 +2642,7 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 
 void AMultiplayTestGameMode::SubmitAuthoritativeResults()
 {
+	if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->NotifyAuthoritativeMatchEnded(AuthoritativeMatchId);
 	if (bMatchEndedByForfeit)
 	{
 		PendingResultSubmissions = 0;

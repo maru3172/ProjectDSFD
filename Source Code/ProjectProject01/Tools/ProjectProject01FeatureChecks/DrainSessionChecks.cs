@@ -63,6 +63,7 @@ internal static class DrainSessionChecks
             await Drain();await Read(clients[0].PostAsJsonAsync("/api/rooms/current/return",new {}));await manager.TickAsync(default);
             Check(manager.Enabled&&factory.Live==1,"한 명 복귀만으로 안전 종료 완료하지 않음");
             for(int member=1;member<3;member++)await Read(clients[member].PostAsJsonAsync("/api/rooms/current/return",new {}));
+            await Read(server.PostAsJsonAsync("/api/server/matches/complete",new {matchId=match}));
             await manager.TickAsync(default);var done=await Read(admin.GetAsync("/api/admin/game-server-demand"));
             Check(!manager.Enabled&&factory.Live==0&&done.GetProperty("drainCompleted").GetBoolean(),"모든 경기 세션 정리 후에만 운영 중지 완료");
             Check((await State()).GetProperty("roomId").GetString()==roomIds[0],"안전 종료 뒤 로그인과 기존 대기방 유지");

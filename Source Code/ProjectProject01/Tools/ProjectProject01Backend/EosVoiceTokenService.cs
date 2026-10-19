@@ -269,17 +269,11 @@ internal sealed partial class EosVoiceTokenService : IHostedService, IDisposable
 
     private string ResolveLibraryPath()
     {
-        var configured = ReadSecret("PROJECTPROJECT01_EOS_SDK_PATH", "EosVoice:SdkPath");
-        var candidates = new[]
-        {
-            configured,
-            Path.Combine(AppContext.BaseDirectory, "EOSSDK-Win64-Shipping.dll"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "Epic Games", "UE_5.8", "Engine", "Binaries", "Win64", "EOSSDK-Win64-Shipping.dll")
-        };
-        var found = candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path));
-        return found ?? throw new FileNotFoundException(
-            "EOSSDK-Win64-Shipping.dll was not found. Set PROJECTPROJECT01_EOS_SDK_PATH.");
+        string? configured = ReadSecret("PROJECTPROJECT01_EOS_SDK_PATH", "EosVoice:SdkPath");
+        if (string.IsNullOrWhiteSpace(configured) && File.Exists(Path.Combine(AppContext.BaseDirectory, EosRuntimeBundle.SdkName)))
+            configured = Path.Combine(AppContext.BaseDirectory, EosRuntimeBundle.SdkName);
+        return EosRuntimeBundle.Prepare(AppContext.BaseDirectory, configuredSdk: configured,
+            configuredAudio: ReadSecret("PROJECTPROJECT01_EOS_XAUDIO_PATH", "EosVoice:XAudioPath")).Sdk;
     }
 
     private string ResolveXAudioPath(string eosLibraryPath)
@@ -291,6 +285,7 @@ internal sealed partial class EosVoiceTokenService : IHostedService, IDisposable
             : Directory.GetParent(eosBinaryDirectory)?.FullName;
         var candidates = new[]
         {
+            eosBinaryDirectory is null ? null : Path.Combine(eosBinaryDirectory, EosRuntimeBundle.AudioName),
             configured,
             engineBinariesDirectory is null
                 ? null

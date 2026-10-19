@@ -247,6 +247,13 @@ internal sealed partial class MainForm : Form
             Append("[차단] Launcher 엔진은 ProjectProject01Server 패키징을 지원하지 않습니다. 소스 빌드 UE Engine 경로로 바꾸세요.");
             return;
         }
+        string[] missingInstallers = MissingPrerequisiteInstallers(engineRoot.Text.Trim());
+        if (missingInstallers.Length > 0)
+        {
+            foreach (string path in missingInstallers) Append("[차단] 필수 런타임 설치 파일이 없습니다: " + path);
+            SetStatus("패키징 전 검사 실패: UE 필수 런타임 파일을 복구하세요.");
+            return;
+        }
         Directory.CreateDirectory(archiveRoot.Text.Trim());
         string role = server ? "Server" : "Client";
         if (!server)
@@ -255,9 +262,7 @@ internal sealed partial class MainForm : Form
             // 이전 해시와 새 파일을 함께 받아 검증에 실패할 수 있다.
             InvalidateClientUpdateManifests(Path.Combine(archiveRoot.Text.Trim(), role));
         }
-        string args = $"BuildCookRun -project=\"{projectFile.Text.Trim()}\" -noP4 -platform=Win64 " +
-            (server ? "-server -serverconfig=Development -noclient " : "-clientconfig=Shipping ") +
-            $"-build -cook -stage -pak -crashreporter -archive -archivedirectory=\"{Path.Combine(archiveRoot.Text.Trim(), role)}\" -utf8output";
+        string args = BuildCookRunArguments(projectFile.Text.Trim(), archiveRoot.Text.Trim(), server);
         SetStatus($"{role} 패키징 중...");
         int code;
         if (server)
@@ -351,7 +356,10 @@ internal sealed partial class MainForm : Form
         await File.WriteAllTextAsync(
             Path.Combine(publishedRoot, "업데이트_실행방법.txt"),
             "ProjectProject01ClientLauncher.exe를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
-            "'업데이트 및 실행'을 누르세요.\r\n게임 실행 파일을 직접 실행하면 자동 업데이트를 확인하지 않습니다.\r\n",
+            "'업데이트 및 실행'을 누르세요.\r\n게임 실행 파일을 직접 실행하면 자동 업데이트를 확인하지 않습니다.\r\n" +
+            "게임 실행에는 Unreal Engine 설치가 필요하지 않습니다. Windows 폴더 전체를 유지하세요.\r\n" +
+            "새 PC에서 VC++ 런타임 오류가 나면 Engine\\Extras\\Redist\\en-us\\vc_redist.x64.exe를 설치한 뒤 다시 실행하세요.\r\n" +
+            "필수 런타임 설치 파일은 포함되지만 자동 설치되지는 않습니다.\r\n",
             new UTF8Encoding(true), lifetime.Token);
 
         SetStatus("클라이언트 파일 해시 계산 중...");
@@ -623,6 +631,16 @@ internal sealed partial class MainForm : Form
             Append("[차단] 게임 서버 서명 비밀키가 없습니다. 'MySQL 초기화/시작'을 먼저 실행하세요.");
             return;
         }
+        try
+        {
+            PrepareBackendVoiceRuntime(backend);
+            Append("[OK] 서버용 EOS·XAudio DLL 검증/보관 완료. 백엔드 Native/EOS/win-x64 폴더를 함께 옮기면 엔진 없이 사용할 수 있습니다.");
+        }
+        catch (Exception exception)
+        {
+            // Authentication/diagnostics must remain available even when optional voice is broken.
+            Append("[주의] 서버용 음성 런타임 준비 실패. 음성 기능을 사용할 수 없을 수 있습니다: " + exception.Message);
+        }
         string urls = GetBackendListenUrls(backend);
         string? configuredAddress=GetConfiguredVpnHost(backend);
         if(configuredAddress is not null&&!IsLocalIpv4Address(configuredAddress))Append("[주의] 저장된 가상 네트워크 주소가 현재 PC에 없어 해당 주소는 제외했습니다. 활성 LAN/로컬 주소로 시작합니다.");
@@ -662,11 +680,14 @@ internal sealed partial class MainForm : Form
 
     private static string GetBackendListenUrls(string backendDirectory)
     {
-        const string loopbackUrl = "http://127.0.0.1:5080";
-        string? host = GetConfiguredVpnHost(backendDirectory);
-        var urls = new List<string> { loopbackUrl };
-        if (host is not null&&IsLocalIpv4Address(host)) urls.Add($"http://{host}:5080");
-        urls.AddRange(GetLocalLanAddresses().Select(item => $"http://{item.Address}:5080"));
+        return BuildBackendListenUrls(GetLocalLanAddresses().Select(item=>item.Address),GetConfiguredVpnHost(backendDirectory),IsLocalIpv4Address);
+    }
+
+    internal static string BuildBackendListenUrls(IEnumerable<string> lan,string? configuredVpn,Func<string,bool> assigned)
+    {
+        var urls = new List<string> { "http://127.0.0.1:5080" };
+        foreach(string host in lan.Concat(configuredVpn is null?Array.Empty<string>():new[]{configuredVpn}))
+            if(IPAddress.TryParse(host,out var ip)&&ip.AddressFamily==AddressFamily.InterNetwork&&assigned(host))urls.Add($"http://{ip}:5080");
         return string.Join(';', urls.Distinct(StringComparer.OrdinalIgnoreCase));
     }
 

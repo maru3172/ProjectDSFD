@@ -53,7 +53,9 @@ internal static class IntegrationChecks
                 options.AddFixedWindowLimiter(policy,limit=>{limit.PermitLimit=1000;limit.Window=TimeSpan.FromMinutes(1);});
         });
         var testConfig=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
-            ["GameServer:SharedSecret"]=new string('s',48),["GameServer:TicketKey"]=Convert.ToBase64String(new byte[32])}).Build();
+            ["GameServer:SharedSecret"]=new string('s',48),["GameServer:TicketKey"]=Convert.ToBase64String(new byte[32]),
+            // A legacy true setting must still fail closed in the Production environment.
+            ["Security:AllowUnverifiedLeaderboardSubmissions"]="true"}).Build();
         var demandFactory=new DemandSessionChecks.FakeFactory();
         var demandClock=new DemandSessionChecks.FakeClock();
         var demand=new GameServerDemandManager(database,ProjectSecurityOptions.FromConfiguration(testConfig),demandFactory,
@@ -182,6 +184,8 @@ internal static class IntegrationChecks
             await DemandSessionChecks.RunAsync(database,admin,demand,demandFactory,demandClock,output);
             await DrainSessionChecks.RunAsync(database,admin,demand,demandFactory,output);
             await MatchmakingChecks.RunAsync(database,admin,demand,demandFactory,output);
+            await StartupRecoveryChecks.RunAsync(database,demand,Check);
+            await ResultDeliveryChecks.RunAsync(database,admin,output,Check);
             Console.WriteLine($"PASS: {passed} isolated API/database checks");
         }
         finally{await app.StopAsync();}

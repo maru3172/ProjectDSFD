@@ -72,6 +72,8 @@
 /Source Code/ProjectProject01/Tools/ProjectProject01DiagnosticsDashboard/obj/
 
 # ProjectProject01 authentication backend (.NET generated output)
+# Local third-party voice runtime bundle; copied for deployment, never credentials.
+/Source Code/ProjectProject01/Tools/ProjectProject01Backend/Native/
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/bin/
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/obj/
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/LocalMySql/

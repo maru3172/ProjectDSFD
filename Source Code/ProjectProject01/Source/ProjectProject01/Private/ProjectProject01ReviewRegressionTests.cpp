@@ -20,6 +20,41 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Crc.h"
+#include "ProjectProject01CheckpointAI.h"
+#include "BTService_MannequinAI.h"
+#include "MannequinAICharacter.h"
+#include "MannequinAIController.h"
+#include "HelperRearGuardCharacter.h"
+#include "HelperRearGuardAIController.h"
+#include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "BehaviorTree/BlackboardData.h"
+#include "BehaviorTree/Blackboard/BlackboardKeyType_Bool.h"
+#include "BehaviorTree/Blackboard/BlackboardKeyType_Vector.h"
+#include "BehaviorTree/Blackboard/BlackboardKeyType_Object.h"
+#include "BehaviorTree/Composites/BTComposite_Sequence.h"
+#include "BehaviorTree/Tasks/BTTask_Wait.h"
+#include "UObject/UObjectHash.h"
+#include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01LobbySubsystem.h"
+#include "ProjectProject01DiagnosticsSubsystem.h"
+#include "ProjectProject01ResultOutbox.h"
+#include "ProjectProject01TravelDeadline.h"
+#include "PlayerHeartbeatComponent.h"
+#include "Engine/LocalPlayer.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Components/EditableTextBox.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Async/TaskGraphInterfaces.h"
+#include "ProjectProject01CrashFiles.h"
+#include "Engine/PendingNetGame.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Dom/JsonObject.h"
 
 namespace
 {
@@ -160,6 +195,12 @@ bool FProjectReviewTravelRollbackTest::RunTest(const FString&)
 	Trigger->HandleTravelTimeout();
 	TestTrue(TEXT("Single-player timeout restores input and rearms the trigger"),!PC->IsMoveInputIgnored()&&!PC->IsLookInputIgnored()&&!Trigger->bTransitionStarted&&Trigger->TransitionVolume->GetCollisionEnabled()==ECollisionEnabled::QueryOnly);
 	TestFalse(TEXT("Cancelled single travel cannot leak fade flag into a later game"),Instance->ConsumePendingSinglePlayerLevelTransitionFade());
+    TestTrue(TEXT("Long async travel gets bounded slow-disk grace"),Trigger->ExtendAsyncTravelGrace(true)&&Trigger->ExtendAsyncTravelGrace(true)&&Trigger->ExtendAsyncTravelGrace(true));
+    TestFalse(TEXT("Fourth deadline terminates async waiting rather than hanging forever"),Trigger->ExtendAsyncTravelGrace(true));
+    TestFalse(TEXT("Non-async travel failure has no extra grace"),Trigger->ExtendAsyncTravelGrace(false));
+    TestTrue(TEXT("GameInstance watchdog survives the old trigger's world being replaced during async load"),FProjectTravelDeadline::Evaluate(121,true,true)==EProjectTravelDeadline::Abort);
+    TestTrue(TEXT("Completed new world cancels the watchdog"),FProjectTravelDeadline::Evaluate(121,false,true)==EProjectTravelDeadline::Complete);
+    TestTrue(TEXT("Slow but bounded disk load does not abort early"),FProjectTravelDeadline::Evaluate(119,true,true)==EProjectTravelDeadline::Wait);
 	return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewCheckpointStoreTest,"ProjectProject01.Review.CheckpointStore",
@@ -278,5 +319,247 @@ bool FProjectReviewRoleGuideKeysTest::RunTest(const FString&)
 			TestTrue(TEXT("Guide displays every configured movement key"),Text.Contains(Key.GetDisplayName().ToString()));
 	}
 	return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewSingleAIStateTest,"ProjectProject01.Review.SingleAIState",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectReviewSingleAIStateTest::RunTest(const FString&)
+{
+	const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true)
+		.CreateNavigation(false).CreateAISystem(true).ShouldSimulatePhysics(false);
+	UWorld* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+	ON_SCOPE_EXIT { World->DestroyWorld(false); };
+	auto* BBAsset=NewObject<UBlackboardData>();
+	for(const FName Key:{FName(TEXT("PlayerLookingAtMannequin")),FName(TEXT("RoamingSequenceCompleted")),FName(TEXT("IsOutsideOuterRange")),FName(TEXT("IsBetweenPlayerRanges")),FName(TEXT("IsInsideInnerRange")),FName(TEXT("IsInChaseSector")),FName(TEXT("IsInRoamingSector"))})
+	{FBlackboardEntry Entry;Entry.EntryName=Key;Entry.KeyType=NewObject<UBlackboardKeyType_Bool>(BBAsset);BBAsset->Keys.Add(Entry);}
+	for(const FName Key:{FName(TEXT("RoamingLocation")),FName(TEXT("PendingMoveLocation"))})
+	{FBlackboardEntry Entry;Entry.EntryName=Key;Entry.KeyType=NewObject<UBlackboardKeyType_Vector>(BBAsset);BBAsset->Keys.Add(Entry);}
+	FBlackboardEntry Target;Target.EntryName=TEXT("TargetActor");Target.KeyType=NewObject<UBlackboardKeyType_Object>(BBAsset);BBAsset->Keys.Add(Target);
+	auto* Asset=NewObject<UBehaviorTree>();Asset->BlackboardAsset=BBAsset;
+	auto* Root=NewObject<UBTComposite_Sequence>(Asset);Asset->RootNode=Root;
+	auto* Template=NewObject<UBTService_MannequinAI>(Root);Root->Services.Add(Template);
+	auto* WaitTemplate=NewObject<UBTTask_Wait>(Root);FBTCompositeChild Child;Child.ChildTask=WaitTemplate;Root->Children.Add(Child);
+	auto* OldPawn=World->SpawnActor<AMannequinAICharacter>();auto* NewPawn=World->SpawnActor<AMannequinAICharacter>();
+	auto* OldAI=World->SpawnActor<AMannequinAIController>();auto* NewAI=World->SpawnActor<AMannequinAIController>();
+	OldAI->Possess(OldPawn);NewAI->Possess(NewPawn);
+	TestTrue(TEXT("Real BT starts for source actor"),OldAI->RunBehaviorTree(Asset));
+	TestTrue(TEXT("Real BT starts for restored actor"),NewAI->RunBehaviorTree(Asset));
+	auto* OldTree=Cast<UBehaviorTreeComponent>(OldAI->GetBrainComponent());auto* NewTree=Cast<UBehaviorTreeComponent>(NewAI->GetBrainComponent());
+	if(!OldTree||!NewTree)return false;
+	OldTree->TickComponent(0.01f,LEVELTICK_All,nullptr);NewTree->TickComponent(0.01f,LEVELTICK_All,nullptr);
+	auto Service=[](UBehaviorTreeComponent* Tree)
+	{
+		TArray<UObject*> Children;GetObjectsWithOuter(Tree,Children,EGetObjectsFlags::None);
+		for(auto* Object:Children)if(auto* Result=Cast<UBTService_MannequinAI>(Object))return Result;
+		return static_cast<UBTService_MannequinAI*>(nullptr);
+	};
+	auto* OldService=Service(OldTree);auto* NewService=Service(NewTree);
+	TestTrue(TEXT("BT services are per-controller instances, not the shared template"),OldService&&NewService&&OldService!=NewService&&OldService!=Template);
+	if(!OldService||!NewService)return false;
+	OldService->RoamingDestination=FVector(100,200,0);OldService->bHasRoamingDestination=true;OldService->bRoamingCommitted=true;
+	OldService->ActiveRangeRegion=EMannequinRangeRegion::InsideInnerRange;OldService->PendingRangeRegion=EMannequinRangeRegion::BetweenRangesOuterRoamingArea;
+	OldService->bHasPendingOutwardTransition=true;OldService->bPendingTransitionUsesCommittedLocation=true;OldService->PendingMoveLocation=FVector(300,400,0);
+	OldService->NextRoamingQueryTime=100.75;
+	TestTrue(TEXT("Service value snapshot restores"),FProjectCheckpointAI::RestoreService(NewService,FProjectCheckpointAI::CaptureService(OldService,100.0),2.0));
+	TestEqual(TEXT("Repath delay is rebased to new world time, not old absolute time"),NewService->NextRoamingQueryTime,2.75);
+	OldPawn->ActivePostPossessionCommand=AMannequinAICharacter::EPostPossessionCommand::ChaseNearestSurvivor;
+	OldPawn->bPostPossessionChaseCommandQueued=true;OldPawn->SetFrozen(true);
+	auto* OldPlayer=World->SpawnActor<APlayerCharacter>();auto* NewPlayer=World->SpawnActor<APlayerCharacter>();
+	OldPawn->CaughtSurvivorsInCurrentContact.Add(OldPlayer);
+	auto* OldBB=OldAI->GetBlackboardComponent();OldBB->SetValueAsObject(TEXT("TargetActor"),OldPlayer);
+	OldBB->SetValueAsBool(TEXT("IsInRoamingSector"),true);OldBB->SetValueAsVector(TEXT("RoamingLocation"),OldService->RoamingDestination);
+	OldBB->SetValueAsVector(TEXT("PendingMoveLocation"),OldService->PendingMoveLocation);
+	if(const auto* Wait=Cast<UBTTask_Wait>(OldTree->GetActiveNode()))
+		Wait->GetSpecialNodeMemory<FBTTaskMemory>(OldTree->GetNodeMemory(Wait,OldTree->GetActiveInstanceIdx()))->NextTickRemainingTime=2.5f;
+	else {AddError(TEXT("Wait task did not activate in checkpoint BT fixture"));return false;}
+	const auto Data=FProjectCheckpointAI::Capture(OldPawn,[&](AActor* Actor){return Actor==OldPlayer?FName(TEXT("player")):NAME_None;});
+	TestTrue(TEXT("AI snapshot restores after actors have been remapped"),FProjectCheckpointAI::Restore(NewPawn,Data,[&](FName Id)->AActor*{return Id==TEXT("player")?NewPlayer:nullptr;}));
+	TestTrue(TEXT("Command, queued command and frozen state restored"),NewPawn->ShouldChasePostPossessionCommand()&&NewPawn->bPostPossessionChaseCommandQueued&&NewPawn->bLegacyAnimationFrozen);
+	TestTrue(TEXT("Distributed movement and pending outward transition persist"),NewService->bRoamingCommitted&&NewService->bHasPendingOutwardTransition&&NewService->RoamingDestination.Equals(FVector(100,200,0))&&NewService->PendingMoveLocation.Equals(FVector(300,400,0)));
+	TestTrue(TEXT("Blackboard target and contact use new-world player, never old pointer"),NewAI->GetBlackboardComponent()->GetValueAsObject(TEXT("TargetActor"))==NewPlayer&&NewPawn->CaughtSurvivorsInCurrentContact.Contains(NewPlayer));
+	TestTrue(TEXT("Blackboard sector and movement destination restored"),NewAI->GetBlackboardComponent()->GetValueAsBool(TEXT("IsInRoamingSector"))&&NewAI->GetBlackboardComponent()->GetValueAsVector(TEXT("RoamingLocation")).Equals(FVector(100,200,0)));
+	NewAI->Tick(0);TestEqual(TEXT("Active Wait task resumes its remaining duration"),NewAI->RestoredWaitNodeIndex,INDEX_NONE);
+	if(const auto* Wait=Cast<UBTTask_Wait>(NewTree->GetActiveNode()))TestEqual(TEXT("Wait memory uses saved remaining seconds"),Wait->GetSpecialNodeMemory<FBTTaskMemory>(NewTree->GetNodeMemory(Wait,NewTree->GetActiveInstanceIdx()))->NextTickRemainingTime,2.5f);
+	TestFalse(TEXT("Restoring instance state never writes the shared service template"),Template->bRoamingCommitted);
+	auto* Helper=World->SpawnActor<AHelperRearGuardCharacter>();auto* HelperAI=World->SpawnActor<AHelperRearGuardAIController>();HelperAI->Possess(Helper);
+	HelperAI->LastMoveTarget=FVector(700,0,0);HelperAI->bHasMoveTarget=true;HelperAI->bWaitingForRepath=true;HelperAI->WaitUntilTime=World->GetTimeSeconds()+0.4;
+	const auto HelperData=FProjectCheckpointAI::Capture(Helper,[](AActor*){return NAME_None;});HelperAI->bHasMoveTarget=false;HelperAI->WaitUntilTime=0;
+	TestTrue(TEXT("Helper navigation/wait snapshot restores"),FProjectCheckpointAI::Restore(Helper,HelperData,[](FName){return static_cast<AActor*>(nullptr);}));
+	TestTrue(TEXT("Helper target and remaining repath wait survive"),HelperAI->bHasMoveTarget&&HelperAI->bWaitingForRepath&&HelperAI->LastMoveTarget.Equals(FVector(700,0,0))&&FMath::IsNearlyEqual(HelperAI->WaitUntilTime-World->GetTimeSeconds(),0.4));
+	return true;
+}
+namespace
+{
+class FReviewResponse final:public IHttpResponse
+{
+public:
+    FString Json,Url=TEXT("http://127.0.0.1/fixture");TArray<uint8> Bytes;
+    explicit FReviewResponse(const FString& Text):Json(Text){FTCHARToUTF8 Data(*Text);Bytes.Append(reinterpret_cast<const uint8*>(Data.Get()),Data.Length());}
+    const FString& GetURL() const override{return Url;}
+    const FString& GetEffectiveURL() const override{return Url;}
+    EHttpRequestStatus::Type GetStatus() const override{return EHttpRequestStatus::Succeeded;}
+    EHttpFailureReason GetFailureReason() const override{return EHttpFailureReason::None;}
+    FString GetURLParameter(const FString&) const override{return {};}
+    FString GetHeader(const FString&) const override{return {};}
+    TArray<FString> GetAllHeaders() const override{return {};}
+    FString GetContentType() const override{return TEXT("application/json");}
+    uint64 GetContentLength() const override{return Bytes.Num();}
+    const TArray<uint8>& GetContent() const override{return Bytes;}
+    TArray<uint8> TakeContent() override{return Bytes;}
+    int32 GetResponseCode() const override{return 200;}
+    FString GetContentAsString() const override{return Json;}
+    FUtf8StringView GetContentAsUtf8StringView() const override{return FUtf8StringView(reinterpret_cast<const UTF8CHAR*>(Bytes.GetData()),Bytes.Num());}
+};
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewAsyncStateTest,"ProjectProject01.Review.AsyncState",
+ EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectReviewAsyncStateTest::RunTest(const FString&)
+{
+    UWorld* World=CreateReviewWorld();auto* Instance=NewObject<UProjectProject01GameInstance>();World->SetGameInstance(Instance);
+    auto& Context=GEngine->CreateNewWorldContext(EWorldType::Game);Context.SetCurrentWorld(World);Context.OwningGameInstance=Instance;Instance->WorldContext=&Context;
+    // Base initialization only: no crash marker, heartbeat or EOS platform startup from Project Init.
+    Instance->UGameInstance::Init();auto* Auth=Instance->GetSubsystem<UProjectProject01AuthSubsystem>();auto* Lobby=Instance->GetSubsystem<UProjectProject01LobbySubsystem>();
+    ON_SCOPE_EXIT{Auth->AccessToken.Reset();Auth->AuthState=EProjectProject01AuthState::SignedOut;Instance->UGameInstance::Shutdown();Instance->WorldContext=nullptr;GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};
+    if(!TestNotNull(TEXT("Fixture auth"),Auth)||!TestNotNull(TEXT("Fixture lobby"),Lobby))return false;
+    auto* Local=NewObject<ULocalPlayer>(GEngine);auto* Settings=UProjectProject01GameUserSettings::Get();
+    UUserWidget* WidgetBase=NewObject<UProjectProject01SettingsWidget>(World);WidgetBase->Initialize();auto* Widget=CastChecked<UProjectProject01SettingsWidget>(WidgetBase);
+    Widget->SetPlayerContext(FLocalPlayerContext(Local,World));
+    TestTrue(TEXT("Settings widget resolves fixture game instance"),Widget->GetGameInstance()==Instance);
+    const FString OldAddress=Settings->GetDirectServerAddress();const float OldVolume=Settings->GetMasterVolume();
+    Widget->DirectServerAddressInput->SetText(FText::FromString(TEXT("192.168.88.42")));Widget->PendingMasterVolume=0.123f;
+    Auth->AuthState=EProjectProject01AuthState::SignedIn;Auth->AccessToken=TEXT("fixture-not-a-real-token");
+    Widget->ApplyPendingSettings();
+    TestEqual(TEXT("F19 rejected signed-in address does not save a new IP"),Settings->GetDirectServerAddress(),OldAddress);
+    TestEqual(TEXT("F19 rejected apply has no partial volume mutation"),Settings->GetMasterVolume(),OldVolume);
+    TestTrue(TEXT("F19 settings explains signed-in rejection"),Widget->StatusText->GetText().ToString().Contains(TEXT("로그인 또는 경기")));
+    Auth->AuthState=EProjectProject01AuthState::SignedOut;Auth->AccessToken.Reset();
+    Auth->AuthState=EProjectProject01AuthState::SignedIn;Auth->AccessToken=TEXT("fixture-session");
+    const uint64 SurveyGeneration=Auth->GetSessionGeneration();
+    TestTrue(TEXT("C07 current account and world can receive survey response"),Instance->IsSurveySessionCurrent(SurveyGeneration,World));
+    Auth->ForceClearLocalSession();Auth->AuthState=EProjectProject01AuthState::SignedIn;Auth->AccessToken=TEXT("replacement-session");
+    TestFalse(TEXT("C07 logout/account change invalidates an older survey response"),Instance->IsSurveySessionCurrent(SurveyGeneration,World));
+    auto PreviousGuide=FHttpModule::Get().CreateRequest();auto CurrentGuide=FHttpModule::Get().CreateRequest();Auth->GuideProgressRequest=CurrentGuide;
+    Auth->HandleGuideProgressRequestComplete(PreviousGuide,nullptr,false);
+    TestTrue(TEXT("C07 delayed old guide completion cannot cancel the new account request"),Auth->GuideProgressRequest==CurrentGuide);
+    Auth->GuideProgressRequest.Reset();Auth->AccessToken.Reset();Auth->AuthState=EProjectProject01AuthState::SignedOut;
+    Lobby->CurrentRoom.RoomId=TEXT("session-room");Lobby->CurrentRoom.bStarted=true;
+    TestTrue(TEXT("C05 multiplayer failure uses session state, not map name"),Instance->IsMultiplayerFailureWorld(World));
+    auto* OtherWorld=CreateReviewWorld();ON_SCOPE_EXIT{OtherWorld->DestroyWorld(false);};
+    TestFalse(TEXT("C05 another PIE world's network failure cannot log this account out"),Instance->IsMultiplayerFailureWorld(OtherWorld));
+    Lobby->ForceClearLocalSession();
+
+    TArray<FString> Requested;Lobby->ReviewRequestSink=[&](const FString& Endpoint){Requested.Add(Endpoint);};
+    auto Old=FHttpModule::Get().CreateRequest();Lobby->ActiveRequest=Old;
+    Lobby->RefreshLeaderboard(EProjectProject01LeaderboardRole::Survivor,EProjectProject01LeaderboardSort::Rescues,EProjectProject01LeaderboardScope::Team);
+    const FString Latest=Lobby->DesiredLeaderboardEndpoint;
+    auto OldResponse=MakeShared<FReviewResponse,ESPMode::ThreadSafe>(TEXT("{\"entries\":[{\"rank\":1,\"displayName\":\"OLD\"}]}"));
+    Lobby->HandleRequestComplete(Old,OldResponse,true,EProjectProject01LobbyOperation::RefreshLeaderboard,TEXT("GET"),TEXT("/api/leaderboards/Mannequin?sort=Overall&scope=Individual"),TEXT(""),0);
+    TestTrue(TEXT("F20 old role response never populates the latest tab"),Lobby->LeaderboardEntries.IsEmpty());
+    TestTrue(TEXT("F20 completion dispatches exactly the latest requested scope"),Requested.Num()==1&&Requested[0]==Latest);
+    auto Current=FHttpModule::Get().CreateRequest();Lobby->ActiveRequest=Current;
+    auto Empty=MakeShared<FReviewResponse,ESPMode::ThreadSafe>(TEXT("{\"entries\":[]}"));
+    Lobby->HandleRequestComplete(Current,Empty,true,EProjectProject01LobbyOperation::RefreshLeaderboard,TEXT("GET"),Latest,TEXT(""),0);
+    TestTrue(TEXT("F20 queued refresh completes without another loop"),!Lobby->bLeaderboardRefreshQueued&&Requested.Num()==1);
+
+    UUserWidget* LobbyBase=NewObject<UProjectProject01LobbyWidget>(World);LobbyBase->Initialize();auto* UI=CastChecked<UProjectProject01LobbyWidget>(LobbyBase);UI->SetPlayerContext(FLocalPlayerContext(Local,World));
+    Lobby->CurrentRoom.RoomId=TEXT("room");Lobby->CurrentRoom.MatchId=TEXT("match");Lobby->CurrentRoom.bStarted=true;
+    UI->AdmissionRoomId=TEXT("room");UI->AdmissionMatchId=TEXT("match");UI->bGameStartFadeComplete=true;
+    Lobby->ActiveRequest=Current;UI->ContinueGameAdmission(1);
+    TestEqual(TEXT("F01 fade completion waits for in-flight room poll"),UI->AdmissionTicketAttempts,0);
+    Lobby->ActiveRequest.Reset();UI->ContinueGameAdmission(0);
+    TestEqual(TEXT("F01 room poll release triggers ticket continuation"),UI->AdmissionTicketAttempts,1);
+    TestTrue(TEXT("F01 admission continuation calls ticket endpoint"),Requested.Last()==TEXT("/api/game-tickets"));
+    Lobby->ActiveRequest=Current;UI->ContinueGameAdmission(16);
+    TestFalse(TEXT("F01 held request has a bounded black-screen wait"),UI->bGameStartFadeComplete);
+    UI->AdmissionRoomId=TEXT("room");UI->AdmissionMatchId=TEXT("old-match");UI->bGameStartFadeComplete=true;UI->ContinueGameAdmission(0);
+    TestFalse(TEXT("F01 match change cancels pending admission"),UI->bGameStartFadeComplete);
+    Lobby->ActiveRequest.Reset();Lobby->ReviewRequestSink=nullptr;Lobby->ForceClearLocalSession();
+
+    auto* Helper=World->SpawnActor<AHelperRearGuardCharacter>();auto* AI=World->SpawnActor<AHelperRearGuardAIController>();AI->Possess(Helper);
+    Helper->SetActorLocation(FVector(-10000,0,0));Helper->GuardedPlayer=World->SpawnActor<APlayerCharacter>();Helper->bFollowDistanceLocked=true;Helper->LockedRetreatTarget=FVector(10000,0,0);
+    AI->RepathInterval=0;AI->AcceptanceRadius=10;AI->ProgressDistance=20;AI->StuckTimeout=1;AI->StuckWaitTime=0.5;AI->bHasMoveTarget=true;AI->LastProgressLocation=Helper->GetActorLocation();AI->LastProgressTime=-0.5;
+    AI->Tick(0.25f);TestEqual(TEXT("F21 failed repath cannot refresh the stuck clock"),AI->LastProgressTime,-0.5);
+    AI->LastProgressTime=-1.1;AI->Tick(0.25f);
+    TestTrue(TEXT("F21 blocked helper enters bounded recovery wait"),AI->bWaitingForRepath&&!AI->bHasMoveTarget&&AI->WaitUntilTime>World->GetTimeSeconds());
+    AI->WaitUntilTime=-1;AI->Tick(0.25f);TestFalse(TEXT("F21 recovery wait expires and permits a new path request"),AI->bWaitingForRepath);
+
+    auto* Diagnostic=NewObject<UProjectProject01DiagnosticsSubsystem>(World);
+    Diagnostic->TestRunId=TEXT("ReviewInterrupted_")+FGuid::NewGuid().ToString(EGuidFormats::Digits);Diagnostic->TestName=TEXT("review");
+    Diagnostic->TestDefinition.FailureCriteria=TEXT("RiskCount==0");Diagnostic->Samples.AddDefaulted();
+    auto Stop=[&](const FString& Reason)
+    {Diagnostic->Events.Reset();Diagnostic->bCaptureActive=true;Diagnostic->StopCapture(Reason);FString Xml;FFileHelper::LoadFileToString(Xml,*FPaths::Combine(Diagnostic->GetOutputDirectory(),TEXT("TestReport.xml")));return Xml;};
+    TestTrue(TEXT("F24 world teardown cannot become Pass despite passing criteria"),Stop(TEXT("World ended")).Contains(TEXT("Outcome=\"Inconclusive\"")));
+    TestTrue(TEXT("F24 normal completion can still pass measured criteria"),Stop(TEXT("Completed")).Contains(TEXT("Outcome=\"Pass\"")));
+
+    auto* Save=Instance->GetSubsystem<UProjectProject01SaveSubsystem>();FString Notice;
+    TestTrue(TEXT("C04 identical data version is compatible without warning"),Save->CheckDataCompatibility(TEXT("v"),TEXT("v"),{},Notice)&&Notice.IsEmpty());
+    TestTrue(TEXT("C04 tuning-only changes remain loadable with an explicit warning"),Save->CheckDataCompatibility(TEXT("old"),TEXT("new"),{},Notice)&&!Notice.IsEmpty());
+    TestFalse(TEXT("C04 explicitly incompatible data version is blocked without deleting it"),Save->CheckDataCompatibility(TEXT("old"),TEXT("new"),{TEXT("old")},Notice));
+    Save->PendingLoad=NewObject<UProjectProject01SinglePlayerSaveGame>();Save->PreviousSlotBeforeLoad=2;Save->CurrentSlotIndex=3;
+    Save->HandleLoadTravelFailure(World,ETravelFailure::LoadMapFailure,TEXT("fixture"));
+    TestTrue(TEXT("C04 failed map load clears PendingLoad and restores previous logical slot"),!Save->PendingLoad&&Save->CurrentSlotIndex==2);
+    Save->BaselineMapPackageName=TEXT("owned");Save->HandlePostLoadMap(OtherWorld);
+    TestEqual(TEXT("C04 other PIE map load cannot replace this save baseline"),Save->BaselineMapPackageName,FString(TEXT("owned")));
+    World->SpawnActor<AHelperRearGuardCharacter>();
+    TestFalse(TEXT("C04 duplicate checkpoint actor IDs fail before overwriting state"),Save->ValidateActorIdentities(World,Notice));
+
+    const FString Evidence=FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("ReviewRemediation"),TEXT("Evidence-")+FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".json"));
+    auto Marker=MakeShared<FJsonObject>();const FDateTime Now=FDateTime::UtcNow();
+    TestTrue(TEXT("C03 first missing native evidence enters grace, not permanent exclusion"),ProjectProject01CrashFiles::AwaitNativeEvidence(Evidence,Marker,Now));
+    TestTrue(TEXT("C03 native evidence writer gets the full grace interval"),ProjectProject01CrashFiles::AwaitNativeEvidence(Evidence,Marker,Now+FTimespan::FromSeconds(119)));
+    FString Stored;FFileHelper::LoadFileToString(Stored,*Evidence);TSharedPtr<FJsonObject> Restarted;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Stored),Restarted);
+    TestFalse(TEXT("C03 persisted grace expires even after another game process restart"),ProjectProject01CrashFiles::AwaitNativeEvidence(Evidence,Restarted,Now+FTimespan::FromSeconds(121)));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewSynthStopTest,"ProjectProject01.Review.SynthStop",
+ EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectReviewSynthStopTest::RunTest(const FString&)
+{
+    auto* Pain=NewObject<UPainGroanSynthComponent>();auto* Fall=NewObject<UBodyFallSynthComponent>();auto* Capture=NewObject<UMannequinCaptureSynthComponent>();
+    int32 Rate=8000;Pain->Init(Rate);Fall->Init(Rate);Capture->Init(Rate);
+    TArray<float> Audio;Audio.SetNumZeroed(16000);
+    Pain->PlaybackGeneration.Increment();Pain->AudioGeneration=1;Pain->bVoiceActive=true;Pain->VoiceDurationSeconds=0.01f;
+    Fall->PlaybackGeneration.Increment();Fall->AudioGeneration=1;Fall->bImpactActive=true;
+    Capture->PlaybackGeneration.Increment();Capture->AudioGeneration=1;Capture->bImpactActive=true;
+    Pain->OnGenerateAudio(Audio.GetData(),Audio.Num());Fall->OnGenerateAudio(Audio.GetData(),Audio.Num());Capture->OnGenerateAudio(Audio.GetData(),Audio.Num());
+    TestTrue(TEXT("F23 all one-shot voices reach their inactive tail"),!Pain->bVoiceActive&&!Fall->bImpactActive&&!Capture->bImpactActive);
+    // Drain the actual audio-to-game-thread Stop tasks. UObject weak refs and generation guards are exercised.
+    Pain->PlaybackGeneration.Increment();Pain->bVoiceActive=true;
+    FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+    TestTrue(TEXT("F23 an old stop task cannot consume a newly triggered generation"),Pain->bVoiceActive&&Pain->PlaybackGeneration.GetValue()==2);
+    TestEqual(TEXT("F23 stale audio completion does not invoke Stop on the new generation"),Pain->ReviewCompletedStopCount,0);
+    TestEqual(TEXT("F23 body-fall tail invokes actual Stop exactly once on game thread"),Fall->ReviewCompletedStopCount,1);
+    TestEqual(TEXT("F23 capture tail invokes actual Stop exactly once on game thread"),Capture->ReviewCompletedStopCount,1);
+    TestFalse(TEXT("F23 completed body fall does not remain an active audio source"),Fall->IsPlaying());
+    TestFalse(TEXT("F23 completed capture does not remain an active audio source"),Capture->IsPlaying());
+    const FString Root=FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("ReviewRemediation/NativeOutbox"),FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    FString Path,Again;
+    TestTrue(TEXT("F26 native producer persists its durable envelope"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),TEXT("{\"matchId\":\"fixture\"}"),Path));
+    TestTrue(TEXT("F26 duplicate enqueue uses the same journal"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),TEXT("{\"matchId\":\"fixture\"}"),Again)&&Path==Again);
+    FString Text;FFileHelper::LoadFileToString(Text,*Path);TestFalse(TEXT("F26 journal has no bearer or server secret"),Text.Contains(TEXT("Secret"))||Text.Contains(TEXT("Bearer")));
+    TestTrue(TEXT("F26 retry classification matches host recovery"),FProjectResultOutbox::IsTransient(503)&&FProjectResultOutbox::IsTransient(0)&&!FProjectResultOutbox::IsTransient(403));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectNetworkIsolationTest,"ProjectProject01.Review.NetworkIsolation",
+ EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectNetworkIsolationTest::RunTest(const FString&)
+{
+    auto* A=NewObject<UProjectProject01GameInstance>();auto* B=NewObject<UProjectProject01GameInstance>();
+    UWorld* WA=CreateReviewWorld();UWorld* WB=CreateReviewWorld();WA->SetGameInstance(A);WB->SetGameInstance(B);
+    auto& CA=GEngine->CreateNewWorldContext(EWorldType::PIE);CA.SetCurrentWorld(WA);CA.OwningGameInstance=A;CA.PendingNetGame=NewObject<UPendingNetGame>();
+    auto& CB=GEngine->CreateNewWorldContext(EWorldType::PIE);CB.SetCurrentWorld(WB);CB.OwningGameInstance=B;CB.PendingNetGame=NewObject<UPendingNetGame>();
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(WA);GEngine->DestroyWorldContext(WB);WA->DestroyWorld(false);WB->DestroyWorld(false);};
+    TestTrue(TEXT("C06 pending handshake callback resolves its exact PIE owner A"),A->ResolveEncryptionOwner(CA.PendingNetGame)==A);
+    TestTrue(TEXT("C06 pending handshake callback resolves its exact PIE owner B"),A->ResolveEncryptionOwner(CB.PendingNetGame)==B);
+    TestNull(TEXT("C06 unowned callback fails closed instead of taking the last PIE client"),A->ResolveEncryptionOwner(nullptr));
+    A->PendingClientEncryptionKey.Init(11,32);B->PendingClientEncryptionKey.Init(22,32);
+    uint8 AKey=0,BKey=0;
+    A->ReceivedNetworkEncryptionAck(FOnEncryptionKeyResponse::CreateLambda([&](const FEncryptionKeyResponse& Response){AKey=Response.EncryptionData.Key[0];}));
+    B->ReceivedNetworkEncryptionAck(FOnEncryptionKeyResponse::CreateLambda([&](const FEncryptionKeyResponse& Response){BKey=Response.EncryptionData.Key[0];}));
+    TestTrue(TEXT("C06 concurrent PIE keys are distinct and consumed per instance"),AKey==11&&BKey==22&&A->PendingClientEncryptionKey.IsEmpty()&&B->PendingClientEncryptionKey.IsEmpty());
+    FProjectProject01ValidatedJoinClaim Claim;Claim.UserId=TEXT("A");Claim.ValidUntilUtc=FDateTime::UtcNow()+FTimespan::FromSeconds(20);A->ValidatedClaims.Add(TEXT("same-token"),Claim);
+    FProjectProject01ValidatedJoinClaim Out;
+    TestFalse(TEXT("C06 another PIE game cannot consume an account claim"),B->ConsumeValidatedJoinClaim(TEXT("same-token"),Out));
+    TestTrue(TEXT("C06 owner consumes the claim once"),A->ConsumeValidatedJoinClaim(TEXT("same-token"),Out)&&Out.UserId==TEXT("A")&&!A->ConsumeValidatedJoinClaim(TEXT("same-token"),Out));
+    return true;
 }
 #endif

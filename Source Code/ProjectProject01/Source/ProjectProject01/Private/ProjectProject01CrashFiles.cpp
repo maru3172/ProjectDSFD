@@ -99,6 +99,21 @@ namespace ProjectProject01CrashFiles
 		IFileManager::Get().Move(*FPaths::Combine(Directory, FPaths::GetCleanFilename(Path)), *Path, true, true);
 	}
 
+    bool AwaitNativeEvidence(const FString& Path,const TSharedPtr<FJsonObject>& Marker,FDateTime Now)
+    {
+        if(!Marker)return false;
+        FString Value;FDateTime First;
+        if(!Marker->TryGetStringField(TEXT("evidenceWaitStartedAtUtc"),Value)||!FDateTime::ParseIso8601(*Value,First)||First>Now+FTimespan::FromSeconds(5))
+        {
+            Marker->SetStringField(TEXT("evidenceWaitStartedAtUtc"),Now.ToIso8601());FString Json;
+            FJsonSerializer::Serialize(Marker.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));
+            // Failure to record the grace period must not classify an unconfirmed run as a crash.
+            FFileHelper::SaveStringToFile(Json,*Path,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+            return true;
+        }
+        return (Now-First).GetTotalSeconds()<120;
+    }
+
 	void ExcludeEditorReports()
 	{
 		const FString Root = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CrashReports"));

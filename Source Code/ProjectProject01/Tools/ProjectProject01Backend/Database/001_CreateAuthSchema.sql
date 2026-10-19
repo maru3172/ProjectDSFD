@@ -291,6 +291,27 @@ CREATE TABLE IF NOT EXISTS crash_reports
   KEY ix_crash_reports_match (match_id)
 ) ENGINE=InnoDB;
 
+-- Immutable admission ledger survives room return/deletion and delayed result delivery.
+CREATE TABLE IF NOT EXISTS authoritative_matches
+(
+  match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+  room_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  room_name VARCHAR(128) NOT NULL,
+  created_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  ended_at_utc DATETIME(6) NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS authoritative_match_players
+(
+  match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role VARCHAR(16) NOT NULL,
+  result_digest CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  PRIMARY KEY (match_id,user_id),
+  CONSTRAINT fk_authoritative_match FOREIGN KEY (match_id) REFERENCES authoritative_matches(match_id) ON DELETE CASCADE,
+  CONSTRAINT fk_authoritative_player FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS player_surveys
 (
   id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

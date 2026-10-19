@@ -57,6 +57,7 @@ builder.Services.AddSingleton<ServiceControlState>();
 builder.Services.AddHostedService<ServiceControlScheduleWorker>();
 builder.Services.AddHostedService<ClientSessionLivenessWorker>();
 builder.Services.AddHostedService<MatchSearchCleanupWorker>();
+builder.Services.AddHostedService<MatchResultRecoveryWorker>();
 builder.Services.AddSingleton<GameServerPresenceState>();
 builder.Services.AddSingleton<IGameServerProcessFactory,GameServerProcessFactory>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -99,36 +100,7 @@ builder.Services.AddRateLimiter(options =>
             $"Method={context.HttpContext.Request.Method}; Path={context.HttpContext.Request.Path.Value}",
             cancellationToken);
     };
-    options.AddPolicy("auth", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            RequestSecurity.GetClientAddress(context),
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 10,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
-                AutoReplenishment = true
-            }));
-    options.AddPolicy("lobby", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            RequestSecurity.GetClientAddress(context),
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 600,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
-                AutoReplenishment = true
-            }));
-    options.AddPolicy("game-ticket", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            RequestSecurity.GetClientAddress(context),
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 30,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
-                AutoReplenishment = true
-            }));
+    NetworkRequestBudget.AddPolicies(options,builder.Configuration);
     // Social polling must not consume the shared classroom/VPN IP's lobby request budget.
     options.AddPolicy("social", context =>
         RateLimitPartition.GetFixedWindowLimiter(

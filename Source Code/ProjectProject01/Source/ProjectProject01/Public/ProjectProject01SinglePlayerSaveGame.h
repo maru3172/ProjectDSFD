@@ -71,6 +71,9 @@ struct FProjectProject01SavedActorState
 
 	UPROPERTY()
 	TArray<FProjectProject01SavedComponentState> Components;
+
+	UPROPERTY()
+	TArray<uint8> SinglePlayerAIData;
 };
 
 UCLASS()
@@ -79,7 +82,7 @@ class PROJECTPROJECT01_API UProjectProject01SinglePlayerSaveGame final : public 
 	GENERATED_BODY()
 
 public:
-	static constexpr int32 CurrentSchemaVersion = 6;
+	static constexpr int32 CurrentSchemaVersion = 7;
 	static constexpr int32 MinimumSupportedSchemaVersion = 1;
 
 	UPROPERTY()

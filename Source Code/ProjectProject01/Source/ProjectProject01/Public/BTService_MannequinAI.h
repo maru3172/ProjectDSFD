@@ -23,6 +23,8 @@ UCLASS()
 class PROJECTPROJECT01_API UBTService_MannequinAI : public UBTService_BlackboardBase
 {
 	GENERATED_BODY()
+	friend struct FProjectCheckpointAI;
+	friend class FProjectReviewSingleAIStateTest;
 	
 public:
 	UBTService_MannequinAI();

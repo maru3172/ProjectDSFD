@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "Containers/Ticker.h"
+#include "Engine/EngineBaseTypes.h"
 #include "ProjectProject01SaveSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FProjectProject01SaveOperationCompleted, bool, bSucceeded, const FString&, Message);
@@ -104,6 +106,14 @@ public:
 
 private:
 	friend class FProjectReviewCheckpointStoreTest;
+    friend class FProjectReviewAsyncStateTest;
+    bool ValidateActorIdentities(UWorld* World,FString& Error) const;
+    static bool CheckDataCompatibility(const FString& Saved,const FString& Current,const TArray<FString>& Blocked,FString& Notice);
+    void CancelPendingLoad(const FString& Error);
+    void HandleLoadTravelFailure(UWorld* World,ETravelFailure::Type Type,const FString& Error);
+    FDelegateHandle LoadTravelFailureHandle;
+    FTSTicker::FDelegateHandle PendingLoadDeadline;
+    int32 PreviousSlotBeforeLoad=1;
 	static constexpr int32 UserIndex = 0;
 	static bool IsValidSlotIndex(int32 SlotIndex);
 	FString GetPrimarySlotName(int32 SlotIndex) const;
@@ -122,9 +132,11 @@ private:
 	FString BuildAppliedGameDataVersion(UWorld* World) const;
 	void CaptureWorldState(UWorld* World, class UProjectProject01SinglePlayerSaveGame* Save);
 	void RestoreWorldState(UWorld* World, const class UProjectProject01SinglePlayerSaveGame* Save);
+	void RestoreAIState(UWorld* World, const class UProjectProject01SinglePlayerSaveGame* Save);
 	void CaptureSaveActorBaseline(UWorld* World);
 	static bool ShouldCaptureActor(const AActor* Actor);
-	static FName BuildActorSaveId(const AActor* Actor);
+	FName BuildActorSaveId(const AActor* Actor) const;
+	TMap<TWeakObjectPtr<const AActor>, FName> RestoredActorSaveIds;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01SinglePlayerSaveGame> PendingLoad;

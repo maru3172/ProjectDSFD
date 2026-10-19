@@ -9,12 +9,14 @@
 #include "ProjectProject01SinglePlayerSaveGame.h"
 #include "ProjectProject01CheckpointPreview.h"
 #include "ProjectProject01CheckpointStore.h"
+#include "ProjectProject01CheckpointAI.h"
 #include "ProjectProject01TuningData.h"
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/MovementComponent.h"
@@ -65,10 +67,13 @@ void UProjectProject01SaveSubsystem::Initialize(FSubsystemCollectionBase& Collec
 	Super::Initialize(Collection);
 	PostLoadMapHandle = FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(
 		this, &UProjectProject01SaveSubsystem::HandlePostLoadMap);
+    if(GEngine)LoadTravelFailureHandle=GEngine->OnTravelFailure().AddUObject(this,&ThisClass::HandleLoadTravelFailure);
 }
 
 void UProjectProject01SaveSubsystem::Deinitialize()
 {
+    if(GEngine)GEngine->OnTravelFailure().Remove(LoadTravelFailureHandle);
+    FTSTicker::GetCoreTicker().RemoveTicker(PendingLoadDeadline);
 	if (PostLoadMapHandle.IsValid())
 	{
 		FCoreUObjectDelegates::PostLoadMapWithWorld.Remove(PostLoadMapHandle);
@@ -108,6 +113,8 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 		OnSaveOperationCompleted.Broadcast(false, TEXT("싱글플레이 플레이어만 저장할 수 있습니다."));
 		return false;
 	}
+    FString IdentityError;
+    if(!ValidateActorIdentities(World,IdentityError)){OnSaveOperationCompleted.Broadcast(false,IdentityError);return false;}
 	if (bResetDeathCount)
 	{
 		Player->ResetDeathCountAtCheckpoint();
@@ -169,7 +176,7 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	auto* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
 	if (SaveSystem && ProjectCheckpointStore::Encode(Save, *Bytes))
 	{
-		SaveSystem->SaveGameAsync(false, *PendingWriteSlot, FPlatformMisc::GetPlatformUserForUserIndex(UserIndex), Bytes.ToSharedRef(),
+		SaveSystem->SaveGameAsync(false, *PendingWriteSlot, FPlatformMisc::GetPlatformUserForUserIndex(UserIndex), Bytes,
 			[Delegate](const FString& Slot, FPlatformUserId, const bool bSucceeded)
 			{
 				check(IsInGameThread());
@@ -193,6 +200,7 @@ bool UProjectProject01SaveSubsystem::LoadMostRecentlyPlayedCheckpoint()
 
 bool UProjectProject01SaveSubsystem::LoadCheckpointFromSlot(const int32 SlotIndex)
 {
+    if(PendingLoad){OnSaveOperationCompleted.Broadcast(false,TEXT("이미 저장 상태를 불러오는 중입니다."));return false;}
 	if (!IsValidSlotIndex(SlotIndex))
 	{
 		OnSaveOperationCompleted.Broadcast(false, TEXT("잘못된 저장소입니다."));
@@ -225,8 +233,10 @@ bool UProjectProject01SaveSubsystem::LoadCheckpointFromSlot(const int32 SlotInde
 		OnSaveOperationCompleted.Broadcast(false, TEXT("현재 월드를 찾지 못했습니다."));
 		return false;
 	}
-	RuntimeProgressState = PendingLoad->ProgressState;
+    PreviousSlotBeforeLoad=CurrentSlotIndex;
 	CurrentSlotIndex = SlotIndex;
+    PendingLoadDeadline=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this](float)
+    {CancelPendingLoad(TEXT("체크포인트 맵 불러오기 시간이 초과되었습니다. 기존 저장은 보존했습니다."));return false;}),30.0f);
 
 	// 같은 맵이어도 다시 열어 파괴된 액터, AI 트리, 타이머를 깨끗한 기준 상태로 만든 뒤
 	// 저장 스냅샷을 적용한다. 일부만 덮어써서 이전 플레이 상태가 섞이는 것을 막는다.
@@ -402,6 +412,9 @@ UProjectProject01SinglePlayerSaveGame* UProjectProject01SaveSubsystem::LoadValid
 	{
 		return nullptr;
 	}
+    TSet<FName> Ids;
+    for(const auto& State:Save->ActorStates)
+    {if(State.ActorId.IsNone()||Ids.Contains(State.ActorId)){OutError=TEXT("저장 액터 ID 중복");return nullptr;}Ids.Add(State.ActorId);}
 	if (Save->SavedMapPackageName.IsEmpty())
 	{
 		OutError = TEXT("저장된 맵 없음");
@@ -437,7 +450,7 @@ void UProjectProject01SaveSubsystem::HandleAsyncSaveComplete(
 
 void UProjectProject01SaveSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)
 {
-	if (!IsValid(LoadedWorld) || LoadedWorld->GetNetMode() != NM_Standalone)
+	if (!IsValid(LoadedWorld) || LoadedWorld->GetGameInstance()!=GetGameInstance() || LoadedWorld->GetNetMode() != NM_Standalone)
 	{
 		return;
 	}
@@ -448,12 +461,14 @@ void UProjectProject01SaveSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)
 		UProjectProject01SaveSubsystem* Self = WeakThis.Get();
 		UWorld* World = WeakWorld.Get();
 		if (!IsValid(Self) || !IsValid(World)) return;
+		Self->RestoredActorSaveIds.Reset();
 		Self->CaptureSaveActorBaseline(World);
 		if (!IsValid(Self->PendingLoad)) return;
 		FString Error;
 		const bool bApplied = Self->ApplyPendingSave(World, Error);
+        if(!bApplied){Self->CancelPendingLoad(Error);return;}
 		Self->OnSaveOperationCompleted.Broadcast(bApplied,
-			bApplied ? TEXT("마지막 체크포인트를 불러왔습니다.") : Error);
+			Error.IsEmpty()?TEXT("마지막 체크포인트를 불러왔습니다."):Error);
 	});
 }
 
@@ -471,18 +486,54 @@ bool UProjectProject01SaveSubsystem::ApplyPendingSave(UWorld* World, FString& Ou
 		return false;
 	}
 	// 체크포인트의 bTriggered 등 월드 상태를 먼저 되살린 뒤 플레이어를 영역 안으로 이동한다.
+    TArray<FString> Blocked;
+    if(GConfig)GConfig->GetArray(TEXT("ProjectProject01.CheckpointCompatibility"),TEXT("BlockedAppliedVersions"),Blocked,GGameIni);
+    FString Notice;
+    if(!CheckDataCompatibility(PendingLoad->AppliedGameDataVersion,BuildAppliedGameDataVersion(World),Blocked,Notice))
+    {OutError=Notice;return false;}
+    if(!ValidateActorIdentities(World,OutError))return false;
 	// 반대 순서면 복원 이동 자체가 BeginOverlap을 발생시켜 저장/초기화가 한 번 더 실행될 수 있다.
 	RestoreWorldState(World, PendingLoad);
 	Player->RestoreSinglePlayerState(PendingLoad->PlayerTransform,
 		PendingLoad->RemainingDeathCount, PendingLoad->CurrentStamina,
 		PendingLoad->PlayerVelocity, PendingLoad->PlayerControlRotation);
+	RestoreAIState(World, PendingLoad);
 	RuntimeProgressState = PendingLoad->ProgressState;
 	// Failure here only loses recency; it can never damage the world snapshot.
 	if (!RecordLastPlayed(CurrentSlotIndex, PendingLoad))
 		UE_LOG(LogTemp, Warning, TEXT("Could not persist last-played metadata for single-player slot %d."), CurrentSlotIndex);
 	PendingLoad = nullptr;
-	OutError.Reset();
+    FTSTicker::GetCoreTicker().RemoveTicker(PendingLoadDeadline);PendingLoadDeadline.Reset();
+	OutError=Notice;
 	return true;
+}
+
+bool UProjectProject01SaveSubsystem::CheckDataCompatibility(const FString& Saved,const FString& Current,const TArray<FString>& Blocked,FString& Notice)
+{
+    if(Blocked.Contains(Saved)){Notice=TEXT("이 버전의 저장 데이터는 현재 콘텐츠와 호환되지 않습니다. 기존 파일은 보존했습니다.");return false;}
+    Notice=Saved==Current?FString():TEXT("체크포인트를 불러왔습니다. 저장 당시와 게임 데이터 버전이 달라 일부 조정값이 다를 수 있습니다.");return true;
+}
+bool UProjectProject01SaveSubsystem::ValidateActorIdentities(UWorld* World,FString& Error) const
+{
+    TSet<FName> Ids;
+    for(TActorIterator<AActor> It(World);It;++It)if(ShouldCaptureActor(*It))
+    {
+        FName Id=BuildActorSaveId(*It);
+        if(Id.IsNone()||Ids.Contains(Id)){Error=TEXT("저장 액터 식별자가 중복되어 복원을 중단했습니다. 기존 저장은 보존했습니다.");return false;}
+        Ids.Add(Id);
+    }
+    return true;
+}
+void UProjectProject01SaveSubsystem::CancelPendingLoad(const FString& Error)
+{
+    if(!PendingLoad)return;
+    PendingLoad=nullptr;CurrentSlotIndex=PreviousSlotBeforeLoad;
+    FTSTicker::GetCoreTicker().RemoveTicker(PendingLoadDeadline);PendingLoadDeadline.Reset();
+    OnSaveOperationCompleted.Broadcast(false,Error);
+}
+void UProjectProject01SaveSubsystem::HandleLoadTravelFailure(UWorld* World,ETravelFailure::Type,const FString&)
+{
+    if(World&&World->GetGameInstance()==GetGameInstance())CancelPendingLoad(TEXT("저장된 맵 이동에 실패했습니다. 기존 저장은 보존했습니다."));
 }
 
 bool UProjectProject01SaveSubsystem::ShouldCaptureActor(const AActor* Actor)
@@ -495,9 +546,11 @@ bool UProjectProject01SaveSubsystem::ShouldCaptureActor(const AActor* Actor)
 		 Actor->IsA<AMannequinReactiveLight>());
 }
 
-FName UProjectProject01SaveSubsystem::BuildActorSaveId(const AActor* Actor)
+FName UProjectProject01SaveSubsystem::BuildActorSaveId(const AActor* Actor) const
 {
 	if (!IsValid(Actor)) return NAME_None;
+	if (Actor->IsA<APlayerCharacter>()) return TEXT("ProjectProject01.SinglePlayer");
+	if (const auto* RestoredId = RestoredActorSaveIds.Find(Actor)) return *RestoredId;
 	if (Actor->GetClass()->ImplementsInterface(UProjectProject01CheckpointSaveable::StaticClass()))
 	{
 		const FName InterfaceId = IProjectProject01CheckpointSaveable::Execute_GetCheckpointSaveId(
@@ -567,6 +620,8 @@ void UProjectProject01SaveSubsystem::CaptureWorldState(
 			State.AngularVelocityDegrees = RootPrimitive->GetPhysicsAngularVelocityInDegrees();
 		}
 		ProjectProject01CheckpointSave::SerializeSaveGameProperties(Actor, State.SaveGameData);
+		if (auto* Pawn = Cast<APawn>(Actor))
+			State.SinglePlayerAIData = FProjectCheckpointAI::Capture(Pawn, [this](AActor* Target){ return BuildActorSaveId(Target); });
 
 		TArray<UActorComponent*> Components;
 		Actor->GetComponents(Components);
@@ -653,6 +708,7 @@ void UProjectProject01SaveSubsystem::RestoreWorldState(
 			UE_LOG(LogTemp, Warning, TEXT("Checkpoint actor could not be restored: %s"), *State.ActorId.ToString());
 			continue;
 		}
+		RestoredActorSaveIds.Add(Actor, State.ActorId);
 
 		if (APawn* Pawn = Cast<APawn>(Actor); IsValid(Pawn))
 		{
@@ -714,6 +770,19 @@ void UProjectProject01SaveSubsystem::RestoreWorldState(
 			IProjectProject01CheckpointSaveable::Execute_OnCheckpointStateRestored(Actor);
 		}
 	}
+}
+
+void UProjectProject01SaveSubsystem::RestoreAIState(UWorld* World, const UProjectProject01SinglePlayerSaveGame* Save)
+{
+	TMap<FName, AActor*> Actors;
+	for (TActorIterator<AActor> It(World); It; ++It)
+		if (ShouldCaptureActor(*It) || It->IsA<APlayerCharacter>()) Actors.Add(BuildActorSaveId(*It), *It);
+	// Resolve object references only after every map/dynamic actor and the player
+	// have their saved transforms. Never restore pointers into the previous world.
+	for (const auto& State : Save->ActorStates)
+		if (auto* Pawn = Cast<APawn>(Actors.FindRef(State.ActorId)); Pawn && !State.SinglePlayerAIData.IsEmpty())
+			if (!FProjectCheckpointAI::Restore(Pawn, State.SinglePlayerAIData, [&Actors](FName Id){return Actors.FindRef(Id);}))
+				UE_LOG(LogTemp, Warning, TEXT("Checkpoint AI state rejected: %s"), *State.ActorId.ToString());
 }
 
 FString UProjectProject01SaveSubsystem::BuildAppliedGameDataVersion(UWorld* World) const

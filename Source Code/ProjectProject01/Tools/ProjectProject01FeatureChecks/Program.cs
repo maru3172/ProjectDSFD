@@ -10,6 +10,23 @@ internal static class FeatureChecks
     {
         try
         {
+            if(args.Length==1 && args[0]=="--packaging-checks")
+            {
+                PackagingReadinessChecks.Run(Check);
+                Console.WriteLine($"PASS: {checks} packaging checks (no packaging/native SDK execution)");
+                return 0;
+            }
+            if(args.Length==2 && args[0]=="--prepare-voice-runtime")
+            {
+                string backend=Path.Combine(Environment.CurrentDirectory,"Tools","ProjectProject01Backend");
+                if(!File.Exists(Path.Combine(Environment.CurrentDirectory,"ProjectProject01.uproject")) ||
+                    !File.Exists(Path.Combine(backend,"ProjectProject01Backend.csproj"))) return 25;
+                var bundle=global::EosRuntimeBundle.Prepare(backend,args[1],
+                    Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_SDK_PATH"),
+                    Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_XAUDIO_PATH"));
+                Console.WriteLine("Prepared server-only EOS runtime: "+Path.GetDirectoryName(bundle.Sdk));
+                return 0;
+            }
             if(args.Length==2&&args[0]=="--check-project-lock")
             {
                 // Invoked only by an isolated review fixture, never by the helper UI.
@@ -41,6 +58,7 @@ internal static class FeatureChecks
             Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");
             VoiceDirectoryChecks.Run(Check);
+            NetworkBudgetChecks.RunAsync(Check).GetAwaiter().GetResult();
             VoiceSecurityChecks.Run(Check);
             CrashRetentionChecks.RunAsync(Check).GetAwaiter().GetResult();
             CrashPolicyHttpChecks.RunAsync(Check).GetAwaiter().GetResult();
@@ -78,6 +96,7 @@ internal static class FeatureChecks
             var extreme=SurveyEndpoints.FillDailyGaps([new("0001-01-01",1,1,0),new("9999-12-31",1,1,0)]);
             Check(extreme.Count==3660&&extreme[^1].Date=="9999-12-31","극단 설문 날짜도 날짜 overflow 없이 기간 상한 적용");
             ReviewLauncherChecks.RunAsync(Check).GetAwaiter().GetResult();
+            PackagingReadinessChecks.Run(Check);
             ResumeDownloadChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/ResumeDownloads")).GetAwaiter().GetResult();
             UpdateInstallChecks.RunAsync(Path.GetFullPath("Saved/FeatureChecks/UpdateInstall")).GetAwaiter().GetResult();
             if(args.Length>0) CheckLayouts(args[0]);

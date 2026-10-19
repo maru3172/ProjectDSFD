@@ -493,6 +493,7 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 			return;
 		}
 		AccessToken = MoveTemp(NewAccessToken);
+        if(Operation!=EAuthOperation::Refresh)++SessionGeneration;
 		RefreshToken = MoveTemp(NewRefreshToken);
 		SignedInDisplayName = DisplayName;
 		bSeenSurvivorGuideForAccount = false;
@@ -609,6 +610,7 @@ bool UProjectProject01AuthSubsystem::CanStartOperation(const EAuthOperation Oper
 
 void UProjectProject01AuthSubsystem::ClearSession()
 {
+    ++SessionGeneration;
 	if (GuideProgressRequest.IsValid())
 	{
 		GuideProgressRequest->OnProcessRequestComplete().Unbind();

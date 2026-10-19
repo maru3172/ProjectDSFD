@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+class FJsonObject;
 
 namespace ProjectProject01CrashFiles
 {
@@ -13,4 +14,5 @@ namespace ProjectProject01CrashFiles
 	FString ScrubText(FString Text);
 	void ExcludeReport(const FString& Path);
 	void ExcludeEditorReports();
+    bool AwaitNativeEvidence(const FString& MarkerPath,const TSharedPtr<FJsonObject>& Marker,FDateTime Now=FDateTime::UtcNow());
 }

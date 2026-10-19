@@ -33,6 +33,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01DiagnosticsSubsystem final : public UTickableWorldSubsystem
 {
 	GENERATED_BODY()
+	friend class FProjectReviewAsyncStateTest;
 
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;

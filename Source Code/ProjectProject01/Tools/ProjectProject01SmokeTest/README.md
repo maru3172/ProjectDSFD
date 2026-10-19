@@ -1,4 +1,6 @@
-# ProjectProject01 전체 흐름 스모크 테스트
+# ProjectProject01 백엔드 흐름 스모크 테스트
+
+통과의 의미는 **백엔드 API 계약 시뮬레이션**이다. 데디 서버 역할의 테스트 요청으로 탈출 결과를 합성 제출하며 Unreal의 이동·포획·탈출·승패 코드를 직접 실행하지 않는다. 보고서의 `EvidenceScope`에도 이 한계를 기록한다. 실제 다중 PC/EOS 통신의 종단 검사 통과로 해석하지 않는다.
 
 백엔드와 MySQL을 먼저 실행한 뒤 다음 명령을 사용합니다.
 
@@ -9,6 +11,7 @@ dotnet run --project .\Tools\ProjectProject01SmokeTest\ProjectProject01SmokeTest
 검사 범위는 버전 불일치 차단, 테스트 계정 3개 생성, 방 생성·참가·준비·시작,
 마네킹 1명/생존자 2명 역할 배정, 일회용 티켓 발급·서버 검증, 대표 탈출 성공 결과의
 서버 권위 저장, 리더보드 등록, 세 플레이어의 기존 방 복귀입니다.
+등록 확인은 전역 top 50 검색 대신 현재 계정의 정확한 `MatchId` 게시 영수증을 조회한다. 다른 계정의 영수증은 조회할 수 없다.
 
 각 단계 제한 시간은 기본 10초이며 `--timeout-seconds 20`처럼 변경할 수 있습니다.
 결과는 `Saved/Diagnostics/Smoke_*/TestReport.xml`, `Events.csv`, `SmokeTest.log`에 기록됩니다.

@@ -6,10 +6,27 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
+#include "BehaviorTree/Tasks/BTTask_Wait.h"
 
 void AMannequinAIController::BeginPlay()
 {
     Super::BeginPlay();
+}
+
+void AMannequinAIController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (RestoredWaitNodeIndex == INDEX_NONE) return;
+	auto* Tree = Cast<UBehaviorTreeComponent>(BrainComponent);
+	const auto* Wait = Tree ? Cast<UBTTask_Wait>(Tree->GetActiveNode()) : nullptr;
+	if (Wait && Wait->GetExecutionIndex() == RestoredWaitNodeIndex)
+	{
+		if (uint8* Memory = Tree->GetNodeMemory(Wait, Tree->GetActiveInstanceIdx()))
+			Wait->GetSpecialNodeMemory<FBTTaskMemory>(Memory)->NextTickRemainingTime = RestoredWaitSeconds;
+		RestoredWaitNodeIndex = INDEX_NONE;
+	}
+	else if (!GetWorld() || GetWorld()->GetTimeSeconds() > RestoredWaitDeadline) RestoredWaitNodeIndex = INDEX_NONE;
 }
 
 void AMannequinAIController::OnPossess(APawn* InPawn)

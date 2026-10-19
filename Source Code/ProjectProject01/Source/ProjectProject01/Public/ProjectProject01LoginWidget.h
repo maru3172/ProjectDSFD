@@ -744,6 +744,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01SettingsWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectReviewAsyncStateTest;
 
 public:
 	void ConfigureReturnWidget(UUserWidget* InReturnWidget);
@@ -984,6 +985,7 @@ class PROJECTPROJECT01_API UProjectProject01LobbyWidget final : public UUserWidg
 {
 	GENERATED_BODY()
 	friend class FProjectLobbySessionPresentationTest;
+	friend class FProjectReviewAsyncStateTest;
 	friend class FProjectLobbyReadabilityTest;
     friend class UProjectProject01LobbySelectionBinding;
 

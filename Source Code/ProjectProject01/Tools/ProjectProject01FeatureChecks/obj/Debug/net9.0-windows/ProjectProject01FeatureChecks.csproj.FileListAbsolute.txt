@@ -205,3 +205,5 @@ C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureCh
 C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.exe
 C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.dll
 C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\ProjectProject01ClientLauncher.pdb
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\Native\EOS\win-x64\EOSSDK-Win64-Shipping.dll
+C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01FeatureChecks\bin\Debug\net9.0-windows\Native\EOS\win-x64\xaudio2_9redist.dll

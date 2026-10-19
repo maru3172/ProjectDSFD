@@ -313,7 +313,11 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 			{
 				bVoiceActive = false;
                 AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UPainGroanSynthComponent>(this),Generation=AudioGeneration]
-                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation)Self->Stop();});
+                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation){Self->Stop();
+#if WITH_DEV_AUTOMATION_TESTS
+                    ++Self->ReviewCompletedStopCount;
+#endif
+                }});
 			}
 		}
 		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
@@ -400,7 +404,11 @@ int32 UBodyFallSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 			{
 				bImpactActive = false;
                 AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UBodyFallSynthComponent>(this),Generation=AudioGeneration]
-                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation)Self->Stop();});
+                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation){Self->Stop();
+#if WITH_DEV_AUTOMATION_TESTS
+                    ++Self->ReviewCompletedStopCount;
+#endif
+                }});
 			}
 		}
 		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)
@@ -484,7 +492,11 @@ int32 UMannequinCaptureSynthComponent::OnGenerateAudio(float* OutAudio, const in
 			{
 				bImpactActive = false;
                 AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UMannequinCaptureSynthComponent>(this),Generation=AudioGeneration]
-                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation)Self->Stop();});
+                {if(auto* Self=Weak.Get();Self&&Self->PlaybackGeneration.GetValue()==Generation){Self->Stop();
+#if WITH_DEV_AUTOMATION_TESTS
+                    ++Self->ReviewCompletedStopCount;
+#endif
+                }});
 			}
 		}
 		for (int32 ChannelIndex = 0; ChannelIndex < ChannelCount; ++ChannelIndex)

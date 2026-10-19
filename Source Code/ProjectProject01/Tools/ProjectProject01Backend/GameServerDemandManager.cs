@@ -22,7 +22,8 @@ internal sealed class GameServerProcessFactory : IGameServerProcessFactory
         string log=Path.Combine(logs,$"Session-{port}-{instanceId}.log");
         string stopFile=Path.ChangeExtension(log,".stop");
         string arguments=Regex.Replace(configuration.Arguments,@"(?i)(?<!\S)-port=\d+","").Trim();
-        var start=new ProcessStartInfo(configuration.Executable,$"{arguments} -port={port} -ProjectProject01ManagedId={instanceId} -ProjectProject01ManagedStopFile=\"{stopFile}\" -abslog=\"{log}\"")
+        string outbox=Path.Combine(configuration.ProjectRoot,"Saved","MatchResultOutbox");
+        var start=new ProcessStartInfo(configuration.Executable,$"{arguments} -port={port} -ProjectProject01ManagedId={instanceId} -ProjectProject01ManagedStopFile=\"{stopFile}\" -ProjectProject01ResultOutbox=\"{outbox}\" -abslog=\"{log}\"")
         {WorkingDirectory=Path.GetDirectoryName(configuration.Executable)!,UseShellExecute=false,CreateNoWindow=true};
         start.Environment["PROJECTPROJECT01_GAME_SERVER_SECRET"]=secret;
         return new ManagedProcess(Process.Start(start)??throw new InvalidOperationException("게임 서버 실행 실패"),stopFile);
@@ -65,6 +66,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     internal bool Enabled {get{lock(gate)return configuration.Enabled;}}
     internal bool AcceptingNewMatches {get{lock(gate)return configuration.Enabled&&!draining;}}
     internal bool Configured {get{lock(gate)return !string.IsNullOrEmpty(configuration.Executable);}}
+    internal string? ResultOutboxDirectory {get{lock(gate)return string.IsNullOrWhiteSpace(configuration.ProjectRoot)?null:Path.Combine(configuration.ProjectRoot,"Saved","MatchResultOutbox");}}
     internal object Snapshot(){lock(gate)return new {enabled=configuration.Enabled,draining,drainCompleted,acceptingNewMatches=configuration.Enabled&&!draining,maximumConcurrent=configuration.MaximumConcurrent,activeSessions=entries.Count,firstPort=configuration.FirstPort,
         sessions=entries.Values.Select(e=>new {roomId=e.Room,port=e.Port,phase=e.ObservedMatch?"Playing":"Preparing"}).ToArray()};}
     internal bool OwnsHeartbeat(int port,string instance){lock(gate)return entries.Values.Any(e=>e.Port==port&&e.Instance==instance&&e.Committed);}
@@ -108,7 +110,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
             if(value.MaximumConcurrent is <1 or >100||value.FirstPort<1024||value.FirstPort+value.MaximumConcurrent-1>65535)throw new InvalidOperationException("동시 경기 한도와 포트 범위를 확인하세요.");
             string path=Path.GetFullPath(value.Executable);
             if(!File.Exists(path)||!Path.GetFileName(path).Equals("ProjectProject01Server.exe",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("패키징된 ProjectProject01Server.exe를 지정하세요.");
-            if(value.Arguments.Contains("ProjectProject01Managed",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("-abslog",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("세션 식별자와 종료/로그 경로는 자동 지정됩니다.");
+            if(value.Arguments.Contains("ProjectProject01Managed",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("ProjectProject01ResultOutbox",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("-abslog",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("세션 식별자와 종료/로그/결과 경로는 자동 지정됩니다.");
             value=value with {Executable=path,ProjectRoot=Path.GetFullPath(value.ProjectRoot)};
         }
         await cycle.WaitAsync(ct);
@@ -224,6 +226,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
                         await using var start=new MySqlCommand("UPDATE room_members SET assigned_role=IF(user_id=@mannequin,'Mannequin','Survivor'),returned_to_room=FALSE WHERE room_id=@room; UPDATE game_rooms SET status='Started',match_id=@match,started_at_utc=UTC_TIMESTAMP(6) WHERE id=@room AND status='Preparing';",connection,tx);
                         start.Parameters.AddWithValue("@room",entry.Room);start.Parameters.AddWithValue("@match",match);start.Parameters.AddWithValue("@mannequin",await LobbyEndpoints.ChooseMatchMannequinAsync(connection,tx,entry.Room,memberIds,ct));
                         await start.ExecuteNonQueryAsync(ct);
+                        await AuthoritativeMatchLedger.CaptureAsync(connection,tx,match,ct);
                         await tx.CommitAsync(ct);logger.LogInformation("경기 세션 준비 완료: 방 {Room}, 역할 배정 및 입장 허용",entry.Room);
                     }
                     else if(status=="Started"&&entry.ObservedMatch&&ready){await RemoveAsync(entry,true,ct);}

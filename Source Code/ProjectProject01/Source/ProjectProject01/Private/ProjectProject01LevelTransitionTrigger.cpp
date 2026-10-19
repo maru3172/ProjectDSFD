@@ -15,6 +15,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Misc/PackageName.h"
 #include "TimerManager.h"
+#include "Containers/Ticker.h"
+#include "HAL/PlatformMisc.h"
 
 AProjectProject01LevelTransitionTrigger::AProjectProject01LevelTransitionTrigger()
 {
@@ -340,14 +342,30 @@ void AProjectProject01LevelTransitionTrigger::HandleTravelTimeout()
 	// A valid async load can exceed this deadline on slow disks. Its engine-owned
 	// world switch cannot safely be rolled back by simply revealing the old pawn.
 	const auto* Context = GEngine ? GEngine->GetWorldContextFromWorld(GetWorld()) : nullptr;
-	if (Context && Context->SeamlessTravelHandler.IsInTransition()) return;
+    const bool bAsync=Context&&Context->SeamlessTravelHandler.IsInTransition();
+    if(ExtendAsyncTravelGrace(bAsync))
+    {
+        GetWorldTimerManager().SetTimer(TravelWatchdogTimer,this,&ThisClass::HandleTravelTimeout,30.0f,false);
+        return;
+    }
+    if(bAsync){AbortUnresponsiveTravel();return;}
 	RollbackTransition(TEXT("No level replacement within the 30-second travel deadline"));
+}
+
+bool AProjectProject01LevelTransitionTrigger::ExtendAsyncTravelGrace(bool bEngineOwnsTransition)
+{
+    return bEngineOwnsTransition&&++AsyncTravelWatchdogChecks<4; // total 120 seconds, never an endless black screen
+}
+void AProjectProject01LevelTransitionTrigger::AbortUnresponsiveTravel()
+{
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->AbortStalledLevelTravel();
 }
 
 void AProjectProject01LevelTransitionTrigger::RollbackTransition(const FString& Reason)
 {
 	UWorld* World = GetWorld();
 	if (!HasAuthority() || !IsValid(World)) return;
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->CancelLevelTransitionWatchdog();
 	World->GetTimerManager().ClearTimer(EvaluationTimer);
 	World->GetTimerManager().ClearTimer(TravelTimer);
 	World->GetTimerManager().ClearTimer(TravelWatchdogTimer);
@@ -378,6 +396,7 @@ void AProjectProject01LevelTransitionTrigger::RollbackTransition(const FString& 
 	else if (auto* Mode = World->GetAuthGameMode<AMultiplayTestGameMode>()) Mode->CancelLevelTransitionTravel();
 	if (IsValid(TransitionVolume)) TransitionVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	bTransitionStarted = false;
+    AsyncTravelWatchdogChecks=0;
 	UE_LOG(LogTemp, Warning, TEXT("Level transition '%s' cancelled: %s"), *GetActorNameOrLabel(), *Reason);
 }
 
@@ -390,6 +409,7 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		return;
 	}
 	// Recheck after the fade delay (editor asset changes / uncooked destinations).
+    AsyncTravelWatchdogChecks=0;
 	if (!IsDestinationAvailable())
 	{
 		RollbackTransition(TEXT("Destination disappeared before travel"));
@@ -397,6 +417,7 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 	}
 	World->GetTimerManager().SetTimer(TravelWatchdogTimer, this,
 		&AProjectProject01LevelTransitionTrigger::HandleTravelTimeout, 30.0f, false);
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->ArmLevelTransitionWatchdog();
 
 	if (World->GetNetMode() == NM_Standalone)
 	{

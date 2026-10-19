@@ -46,6 +46,10 @@ UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UPainGroanSynthComponent final : public USynthComponent
 {
 	GENERATED_BODY()
+	friend class FProjectReviewSynthStopTest;
+#if WITH_DEV_AUTOMATION_TESTS
+    int32 ReviewCompletedStopCount=0;
+#endif
 	friend class FProjectPainBreathingTest;
 
 public:
@@ -78,6 +82,10 @@ UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UBodyFallSynthComponent final : public USynthComponent
 {
 	GENERATED_BODY()
+	friend class FProjectReviewSynthStopTest;
+#if WITH_DEV_AUTOMATION_TESTS
+    int32 ReviewCompletedStopCount=0;
+#endif
 
 public:
 	UBodyFallSynthComponent(const FObjectInitializer& ObjectInitializer);
@@ -102,6 +110,10 @@ UCLASS(ClassGroup=(Audio), meta=(BlueprintSpawnableComponent))
 class PROJECTPROJECT01_API UMannequinCaptureSynthComponent final : public USynthComponent
 {
 	GENERATED_BODY()
+	friend class FProjectReviewSynthStopTest;
+#if WITH_DEV_AUTOMATION_TESTS
+    int32 ReviewCompletedStopCount=0;
+#endif
 
 public:
 	UMannequinCaptureSynthComponent(const FObjectInitializer& ObjectInitializer);

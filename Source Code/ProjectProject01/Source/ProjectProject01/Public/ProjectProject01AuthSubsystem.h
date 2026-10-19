@@ -116,9 +116,12 @@ public:
 	/** 로그인 전에 사용자가 직접 입력한 서버 IP의 테스트 API 주소를 적용합니다. */
 	bool ConfigureLocalTestApiEndpoint(const FString& InApiBaseUrl);
 	void RefreshSession(TFunction<void(bool)> Completion);
+    uint64 GetSessionGeneration() const {return SessionGeneration;}
 
 private:
+    uint64 SessionGeneration=0;
 	friend class FProjectStaleFrontendResponseTest;
+	friend class FProjectReviewAsyncStateTest;
 	friend class FProjectSocialWidgetLayoutTest;
 	enum class EAuthOperation : uint8
 	{

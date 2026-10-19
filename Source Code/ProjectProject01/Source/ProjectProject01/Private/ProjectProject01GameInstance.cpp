@@ -4,6 +4,8 @@
 #include "ProjectProject01GameInstance.h"
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01CrashFiles.h"
+#include "ProjectProject01ResultOutbox.h"
+#include "ProjectProject01TravelDeadline.h"
 
 #include "Containers/Ticker.h"
 
@@ -12,6 +14,9 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
+#include "Engine/NetConnection.h"
+#include "Engine/NetDriver.h"
+#include "Engine/PendingNetGame.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
@@ -544,6 +549,7 @@ void UProjectProject01GameInstance::Init()
 	SecurityRequestTimeoutSeconds = FMath::Clamp(SecurityRequestTimeoutSeconds, 2.0f, 30.0f);
 	RuntimeMultiplayerServerAddress.Reset();
 	Super::Init();
+    BindEncryptionDispatchers();
 	if (!IsRunningDedicatedServer())
 	{
 		if (UProjectProject01AuthSubsystem* Auth = GetSubsystem<UProjectProject01AuthSubsystem>(); IsValid(Auth))
@@ -600,6 +606,7 @@ void UProjectProject01GameInstance::Init()
 
 void UProjectProject01GameInstance::Shutdown()
 {
+    CancelLevelTransitionWatchdog();
 	if (EntireScreenFadeTickerHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(EntireScreenFadeTickerHandle);
@@ -655,6 +662,31 @@ void UProjectProject01GameInstance::Shutdown()
 	}
 	PendingSecurityRequests.Reset();
 	Super::Shutdown();
+    // Base Shutdown unbinds global delegates even when another PIE world is alive.
+    if(GEngine)for(const auto& Context:GEngine->GetWorldContexts())
+        if(Context.OwningGameInstance!=this&&Cast<UProjectProject01GameInstance>(Context.OwningGameInstance.Get())){BindEncryptionDispatchers();break;}
+}
+
+UProjectProject01GameInstance* UProjectProject01GameInstance::ResolveEncryptionOwner(const UObject* Owner)
+{
+    if(const auto* Connection=Cast<UNetConnection>(Owner))
+        return Connection->Driver&&Connection->Driver->GetWorld()?Cast<UProjectProject01GameInstance>(Connection->Driver->GetWorld()->GetGameInstance()):nullptr;
+    if(GEngine&&Cast<UPendingNetGame>(Owner))for(const auto& Context:GEngine->GetWorldContexts())
+        if(Context.PendingNetGame==Owner)return Cast<UProjectProject01GameInstance>(Context.OwningGameInstance.Get());
+    return nullptr;
+}
+void UProjectProject01GameInstance::BindEncryptionDispatchers()
+{
+    FNetDelegates::OnReceivedNetworkEncryptionToken.BindLambda([](const FString& Token,const FOnEncryptionKeyResponse& Callback)
+    {
+        if(auto* Owner=ResolveEncryptionOwner(Callback.GetUObject()))Owner->ReceivedNetworkEncryptionToken(Token,Callback);
+        else ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Callback,EEncryptionResponse::Failure,TEXT("Encryption connection owner is unavailable."));
+    });
+    FNetDelegates::OnReceivedNetworkEncryptionAck.BindLambda([](const FOnEncryptionKeyResponse& Callback)
+    {
+        if(auto* Owner=ResolveEncryptionOwner(Callback.GetUObject()))Owner->ReceivedNetworkEncryptionAck(Callback);
+        else ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Callback,EEncryptionResponse::Failure,TEXT("Encryption connection owner is unavailable."));
+    });
 }
 
 void UProjectProject01GameInstance::InitializeCrashReportCollection()
@@ -800,6 +832,7 @@ void UProjectProject01GameInstance::RecoverPendingCrashReports()
 		if (MapName.StartsWith(TEXT("UEDPIE_"))) { ProjectProject01CrashFiles::ExcludeReport(Source); continue; }
 		if (ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId).IsEmpty())
 		{
+			if(ProjectProject01CrashFiles::AwaitNativeEvidence(Source,Marker))continue;
 			// Preserve excluded records for inspection without presenting them as confirmed crashes.
 			ProjectProject01CrashFiles::ExcludeReport(Source);
 			continue;
@@ -819,8 +852,10 @@ void UProjectProject01GameInstance::RecoverPendingCrashReports()
 			Marker->TryGetStringField(TEXT("reportId"), ReportId);
 		FString MapName;
 		if (Marker.IsValid()) Marker->TryGetStringField(TEXT("mapName"), MapName);
-		if (MapName.StartsWith(TEXT("UEDPIE_")) || ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId).IsEmpty())
+		if (MapName.StartsWith(TEXT("UEDPIE_")))
 			ProjectProject01CrashFiles::ExcludeReport(Path);
+		else if(ProjectProject01CrashFiles::FindNativeCrashDirectory(ReportId).IsEmpty())
+        {if(!ProjectProject01CrashFiles::AwaitNativeEvidence(Path,Marker))ProjectProject01CrashFiles::ExcludeReport(Path);}
 		else if (CrashReportsInFlight.Num() < 2) UploadPendingCrashReport(Path);
 	}
 }
@@ -942,6 +977,8 @@ void UProjectProject01GameInstance::FetchActivePlayerSurvey(
 	TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)> Completion)
 {
 	const UProjectProject01AuthSubsystem* SurveyAuth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	const uint64 SessionGeneration=SurveyAuth?SurveyAuth->GetSessionGeneration():0;
+	const TWeakObjectPtr<UWorld> SurveyWorld(GetWorld());
 	if (!IsValid(SurveyAuth) || !SurveyAuth->IsSignedIn())
 	{
 		Completion(true, false, FProjectProject01SurveyDefinition(), TEXT("로그인 후 설문에 참여할 수 있습니다."));
@@ -962,12 +999,11 @@ void UProjectProject01GameInstance::FetchActivePlayerSurvey(
 	TSharedRef<TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)>> CompletionRef =
 		MakeShared<TFunction<void(bool, bool, const FProjectProject01SurveyDefinition&, const FString&)>>(MoveTemp(Completion));
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis, WeakRequest, CompletionRef](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
+		[WeakThis, WeakRequest, CompletionRef,SessionGeneration,SurveyWorld](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
 		{
-			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
-			{
-				Instance->RemovePendingRequest(WeakRequest.Pin());
-			}
+            auto* Instance=WeakThis.Get();if(!Instance)return;
+            Instance->RemovePendingRequest(WeakRequest.Pin());
+            if(!Instance->IsSurveySessionCurrent(SessionGeneration,SurveyWorld.Get()))return;
 			if (bSucceeded && Response.IsValid() && Response->GetResponseCode() == 404)
 			{
 				(*CompletionRef)(true, false, FProjectProject01SurveyDefinition(), TEXT("현재 진행 중인 설문이 없습니다."));
@@ -1033,6 +1069,8 @@ void UProjectProject01GameInstance::SubmitPlayerSurvey(
 	TFunction<void(bool, const FString&)> Completion)
 {
 	const UProjectProject01AuthSubsystem* SurveyAuth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	const uint64 SessionGeneration=SurveyAuth?SurveyAuth->GetSessionGeneration():0;
+	const TWeakObjectPtr<UWorld> SurveyWorld(GetWorld());
 	if (!IsValid(SurveyAuth) || !SurveyAuth->IsSignedIn())
 	{
 		Completion(false, TEXT("로그인 후 설문에 참여해주세요."));
@@ -1083,12 +1121,11 @@ void UProjectProject01GameInstance::SubmitPlayerSurvey(
 	TSharedRef<TFunction<void(bool, const FString&)>> CompletionRef =
 		MakeShared<TFunction<void(bool, const FString&)>>(MoveTemp(Completion));
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis, WeakRequest, CompletionRef](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
+		[WeakThis, WeakRequest, CompletionRef,SessionGeneration,SurveyWorld](FHttpRequestPtr, FHttpResponsePtr Response, const bool bSucceeded)
 		{
-			if (UProjectProject01GameInstance* Instance = WeakThis.Get(); IsValid(Instance))
-			{
-				Instance->RemovePendingRequest(WeakRequest.Pin());
-			}
+            auto* Instance=WeakThis.Get();if(!Instance)return;
+            Instance->RemovePendingRequest(WeakRequest.Pin());
+            if(!Instance->IsSurveySessionCurrent(SessionGeneration,SurveyWorld.Get()))return;
 			const bool bAccepted = bSucceeded && Response.IsValid() &&
 				Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300;
 			FString ResponseMessage = bAccepted
@@ -1116,6 +1153,51 @@ void UProjectProject01GameInstance::SubmitPlayerSurvey(
 void UProjectProject01GameInstance::MarkPendingSinglePlayerLevelTransitionFade()
 {
 	bPendingSinglePlayerLevelTransitionFade = true;
+}
+
+void UProjectProject01GameInstance::CancelLevelTransitionWatchdog()
+{
+    FTSTicker::GetCoreTicker().RemoveTicker(LevelTransitionWatchdog);LevelTransitionWatchdog.Reset();
+}
+void UProjectProject01GameInstance::ArmLevelTransitionWatchdog()
+{
+    CancelLevelTransitionWatchdog();const double Start=FPlatformTime::Seconds();const TWeakObjectPtr<UWorld> Original(GetWorld());
+    // Core ticker belongs to the GameInstance, not a trigger in the disappearing old world.
+    LevelTransitionWatchdog=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this,Start,Original](float)
+    {
+        auto* World=GetWorld();const auto* Context=GEngine?GEngine->GetWorldContextFromWorld(World):nullptr;
+        const bool Async=Context&&Context->SeamlessTravelHandler.IsInTransition();
+        const auto Action=FProjectTravelDeadline::Evaluate(FPlatformTime::Seconds()-Start,Async,World!=Original.Get());
+        if(Action==EProjectTravelDeadline::Abort){AbortStalledLevelTravel();return false;}
+        return Action!=EProjectTravelDeadline::Complete&&FPlatformTime::Seconds()-Start<121;
+    }),1.0f);
+}
+void UProjectProject01GameInstance::AbortStalledLevelTravel()
+{
+    ServerMatchCarryover.Reset();ConsumePendingSinglePlayerLevelTransitionFade();
+    UWorld* World=GetWorld();
+    if(World)
+    {
+        World->NextURL.Reset();
+        for(FConstPlayerControllerIterator It=World->GetPlayerControllerIterator();It;++It)
+            if(auto* PC=It->Get())PC->ClientReturnToMainMenuWithTextReason(FText::FromString(TEXT("맵 이동 시간이 초과되었습니다. 다시 접속하세요.")));
+    }
+    UE_LOG(LogProjectProject01NetworkSecurity,Warning,TEXT("Async level transition exceeded 120 seconds; closing this match safely."));
+    if(IsRunningDedicatedServer())FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float){FPlatformMisc::RequestExit(false);return false;}),1.0f);
+    else if(GEngine&&World)GEngine->HandleDisconnect(World,World->GetNetDriver());
+}
+
+bool UProjectProject01GameInstance::IsSurveySessionCurrent(uint64 Generation,const UWorld* World) const
+{
+    const auto* Auth=GetSubsystem<UProjectProject01AuthSubsystem>();
+    return Auth&&Auth->IsSignedIn()&&Auth->GetSessionGeneration()==Generation&&GetWorld()==World;
+}
+bool UProjectProject01GameInstance::IsMultiplayerFailureWorld(const UWorld* World) const
+{
+    if(!World||World->GetGameInstance()!=this)return false;
+    const auto* Lobby=GetSubsystem<UProjectProject01LobbySubsystem>();
+    return World->GetNetMode()==NM_Client||!PendingClientTicket.IsEmpty()||
+        (Lobby&&Lobby->HasCurrentRoom()&&(Lobby->GetCurrentRoom().bStarting||Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bServerPreparing));
 }
 
 bool UProjectProject01GameInstance::ConsumePendingSinglePlayerLevelTransitionFade()
@@ -1261,7 +1343,7 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 	const ENetworkFailure::Type FailureType,
 	const FString& ErrorString)
 {
-	if (IsRunningDedicatedServer() || !IsValid(World) || bHandlingFailedGameConnection)
+	if (IsRunningDedicatedServer() || !IsValid(World) || World->GetGameInstance()!=this || bHandlingFailedGameConnection)
 	{
 		return;
 	}
@@ -1273,10 +1355,7 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 		ClearPendingGameConnection();
 		return;
 	}
-    const auto* Lobby=GetSubsystem<UProjectProject01LobbySubsystem>();
-    const bool bWasMultiplayerTravel=World->GetNetMode()==NM_Client||!PendingClientTicket.IsEmpty()||
-        (Lobby&&Lobby->HasCurrentRoom()&&(Lobby->GetCurrentRoom().bStarting||Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bServerPreparing));
-	if (!bWasMultiplayerTravel)
+	if (!IsMultiplayerFailureWorld(World))
 	{
 		return;
 	}
@@ -1702,22 +1781,6 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 		return;
 	}
 
-	TSharedRef<TFunction<void(bool)>> CompletionRef =
-		MakeShared<TFunction<void(bool)>>(MoveTemp(Completion));
-	TSharedRef<bool> bCompletionCalled = MakeShared<bool>(false);
-	auto CompleteOnce = [CompletionRef, bCompletionCalled](const bool bSubmissionSucceeded)
-	{
-		if (*bCompletionCalled)
-		{
-			return;
-		}
-		*bCompletionCalled = true;
-		if (*CompletionRef)
-		{
-			(*CompletionRef)(bSubmissionSucceeded);
-		}
-	};
-
 	TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetStringField(TEXT("matchId"), MatchId);
 	Json->SetStringField(TEXT("userId"), UserId);
@@ -1731,37 +1794,16 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 	FString Body;
 	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
 
-	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/server/matches/results"));
-	Request->SetVerb(TEXT("POST"));
-	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-	Request->SetHeader(TEXT("X-ProjectProject01-Server-Secret"), ServerSecret);
-	FProjectProject01VersionContract::ApplyToRequest(Request);
-	Request->SetContentAsString(Body);
-	Request->SetTimeout(SecurityRequestTimeoutSeconds);
-	Request->OnProcessRequestComplete().BindWeakLambda(this,
-		[this, CompleteOnce](const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& CompletedRequest,
-			const TSharedPtr<IHttpResponse, ESPMode::ThreadSafe>& Response,
-			const bool bConnectedSuccessfully)
-		{
-			RemovePendingRequest(CompletedRequest);
-			const bool bSucceeded = bConnectedSuccessfully && Response.IsValid() &&
-				Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300;
-			if (!bSucceeded)
-			{
-				UE_LOG(LogProjectProject01NetworkSecurity, Error,
-					TEXT("Authoritative match result submission failed with status %d."),
-					Response.IsValid() ? Response->GetResponseCode() : 0);
-			}
-			CompleteOnce(bSucceeded);
-		});
-	PendingSecurityRequests.Add(Request);
-	if (!Request->ProcessRequest())
-	{
-		RemovePendingRequest(Request);
-		UE_LOG(LogProjectProject01NetworkSecurity, Error, TEXT("Unable to start authoritative result submission."));
-		CompleteOnce(false);
-	}
+	FProjectResultOutbox::Submit(SecurityApiBaseUrl,TEXT("/api/server/matches/results"),Body,ServerSecret,MoveTemp(Completion));
+}
+
+void UProjectProject01GameInstance::NotifyAuthoritativeMatchEnded(const FString& MatchId)
+{
+    if(!GetWorld()||GetWorld()->GetNetMode()==NM_Client||!IsBackendUrlAllowed()||MatchId.IsEmpty())return;
+    FString Secret=LoadGameServerSharedSecret();if(Secret.Len()<32)return;
+    auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("matchId"),MatchId);FString Body;
+    FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    FProjectResultOutbox::Submit(SecurityApiBaseUrl,TEXT("/api/server/matches/complete"),Body,Secret);
 }
 
 void UProjectProject01GameInstance::NotifyAuthoritativePlayerForfeit(

@@ -104,6 +104,8 @@ internal static class DemandSessionChecks
             await Heartbeat(false,match);await manager.TickAsync(default);
             await Read(clients[0].PostAsJsonAsync("/api/rooms/current/return",new {}));await manager.TickAsync(default);Check(factory.Live==1,"한 명 복귀로 진행 중 세션을 닫지 않음");
             for(int member=1;member<3;member++)await Read(clients[member].PostAsJsonAsync("/api/rooms/current/return",new {}));
+            await manager.TickAsync(default);Check(factory.Live==1,"서버 종료 확인 없이 전원 복귀만으로 세션 종료 불가");
+            await Read(server.PostAsJsonAsync("/api/server/matches/complete",new {matchId=match}));
             await manager.TickAsync(default);Check(factory.Live==0&&(await State()).GetProperty("roomId").GetString()==rooms[0],"전원 복귀 후 세션 종료·기존 방 유지");
             string previous=factory.Started.Last().Instance;
             await manager.TickAsync(default);

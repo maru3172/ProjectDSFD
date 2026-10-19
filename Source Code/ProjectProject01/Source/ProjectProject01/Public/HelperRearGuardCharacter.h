@@ -20,6 +20,9 @@ UCLASS(BlueprintType, Blueprintable)
 class PROJECTPROJECT01_API AHelperRearGuardCharacter : public ACharacter
 {
 	GENERATED_BODY()
+	friend struct FProjectCheckpointAI;
+	friend class FProjectReviewSingleAIStateTest;
+	friend class FProjectReviewAsyncStateTest;
 
 public:
 	AHelperRearGuardCharacter();
