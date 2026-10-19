@@ -55,12 +55,31 @@ void UPlayerInteractionComponent::TryInteract()
 		QueryParams
 		);
 	
+	// 트레이스에 맞은 액터를 가져온다.
+	AActor* HitActor = bHit ? HitResult.GetActor() : nullptr;
+
+	// 유효한 액터이고 인터페이스를 구현했는지 확인합니다.
+	const bool bImplementsInteraction = IsValid(HitActor) && HitActor->Implements<UInteractionInterface>();
+
+	// 인터페이스를 구현했고 현재 실제로 상호작용 가능한지 확인합니다.
+	const bool bCanInteract = bImplementsInteraction && IInteractionInterface::Execute_CanInteract(HitActor, OwnerPawn);
+	
 #if ENABLE_DRAW_DEBUG
 	if (bDrawDebugTrace)
 	{
-		const FColor TraceColor = bHit ? FColor::Green : FColor::Red;
-		
-		// 선 그리기
+		FColor TraceColor = FColor::Red;
+
+		if (bCanInteract)
+		{
+			// 상호작용 가능한 대상
+			TraceColor = FColor::Green;
+		}
+		else if (bHit)
+		{
+			// 충돌은 했지만 상호작용할 수 없는 대상
+			TraceColor = FColor::Red;
+		}
+
 		DrawDebugLine(
 			GetWorld(),
 			ViewLocation,
@@ -69,12 +88,10 @@ void UPlayerInteractionComponent::TryInteract()
 			false,
 			1.0f,
 			0,
-			1.5f
-			);
-		
+			1.5f);
+
 		if (bHit)
 		{
-			// 구 그리기
 			DrawDebugSphere(
 				GetWorld(),
 				HitResult.ImpactPoint,
@@ -82,35 +99,10 @@ void UPlayerInteractionComponent::TryInteract()
 				12,
 				TraceColor,
 				false,
-				1.0f
-				);
+				1.0f);
 		}
 	}
 #endif
-	if (!bHit)
-	{
-		return;
-	}
-	
-	// Line Trace 에 맞은 액터를 가져온다.
-	AActor* HitActor = HitResult.GetActor();
-	if (!IsValid(HitActor))
-	{
-		return;
-	}
-	
-	// 맞은 액터가 상호작용 인터페이스를 구현하는지 확인한다.
-	if (!HitActor->Implements<UInteractionInterface>())
-	{
-		return;
-	}
-	
-	// 현재 플레이어가 이 액터와 상호작용할 수 있는지 확인한다.
-	if (!IInteractionInterface::Execute_CanInteract(HitActor, OwnerPawn))
-	{
-		return;
-	}
-	
 	// 인터페이스를 통해 대상 액터의 상호작용을 실행한다.
 	IInteractionInterface::Execute_Interact(HitActor, OwnerPawn);
 }
