@@ -327,6 +327,8 @@ APlayerCharacter::APlayerCharacter()
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	if (IsValid(FootstepSFXComponent))
+		FootstepSFXComponent->OnFootContact.AddUObject(this, &APlayerCharacter::HandleFootContact);
 
 	if (UWorld* World = GetWorld(); IsValid(World) && World->GetNetMode() != NM_Client)
 	{
@@ -402,6 +404,8 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(FootstepSFXComponent)) FootstepSFXComponent->OnFootContact.RemoveAll(this);
+	LocomotionCameraFeedback.Reset();
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01SaveSubsystem* Saves =
@@ -429,6 +433,8 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (CanUseLocomotionCamera()) LocomotionCameraFeedback.Advance(DeltaTime);
+	else LocomotionCameraFeedback.Reset();
 	if (IsValid(FootstepSFXComponent))
 	{
 		FootstepSFXComponent->UpdateFootsteps(DeltaTime);
@@ -456,6 +462,33 @@ void APlayerCharacter::Tick(float DeltaTime)
 
 	// 카메라 디버그 관련
 	UpdateDebugCursorAim();
+}
+
+bool APlayerCharacter::CanUseLocomotionCamera() const
+{
+	// Same local active-survivor lifecycle as breathing, plus camera/movement-specific guards.
+	const auto* Movement = GetCharacterMovement();
+	const auto* PC = Cast<APlayerController>(GetController());
+	return CanPlayTensionBreathing() && !bUseTopViewInPIE && !bCameraHitFeedbackActive &&
+		IsValid(Camera) && Camera->IsActive() && IsValid(PC) && PC->GetViewTarget() == this &&
+		IsValid(Movement) && Movement->IsMovingOnGround();
+}
+
+void APlayerCharacter::HandleFootContact(const bool bRunning, const bool bRightFoot)
+{
+	if (CanUseLocomotionCamera() && GetVelocity().SizeSquared2D() > 400.0f)
+		LocomotionCameraFeedback.Contact(bRunning, bRightFoot);
+}
+
+void APlayerCharacter::CalcCamera(const float DeltaTime, FMinimalViewInfo& OutResult)
+{
+	Super::CalcCamera(DeltaTime, OutResult);
+	if (!CanUseLocomotionCamera()) return;
+	const auto* Settings = UProjectProject01GameUserSettings::Get();
+	const float ShakeScale = IsValid(Settings) ? Settings->GetScreenShakeScale() : 1.0f;
+	// Final view only: no controller/actor/component rotation, input drift, yaw/roll or AI sight change.
+	OutResult.Location.Z += LocomotionCameraFeedback.GetOffset(ShakeScale);
+	OutResult.Rotation.Pitch += LocomotionCameraFeedback.GetPitchOffset(ShakeScale);
 }
 
 // =========================================================================================================================
@@ -1404,6 +1437,7 @@ void APlayerCharacter::RestoreSinglePlayerState(
 	World->GetTimerManager().ClearTimer(SinglePlayerDeathResultTimer);
 	RestoreFeedbackCamera();
 	if (IsValid(HeartbeatComponent)) HeartbeatComponent->ResetTensionBreathing();
+	LocomotionCameraFeedback.Reset();
 	if (IsValid(DamageFeedbackWidget)) DamageFeedbackWidget->RemoveFromParent();
 	if (IsValid(DeathFeedbackWidget)) DeathFeedbackWidget->RemoveFromParent();
 	DamageFeedbackWidget = nullptr;

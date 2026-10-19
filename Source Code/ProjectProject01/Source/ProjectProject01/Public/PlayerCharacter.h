@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "InputActionValue.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01LocomotionFeedback.h"
 #include "PlayerCharacter.generated.h"
 
 class UInputAction;
@@ -113,6 +114,7 @@ protected:
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+	virtual void CalcCamera(float DeltaTime, struct FMinimalViewInfo& OutResult) override;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -282,6 +284,10 @@ private:
 	void PlayLocalDeathSequence(float FallPitchDirection, float FallRollDirection);
 	void UpdateCameraFeedback(float DeltaTime);
 	void RestoreFeedbackCamera();
+	bool CanUseLocomotionCamera() const;
+	void HandleFootContact(bool bRunning, bool bRightFoot);
+	FProjectProject01LocomotionFeedback LocomotionCameraFeedback;
+	friend class FProjectLocomotionFeedbackTest;
 	void PlayPainSFX(bool bFatal, float Intensity);
 	void PlayBodyFallSFX();
 

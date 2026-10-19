@@ -2,6 +2,7 @@
 
 #include "FootstepSynthComponent.h"
 #include "PlasticJointSynthComponent.h"
+#include "ProjectProject01LocomotionFeedback.h"
 
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -246,7 +247,7 @@ void UFootstepSynthComponent::UpdateAutomaticCadence(const float DeltaTime)
 void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 {
 	UWorld* World = GetWorld();
-	if (!CanProduceLocalAudio() || !IsValid(World) || FootstepVolumeScale <= UE_SMALL_NUMBER)
+	if (!CanProduceLocalAudio() || !IsValid(World))
 	{
 		return;
 	}
@@ -257,10 +258,17 @@ void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 		return;
 	}
 	LastTriggerTimeSeconds = CurrentTime;
+	const bool bRightFoot = bNextFootIsRight;
+	bNextFootIsRight = !bNextFootIsRight;
+	// Keep the same small variation within a pair so random pitch cannot erase the 10% difference.
+	if (!bRightFoot) PairedFootPitch = FMath::FRandRange(0.97f, 1.03f);
+	const float Pitch = PairedFootPitch * FProjectProject01LocomotionFeedback::FootPitchScale(bRightFoot);
+	OnFootContact.Broadcast(bRunning, bRightFoot);
+	if (FootstepVolumeScale <= UE_SMALL_NUMBER) return;
 	TryTriggerPlasticBodyMotion(bRunning, false);
 	
 	// Explicit opt-in only: older Blueprint WAV assignments must not hide the material mix.
-	if (PlaySoundAsset(bRunning))
+	if (PlaySoundAsset(bRunning, Pitch))
 	{
 		return;
 	}
@@ -272,7 +280,6 @@ void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 	}
 
 	const EProjectProject01FootstepStyle Style = FootstepStyle;
-	const float Pitch = FMath::FRandRange(0.94f, 1.06f);
 	const float Gain = FootstepVolumeScale * (bRunning ? 1.18f : 1.0f) * FMath::FRandRange(0.92f, 1.0f);
 	const uint32 Seed = FMath::Rand();
 	SynthCommand([this, Style, Pitch, Gain, Seed, bRunning]()
@@ -459,7 +466,7 @@ int32 UFootstepSynthComponent::OnGenerateAudio(float* OutAudio, const int32 NumS
 }
 
 // 사운드 재생 함수
-bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning)
+bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning, const float Pitch)
 {
 	if (!bUseAssignedSoundAssets) return false;
 	const TArray<TObjectPtr<USoundBase>>& SelectedSounds =
@@ -489,7 +496,7 @@ bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning)
 			FootstepVolumeScale *
 				(bRunning ? 1.18f : 1.0f) *
 				FMath::FRandRange(0.92f, 1.0f),
-			FMath::FRandRange(0.97f, 1.03f),
+			Pitch,
 			0.0f,
 			OccludedSoundAttenuation);
 

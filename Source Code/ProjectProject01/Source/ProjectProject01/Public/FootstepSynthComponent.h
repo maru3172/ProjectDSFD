@@ -18,6 +18,8 @@ class USoundBase;
 class USoundAttenuation;
 class UPlasticJointSynthComponent;
 
+DECLARE_MULTICAST_DELEGATE_TwoParams(FProjectProject01FootContact, bool /* bRunning */, bool /* bRightFoot */);
+
 /**
  * 외부 음원 없이 대리석 위 플라스틱·운동화 발소리를 만드는 경량 공간 음향 컴포넌트입니다.
  * 애니메이션 Notify가 있는 캐릭터는 TriggerFootstep을 직접 호출하고, 그렇지 않은 캐릭터는
@@ -34,6 +36,8 @@ public:
 
 	void Configure(EProjectProject01FootstepStyle NewStyle, float NewVolumeScale, bool bNewAutomaticCadence);
 	void UpdateFootsteps(float DeltaTime);
+	/** Accepted contacts on the game thread, also when SFX is muted. No new network traffic. */
+	FProjectProject01FootContact OnFootContact;
 
 	UFUNCTION(BlueprintCallable, Category="Audio|Footstep")
 	void TriggerFootstep(bool bRunning);
@@ -89,6 +93,8 @@ private:
 	float PreviousHorizontalSpeed = 0.0f;
 	bool bSkidArmed = false;
 	bool bLocationInitialized = false;
+	bool bNextFootIsRight = false;
+	float PairedFootPitch = 1.0f;
 	double NextPlasticMotionTimeSeconds = -1.0;
 	double LastPlasticMotionTimeSeconds = -1.0;
 	float PreviousPlasticYaw = 0.0f;
@@ -131,6 +137,6 @@ private:
 	UPROPERTY(Transient) TObjectPtr<USoundAttenuation> OcclusionSource;
 	
 	// 관련 함수
-	bool PlaySoundAsset(bool bRunning);
+	bool PlaySoundAsset(bool bRunning, float Pitch = 1.0f);
 	USoundBase* SelectRandomSound(const TArray<TObjectPtr<USoundBase>>& Sounds) const;
 };
