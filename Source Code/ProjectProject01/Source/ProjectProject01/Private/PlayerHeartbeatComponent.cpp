@@ -56,8 +56,6 @@ namespace ProjectProject01PainVoice
 	constexpr float PantCount = 3.0f;
 	constexpr float ExhaleDurationSeconds = 0.42f;
 	constexpr float BetweenExhalesPauseSeconds = 0.38f;
-	constexpr float PostPantPauseSeconds = 0.50f;
-	constexpr float RecoveryDurationSeconds = 0.65f;
 	constexpr float BreathAmplitudeScale = 0.32f;
 	constexpr float FatalGroanSeconds = 0.38f;
 
@@ -72,14 +70,9 @@ namespace ProjectProject01PainVoice
 		return PantStartSeconds + (PantCount - 1.0f) / GetPantRate(Intensity) + ExhaleDurationSeconds;
 	}
 
-	float GetRecoveryStartSeconds(const float Intensity)
-	{
-		return GetPantEndSeconds(Intensity) + PostPantPauseSeconds;
-	}
-
 	float GetNonFatalDurationSeconds(const float Intensity)
 	{
-		return GetRecoveryStartSeconds(Intensity) + RecoveryDurationSeconds;
+		return GetPantEndSeconds(Intensity);
 	}
 }
 
@@ -195,10 +188,8 @@ void UPainGroanSynthComponent::TriggerPain(const bool bFatal, const float Intens
 		BreathNoiseFiltered = BreathNoiseLow = 0.0f;
 		VoiceIntensity = SafeIntensity;
 		bFatalVoice = bFatal;
-		// 살아남은 피격은 짧은 고통 신음 뒤 정확히 세 번 헐떡이고,
-		// 잠깐 쉰 다음 긴 날숨으로 호흡을 고르는 한 묶음으로 재생한다.
-		// Fatal hits end with a short strained grunt only. Panting and the recovery
-		// exhale below are deliberately reserved for survivors of non-fatal hits.
+		// 살아남은 피격은 짧은 고통 신음 뒤 정확히 세 번 헐떡이고 끝낸다.
+		// Fatal hits end with a short strained grunt only, with no recovery breathing.
 		VoiceDurationSeconds = GetReactionDuration(bFatal, SafeIntensity);
 		NoiseState ^= bFatal ? 0xA511E9B3u : 0x63D83595u;
 		bVoiceActive = true;
@@ -261,7 +252,6 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 				// 피격 신음이 완전히 끝난 뒤 짧은 무음 구간을 둔 다음 호흡을 시작한다.
 				const float PantRate = GetPantRate(VoiceIntensity);
 				const float PantEnd = GetPantEndSeconds(VoiceIntensity);
-				const float RecoveryStart = GetRecoveryStartSeconds(VoiceIntensity);
 				if (TimeSeconds < GroanEndSeconds)
 				{
 					// 피격 직후 숨이 턱 막히는 낮은 신음/들이마심.
@@ -293,21 +283,11 @@ int32 UPainGroanSynthComponent::OnGenerateAudio(float* OutAudio, const int32 Num
 					VoiceAmount = 0.035f;
 					NoiseAmount = FMath::Lerp(1.0f, 0.72f, PantProgress);
 				}
-				else if (TimeSeconds < RecoveryStart)
-				{
-					// 세 번의 헐떡임과 마지막 긴 날숨 사이를 한 박자 비운다.
-					Envelope = 0.0f;
-					NoiseAmount = 0.0f;
-				}
 				else
 				{
-					// 세 날숨 뒤에도 한 박자 쉬고 마지막 긴 한숨을 낸다.
-					const float Recovery = (TimeSeconds - RecoveryStart) /
-						FMath::Max(0.01f, VoiceDurationSeconds - RecoveryStart);
-					Envelope = FMath::Pow(FMath::Max(0.0f, FMath::Sin(PI * FMath::Clamp(Recovery, 0.0f, 1.0f))), 0.9f) * 0.46f * BreathAmplitudeScale;
-					Frequency = FMath::Lerp(86.0f, 62.0f, Recovery);
-					VoiceAmount = 0.015f;
-					NoiseAmount = FMath::Lerp(0.78f, 0.38f, Recovery);
+					// No final sigh or post-pant tail, even if a caller supplies a longer duration.
+					Envelope = 0.0f;
+					NoiseAmount = 0.0f;
 				}
 			}
 			FlutterPhase = FMath::Fmod(FlutterPhase + (2.0f * UE_PI * 5.2f / SynthSampleRate), 2.0f * UE_PI);
@@ -537,18 +517,8 @@ bool FProjectProject01HeartbeatVFXMappingTest::RunTest(const FString& Parameters
 		 ProjectProject01PainVoice::PantStartSeconds - ProjectProject01PainVoice::ExhaleDurationSeconds) * PantRate + 1.0f;
 	TestTrue(TEXT("Non-fatal pain voice contains exactly three pant cycles"),
 		FMath::IsNearlyEqual(GeneratedPantCount, ProjectProject01PainVoice::PantCount, 0.001f));
-	TestTrue(TEXT("Recovery exhale begins after the post-pant pause"),
-		FMath::IsNearlyEqual(
-			ProjectProject01PainVoice::GetRecoveryStartSeconds(TestIntensity) -
-			ProjectProject01PainVoice::GetPantEndSeconds(TestIntensity),
-			ProjectProject01PainVoice::PostPantPauseSeconds,
-			0.001f));
-	TestTrue(TEXT("Recovery exhale keeps the configured long duration"),
-		FMath::IsNearlyEqual(
-			ProjectProject01PainVoice::GetNonFatalDurationSeconds(TestIntensity) -
-			ProjectProject01PainVoice::GetRecoveryStartSeconds(TestIntensity),
-			ProjectProject01PainVoice::RecoveryDurationSeconds,
-			0.001f));
+	TestTrue(TEXT("Pain reaction ends with the third breath, without a final sigh"),
+		FMath::IsNearlyEqual(UPainGroanSynthComponent::GetReactionDuration(false,TestIntensity), 2.87f, 0.001f));
 	return true;
 }
 #endif

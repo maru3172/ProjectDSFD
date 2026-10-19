@@ -186,7 +186,7 @@ bool FProjectPainBreathingTest::RunTest(const FString&)
     auto Render=[Synth](bool Fatal,float Intensity)
     {
         int32 Rate=48000;Synth->Init(Rate);Synth->VoiceIntensity=Intensity;Synth->bFatalVoice=Fatal;
-        Synth->VoiceDurationSeconds=Fatal?0.38f:4.02f;Synth->NoiseState=0x91E10DA5u;Synth->bVoiceActive=true;
+        Synth->VoiceDurationSeconds=UPainGroanSynthComponent::GetReactionDuration(Fatal,Intensity);Synth->NoiseState=0x91E10DA5u;Synth->bVoiceActive=true;
         TArray<float> Audio;Audio.SetNumZeroed(48000*6);
         for(int32 Offset=0;Offset<Audio.Num();Offset+=1024)
             Synth->OnGenerateAudio(Audio.GetData()+Offset,FMath::Min(1024,Audio.Num()-Offset));
@@ -198,16 +198,19 @@ bool FProjectPainBreathingTest::RunTest(const FString&)
     TestTrue(TEXT("Sharp pain reaction is followed by a silent beat"),SegmentEnergy(Strong,0.02f,0.28f)>0.001&&SegmentEnergy(Strong,0.36f,0.83f)==0);
     for(float Start:{0.85f,1.65f,2.45f})
         TestTrue(TEXT("Each quiet shortened exhalation remains audible"),SegmentEnergy(Strong,Start+0.08f,Start+0.32f)>0.0001);
-    for(const FVector2D Gap:{FVector2D(1.30,1.62),FVector2D(2.10,2.42),FVector2D(2.90,3.34)})
-        TestTrue(TEXT("A real silent pause separates breaths and final sigh"),SegmentEnergy(Strong,Gap.X,Gap.Y)==0);
-    TestTrue(TEXT("Short final recovery sigh follows its pause and ends by 4.02 seconds"),SegmentEnergy(Strong,3.45f,3.95f)>0.00001&&SegmentEnergy(Strong,4.04f,6.0f)==0);
+    for(const FVector2D Gap:{FVector2D(1.30,1.62),FVector2D(2.10,2.42)})
+        TestTrue(TEXT("A real silent pause separates the three recovery breaths"),SegmentEnergy(Strong,Gap.X,Gap.Y)==0);
+    TestTrue(TEXT("Third breath ends by 2.87 seconds without a final sigh"),
+        FMath::IsNearlyEqual(UPainGroanSynthComponent::GetReactionDuration(false),2.87f,0.0001f) &&
+        SegmentEnergy(Strong,2.89f,6.0f)==0 && SegmentEnergy(Mild,2.89f,6.0f)==0);
     TestTrue(TEXT("Breathing remains audible but clearly quieter than the initial pain grunt"),SegmentEnergy(Strong,0.85f,2.87f)>0.00001&&SegmentEnergy(Strong,0.85f,2.87f)<SegmentEnergy(Strong,0.02f,0.28f)*0.10);
     TestTrue(TEXT("Lower death count strengthens the initial pain grunt as well as the breaths"),SegmentEnergy(Strong,0.02f,0.28f)>SegmentEnergy(Mild,0.02f,0.28f));
     TestTrue(TEXT("Repeated-hit intensity adds strain without removing breath pauses"),SegmentEnergy(Strong,0.85f,2.87f)>SegmentEnergy(Mild,0.85f,2.87f));
     TestTrue(TEXT("Death is a short grunt, not a sustained scream or recovery breathing"),SegmentEnergy(Fatal,0.02f,0.30f)>0.001&&SegmentEnergy(Fatal,0.40f,6.0f)==0);
     bool Finite=true;for(const float Sample:Strong)Finite&=FMath::IsFinite(Sample)&&FMath::Abs(Sample)<=0.88f;
     TestTrue(TEXT("Pain sequence stays finite and bounded"),Finite);
-    TestTrue(TEXT("Write quieter shorter pain recovery audition"),SaveAudioPreview(TEXT("Pain_Recovery.wav"),TArray<float>(Strong.GetData(),201600),1,201600,1));
+    const int32 RecoveryPreviewFrames=FMath::RoundToInt((UPainGroanSynthComponent::GetReactionDuration(false)+0.15f)*48000);
+    TestTrue(TEXT("Write pain recovery audition with no final sigh"),SaveAudioPreview(TEXT("Pain_Recovery.wav"),TArray<float>(Strong.GetData(),RecoveryPreviewFrames),1,RecoveryPreviewFrames,1));
     TestTrue(TEXT("Write short fatal grunt audition"),SaveAudioPreview(TEXT("Pain_Fatal.wav"),TArray<float>(Fatal.GetData(),27840),1,27840,1));
     return true;
 }
@@ -237,9 +240,10 @@ bool FProjectTensionBreathingTest::RunTest(const FString&)
     Heartbeat->CurrentBPM=0;
     TestFalse(TEXT("When heartbeat decays to zero, breathing stops even if active flag is stale"),Heartbeat->ShouldPlayTensionBreathing());
     Heartbeat->bHeartbeatActive=false;
-    Heartbeat->BreathingResumeWorldSeconds=UPainGroanSynthComponent::GetReactionDuration(false);
-    TestFalse(TEXT("Ambient breathing is suppressed through pain recovery, not just the initial grunt"),Heartbeat->CanResumeTensionBreathing(4.0));
-    TestTrue(TEXT("Ambient breathing can resume immediately after full recovery"),Heartbeat->CanResumeTensionBreathing(4.03));
+    const float PainDuration=UPainGroanSynthComponent::GetReactionDuration(false);
+    Heartbeat->BreathingResumeWorldSeconds=PainDuration;
+    TestFalse(TEXT("Ambient breathing is suppressed through all three recovery breaths"),Heartbeat->CanResumeTensionBreathing(PainDuration-0.02));
+    TestTrue(TEXT("Ambient breathing can resume after the third breath, without waiting for a removed sigh"),Heartbeat->CanResumeTensionBreathing(PainDuration+0.02));
     Heartbeat->SuspendTensionBreathingForPain(true,UPainGroanSynthComponent::GetReactionDuration(true));
     TestFalse(TEXT("Fatal reaction never resumes ambient breathing later"),Heartbeat->CanResumeTensionBreathing(10000));
     Heartbeat->ResetTensionBreathing();
