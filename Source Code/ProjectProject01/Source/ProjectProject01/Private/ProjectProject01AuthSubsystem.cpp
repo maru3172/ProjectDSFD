@@ -150,6 +150,7 @@ void UProjectProject01AuthSubsystem::RegisterAccount(
 	Json->SetStringField(TEXT("accountId"), AccountId.TrimStartAndEnd());
 	Json->SetStringField(TEXT("password"), Password);
 	Json->SetStringField(TEXT("displayName"), CleanDisplayName);
+	Json->SetBoolField(TEXT("loginAfterRegistration"), false);
 	FString Body;
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Body);
 	FJsonSerializer::Serialize(Json, Writer);
@@ -482,6 +483,13 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 
 	FString DisplayName;
 	Json->TryGetStringField(TEXT("displayName"), DisplayName);
+	bool bRegistrationOnly = false;
+	if (Operation == EAuthOperation::Register && Json->TryGetBoolField(TEXT("registrationOnly"), bRegistrationOnly) && bRegistrationOnly)
+	{
+		ClearSession();
+		CompleteOperation(Operation, true, Message, DisplayName);
+		return;
+	}
 	if (Operation == EAuthOperation::Login || Operation == EAuthOperation::Register || Operation == EAuthOperation::Refresh)
 	{
 		FString NewAccessToken;
@@ -517,7 +525,7 @@ void UProjectProject01AuthSubsystem::CompleteOperation(
 {
 	if (Operation == EAuthOperation::Register)
 	{
-		AuthState = bSuccess ? EProjectProject01AuthState::SignedIn : EProjectProject01AuthState::SignedOut;
+		AuthState = bSuccess && !AccessToken.IsEmpty() ? EProjectProject01AuthState::SignedIn : EProjectProject01AuthState::SignedOut;
 		OnRegistrationCompleted.Broadcast(bSuccess, Message, DisplayName);
 	}
 	else if (Operation == EAuthOperation::Login)

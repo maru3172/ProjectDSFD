@@ -197,10 +197,18 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 		TestTrue(TEXT("Readability UI renders"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));TestTrue(TEXT("Readability screenshot written"),FFileHelper::SaveArrayToFile(Image,*(Directory/(Name+TEXT(".png")))));
 	};
     Render(Lobby,TEXT("MatchingModes"));TestEqual(TEXT("Lobby opens matching mode chooser"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),4);
+    TestNotNull(TEXT("Matching mode chooser has a logout button"),Lobby->ModesLogoutButton.Get());
+    TestTrue(TEXT("Mode logout is directly below the mode choices, not in a bottom footer"),
+        Lobby->ModesLogoutButton->GetParent()->GetParent()==Lobby->LobbyViewSwitcher->GetActiveWidget());
+    TestTrue(TEXT("Leaderboard opens from the matching-mode selection page"),
+        Lobby->OpenLeaderboardTestButton->GetParent()==Lobby->ModesLogoutButton->GetParent());
     auto* State=Instance->GetSubsystem<UProjectProject01LobbySubsystem>();
     State->CurrentRoom.RoomId=TEXT("fixture-party");State->CurrentRoom.bRandomParty=true;State->CurrentRoom.bIsHost=true;
     FProjectProject01RoomMember P;P.UserId=TEXT("1");P.DisplayName=TEXT("개인 참가자");P.bIsHost=true;State->CurrentRoom.Members={P};
     Lobby->RefreshCurrentRoomView();Render(Lobby,TEXT("RandomSolo"));
+    TestTrue(TEXT("Random matching ready screen permits logout"),Lobby->MatchLogoutButton->GetIsEnabled());
+    TestTrue(TEXT("Random logout is directly below back, not in a bottom footer"),
+        Lobby->MatchLogoutButton->GetParent()==Lobby->MatchBackButton->GetParent());
     TestEqual(TEXT("Solo matchmaking has separate screen"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),3);
     TestTrue(TEXT("Idle solo can start and go back"),Lobby->MatchStartButton->GetIsEnabled()&&Lobby->MatchBackButton->GetIsEnabled());
     TArray<UWidget*> MatchWidgets;Lobby->WidgetTree->GetAllWidgets(MatchWidgets);int32 MatchButtons=0,MatchInputs=0;
@@ -214,27 +222,42 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
             break;
         }
     }
-    TestEqual(TEXT("Random screen has only start, cancel and back; no party invitation"),MatchButtons,3);
+    TestEqual(TEXT("Random screen has start, cancel, back and logout; no party invitation"),MatchButtons,4);
     TestEqual(TEXT("Random screen has no chat input"),MatchInputs,0);
     State->CurrentRoom.Members.Add(P);Lobby->RefreshMatchmakingView();
     TestFalse(TEXT("Legacy multi-user party cannot start a solo search"),Lobby->MatchStartButton->GetIsEnabled());
     State->CurrentRoom.Members.SetNum(1);
     State->bMatchmaking=true;State->MatchmakingWaiting=1;State->MatchmakingSeconds=175;Lobby->RefreshMatchmakingView();Render(Lobby,TEXT("RandomWaiting"));
     TestTrue(TEXT("Waiting offers cancellation but not back"),Lobby->MatchCancelButton->GetIsEnabled()&&!Lobby->MatchBackButton->GetIsEnabled());
+    TestTrue(TEXT("Random matching queue permits logout"),Lobby->MatchLogoutButton->GetIsEnabled());
     State->bMatchmaking=false;State->CurrentRoom.bRandomMatch=true;State->CurrentRoom.bStarting=true;State->CurrentRoom.AssignedRole=TEXT("Survivor");
     Lobby->RefreshCurrentRoomView();Render(Lobby,TEXT("RandomConfirmed"));
     TestFalse(TEXT("Confirmed match disables cancel and back"),Lobby->MatchCancelButton->GetIsEnabled()||Lobby->MatchBackButton->GetIsEnabled());
+    TestFalse(TEXT("Confirmed random match also locks logout until entering gameplay"),Lobby->MatchLogoutButton->GetIsEnabled());
     TestTrue(TEXT("Confirmed countdown reveals only own role"),Lobby->StartCountdownText->GetText().ToString().Contains(TEXT("생존자"))&&!Lobby->StartCountdownText->GetText().ToString().Contains(TEXT("마네킹")));
     TestEqual(TEXT("Random countdown begins at five"),Lobby->GameStartCountdownNumber,5);
     Lobby->CancelGameStartCountdown();State->ForceClearLocalSession();Lobby->HandleOpenMatchClicked();Lobby->RefreshCurrentRoomView();
+    auto* Browser=CastChecked<UVerticalBox>(Lobby->LogoutButton->GetParent());
+    const int32 LogoutIndex=Browser->GetChildIndex(Lobby->LogoutButton),CreateIndex=Browser->GetChildIndex(Lobby->OpenCreateRoomButton);
+    TestEqual(TEXT("Join by code immediately follows selected-room join"),Browser->GetChildIndex(Lobby->OpenCodeJoinButton),Browser->GetChildIndex(Lobby->JoinRoomButton)+1);
+    TestEqual(TEXT("Create-room immediately follows join by code"),CreateIndex,Browser->GetChildIndex(Lobby->OpenCodeJoinButton)+1);
+    TestEqual(TEXT("Logout immediately follows back below create-room"),LogoutIndex,CreateIndex+2);
+    auto* BrowserBack=CastChecked<UButton>(Browser->GetChildAt(CreateIndex+1));
+    TestEqual(TEXT("Back immediately follows create-room and uses the requested label"),CastChecked<UTextBlock>(BrowserBack->GetChildAt(0))->GetText().ToString(),FString(TEXT("뒤로가기")));
+    TestTrue(TEXT("Leaderboard no longer consumes space in the open browser"),Lobby->OpenLeaderboardTestButton->GetParent()!=Browser);
     Lobby->PopulatePublicRooms({A,B});Lobby->PublicRoomBindings[0]->HandleClicked();Render(Lobby,TEXT("PublicRooms"));
     Lobby->HandleOpenCodeJoinClicked();Render(Lobby,TEXT("JoinByCode"));
     TestEqual(TEXT("Code entry button reveals code/password form"),Lobby->CodeJoinPanel->GetVisibility(),ESlateVisibility::Visible);
+    TestEqual(TEXT("Code entry switches to its own page"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),5);
+    for(auto* Parent=Lobby->PublicRoomList->GetParent();Parent;Parent=Parent->GetParent())
+        TestTrue(TEXT("Public room list does not belong to the active code-entry page"),Parent!=Lobby->LobbyViewSwitcher->GetActiveWidget());
     TestTrue(TEXT("Code form masks password"),Lobby->JoinPasswordInput->GetIsPassword());
     Lobby->HandleJoinByCodeClicked();TestTrue(TEXT("Blank direct code never falls back to selected public room"),Lobby->LobbyStatusText->GetText().ToString().Contains(TEXT("참가 코드를 입력")));
     Lobby->DirectRoomCodeInput->SetText(FText::FromString(TEXT("ABCD1234")));Lobby->JoinPasswordInput->SetText(FText::FromString(TEXT("secret-fixture")));
     Lobby->RefreshCurrentRoomView();TestEqual(TEXT("Periodic room refresh keeps code form open"),Lobby->CodeJoinPanel->GetVisibility(),ESlateVisibility::Visible);
+    TestEqual(TEXT("Polling cannot reopen public room list over code entry"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),5);
     Lobby->HandleCloseCodeJoinClicked();TestTrue(TEXT("Closing code form clears code and password"),Lobby->DirectRoomCodeInput->GetText().IsEmpty()&&Lobby->JoinPasswordInput->GetText().IsEmpty());
+    TestEqual(TEXT("Code-entry back returns to public room browser"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),0);
 	FProjectProject01RoomMember M1;M1.UserId=TEXT("101");M1.DisplayName=TEXT("같은 이름");M1.bIsHost=true;M1.AssignedRole=TEXT("Mannequin");
 	FProjectProject01RoomMember M2=M1;M2.UserId=TEXT("202");M2.bIsHost=false;
     State->CurrentRoom.RoomId=TEXT("host-selection-fixture");State->CurrentRoom.bIsHost=true;State->CurrentRoom.Members={M1,M2};Lobby->RefreshCurrentRoomView();

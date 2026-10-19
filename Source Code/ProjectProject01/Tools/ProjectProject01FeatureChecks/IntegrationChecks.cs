@@ -84,6 +84,21 @@ internal static class IntegrationChecks
             await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null01",password="ReviewPassword123!",displayName=(string?)null}),HttpStatusCode.BadRequest,"F29 null 표시 이름 회원가입은 실제 HTTP에서 400");
             await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null02",password="ReviewPassword123!"}),HttpStatusCode.BadRequest,"F29 누락된 표시 이름도 400");
             await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null03",password="ReviewPassword123!",displayName="   "}),HttpStatusCode.BadRequest,"F29 공백 표시 이름도 400");
+            string registrationId="UiReg_"+Guid.NewGuid().ToString("N")[..12];
+            var registration=new {accountId=registrationId,password="ReviewPassword123!",displayName="가입 화면 검사",loginAfterRegistration=false};
+            using(var response=await player.PostAsJsonAsync("/api/auth/register",registration))
+            {
+                Check(response.StatusCode==HttpStatusCode.Created,"분리된 회원가입 화면은 계정만 생성");
+                using var body=JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                Check(body.RootElement.GetProperty("registrationOnly").GetBoolean()&&!body.RootElement.TryGetProperty("accessToken",out _)&&!body.RootElement.TryGetProperty("refreshToken",out _),"회원가입 응답에 로그인 토큰 발급 없음");
+            }
+            await using(var registrationConnection=await database.OpenConnectionAsync(CancellationToken.None))
+            await using(var registrationQuery=new MySqlCommand("SELECT COUNT(s.id) FROM users u LEFT JOIN auth_sessions s ON s.user_id=u.id WHERE u.account_id=@account;",registrationConnection))
+            {
+                registrationQuery.Parameters.AddWithValue("@account",registrationId);
+                Check(Convert.ToInt32(await registrationQuery.ExecuteScalarAsync())==0,"가입 직후 DB에도 자동 로그인 세션 없음");
+            }
+            await Expect(await player.PostAsJsonAsync("/api/auth/register",registration),HttpStatusCode.Conflict,"같은 아이디 중복 회원가입 차단 유지");
             await Expect(await player.GetAsync("/api/surveys/active"),HttpStatusCode.Unauthorized,"미로그인 설문 조회 차단");
             string questionId=Guid.NewGuid().ToString("D");
             var question=new {id=questionId,type="Choice",prompt="두 개 선택",options=new[]{"A","B","C"},required=true,allowMultiple=true,maxSelections=2,isTrap=true,expectedAnswers=new[]{"A","B"}};

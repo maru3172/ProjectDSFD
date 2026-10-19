@@ -1962,6 +1962,7 @@ void UProjectProject01LoginWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	bMultiplayerServiceAvailable = false;
+	bAuthenticationRequestPending = false;
 
 	if (IsValid(LoginButton))
 	{
@@ -1969,8 +1970,10 @@ void UProjectProject01LoginWidget::NativeConstruct()
 	}
 	if (IsValid(RegisterButton))
 	{
-		RegisterButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleRegisterClicked);
+		RegisterButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleOpenRegistrationClicked);
 	}
+	if (RegistrationSubmitButton) RegistrationSubmitButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleRegisterClicked);
+	if (ReturnToLoginButton) ReturnToLoginButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleReturnToLoginClicked);
 	if (IsValid(ReturnToTitleButton))
 	{
 		ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LoginWidget::HandleReturnToTitleClicked);
@@ -2011,8 +2014,13 @@ void UProjectProject01LoginWidget::NativeDestruct()
 	}
 	if (IsValid(RegisterButton))
 	{
-		RegisterButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleRegisterClicked);
+		RegisterButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleOpenRegistrationClicked);
 	}
+	if (RegistrationSubmitButton) RegistrationSubmitButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleRegisterClicked);
+	if (ReturnToLoginButton) ReturnToLoginButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleReturnToLoginClicked);
+	if (PasswordInput) PasswordInput->SetText(FText::GetEmpty());
+	if (RegistrationPasswordInput) RegistrationPasswordInput->SetText(FText::GetEmpty());
+	bAuthenticationRequestPending = false;
 	if (IsValid(ReturnToTitleButton))
 	{
 		ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01LoginWidget::HandleReturnToTitleClicked);
@@ -2065,6 +2073,7 @@ void UProjectProject01LoginWidget::HandleReturnToTitleClicked()
 
 void UProjectProject01LoginWidget::HandleLoginClicked()
 {
+	if (bAuthenticationRequestPending || (AuthenticationPages && AuthenticationPages->GetActiveWidgetIndex()!=0)) return;
 	if (!bMultiplayerServiceAvailable)
 	{
 		SetStatus(TEXT("서버가 꺼져 있습니다."), true);
@@ -2085,6 +2094,7 @@ void UProjectProject01LoginWidget::HandleLoginClicked()
 		return;
 	}
 
+	bAuthenticationRequestPending = true;
 	SetRequestControlsEnabled(false);
 	SetStatus(TEXT("로그인 중..."), false);
 	Auth->Login(AccountIdInput->GetText().ToString(), PasswordInput->GetText().ToString());
@@ -2092,12 +2102,13 @@ void UProjectProject01LoginWidget::HandleLoginClicked()
 
 void UProjectProject01LoginWidget::HandleRegisterClicked()
 {
+	if (bAuthenticationRequestPending || !AuthenticationPages || AuthenticationPages->GetActiveWidgetIndex()!=1) return;
 	if (!bMultiplayerServiceAvailable)
 	{
 		SetStatus(TEXT("서버가 꺼져 있습니다."), true);
 		return;
 	}
-	if (!IsValid(AccountIdInput) || !IsValid(PasswordInput) || !IsValid(DisplayNameInput))
+	if (!IsValid(RegistrationAccountIdInput) || !IsValid(RegistrationPasswordInput) || !IsValid(DisplayNameInput))
 	{
 		SetStatus(TEXT("회원가입 입력 UI를 찾지 못했습니다."), true);
 		return;
@@ -2112,12 +2123,35 @@ void UProjectProject01LoginWidget::HandleRegisterClicked()
 		return;
 	}
 
+	bAuthenticationRequestPending = true;
 	SetRequestControlsEnabled(false);
 	SetStatus(TEXT("계정 생성 중..."), false);
 	Auth->RegisterAccount(
-		AccountIdInput->GetText().ToString(),
-		PasswordInput->GetText().ToString(),
+		RegistrationAccountIdInput->GetText().ToString(),
+		RegistrationPasswordInput->GetText().ToString(),
 		DisplayNameInput->GetText().ToString());
+}
+
+void UProjectProject01LoginWidget::HandleOpenRegistrationClicked()
+{
+	ShowRegistrationPage(true);
+}
+
+void UProjectProject01LoginWidget::HandleReturnToLoginClicked()
+{
+	ShowRegistrationPage(false);
+}
+
+void UProjectProject01LoginWidget::ShowRegistrationPage(bool bShow)
+{
+	if (bAuthenticationRequestPending || !AuthenticationPages) return;
+	if (PasswordInput) PasswordInput->SetText(FText::GetEmpty());
+	if (RegistrationPasswordInput) RegistrationPasswordInput->SetText(FText::GetEmpty());
+	if (DisplayNameInput) DisplayNameInput->SetText(FText::GetEmpty());
+	if (RegistrationAccountIdInput) RegistrationAccountIdInput->SetText(bShow && AccountIdInput ? AccountIdInput->GetText() : FText::GetEmpty());
+	AuthenticationPages->SetActiveWidgetIndex(bShow ? 1 : 0);
+	SetStatus(bShow ? TEXT("아이디, 비밀번호, 닉네임을 입력해주세요.") : TEXT("아이디와 비밀번호를 입력해주세요."), false);
+	SetRequestControlsEnabled(true);
 }
 
 void UProjectProject01LoginWidget::HandleLoginResult(
@@ -2125,6 +2159,7 @@ void UProjectProject01LoginWidget::HandleLoginResult(
 	const FString& Message,
 	const FString& DisplayName)
 {
+	bAuthenticationRequestPending = false;
 	SetRequestControlsEnabled(true);
 	SetStatus(Message, !bSuccess);
 	if (bSuccess)
@@ -2138,11 +2173,15 @@ void UProjectProject01LoginWidget::HandleRegistrationResult(
 	const FString& Message,
 	const FString& DisplayName)
 {
+	bAuthenticationRequestPending = false;
 	SetRequestControlsEnabled(true);
 	SetStatus(Message, !bSuccess);
 	if (bSuccess)
 	{
-		EnterLobby();
+		if (AccountIdInput && RegistrationAccountIdInput)
+			AccountIdInput->SetText(FText::FromString(RegistrationAccountIdInput->GetText().ToString().TrimStartAndEnd()));
+		ShowRegistrationPage(false);
+		SetStatus(TEXT("회원가입이 완료되었습니다. 로그인해주세요."), false);
 	}
 }
 
@@ -2185,33 +2224,59 @@ void UProjectProject01LoginWidget::BuildWidgetTree()
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
 	WidgetTree->RootWidget = Root;
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("ProjectProject01"), 30.0f);
-	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("로그인 / 회원가입"), 20.0f);
+	AuthenticationPages = WidgetTree->ConstructWidget<UWidgetSwitcher>();
+	Root->AddChildToVerticalBox(AuthenticationPages);
+	UVerticalBox* LoginPage = WidgetTree->ConstructWidget<UVerticalBox>();
+	UVerticalBox* RegistrationPage = WidgetTree->ConstructWidget<UVerticalBox>();
+	AuthenticationPages->AddChild(LoginPage);
+	AuthenticationPages->AddChild(RegistrationPage);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, LoginPage, TEXT("로그인"), 20.0f);
 
 	AccountIdInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	AccountIdInput->SetHintText(FProjectProject01Localization::Text(TEXT("계정 ID (영문/숫자/밑줄 3~32자)")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(AccountIdInput);
-	Root->AddChildToVerticalBox(AccountIdInput)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::EnlargeInput(AccountIdInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,LoginPage,AccountIdInput,54);
 
 	PasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	PasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("비밀번호 (10~128자)")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(PasswordInput);
 	PasswordInput->SetIsPassword(true);
-	Root->AddChildToVerticalBox(PasswordInput)->SetPadding(FMargin(6.0f));
+	ProjectProject01LoginUI::EnlargeInput(PasswordInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,LoginPage,PasswordInput,54);
+	LoginButton = ProjectProject01LoginUI::AddButton(WidgetTree, LoginPage, TEXT("로그인"));
+	RegisterButton = ProjectProject01LoginUI::AddButton(WidgetTree, LoginPage, TEXT("회원가입"));
+	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, LoginPage, TEXT("타이틀로 돌아가기"));
+
+	ProjectProject01LoginUI::AddLabel(WidgetTree, RegistrationPage, TEXT("회원가입"), 20.0f);
+	RegistrationAccountIdInput = WidgetTree->ConstructWidget<UEditableTextBox>();
+	RegistrationAccountIdInput->SetHintText(FProjectProject01Localization::Text(TEXT("계정 ID (영문/숫자/밑줄 3~32자)")));
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(RegistrationAccountIdInput);
+	ProjectProject01LoginUI::EnlargeInput(RegistrationAccountIdInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,RegistrationPage,RegistrationAccountIdInput,54);
+	RegistrationPasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
+	RegistrationPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("비밀번호 (10~128자)")));
+	RegistrationPasswordInput->SetIsPassword(true);
+	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(RegistrationPasswordInput);
+	ProjectProject01LoginUI::EnlargeInput(RegistrationPasswordInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,RegistrationPage,RegistrationPasswordInput,54);
 
 	DisplayNameInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	DisplayNameInput->SetHintText(FProjectProject01Localization::Text(TEXT("표시 이름 (회원가입 시 2~32자)")));
+	DisplayNameInput->SetHintText(FProjectProject01Localization::Text(TEXT("닉네임 (2~32자)")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DisplayNameInput);
-	Root->AddChildToVerticalBox(DisplayNameInput)->SetPadding(FMargin(6.0f));
-
-	LoginButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("로그인"));
-	RegisterButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("회원가입"));
-	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("타이틀로 돌아가기"));
+	ProjectProject01LoginUI::EnlargeInput(DisplayNameInput);
+	ProjectProject01LoginUI::AddLargeField(WidgetTree,RegistrationPage,DisplayNameInput,54);
+	RegistrationSubmitButton = ProjectProject01LoginUI::AddButton(WidgetTree, RegistrationPage, TEXT("회원가입"));
+	ReturnToLoginButton = ProjectProject01LoginUI::AddButton(WidgetTree, RegistrationPage, TEXT("로그인으로 돌아가기"));
+	AuthenticationPages->SetActiveWidgetIndex(0);
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("인증 서버에 연결할 준비가 되었습니다."), 14.0f);
 }
 
 void UProjectProject01LoginWidget::SetRequestControlsEnabled(const bool bEnabled)
 {
-	bool bAuthenticationEnabled = bEnabled;
+	for (UEditableTextBox* Input : {AccountIdInput.Get(),PasswordInput.Get(),RegistrationAccountIdInput.Get(),RegistrationPasswordInput.Get(),DisplayNameInput.Get()})
+		if (Input) Input->SetIsEnabled(!bAuthenticationRequestPending);
+	bool bAuthenticationEnabled = bEnabled && !bAuthenticationRequestPending;
 	if (const UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
 	{
 		if (const UProjectProject01AuthSubsystem* Auth =
@@ -2230,6 +2295,8 @@ void UProjectProject01LoginWidget::SetRequestControlsEnabled(const bool bEnabled
 	{
 		RegisterButton->SetIsEnabled(bAuthenticationEnabled);
 	}
+	if (RegistrationSubmitButton) RegistrationSubmitButton->SetIsEnabled(bAuthenticationEnabled);
+	if (ReturnToLoginButton) ReturnToLoginButton->SetIsEnabled(!bAuthenticationRequestPending);
 	if (IsValid(ReturnToTitleButton))
 	{
 		ReturnToTitleButton->SetIsEnabled(bEnabled);
@@ -5175,6 +5242,8 @@ void UProjectProject01LobbyWidget::RefreshMatchmakingView()
     auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;if(!Lobby)return;
     bool Party=Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomParty;
     bool Matched=Party&&Lobby->GetCurrentRoom().bRandomMatch,Leader=Party&&Lobby->GetCurrentRoom().bIsHost,Waiting=Lobby->IsMatchmaking(),Busy=Lobby->IsRequestInFlight();
+    for(UButton* Button : {LogoutButton.Get(),MatchLogoutButton.Get(),ModesLogoutButton.Get()})
+        if(Button)Button->SetIsEnabled(!bLobbyLogoutInProgress&&!bTravelRequested&&!bGameStartFadeActive&&(!Matched||Lobby->GetCurrentRoom().bReturnedToRoom));
     if(MatchStartButton)MatchStartButton->SetIsEnabled(Party&&Leader&&Lobby->GetCurrentRoom().Members.Num()==1&&!Matched&&!Waiting&&!Busy);
     if(MatchCancelButton)MatchCancelButton->SetIsEnabled(!Matched&&Leader&&Waiting&&!Lobby->IsCancellingMatchmaking());
     if(MatchBackButton)MatchBackButton->SetIsEnabled(!Matched&&!Waiting&&!Busy);
@@ -5235,7 +5304,7 @@ void UProjectProject01LobbyWidget::HandleOpenCodeJoinClicked()
     auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
     if(!Lobby||Lobby->HasCurrentRoom()||Lobby->IsRequestInFlight())return;
     if(CodeJoinPanel)CodeJoinPanel->SetVisibility(ESlateVisibility::Visible);
-    if(CodeJoinPanel&&CodeJoinPanel->GetParent())if(auto* Scroll=Cast<UScrollBox>(CodeJoinPanel->GetParent()->GetParent()))Scroll->ScrollWidgetIntoView(CodeJoinPanel,false);
+    ShowLobbyView(5);
     if(DirectRoomCodeInput)DirectRoomCodeInput->SetKeyboardFocus();
 }
 
@@ -5244,6 +5313,7 @@ void UProjectProject01LobbyWidget::HandleCloseCodeJoinClicked()
     if(CodeJoinPanel)CodeJoinPanel->SetVisibility(ESlateVisibility::Collapsed);
     if(DirectRoomCodeInput)DirectRoomCodeInput->SetText(FText::GetEmpty());
     if(JoinPasswordInput)JoinPasswordInput->SetText(FText::GetEmpty());
+    if(LobbyViewSwitcher&&LobbyViewSwitcher->GetActiveWidgetIndex()==5)ShowLobbyView(0);
 }
 
 void UProjectProject01LobbyWidget::HandleJoinByCodeClicked()
@@ -5384,13 +5454,31 @@ void UProjectProject01LobbyWidget::HandleChatTextCommitted(const FText&, const E
 
 void UProjectProject01LobbyWidget::HandleLogoutClicked()
 {
+	if (bLobbyLogoutInProgress || bTravelRequested || bGameStartFadeActive) return;
+	UGameInstance* GameInstance = GetGameInstance();
+	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	// A confirmed random match keeps the existing no-cancellation policy until gameplay starts.
+	if (IsValid(Lobby) && Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bRandomMatch &&
+		!Lobby->GetCurrentRoom().bReturnedToRoom) return;
+	bLobbyLogoutInProgress = true;
+	SetIsEnabled(false);
 	if (IsValid(LogoutButton))
 	{
 		LogoutButton->SetIsEnabled(false);
 	}
-	UGameInstance* GameInstance = GetGameInstance();
-	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
-		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	if (IsValid(Lobby) && (bShowingMatchmaking || Lobby->IsMatchmaking() ||
+		(Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bRandomParty)))
+	{
+		// Auth logout removes the queue/party on the server in the same transaction as session revocation.
+		// Cancel the local poll first: a delayed match response must not start a countdown or recreate a party.
+		bShowingMatchmaking = false;
+		bPartyCreationRequested = true;
+		CancelGameStartCountdown();
+		Lobby->ForceClearLocalSession();
+		BeginLogout();
+		return;
+	}
 	if (IsValid(Lobby) && Lobby->HasCurrentRoom())
 	{
 		bLogoutAfterLeave = true;
@@ -5420,6 +5508,8 @@ void UProjectProject01LobbyWidget::BeginLogout()
 		? GameInstance->GetSubsystem<UProjectProject01AuthSubsystem>() : nullptr;
 	if (!IsValid(Auth))
 	{
+		bLobbyLogoutInProgress = false;
+		SetIsEnabled(true);
 		SetStatus(TEXT("인증 시스템을 찾지 못했습니다."), true);
 		if (IsValid(LogoutButton)) LogoutButton->SetIsEnabled(true);
 		return;
@@ -5445,6 +5535,8 @@ void UProjectProject01LobbyWidget::HandleLogoutResult(
 	{
 		LogoutButton->SetIsEnabled(true);
 	}
+	bLobbyLogoutInProgress = false;
+	SetIsEnabled(true);
 }
 
 void UProjectProject01LobbyWidget::HandleServiceStatusChanged(
@@ -5469,6 +5561,7 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	const bool bSuccess,
 	const FString& Message)
 {
+	if (bLobbyLogoutInProgress && Operation != EProjectProject01LobbyOperation::LeaveRoom) return;
 	if (!bSuccess &&
 		(Operation == EProjectProject01LobbyOperation::StartRoom ||
 			Operation == EProjectProject01LobbyOperation::RequestGameTicket) &&
@@ -5551,6 +5644,8 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 		if (!bSuccess)
 		{
 			bLogoutAfterLeave = false;
+			bLobbyLogoutInProgress = false;
+			SetIsEnabled(true);
 			if (IsValid(LogoutButton)) LogoutButton->SetIsEnabled(true);
 		}
 	}
@@ -5583,6 +5678,7 @@ void UProjectProject01LobbyWidget::HandleCurrentRoomChanged()
 
 void UProjectProject01LobbyWidget::RefreshLobbyState()
 {
+	if (bLobbyLogoutInProgress) return;
 	if (++LobbySurveyPollCounter >= 10) { LobbySurveyPollCounter = 0; RefreshLobbySurvey(); }
 	UGameInstance* GameInstance = GetGameInstance();
 	if (IsValid(GameInstance) && ++ServiceStatusPollCounter >= 5)
@@ -5774,6 +5870,7 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
 
 void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 {
+	if (bLobbyLogoutInProgress) return;
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
@@ -5790,7 +5887,8 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
     RefreshMatchmakingView();
     const bool RandomStart=bInRoom&&Lobby->GetCurrentRoom().bRandomMatch;
-	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bShowingOpenMatching?0:4);
+	const bool bCodeJoinOpen=CodeJoinPanel&&CodeJoinPanel->GetVisibility()!=ESlateVisibility::Collapsed;
+	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingOpenMatching?0:4);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
     if(OpenCodeJoinButton)OpenCodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
@@ -6125,6 +6223,7 @@ void UProjectProject01LobbyWidget::CompleteGameStartFade()
 
 void UProjectProject01LobbyWidget::ContinueGameAdmission(float DeltaSeconds)
 {
+	if (bLobbyLogoutInProgress) return;
     if(!bGameStartFadeComplete||bTravelRequested)return;
     auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
     if(!Lobby||!Lobby->HasCurrentRoom()||!Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bReturnedToRoom||Lobby->GetCurrentRoom().RoomId!=AdmissionRoomId||Lobby->GetCurrentRoom().MatchId!=AdmissionMatchId)
@@ -6227,11 +6326,9 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 		return Panel;
 	};
 
-	// 0: 처음 보이는 방 검색/참가 화면
+	// 0: open matching browser; code entry uses its own page (5).
 	UVerticalBox* BrowserPanel = MakeScrollablePanel();
-    auto* BrowserBack=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("매칭 방식 선택으로"));BrowserBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, BrowserPanel, TEXT("방 목록 / 참가"), 20.0f);
-	OpenCreateRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("새 방 만들기"));
 	RoomSearchInput = WidgetTree->ConstructWidget<UEditableTextBox>();
 	RoomSearchInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 이름 / 참가 코드 / 방장 이름 검색")));
 	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(RoomSearchInput);
@@ -6239,7 +6336,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLargeField(WidgetTree,BrowserPanel,RoomSearchInput,54);
 	RefreshRoomsButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("공개방 목록 새로고침"));
     auto* RoomListScroll=WidgetTree->ConstructWidget<UScrollBox>();PublicRoomList=WidgetTree->ConstructWidget<UVerticalBox>();RoomListScroll->AddChild(PublicRoomList);
-    auto* RoomListFrame=WidgetTree->ConstructWidget<USizeBox>();RoomListFrame->SetHeightOverride(240);RoomListFrame->AddChild(RoomListScroll);
+    auto* RoomListFrame=WidgetTree->ConstructWidget<USizeBox>();RoomListFrame->SetHeightOverride(200);RoomListFrame->AddChild(RoomListScroll);
     BrowserPanel->AddChildToVerticalBox(RoomListFrame)->SetPadding(FMargin(6));
 	SelectedPublicRoomBanner=WidgetTree->ConstructWidget<UBorder>();SelectedPublicRoomBanner->SetPadding(FMargin(12));
 	SelectedPublicRoomText=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo SelectionFont=SelectedPublicRoomText->GetFont();SelectionFont.Size=20;SelectedPublicRoomText->SetFont(SelectionFont);
@@ -6250,30 +6347,14 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     PublicJoinPasswordInput->SetIsPassword(true);ProjectProject01LoginUI::SetEditableTextBoxTextBlack(PublicJoinPasswordInput);
     ProjectProject01LoginUI::EnlargeInput(PublicJoinPasswordInput);
     BrowserPanel->AddChildToVerticalBox(PublicJoinPasswordInput)->SetPadding(FMargin(6));
-    JoinRoomButton=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("선택한 공개방 참가"));
+    JoinRoomButton=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("선택한 방 참가"));
 	UpdatePublicRoomSelection();
-    OpenCodeJoinButton=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("참가 코드로 방 참가"));
+    OpenCodeJoinButton=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("참가코드로 참가"));
     OpenCodeJoinButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenCodeJoinClicked);
-    CodeJoinPanel=WidgetTree->ConstructWidget<UVerticalBox>();BrowserPanel->AddChildToVerticalBox(CodeJoinPanel)->SetPadding(FMargin(6));
-    CodeJoinPanel->SetVisibility(ESlateVisibility::Collapsed);
-    ProjectProject01LoginUI::AddLabel(WidgetTree,CodeJoinPanel,TEXT("참가 코드로 방 참가"),22);
-	DirectRoomCodeInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	DirectRoomCodeInput->SetHintText(FProjectProject01Localization::Text(TEXT("6~8자리 참가 코드 (비공개방 또는 직접 참가)")));
-	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DirectRoomCodeInput);
-    ProjectProject01LoginUI::EnlargeInput(DirectRoomCodeInput);
-    ProjectProject01LoginUI::AddLargeField(WidgetTree,CodeJoinPanel,DirectRoomCodeInput,54);
-	JoinPasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
-	JoinPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("참가 비밀번호 (비밀번호방만)")));
-	ProjectProject01LoginUI::SetEditableTextBoxTextBlack(JoinPasswordInput);
-	JoinPasswordInput->SetIsPassword(true);
-    ProjectProject01LoginUI::EnlargeInput(JoinPasswordInput);
-    ProjectProject01LoginUI::AddLargeField(WidgetTree,CodeJoinPanel,JoinPasswordInput,54);
-    CodeJoinButton=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("방 참가"));
-    CodeJoinButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleJoinByCodeClicked);
-    auto* CloseCodeJoin=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("닫기"));
-    CloseCodeJoin->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCloseCodeJoinClicked);
-	OpenLeaderboardTestButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("리더보드 열기"));
-	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("로그아웃 / 로그인 화면으로"));
+	OpenCreateRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("새 방 만들기"));
+    auto* BrowserBack=ProjectProject01LoginUI::AddButton(WidgetTree,BrowserPanel,TEXT("뒤로가기"));
+    BrowserBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
+	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, BrowserPanel, TEXT("로그아웃"));
 
 	// 1: 사용자가 '새 방 만들기'를 눌렀을 때만 보이는 생성 화면
 	UVerticalBox* CreatePanel = MakeScrollablePanel();
@@ -6345,10 +6426,40 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     MatchStartButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("시작"));MatchStartButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMatchStartClicked);
     MatchCancelButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("매칭 취소"));MatchCancelButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMatchCancelClicked);
     MatchBackButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("뒤로가기"));MatchBackButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
+    MatchLogoutButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("로그아웃 / 로그인 화면으로"));
+    MatchLogoutButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
     auto* Modes=MakeScrollablePanel(); // 4: lobby entry; existing room browser is only under Open Matching.
     ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("매칭 방식 선택"),26);
     auto* Random=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("랜덤 매칭"));Random->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRandomMatchClicked);
     auto* Open=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("오픈 매칭"));Open->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenMatchClicked);
+	OpenLeaderboardTestButton = ProjectProject01LoginUI::AddButton(WidgetTree, Modes, TEXT("리더보드 열기"));
+    ModesLogoutButton=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("로그아웃 / 로그인 화면으로"));
+    ModesLogoutButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
+
+    // 5: direct code entry only. The public room browser is an inactive sibling page.
+    CodeJoinPanel=MakeScrollablePanel();
+    CodeJoinPanel->SetVisibility(ESlateVisibility::Collapsed);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,CodeJoinPanel,TEXT("참가 코드로 방 참가"),22);
+    DirectRoomCodeInput = WidgetTree->ConstructWidget<UEditableTextBox>();
+    DirectRoomCodeInput->SetHintText(FProjectProject01Localization::Text(TEXT("6~8자리 참가 코드 (비공개방 또는 직접 참가)")));
+    ProjectProject01LoginUI::SetEditableTextBoxTextBlack(DirectRoomCodeInput);
+    ProjectProject01LoginUI::EnlargeInput(DirectRoomCodeInput);
+    ProjectProject01LoginUI::AddLargeField(WidgetTree,CodeJoinPanel,DirectRoomCodeInput,54);
+    JoinPasswordInput = WidgetTree->ConstructWidget<UEditableTextBox>();
+    JoinPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("참가 비밀번호 (비밀번호방만)")));
+    ProjectProject01LoginUI::SetEditableTextBoxTextBlack(JoinPasswordInput);
+    JoinPasswordInput->SetIsPassword(true);
+    ProjectProject01LoginUI::EnlargeInput(JoinPasswordInput);
+    ProjectProject01LoginUI::AddLargeField(WidgetTree,CodeJoinPanel,JoinPasswordInput,54);
+    CodeJoinButton=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("방 참가"));
+    CodeJoinButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleJoinByCodeClicked);
+    auto* CloseCodeJoin=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("뒤로가기"));
+    CloseCodeJoin->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCloseCodeJoinClicked);
+
+    // Compact only the matching panels; social overlays and other game menus retain their layout.
+    for(UVerticalBox* Panel : {BrowserPanel,Matching,Modes,CodeJoinPanel.Get()})
+        for(UWidget* Child : Panel->GetAllChildren())
+            if(auto* PanelChildSlot=Cast<UVerticalBoxSlot>(Child->Slot))PanelChildSlot->SetPadding(FMargin(6.0f,4.0f));
 
 	StartCountdownPanel = WidgetTree->ConstructWidget<UBorder>();
 	StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));

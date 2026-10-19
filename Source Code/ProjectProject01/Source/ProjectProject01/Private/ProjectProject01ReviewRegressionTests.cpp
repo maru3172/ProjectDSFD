@@ -55,6 +55,13 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Dom/JsonObject.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Button.h"
+#include "Components/WidgetSwitcher.h"
+#include "Slate/WidgetRenderer.h"
+#include "ImageUtils.h"
+#include "Serialization/BufferArchive.h"
+#include "RenderingThread.h"
 
 namespace
 {
@@ -410,6 +417,59 @@ public:
     FUtf8StringView GetContentAsUtf8StringView() const override{return FUtf8StringView(reinterpret_cast<const UTF8CHAR*>(Bytes.GetData()),Bytes.Num());}
 };
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectLoginRegistrationTest,"ProjectProject01.Operations.LoginRegistration",
+ EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
+bool FProjectLoginRegistrationTest::RunTest(const FString&)
+{
+    UWorld* World=CreateReviewWorld();auto* Instance=NewObject<UProjectProject01GameInstance>();World->SetGameInstance(Instance);
+    auto& Context=GEngine->CreateNewWorldContext(EWorldType::Game);Context.SetCurrentWorld(World);Context.OwningGameInstance=Instance;Instance->WorldContext=&Context;
+    Instance->UGameInstance::Init();auto* Auth=Instance->GetSubsystem<UProjectProject01AuthSubsystem>();
+    UUserWidget* Base=NewObject<UProjectProject01LoginWidget>(World);Base->Initialize();auto* UI=CastChecked<UProjectProject01LoginWidget>(Base);
+    auto* Local=NewObject<ULocalPlayer>(GEngine);UI->SetPlayerContext(FLocalPlayerContext(Local,World));
+    ON_SCOPE_EXIT{Auth->OnRegistrationCompleted.RemoveDynamic(UI,&UProjectProject01LoginWidget::HandleRegistrationResult);UI->ReleaseSlateResources(true);Instance->UGameInstance::Shutdown();Instance->WorldContext=nullptr;GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};
+    Auth->bServiceReachable=true;UI->bMultiplayerServiceAvailable=true;
+    Auth->OnRegistrationCompleted.AddUniqueDynamic(UI,&UProjectProject01LoginWidget::HandleRegistrationResult);
+    TestEqual(TEXT("Only login form is shown initially"),UI->AuthenticationPages->GetActiveWidgetIndex(),0);
+    TestEqual(TEXT("Login and registration are separate pages"),UI->AuthenticationPages->GetNumWidgets(),2);
+    TestTrue(TEXT("Both password fields are masked"),UI->PasswordInput->GetIsPassword()&&UI->RegistrationPasswordInput->GetIsPassword());
+    auto Render=[&](const TCHAR* Name)
+    {
+        // Render only the tree: do not run NativeConstruct's service polling or touch a live backend.
+        auto Slate=UI->WidgetTree->RootWidget->TakeWidget();FWidgetRenderer Renderer(true);const FVector2D Size(1280,720);
+        auto* Target=Renderer.DrawWidget(Slate,Size);Renderer.DrawWidget(Target,Slate,Size,.016f);FlushRenderingCommands();FBufferArchive Image;
+        const FString Directory=FPaths::ProjectSavedDir()/TEXT("ReviewRemediation/LoginRegistrationUI");IFileManager::Get().MakeDirectory(*Directory,true);
+        TestTrue(TEXT("Authentication page render exports"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));
+        TestTrue(TEXT("Authentication page screenshot saved"),FFileHelper::SaveArrayToFile(Image,*(Directory/(FString(Name)+TEXT(".png")))));
+    };
+    Render(TEXT("Login"));
+    UI->AccountIdInput->SetText(FText::FromString(TEXT("LoginAccount")));UI->PasswordInput->SetText(FText::FromString(TEXT("not-kept")));
+    UI->HandleOpenRegistrationClicked();
+    TestEqual(TEXT("Register button opens registration form"),UI->AuthenticationPages->GetActiveWidgetIndex(),1);
+    TestTrue(TEXT("Opening registration clears login password"),UI->PasswordInput->GetText().IsEmpty());
+    UI->RegistrationAccountIdInput->SetText(FText::FromString(TEXT("NewAccount")));
+    UI->RegistrationPasswordInput->SetText(FText::FromString(TEXT("ExamplePassword123!")));UI->DisplayNameInput->SetText(FText::FromString(TEXT("테스트 닉네임")));
+    Render(TEXT("Registration"));
+    UI->bAuthenticationRequestPending=true;UI->HandleServiceStatusChanged(false,TEXT(""),TEXT(""),TEXT(""));
+    TestFalse(TEXT("Service poll cannot enable duplicate registration while request pending"),UI->RegistrationSubmitButton->GetIsEnabled());
+    TestFalse(TEXT("Submitted registration fields cannot change before completion"),UI->RegistrationAccountIdInput->GetIsEnabled()||UI->RegistrationPasswordInput->GetIsEnabled()||UI->DisplayNameInput->GetIsEnabled());
+    UI->HandleReturnToLoginClicked();TestEqual(TEXT("Pending request cannot switch forms"),UI->AuthenticationPages->GetActiveWidgetIndex(),1);
+    UI->HandleRegistrationResult(false,TEXT("이미 사용 중인 계정 ID입니다."),TEXT(""));
+    TestEqual(TEXT("Duplicate registration stays on signup form"),UI->AuthenticationPages->GetActiveWidgetIndex(),1);
+    TestTrue(TEXT("Registration error remains visible"),UI->StatusText->GetText().ToString().Contains(TEXT("이미 사용 중")));
+    TestTrue(TEXT("Failed registration permits correction and retry"),UI->RegistrationSubmitButton->GetIsEnabled());
+    auto Request=FHttpModule::Get().CreateRequest();Auth->ActiveRequest=Request;Auth->AuthState=EProjectProject01AuthState::Registering;
+    UI->bAuthenticationRequestPending=true;
+    auto Response=MakeShared<FReviewResponse,ESPMode::ThreadSafe>(TEXT("{\"message\":\"계정이 생성되었습니다.\",\"displayName\":\"테스트 닉네임\",\"registrationOnly\":true}"));
+    Auth->HandleRequestComplete(Request,Response,true,UProjectProject01AuthSubsystem::EAuthOperation::Register,TEXT("/api/auth/register"),TEXT("{}"),0);
+    TestTrue(TEXT("Registration success leaves no authenticated session"),!Auth->IsSignedIn()&&Auth->AccessToken.IsEmpty()&&Auth->RefreshToken.IsEmpty());
+    TestEqual(TEXT("Successful registration returns to login, never lobby"),UI->AuthenticationPages->GetActiveWidgetIndex(),0);
+    TestEqual(TEXT("New account ID is prefilled for explicit login"),UI->AccountIdInput->GetText().ToString(),FString(TEXT("NewAccount")));
+    TestTrue(TEXT("Registration success clears passwords and nickname"),UI->PasswordInput->GetText().IsEmpty()&&UI->RegistrationPasswordInput->GetText().IsEmpty()&&UI->DisplayNameInput->GetText().IsEmpty());
+    TestTrue(TEXT("Login is enabled after account-only registration"),UI->LoginButton->GetIsEnabled());
+    TestTrue(TEXT("Success message asks user to log in"),UI->StatusText->GetText().ToString().Contains(TEXT("로그인해주세요")));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewAsyncStateTest,"ProjectProject01.Review.AsyncState",
  EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectReviewAsyncStateTest::RunTest(const FString&)
@@ -473,6 +533,23 @@ bool FProjectReviewAsyncStateTest::RunTest(const FString&)
     UI->AdmissionRoomId=TEXT("room");UI->AdmissionMatchId=TEXT("old-match");UI->bGameStartFadeComplete=true;UI->ContinueGameAdmission(0);
     TestFalse(TEXT("F01 match change cancels pending admission"),UI->bGameStartFadeComplete);
     Lobby->ActiveRequest.Reset();Lobby->ReviewRequestSink=nullptr;Lobby->ForceClearLocalSession();
+
+    // No live HTTP or map travel: this fixture has no signed-in account and the widget is not constructed in a viewport.
+    Lobby->CurrentRoom.RoomId=TEXT("queued-party");Lobby->CurrentRoom.bRandomParty=true;
+    Lobby->bMatchmaking=true;Lobby->MatchSearchId=TEXT("queued-search");Lobby->ActiveRequest=FHttpModule::Get().CreateRequest();
+    UI->bShowingMatchmaking=true;UI->HandleLogoutClicked();
+    TestTrue(TEXT("Random queue logout invalidates local queue, party and in-flight polling"),
+        !Lobby->IsMatchmaking()&&!Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight()&&Lobby->MatchSearchId.IsEmpty());
+    TestTrue(TEXT("Logout blocks duplicate clicks and prevents automatic party creation"),
+        UI->bLobbyLogoutInProgress&&!UI->GetIsEnabled()&&!UI->bShowingMatchmaking&&UI->bPartyCreationRequested);
+    const uint64 ClearedGeneration=Auth->GetSessionGeneration();UI->HandleLogoutClicked();
+    TestEqual(TEXT("Duplicate logout does not repeat session clearing"),Auth->GetSessionGeneration(),ClearedGeneration);
+    UI->RefreshLobbyState();TestFalse(TEXT("Pending logout never starts another poll or party request"),Lobby->IsRequestInFlight());
+    UI->HandleLogoutResult(false,TEXT("fixture failure"),TEXT(""));
+    TestTrue(TEXT("Failed logout restores usable lobby controls"),!UI->bLobbyLogoutInProgress&&UI->GetIsEnabled());
+    Lobby->CurrentRoom.RoomId=TEXT("confirmed-room");Lobby->CurrentRoom.bRandomParty=true;Lobby->CurrentRoom.bRandomMatch=true;
+    UI->HandleLogoutClicked();TestFalse(TEXT("Confirmed matching cannot be cancelled through logout handler"),UI->bLobbyLogoutInProgress);
+    Lobby->ForceClearLocalSession();
 
     auto* Helper=World->SpawnActor<AHelperRearGuardCharacter>();auto* AI=World->SpawnActor<AHelperRearGuardAIController>();AI->Possess(Helper);
     Helper->SetActorLocation(FVector(-10000,0,0));Helper->GuardedPlayer=World->SpawnActor<APlayerCharacter>();Helper->bFollowDistanceLocked=true;Helper->LockedRetreatTarget=FVector(10000,0,0);

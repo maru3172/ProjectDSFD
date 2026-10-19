@@ -390,6 +390,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01LoginWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectLoginRegistrationTest;
 
 protected:
 	virtual bool Initialize() override;
@@ -402,6 +403,8 @@ private:
 
 	UFUNCTION()
 	void HandleRegisterClicked();
+	UFUNCTION() void HandleOpenRegistrationClicked();
+	UFUNCTION() void HandleReturnToLoginClicked();
 
 	UFUNCTION()
 	void HandleReturnToTitleClicked();
@@ -421,6 +424,13 @@ private:
 	void SetRequestControlsEnabled(bool bEnabled);
 	void SetStatus(const FString& Message, bool bIsError);
 	void EnterLobby();
+	void ShowRegistrationPage(bool bShow);
+	UPROPERTY(Transient) TObjectPtr<class UWidgetSwitcher> AuthenticationPages;
+	UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> RegistrationAccountIdInput;
+	UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> RegistrationPasswordInput;
+	UPROPERTY(Transient) TObjectPtr<class UButton> RegistrationSubmitButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> ReturnToLoginButton;
+	bool bAuthenticationRequestPending = false;
 	UPROPERTY(Transient)
 	TObjectPtr<class UEditableTextBox> AccountIdInput;
 
@@ -1013,6 +1023,8 @@ private:
     UPROPERTY(Transient) TObjectPtr<class UButton> MatchStartButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> MatchCancelButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> MatchBackButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> MatchLogoutButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> ModesLogoutButton;
     UPROPERTY(Transient) TObjectPtr<class UTextBlock> MatchStatusText;
     UFUNCTION() void HandleLobbySettingsClicked();
     UPROPERTY(Transient) TObjectPtr<class UButton> LobbySettingsButton;
@@ -1230,6 +1242,7 @@ private:
 	int32 GameStartCountdownNumber = 0;
 	int32 ServiceStatusPollCounter = 0;
 	bool bLogoutAfterLeave = false;
+	bool bLobbyLogoutInProgress = false;
 	bool bTravelRequested = false;
 	bool bShowingCreateRoom = false;
 	bool bGameStartCountdownActive = false;

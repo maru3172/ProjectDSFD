@@ -122,6 +122,7 @@ private:
     uint64 SessionGeneration=0;
 	friend class FProjectStaleFrontendResponseTest;
 	friend class FProjectReviewAsyncStateTest;
+	friend class FProjectLoginRegistrationTest;
 	friend class FProjectSocialWidgetLayoutTest;
 	enum class EAuthOperation : uint8
 	{

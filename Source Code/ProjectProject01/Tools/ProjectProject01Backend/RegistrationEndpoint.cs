@@ -29,6 +29,12 @@ internal static class RegistrationEndpoint
                 insert.Parameters.AddWithValue("@account",accountId);insert.Parameters.AddWithValue("@name",displayName);insert.Parameters.AddWithValue("@hash",passwordHash);
                 await insert.ExecuteNonQueryAsync(ct);
                 ulong userId=checked((ulong)insert.LastInsertedId);
+                if(!request.LoginAfterRegistration)
+                {
+                    await transaction.CommitAsync(ct);
+                    await SecurityAudit.WriteAsync(database,httpRequest,"AuthRegister","Success",userId,null,ct);
+                    return Results.Created("/api/auth/login",new {message="계정이 생성되었습니다. 로그인해주세요.",displayName,registrationOnly=true});
+                }
                 var tokens=await issueSession(connection,transaction,userId,ct);
                 await transaction.CommitAsync(ct);
                 await SecurityAudit.WriteAsync(database,httpRequest,"AuthRegister","Success",userId,null,ct);

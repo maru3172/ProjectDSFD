@@ -479,6 +479,7 @@ private:
     static UProjectProject01GameInstance* ResolveEncryptionOwner(const UObject* CallbackOwner);
     static void BindEncryptionDispatchers();
     friend class FProjectReviewAsyncStateTest;
+    friend class FProjectLoginRegistrationTest;
     bool IsSurveySessionCurrent(uint64 Generation,const UWorld* World) const;
     bool IsMultiplayerFailureWorld(const UWorld* World) const;
     TArray<uint8> PendingClientEncryptionKey;

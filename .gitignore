@@ -90,6 +90,10 @@
 /Source Code/ProjectProject01/Tools/ProjectProject01SmokeTest/bin/
 /Source Code/ProjectProject01/Tools/ProjectProject01SmokeTest/obj/
 
+# ProjectProject01 feature checks (.NET generated output)
+/Source Code/ProjectProject01/Tools/ProjectProject01FeatureChecks/bin/
+/Source Code/ProjectProject01/Tools/ProjectProject01FeatureChecks/obj/
+
 # Generated map build data
 *_BuiltData.uasset
 

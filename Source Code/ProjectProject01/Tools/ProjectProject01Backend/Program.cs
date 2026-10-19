@@ -1083,7 +1083,7 @@ internal sealed class AuthDatabase
     }
 }
 
-internal sealed record RegisterRequest(string AccountId, string Password, string? DisplayName);
+internal sealed record RegisterRequest(string AccountId, string Password, string? DisplayName, bool LoginAfterRegistration = true);
 internal sealed record LoginRequest(string AccountId, string Password);
 internal sealed record RefreshRequest(string RefreshToken);
 internal sealed record GuideProgressRequest(string? Role);
