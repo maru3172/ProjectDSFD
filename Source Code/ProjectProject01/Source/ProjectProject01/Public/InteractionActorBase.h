@@ -50,8 +50,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction")
 	bool bInteractionEnabled = true;
 	
-	// 아이템별 동작은 자식 BP 에서 구현할 것이다.
-	UFUNCTION(BlueprintImplementableEvent, Category = "Interaction", meta = (DisplayName = "On Interacted"))
-	void BP_OnInteracted(APawn* Interactor);
+protected:
+	// 상호작용이 허용된 후 실제 행동을 처리
+	// 자식 C++ 클래스가 아이템 획득, 문 열기 등의 행동을 재정의
+	virtual void HandleInteraction(APawn* Interactor);
 	
 };

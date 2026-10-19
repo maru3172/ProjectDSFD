@@ -57,5 +57,16 @@ void AInteractionActorBase::Interact_Implementation(APawn* Interactor)
 		return;
 	}
 	
-	BP_OnInteracted(Interactor);
+	HandleInteraction(Interactor);
+}
+
+void AInteractionActorBase::HandleInteraction(APawn* Interactor)
+{
+	// 현재 단계에서 상호작용 성공 여부를 확인하기 위한 기본 동작
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("%s interacted with %s"),
+		*GetNameSafe(Interactor),
+		*GetNameSafe(this));
 }
