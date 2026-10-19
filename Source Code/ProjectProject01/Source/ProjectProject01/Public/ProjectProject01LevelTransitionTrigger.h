@@ -18,10 +18,11 @@ class UWorld;
  * 영역 안에 모였을 때 권위 서버가 모든 접속자를 다음 맵으로 이동시킵니다.
  */
 UCLASS(BlueprintType, Blueprintable)
-class PROJECTPROJECT01_API AProjectProject01LevelTransitionTrigger final : public AActor
+class PROJECTPROJECT01_API AProjectProject01LevelTransitionTrigger : public AActor
 {
 	GENERATED_BODY()
 	friend class FProjectReviewTravelRollbackTest;
+	friend class FProjectElevatorTest;
 
 public:
 	AProjectProject01LevelTransitionTrigger();
@@ -30,9 +31,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Level Transition")
 	void GetTransitionProgress(int32& OutPlayersInside, int32& OutRequiredPlayers) const;
 
+	/** 버튼 등 서버 권위 장치에서도 기존 이동/복구 경로를 재사용합니다. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Level Transition")
+	bool RequestTransition(APlayerCharacter* Survivor);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void RollbackTransition(const FString& Reason);
+	virtual float GetTransitionFadeSeconds() const { return 0.6f; }
+	virtual bool ShouldFadeToWaitingSpectator() const { return true; }
+	virtual float GetTravelDelaySeconds() const { return TravelDelaySeconds; }
+	bool IsDestinationAvailable() const;
+	bool HasStartedTransition() const { return bTransitionStarted; }
+	/** 파생 장치는 진입만으로 이동하지 않고 버튼으로만 확정할 수 있습니다. */
+	bool bUseOverlapActivation = true;
+	/** 목적지 엘리베이터 내부 스폰을 선택하는 URL 옵션입니다. 일반 트리거는 비워둡니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Level Transition")
+	FName DestinationArrivalId;
 
 private:
 	UFUNCTION()
@@ -49,8 +65,6 @@ private:
 	void ExecuteTransition();
 	bool IsEligibleLivingPlayer(const APlayerCharacter* Player) const;
 	FString GetDestinationPackageName() const;
-	bool IsDestinationAvailable() const;
-	void RollbackTransition(const FString& Reason);
 	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& Error);
 	void HandleTravelTimeout();
     bool ExtendAsyncTravelGrace(bool bEngineOwnsTransition);

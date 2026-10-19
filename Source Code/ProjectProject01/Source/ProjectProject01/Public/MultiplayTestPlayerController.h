@@ -42,6 +42,15 @@ enum class EMultiplayTestSurvivorState : uint8
 	Escaped
 };
 
+/** Owner-only camera intent survives RPC/Pawn replication order changes. */
+USTRUCT()
+struct FMultiplaySurvivorSpectatorView
+{
+	GENERATED_BODY()
+	UPROPERTY() bool bEnabled = false;
+	UPROPERTY() TObjectPtr<class APlayerCharacter> Target;
+};
+
 /** 서버가 확정하여 해당 소유 클라이언트에만 전달하는 한 경기의 결과입니다. */
 USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FMultiplayTestMatchResult
@@ -100,6 +109,8 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 
 public:
 	AMultiplayTestPlayerController();
+	friend class FProjectElevatorTest;
+	friend class FProjectReviewMatchCarryoverTest;
 	UFUNCTION(Client,Unreliable)
 	void ClientUpdateVoiceAudibility(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers);
 	class AMannequinAICharacter* GetViewedMannequin() const;
@@ -114,7 +125,7 @@ public:
 	void DeclareVoluntaryExit();
 	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
 	/** 서버의 seamless map travel에서 이 컨트롤러와 다음 맵 생존 여부를 보존합니다. */
-	void PrepareLevelTransitionCarryover(bool bSpawnInNextLevel);
+	void PrepareLevelTransitionCarryover(bool bSpawnInNextLevel, float FadeSeconds = 0.6f);
 	bool IsLevelTransitionCarryover() const { return bLevelTransitionCarryover; }
 	bool ShouldSpawnAfterLevelTransition() const { return bSpawnAfterLevelTransition; }
 	void CompleteLevelTransitionCarryover(class AActor* InitialViewTarget, bool bCanPlay);
@@ -131,6 +142,7 @@ public:
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 	virtual void SeamlessTravelFrom(APlayerController* OldPC) override;
 	virtual void PostSeamlessTravel() override;
+	virtual void PlayerTick(float DeltaTime) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -139,6 +151,14 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	UFUNCTION() void OnRep_SurvivorSpectatorView();
+	void ApplySurvivorSpectatorView();
+	void TryCompleteClientArrivalView();
+	UPROPERTY(ReplicatedUsing=OnRep_SurvivorSpectatorView)
+	FMultiplaySurvivorSpectatorView SurvivorSpectatorView;
+	bool bClientArrivalViewPending = false;
+	bool bClientArrivalCanPlay = false;
+	TWeakObjectPtr<AActor> ClientArrivalViewTarget;
 	friend class FProjectMannequinCameraTest;
 	void EnsureMannequinLookBinding();
 	void RemoveMannequinLookBinding();
@@ -229,7 +249,7 @@ private:
 	void ClientEnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition);
 
 	UFUNCTION(Client, Reliable)
-	void ClientPrepareForLevelTransition();
+	void ClientPrepareForLevelTransition(float FadeSeconds);
 
 	UFUNCTION(Client, Reliable)
 	void ClientCompleteLevelTransition(class AActor* InitialViewTarget, bool bCanPlay);

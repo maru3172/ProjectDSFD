@@ -53,6 +53,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode final : public AGameModeBase
 	GENERATED_BODY()
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectReviewTravelRollbackTest;
+	friend class FProjectElevatorTest;
 
 public:
 	const FString& GetServerMatchId() const { return AuthoritativeMatchId; }
@@ -80,11 +81,16 @@ public:
 	bool TryBroadcastSurvivorPing(class AMultiplayTestPlayerController* RequestingController,
 		EProjectProject01PingType Type, const FVector& Location);
 	/** 맵 이동 영역에 들어온 생존자를 관전 대기 상태로 확정합니다. */
-	bool MarkSurvivorWaitingForLevelTransition(class APlayerCharacter* Survivor);
+	bool MarkSurvivorWaitingForLevelTransition(class APlayerCharacter* Survivor, bool bFadeToSpectator = true);
 	/** 한 명 이상 대기 중이고 더 이상 활동 중인 생존자가 없으면 true입니다. */
 	bool CanCommitLevelTransition() const;
+	/** 사망/포획/확정 기권만 인정. 층 이동 대기·탈출·재접속 유예는 인정하지 않습니다. */
+	bool CanUseEmergencyElevator() const;
+	/** Server-owned match membership, including ticket-free local PIE role assignments. */
+	bool IsRegisteredActiveSurvivor(const class APlayerCharacter* Survivor) const;
+	bool IsAuthoritativeMatchInProgress() const { return AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress; }
 	/** seamless travel 직전 각 컨트롤러의 다음 맵 스폰 여부와 암전을 준비합니다. */
-	void PrepareLevelTransitionTravel();
+	void PrepareLevelTransitionTravel(float FadeSeconds = 0.6f);
 	/** Old-world travel rejection/timeout: undo only transition-owned state. */
 	void CancelLevelTransitionTravel();
 
@@ -192,6 +198,8 @@ private:
 		bool bSucceeded);
 	void PresentFinalResults();
 	void FinalizeLevelTransitionArrivals();
+	void RefreshSurvivorSpectatorTargets();
+	float SpectatorRefreshSeconds = 0;
 	FMultiplayTestMatchResult BuildFinalResult(
 		const class AMultiplayTestPlayerController* Controller,
 		const FMultiplayTestServerPlayerRecord& Record) const;

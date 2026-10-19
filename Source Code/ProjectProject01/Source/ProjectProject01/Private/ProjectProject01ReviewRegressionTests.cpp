@@ -1,6 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "Misc/ScopeExit.h"
+#include "HAL/IConsoleManager.h"
 #include "PlayerCharacter.h"
 #include "MannequinReactiveLight.h"
 #include "MultiplayTestGameMode.h"
@@ -118,37 +119,75 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewMatchCarryoverTest,"ProjectProjec
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 {
+	for (const bool bForfeit : {false,true})
+	{
 	UWorld* World=CreateReviewWorld();ON_SCOPE_EXIT { World->DestroyWorld(false); };
+#if WITH_EDITOR
+	World->WorldType=EWorldType::PIE;
+	auto* SeamlessSetting=IConsoleManager::Get().FindConsoleVariable(TEXT("net.AllowPIESeamlessTravel"));
+	const int32 PreviousSetting=SeamlessSetting ? SeamlessSetting->GetInt() : 0;
+	ON_SCOPE_EXIT { if(SeamlessSetting) SeamlessSetting->SetWithCurrentPriority(PreviousSetting); };
+	if(SeamlessSetting) SeamlessSetting->SetWithCurrentPriority(0);
+#endif
 	auto* Instance=NewObject<UProjectProject01GameInstance>();World->SetGameInstance(Instance);
 	auto* Previous=World->SpawnActor<AMultiplayTestGameMode>();
 	Previous->AuthoritativeMatchId=TEXT("review-match");Previous->AuthoritativeMatchPhase=EMultiplayTestMatchPhase::InProgress;
 	Previous->MatchStartWorldSeconds=-100.0;
 	TArray<AMultiplayTestPlayerController*> Players;
-	for(int32 Index=0;Index<2;++Index)
+	for(int32 Index=0;Index<3;++Index)
 	{
 		auto* PC=World->SpawnActor<AMultiplayTestPlayerController>();Players.Add(PC);
 		FProjectProject01ValidatedJoinClaim Claim;Claim.UserId=FString::FromInt(Index+1);Claim.MatchId=TEXT("review-match");
 		Claim.Role=Index==0?TEXT("Mannequin"):TEXT("Survivor");PC->SetAuthenticatedLobbyIdentity(Claim);
 		FMultiplayTestServerPlayerRecord Record;Record.UserId=Claim.UserId;Record.MatchId=Claim.MatchId;Record.Role=Claim.Role;
-		Record.SurvivorState=Index==0?EMultiplayTestSurvivorState::NotApplicable:EMultiplayTestSurvivorState::TransitionWaiting;
+		Record.SurvivorState=Index==0?EMultiplayTestSurvivorState::NotApplicable:
+			Index==1?EMultiplayTestSurvivorState::TransitionWaiting:EMultiplayTestSurvivorState::Eliminated;
+		Record.bForfeited=Index==2 && bForfeit;
 		Record.CaptureCount=2;Record.RescueCount=3;Record.FirstCaptureSeconds=25;
 		Previous->MatchPlayerRecords.Add(PC,Record);
 	}
 	FMultiplayTestServerPlayerRecord Left;Left.UserId=TEXT("left");Left.Role=TEXT("Survivor");Left.MatchId=TEXT("review-match");Left.bForfeited=true;Left.SurvivorState=EMultiplayTestSurvivorState::Eliminated;
 	Previous->DisconnectedMatchRecords.Add(Left.UserId,Left);
+#if WITH_EDITOR
+	// Reproduce ticket-free PIE: the server match record exists but the ticket identity is empty.
+	Players[0]->SetAuthenticatedLobbyIdentity(FProjectProject01ValidatedJoinClaim());
+#endif
 	Previous->PrepareLevelTransitionTravel();
-	TestTrue(TEXT("Travel snapshot contains only two connected controllers"),Instance->ServerMatchCarryover&&Instance->ServerMatchCarryover->Players.Num()==2);
+	TestTrue(TEXT("Travel snapshot includes connected dead spectators, not departed players"),Instance->ServerMatchCarryover&&Instance->ServerMatchCarryover->Players.Num()==3);
+	TestFalse(TEXT("Dead or forfeited survivor cannot spawn after travel"),Players[2]->ShouldSpawnAfterLevelTransition());
+	TestTrue(TEXT("Only the advancing survivor is marked for a new spawn"),Players[1]->ShouldSpawnAfterLevelTransition());
+	auto* LateExit=World->SpawnActor<AMultiplayTestPlayerController>();
+	LateExit->PrepareLevelTransitionCarryover(true);
+	LateExit->PrepareLevelTransitionCarryover(false);
+	LateExit->PrepareLevelTransitionCarryover(true);
+	TestFalse(TEXT("Repeated preparation cannot undo a late death/forfeit spawn veto"),LateExit->ShouldSpawnAfterLevelTransition());
+#if WITH_EDITOR
+	TestTrue(TEXT("PIE enables seamless travel instead of silently starting a fresh match"),SeamlessSetting && SeamlessSetting->GetInt()==1);
+	TestEqual(TEXT("PIE mannequin identity and role survive the next GameMode"),Players[0]->GetAuthenticatedRole(),FString(TEXT("Mannequin")));
+#endif
 	auto* Next=World->SpawnActor<AMultiplayTestGameMode>();
 	for(auto* PC:Players)Next->RegisterMatchPlayer(PC);
-	TestEqual(TEXT("Next map does not wait for the departed third controller"),Next->ExpectedMatchPlayers,2);
+	TestEqual(TEXT("Next map does not wait for departed controllers"),Next->ExpectedMatchPlayers,3);
+	TestTrue(TEXT("Dead survivor state remains eliminated in the destination"),Next->MatchPlayerRecords.FindChecked(Players[2]).SurvivorState==EMultiplayTestSurvivorState::Eliminated);
+	TestEqual(TEXT("Forfeit flag is not erased by travel"),Next->MatchPlayerRecords.FindChecked(Players[2]).bForfeited,bForfeit);
+	Next->HandleStartingNewPlayer_Implementation(Players[2]);
+	TestNull(TEXT("Destination starting-player path does not respawn a dead spectator"),Players[2]->GetPawn());
 	TestEqual(TEXT("Capture total survives a map change"),Next->MatchPlayerRecords.FindChecked(Players[0]).CaptureCount,2);
 	TestEqual(TEXT("Rescue total survives a map change"),Next->MatchPlayerRecords.FindChecked(Players[1]).RescueCount,3);
 	TestEqual(TEXT("First capture time remains match-wide"),Next->MatchPlayerRecords.FindChecked(Players[0]).FirstCaptureSeconds,25.0);
 	Next->TryStartAuthoritativeMatch();
-	TestTrue(TEXT("Two-player transition reaches InProgress"),Next->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress);
+	TestTrue(TEXT("Transition with a dead spectator reaches InProgress"),Next->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress);
+	Next->HandleStartingNewPlayer_Implementation(Players[2]);
+	TestNull(TEXT("Consumed carryover flags cannot enable a later dead-player restart"),Players[2]->GetPawn());
 	TestTrue(TEXT("Result timer includes the previous map"),Next->GetElapsedMatchSeconds()>=100.0);
 	TestTrue(TEXT("Departed survivor record is preserved without increasing arrival count"),Next->DisconnectedMatchRecords.Contains(TEXT("left")));
-	for(auto* PC:Players)TestFalse(TEXT("Arrival unlocks controller input and carryover flag"),PC->IsLevelTransitionCarryover()||PC->IsMoveInputIgnored()||PC->IsLookInputIgnored());
+	for(int32 Index=0;Index<Players.Num();++Index)
+	{
+		auto* PC=Players[Index];
+		TestFalse(TEXT("Arrival clears carryover and restores looking"),PC->IsLevelTransitionCarryover()||PC->IsLookInputIgnored());
+		TestEqual(TEXT("Only the eliminated spectator keeps movement disabled"),PC->IsMoveInputIgnored(),Index==2);
+	}
+	}
 	return true;
 }
 

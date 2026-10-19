@@ -12,6 +12,7 @@
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01RoleSpawnPoint.h"
+#include "ProjectProject01Elevator.h"
 #include "ProjectProject01VersionContract.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/TriggerBox.h"
@@ -28,6 +29,7 @@
 #include "NavigationPath.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
+#include "HAL/IConsoleManager.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -1483,6 +1485,13 @@ void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerContr
 		// 이전 맵에서 탈락했거나 다음 구간에 도착하지 못한 생존자는 새 Pawn을 만들지 않는다.
 		return;
 	}
+	if (const auto* Record=MatchPlayerRecords.Find(MultiplayController); Record &&
+		(Record->bForfeited || Record->SurvivorState==EMultiplayTestSurvivorState::Eliminated ||
+		 Record->SurvivorState==EMultiplayTestSurvivorState::Escaped))
+	{
+		// FinalizeLevelTransitionArrivals clears the carryover flags; that must not permit a later restart.
+		return;
+	}
 
 	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 }
@@ -1515,6 +1524,12 @@ AActor* AMultiplayTestGameMode::ChoosePlayerStart_Implementation(AController* Pl
 	if (!HasAuthority() || !IsValid(Player) || IsMannequinController(Cast<AMultiplayTestPlayerController>(Player)))
 	{
 		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+	// Arrival is chosen before a new survivor pawn is created, never teleported after fade-in.
+	if (const auto* PC = Cast<AMultiplayTestPlayerController>(Player);
+		PC && PC->IsLevelTransitionCarryover() && PC->ShouldSpawnAfterLevelTransition())
+	{
+		if (AActor* Arrival = AProjectProject01Elevator::FindArrivalStart(GetWorld(), OptionsString)) return Arrival;
 	}
 
 	if (const TWeakObjectPtr<AActor>* Existing = AssignedSurvivorSpawnPoints.Find(Player);
@@ -2358,7 +2373,7 @@ bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 	return true;
 }
 
-bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharacter* Survivor)
+bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharacter* Survivor, const bool bFadeToSpectator)
 {
 	if (!HasAuthority() || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress ||
 		!IsValid(Survivor))
@@ -2398,12 +2413,37 @@ bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharac
 	{
 		Controller->SetServerMatchState(AuthoritativeMatchPhase, Record->SurvivorState);
 		Controller->EnterSurvivorSpectator(
-			FindLivingSurvivorSpectatorTarget(Controller, 1), true);
+			FindLivingSurvivorSpectatorTarget(Controller, 1), bFadeToSpectator);
 	}
 
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("Survivor %s is waiting for the next level."), *GetNameSafe(Survivor));
 	return true;
+}
+
+bool AMultiplayTestGameMode::IsRegisteredActiveSurvivor(const APlayerCharacter* Survivor) const
+{
+	if (!HasAuthority() || !IsValid(Survivor)) return false;
+	const auto* Controller=Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+	if (!IsValid(Controller) || Controller->GetPawn()!=Survivor) return false;
+	const auto* Record=MatchPlayerRecords.Find(Controller);
+	// Registration may precede the first Pawn snapshot. Current server possession
+	// above is the ownership check, just as in FindSurvivorRecord.
+	return Record && Record->Role==TEXT("Survivor") &&
+		Record->SurvivorState==EMultiplayTestSurvivorState::Active && !Record->bDisconnected && !Record->bForfeited;
+}
+
+bool AMultiplayTestGameMode::CanUseEmergencyElevator() const
+{
+	if (!HasAuthority() || !IsAuthoritativeMatchInProgress()) return false;
+	const auto Qualifies = [](const FMultiplayTestServerPlayerRecord& Record)
+	{
+		return Record.Role == TEXT("Survivor") && Record.SurvivorState == EMultiplayTestSurvivorState::Eliminated &&
+			(!Record.bDisconnected || Record.bForfeited);
+	};
+	for (const auto& Pair : MatchPlayerRecords) if (Qualifies(Pair.Value)) return true;
+	for (const auto& Pair : DisconnectedMatchRecords) if (Qualifies(Pair.Value)) return true;
+	return false;
 }
 
 bool AMultiplayTestGameMode::CanCommitLevelTransition() const
@@ -2420,12 +2460,29 @@ bool AMultiplayTestGameMode::CanCommitLevelTransition() const
 	return EvaluateLevelTransition(SurvivorStates).CanTravel();
 }
 
-void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
+void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSeconds)
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
+#if WITH_EDITOR
+	if (IsLocalEditorPlaySession(GetWorld()))
+	{
+		// PIE otherwise silently falls back to a fresh login/new match, losing dead players' flags.
+		if (auto* Setting=IConsoleManager::Get().FindConsoleVariable(TEXT("net.AllowPIESeamlessTravel")))
+			Setting->SetWithCurrentPriority(1);
+		// Ticket-free PIE identities must also survive the new GameMode and role assignment.
+		for (const auto& Pair : MatchPlayerRecords)
+			if (auto* Controller=Pair.Key.Get(); IsValid(Controller) && Controller->GetAuthenticatedUserId().IsEmpty())
+			{
+				FProjectProject01ValidatedJoinClaim LocalClaim;
+				LocalClaim.UserId=Pair.Value.UserId; LocalClaim.MatchId=Pair.Value.MatchId;
+				LocalClaim.DisplayName=Pair.Value.DisplayName; LocalClaim.Role=Pair.Value.Role;
+				Controller->SetAuthenticatedLobbyIdentity(LocalClaim);
+			}
+	}
+#endif
 	if (TimelineLog && !bTimelineTravelPrepared)
 	{
 		TimelineSecondsBeforeTravel = TimelineLog->PreviousLevelsSeconds;
@@ -2452,7 +2509,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel()
 		{
 			const bool bSpawnInNextLevel = Pair.Value.Role == TEXT("Survivor") &&
 				Pair.Value.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting;
-			if(!Controller->IsLevelTransitionCarryover())Controller->PrepareLevelTransitionCarryover(bSpawnInNextLevel);
+			Controller->PrepareLevelTransitionCarryover(bSpawnInNextLevel,FadeSeconds);
 		}
 	}
 }

@@ -8,9 +8,23 @@
 #include "GameFramework/Pawn.h"
 #include "InteractionInterface.h"
 #include "InteractionPromptWidget.h"
+#include "ProjectProject01Elevator.h"
 
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/UserWidget.h"
+
+namespace
+{
+	bool CanUseInteractionTarget(AActor* Target, APawn* Interactor)
+	{
+		if (!IsValid(Target)) return false;
+		// Elevator permissions are always its concrete native contract, on both peers.
+		// Do not let a Blueprint interface event replace server role/state checks.
+		if (auto* Elevator=Cast<AProjectProject01Elevator>(Target)) return Elevator->CanInteract_Implementation(Interactor);
+		return IsValid(Target) && Target->Implements<UInteractionInterface>() &&
+			IInteractionInterface::Execute_CanInteract(Target,Interactor);
+	}
+}
 
 // Sets default values for this component's properties
 UPlayerInteractionComponent::UPlayerInteractionComponent()
@@ -18,6 +32,7 @@ UPlayerInteractionComponent::UPlayerInteractionComponent()
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
+	SetIsReplicatedByDefault(true);
 	
 	// 매 프레임이 아니라 0.1 초마다 검사
 	PrimaryComponentTick.TickInterval = 0.1f;
@@ -26,6 +41,7 @@ UPlayerInteractionComponent::UPlayerInteractionComponent()
 void UPlayerInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	SetIsReplicated(true); // Also refresh old Blueprint component defaults saved before elevator RPC support.
 
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	if (!IsValid(OwnerPawn) ||
@@ -101,7 +117,7 @@ void UPlayerInteractionComponent::TryInteract()
 	const bool bImplementsInteraction = IsValid(HitActor) && HitActor->Implements<UInteractionInterface>();
 
 	// 인터페이스를 구현했고 현재 실제로 상호작용 가능한지 확인합니다.
-	const bool bCanInteract = bImplementsInteraction && IInteractionInterface::Execute_CanInteract(HitActor, OwnerPawn);
+	const bool bCanInteract = bImplementsInteraction && CanUseInteractionTarget(HitActor, OwnerPawn);
 	
 #if ENABLE_DRAW_DEBUG
 	if (bDrawDebugTrace)
@@ -148,7 +164,36 @@ void UPlayerInteractionComponent::TryInteract()
 	}
 
 	// 인터페이스를 통해 대상 액터의 상호작용을 실행한다.
+	if (auto* Elevator = Cast<AProjectProject01Elevator>(HitActor))
+	{
+		if (OwnerPawn->HasAuthority()) Elevator->Interact_Implementation(OwnerPawn);
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("[ElevatorInteraction] Sending click: target=%s owner=%s replicated=%d"),
+				*GetNameSafe(Elevator), *GetNameSafe(OwnerPawn), GetIsReplicated());
+			ServerInteractElevator(Elevator, ViewLocation, ViewRotation.Vector());
+		}
+		return;
+	}
 	IInteractionInterface::Execute_Interact(HitActor, OwnerPawn);
+}
+
+void UPlayerInteractionComponent::ServerInteractElevator_Implementation(AProjectProject01Elevator* Elevator, FVector_NetQuantize ViewOrigin, FVector_NetQuantizeNormal ViewDirection)
+{
+	APawn* Pawn = Cast<APawn>(GetOwner());
+	UWorld* World = GetWorld();
+	UE_LOG(LogTemp, Log, TEXT("[ElevatorInteraction] Server received click: target=%s owner=%s"),
+		*GetNameSafe(Elevator), *GetNameSafe(Pawn));
+	if (!IsValid(Pawn) || !Pawn->HasAuthority() || !IsValid(World) || !IsValid(Elevator) ||
+		!IsValid(Pawn->GetController()) || !Pawn->GetController()->IsPlayerController())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[ElevatorInteraction] Rejected: InvalidOwnerOrTarget"));
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	if (Now - LastElevatorRequestSeconds < 0.15) return;
+	LastElevatorRequestSeconds = Now;
+	Elevator->TryInteractFromView(Pawn, ViewOrigin, ViewDirection, InteractionDistance, TraceChannel);
 }
 
 AActor* UPlayerInteractionComponent::FindInteractableActor(const bool bDrawDebug) const
@@ -187,12 +232,7 @@ AActor* UPlayerInteractionComponent::FindInteractableActor(const bool bDrawDebug
 		QueryParams);
 
 	AActor* HitActor = bHit ? HitResult.GetActor() : nullptr;
-	const bool bCanInteract =
-		IsValid(HitActor) &&
-		HitActor->Implements<UInteractionInterface>() &&
-		IInteractionInterface::Execute_CanInteract(
-			HitActor,
-			OwnerPawn);
+	const bool bCanInteract = CanUseInteractionTarget(HitActor,OwnerPawn);
 
 #if ENABLE_DRAW_DEBUG
 	if (bDrawDebug && bDrawDebugTrace)
@@ -246,9 +286,9 @@ void UPlayerInteractionComponent::UpdateInteractionTarget()
 		return;
 	}
 
-	const FText ItemName = IInteractionInterface::Execute_GetInteractionText(
-		CurrentInteractable,
-		OwnerPawn);
+	const auto* Elevator=Cast<AProjectProject01Elevator>(CurrentInteractable);
+	const FText ItemName = Elevator ? Elevator->GetInteractionText_Implementation(OwnerPawn) :
+		IInteractionInterface::Execute_GetInteractionText(CurrentInteractable,OwnerPawn);
 	InteractionWidget->ShowInteractionPrompt(ItemName);
 }
 

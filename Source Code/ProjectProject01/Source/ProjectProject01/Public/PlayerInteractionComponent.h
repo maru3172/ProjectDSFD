@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Engine/EngineTypes.h"
+#include "Engine/NetSerialization.h"
 #include "PlayerInteractionComponent.generated.h"
 
 class AActor;
@@ -14,6 +15,7 @@ UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class PROJECTPROJECT01_API UPlayerInteractionComponent : public UActorComponent
 {
 	GENERATED_BODY()
+	friend class FProjectElevatorTest;
 
 public:	
 	// Sets default values for this component's properties
@@ -29,6 +31,10 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+	/** 엘리베이터만 서버에서 시선/거리/역할을 다시 검증하여 실행합니다. */
+	UFUNCTION(Server, Reliable)
+	void ServerInteractElevator(class AProjectProject01Elevator* Elevator, FVector_NetQuantize ViewOrigin, FVector_NetQuantizeNormal ViewDirection);
+	double LastElevatorRequestSeconds = -1.0;
 
 	// 카메라 방향으로 라인 트레이스를 실행하고 현재 상호작용 가능한 액터를 반환한다.
 	AActor* FindInteractableActor(bool bDrawDebug) const;

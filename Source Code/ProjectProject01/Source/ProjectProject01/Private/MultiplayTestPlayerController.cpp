@@ -787,19 +787,25 @@ void AMultiplayTestPlayerController::EnterSurvivorSpectator(
 }
 
 void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
-	const bool bSpawnInNextLevel)
+	const bool bSpawnInNextLevel, const float FadeSeconds)
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
 
+	if (bLevelTransitionCarryover)
+	{
+		// A late death/forfeit may revoke permission, but repeated prepare cannot revive or restart the fade.
+		bSpawnAfterLevelTransition &= bSpawnInNextLevel;
+		return;
+	}
 	CaptureLevelTransitionState();
 	bLevelTransitionCarryover = true;
 	bSpawnAfterLevelTransition = bSpawnInNextLevel;
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
-	ClientPrepareForLevelTransition();
+	ClientPrepareForLevelTransition(FadeSeconds);
 }
 
 void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
@@ -1064,7 +1070,7 @@ void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation
 	}, 0.5f, false);
 }
 
-void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementation()
+void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementation(const float FadeSeconds)
 {
 	if (!IsLocalController())
 	{
@@ -1077,6 +1083,7 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(InitialGameplayRevealTimer);
+		World->GetTimerManager().ClearTimer(SpectatorFadeTimer);
 	}
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
@@ -1090,7 +1097,7 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 	if (UProjectProject01GameInstance* ProjectGameInstance =
 		Cast<UProjectProject01GameInstance>(GetGameInstance()))
 	{
-		ProjectGameInstance->FadeEntireScreenToBlack(0.6f);
+		ProjectGameInstance->FadeEntireScreenToBlack(FMath::Clamp(FadeSeconds,0.1f,10.0f));
 	}
 }
 

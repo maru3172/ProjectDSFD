@@ -17,6 +17,7 @@
 #include "TimerManager.h"
 #include "Containers/Ticker.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/IConsoleManager.h"
 
 AProjectProject01LevelTransitionTrigger::AProjectProject01LevelTransitionTrigger()
 {
@@ -36,25 +37,37 @@ AProjectProject01LevelTransitionTrigger::AProjectProject01LevelTransitionTrigger
 void AProjectProject01LevelTransitionTrigger::BeginPlay()
 {
 	Super::BeginPlay();
+	if (!bUseOverlapActivation && IsValid(TransitionVolume)) TransitionVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	if (!HasAuthority() || !IsValid(TransitionVolume))
 	{
 		return;
 	}
 
+	if (bUseOverlapActivation)
+	{
 	TransitionVolume->OnComponentBeginOverlap.AddUniqueDynamic(
 		this, &AProjectProject01LevelTransitionTrigger::HandleBeginOverlap);
 	TransitionVolume->OnComponentEndOverlap.AddUniqueDynamic(
 		this, &AProjectProject01LevelTransitionTrigger::HandleEndOverlap);
+	}
+	else TransitionVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	if (GEngine) TravelFailureHandle = GEngine->OnTravelFailure().AddUObject(
 		this, &AProjectProject01LevelTransitionTrigger::HandleTravelFailure);
 
-	if (DestinationLevel.IsNull())
+	if (DestinationLevel.IsNull() && bUseOverlapActivation)
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("Level transition trigger '%s' has no DestinationLevel and will remain disabled."),
 			*GetActorNameOrLabel());
 	}
+}
+
+bool AProjectProject01LevelTransitionTrigger::RequestTransition(APlayerCharacter* Survivor)
+{
+	if (!HasAuthority() || bTransitionStarted || !IsEligibleLivingPlayer(Survivor) || !IsDestinationAvailable()) return false;
+	HandleBeginOverlap(nullptr, Survivor, nullptr, 0, false, FHitResult());
+	return bTransitionStarted || AcceptedSurvivors.Contains(Cast<AMultiplayTestPlayerController>(Survivor->GetController()));
 }
 
 void AProjectProject01LevelTransitionTrigger::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -105,7 +118,7 @@ void AProjectProject01LevelTransitionTrigger::HandleBeginOverlap(
 		AMultiplayTestPlayerController* Controller =
 			Cast<AMultiplayTestPlayerController>(Survivor->GetController());
 		if (!IsValid(GameMode) || !IsValid(Controller) ||
-			!GameMode->MarkSurvivorWaitingForLevelTransition(Survivor))
+			!GameMode->MarkSurvivorWaitingForLevelTransition(Survivor,ShouldFadeToWaitingSpectator()))
 		{
 			return;
 		}
@@ -270,7 +283,7 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 			if (UProjectProject01GameInstance* GameInstance =
 				Cast<UProjectProject01GameInstance>(GetGameInstance()))
 			{
-				GameInstance->FadeEntireScreenToBlack(0.6f);
+				GameInstance->FadeEntireScreenToBlack(GetTransitionFadeSeconds());
 			}
 			if (APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
 				IsValid(PlayerController))
@@ -285,14 +298,15 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 		else if (AMultiplayTestGameMode* GameMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
 			IsValid(GameMode))
 		{
-			GameMode->PrepareLevelTransitionTravel();
+			GameMode->PrepareLevelTransitionTravel(GetTransitionFadeSeconds());
 		}
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("Level transition trigger '%s' accepted. Destination=%s"),
 		*GetActorNameOrLabel(), *DestinationPackage);
 
-	if (TravelDelaySeconds <= 0.0f)
+	const float DelaySeconds=GetTravelDelaySeconds();
+	if (DelaySeconds <= 0.0f)
 	{
 		ExecuteTransition();
 		return;
@@ -302,7 +316,7 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 		TravelTimer,
 		this,
 		&AProjectProject01LevelTransitionTrigger::ExecuteTransition,
-		TravelDelaySeconds,
+		DelaySeconds,
 		false);
 }
 
@@ -319,6 +333,13 @@ FString AProjectProject01LevelTransitionTrigger::GetDestinationPackageName() con
 
 bool AProjectProject01LevelTransitionTrigger::IsDestinationAvailable() const
 {
+	if (!DestinationArrivalId.IsNone())
+	{
+		const FString Id = DestinationArrivalId.ToString();
+		if (Id.Len()>64) return false;
+		for (const TCHAR Ch : Id)
+			if (!((Ch>='a' && Ch<='z') || (Ch>='A' && Ch<='Z') || (Ch>='0' && Ch<='9') || Ch=='_' || Ch=='-')) return false;
+	}
 	const FString Package = GetDestinationPackageName();
 	return FPackageName::IsValidLongPackageName(Package) && FPackageName::DoesPackageExist(Package);
 }
@@ -394,7 +415,7 @@ void AProjectProject01LevelTransitionTrigger::RollbackTransition(const FString& 
 		}
 	}
 	else if (auto* Mode = World->GetAuthGameMode<AMultiplayTestGameMode>()) Mode->CancelLevelTransitionTravel();
-	if (IsValid(TransitionVolume)) TransitionVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	if (IsValid(TransitionVolume)) TransitionVolume->SetCollisionEnabled(bUseOverlapActivation ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
 	bTransitionStarted = false;
     AsyncTravelWatchdogChecks=0;
 	UE_LOG(LogTemp, Warning, TEXT("Level transition '%s' cancelled: %s"), *GetActorNameOrLabel(), *Reason);
@@ -403,11 +424,20 @@ void AProjectProject01LevelTransitionTrigger::RollbackTransition(const FString& 
 void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 {
 	UWorld* World = GetWorld();
-	const FString DestinationPackage = GetDestinationPackageName();
+	FString DestinationPackage = GetDestinationPackageName();
 	if (!HasAuthority() || !IsValid(World))
 	{
 		return;
 	}
+	if (!DestinationArrivalId.IsNone())
+	{
+		const FString Id = DestinationArrivalId.ToString();
+		bool bSafe = Id.Len() <= 64;
+		for (const TCHAR Ch : Id) bSafe &= (Ch >= 'a' && Ch <= 'z') || (Ch >= 'A' && Ch <= 'Z') || (Ch >= '0' && Ch <= '9') || Ch == '_' || Ch == '-';
+		if (!bSafe) { RollbackTransition(TEXT("Arrival ID must contain only ASCII letters, numbers, underscore or hyphen (max 64)")); return; }
+		DestinationPackage += TEXT("?ElevatorArrival=") + Id;
+	}
+	else DestinationPackage += TEXT("?ElevatorArrival="); // Do not carry an old elevator option into ordinary travel.
 	// Recheck after the fade delay (editor asset changes / uncooked destinations).
     AsyncTravelWatchdogChecks=0;
 	if (!IsDestinationAvailable())
@@ -426,12 +456,24 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		{
 			GameInstance->MarkPendingSinglePlayerLevelTransitionFade();
 		}
-		UGameplayStatics::OpenLevel(this, FName(*DestinationPackage), true);
+		const FString ArrivalOption = DestinationArrivalId.IsNone() ? FString() : TEXT("ElevatorArrival=") + DestinationArrivalId.ToString();
+		UGameplayStatics::OpenLevel(this, FName(*GetDestinationPackageName()), true, ArrivalOption);
 		return;
 	}
 
 	// 서버 이동은 현재 접속한 모든 클라이언트를 같은 목적지로 함께 전환합니다.
-    if(auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>())Mode->PrepareLevelTransitionTravel();
+    if(auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>())Mode->PrepareLevelTransitionTravel(GetTransitionFadeSeconds());
+#if WITH_EDITOR
+	if (World->WorldType==EWorldType::PIE)
+	{
+		const auto* Setting=IConsoleManager::Get().FindConsoleVariable(TEXT("net.AllowPIESeamlessTravel"));
+		if (!Setting || Setting->GetInt()==0)
+		{
+			RollbackTransition(TEXT("PIE seamless travel is unavailable; refusing to reset the match"));
+			return;
+		}
+	}
+#endif
 	if (!World->ServerTravel(DestinationPackage, false))
 	{
 		RollbackTransition(FString::Printf(TEXT("ServerTravel rejected destination '%s'"), *DestinationPackage));
