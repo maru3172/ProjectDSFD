@@ -120,6 +120,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReviewMatchCarryoverTest,"ProjectProjec
 bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 {
 	for (const bool bForfeit : {false,true})
+	for (const bool bDeathBeforeWaiting : {false,true})
 	{
 	UWorld* World=CreateReviewWorld();ON_SCOPE_EXIT { World->DestroyWorld(false); };
 #if WITH_EDITOR
@@ -137,6 +138,7 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	for(int32 Index=0;Index<3;++Index)
 	{
 		auto* PC=World->SpawnActor<AMultiplayTestPlayerController>();Players.Add(PC);
+		PC->PlayerCameraManager=World->SpawnActor<APlayerCameraManager>(); PC->PlayerCameraManager->InitializeFor(PC);
 		FProjectProject01ValidatedJoinClaim Claim;Claim.UserId=FString::FromInt(Index+1);Claim.MatchId=TEXT("review-match");
 		Claim.Role=Index==0?TEXT("Mannequin"):TEXT("Survivor");PC->SetAuthenticatedLobbyIdentity(Claim);
 		FMultiplayTestServerPlayerRecord Record;Record.UserId=Claim.UserId;Record.MatchId=Claim.MatchId;Record.Role=Claim.Role;
@@ -148,6 +150,8 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	}
 	FMultiplayTestServerPlayerRecord Left;Left.UserId=TEXT("left");Left.Role=TEXT("Survivor");Left.MatchId=TEXT("review-match");Left.bForfeited=true;Left.SurvivorState=EMultiplayTestSurvivorState::Eliminated;
 	Previous->DisconnectedMatchRecords.Add(Left.UserId,Left);
+	Players[1]->SurvivorSpectatorView.bEnabled=true; // A living survivor waiting at the trigger, not permanently dead.
+	Players[2]->SurvivorSpectatorView.bEnabled=bDeathBeforeWaiting; // Or the death handoff timer never ran before travel.
 #if WITH_EDITOR
 	// Reproduce ticket-free PIE: the server match record exists but the ticket identity is empty.
 	Players[0]->SetAuthenticatedLobbyIdentity(FProjectProject01ValidatedJoinClaim());
@@ -177,6 +181,28 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	TestEqual(TEXT("First capture time remains match-wide"),Next->MatchPlayerRecords.FindChecked(Players[0]).FirstCaptureSeconds,25.0);
 	Next->TryStartAuthoritativeMatch();
 	TestTrue(TEXT("Transition with a dead spectator reaches InProgress"),Next->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress);
+	TestTrue(TEXT("Missing new Pawn keeps camera handoff pending instead of consuming it with a null target"),Players[1]->IsLevelTransitionCarryover() && Players[2]->IsLevelTransitionCarryover());
+	FActorSpawnParameters Spawn; Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	auto* LivePawn=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(2000,0,100)),Spawn);
+	Players[1]->Possess(LivePawn);
+	auto* Mannequin=World->SpawnActor<AMannequinAICharacter>();
+	Players[0]->SetViewedMannequin(Mannequin);
+	Next->FinalizeLevelTransitionArrivals();
+	TestTrue(TEXT("Previously waiting survivor now owns and views its new playable Pawn"),Players[1]->GetPawn()==LivePawn && Players[1]->GetViewTarget()==LivePawn && !Players[1]->SurvivorSpectatorView.bEnabled);
+	TestTrue(TEXT("Dead survivor watches the new-map living Pawn in either death/wait order"),Players[2]->GetViewTarget()==LivePawn && Players[2]->SurvivorSpectatorView.bEnabled && Players[2]->SurvivorSpectatorView.Target==LivePawn);
+	Players[2]->SetViewTarget(Players[2]);
+	Players[2]->OnRep_Pawn();
+	TestTrue(TEXT("Pawn replication cannot overwrite the persisted dead spectator camera"),Players[2]->GetViewTarget()==LivePawn);
+	Players[2]->EnterSurvivorSpectator(Mannequin,false);
+	TestFalse(TEXT("A mannequin can never become the survivor spectator target"),Players[2]->GetViewTarget()==Mannequin);
+	Next->RefreshSurvivorSpectatorTargets();
+	TestTrue(TEXT("Server repairs an invalid spectator target"),Players[2]->GetViewTarget()==LivePawn);
+	LivePawn->SetActorHiddenInGame(true);
+	auto* Replacement=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(2200,0,100)),Spawn);
+	Players[1]->Possess(Replacement);
+	Next->MatchPlayerRecords.FindChecked(Players[1]).SurvivorPawn=LivePawn; // Deliberately stale snapshot.
+	Next->RefreshSurvivorSpectatorTargets();
+	TestTrue(TEXT("Spectating follows current possession, never the stale previous Pawn snapshot"),Players[2]->GetViewTarget()==Replacement);
 	Next->HandleStartingNewPlayer_Implementation(Players[2]);
 	TestNull(TEXT("Consumed carryover flags cannot enable a later dead-player restart"),Players[2]->GetPawn());
 	TestTrue(TEXT("Result timer includes the previous map"),Next->GetElapsedMatchSeconds()>=100.0);
@@ -187,6 +213,33 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 		TestFalse(TEXT("Arrival clears carryover and restores looking"),PC->IsLevelTransitionCarryover()||PC->IsLookInputIgnored());
 		TestEqual(TEXT("Only the eliminated spectator keeps movement disabled"),PC->IsMoveInputIgnored(),Index==2);
 	}
+	}
+	// Client-side replication order without a viewport, backend or real network.
+	{
+	UWorld* ClientWorld=CreateReviewWorld(); ON_SCOPE_EXIT { ClientWorld->DestroyWorld(false); };
+	ClientWorld->SetGameInstance(NewObject<UGameInstance>());
+	auto* DeadClient=ClientWorld->SpawnActor<AMultiplayTestPlayerController>(); DeadClient->SetAsLocalPlayerController();
+	DeadClient->PlayerCameraManager=ClientWorld->SpawnActor<APlayerCameraManager>(); DeadClient->PlayerCameraManager->InitializeFor(DeadClient);
+	DeadClient->SurvivorState=EMultiplayTestSurvivorState::Eliminated;
+	DeadClient->bLocalLevelTransitionFadeHeld=true;
+	DeadClient->ClientCompleteLevelTransition_Implementation(nullptr,false);
+	TestTrue(TEXT("Unmapped spectator target keeps the client black and pending"),DeadClient->bClientArrivalViewPending && DeadClient->bLocalLevelTransitionFadeHeld);
+	auto* NewLivingPawn=ClientWorld->SpawnActor<APlayerCharacter>();
+	DeadClient->SurvivorSpectatorView.Target=NewLivingPawn;
+	DeadClient->OnRep_SurvivorSpectatorView();
+	TestTrue(TEXT("Late target replication completes dead-client spectating"),!DeadClient->bClientArrivalViewPending && !DeadClient->bLocalLevelTransitionFadeHeld && DeadClient->GetViewTarget()==NewLivingPawn && DeadClient->IsMoveInputIgnored());
+	DeadClient->ClientCompleteLevelTransition_Implementation(nullptr,false);
+	TestTrue(TEXT("A null RPC parameter cannot erase an already-replicated spectator target"),!DeadClient->bClientArrivalViewPending && DeadClient->GetViewTarget()==NewLivingPawn);
+	auto* LiveClient=ClientWorld->SpawnActor<AMultiplayTestPlayerController>(); LiveClient->SetAsLocalPlayerController();
+	LiveClient->PlayerCameraManager=ClientWorld->SpawnActor<APlayerCameraManager>(); LiveClient->PlayerCameraManager->InitializeFor(LiveClient);
+	LiveClient->SurvivorState=EMultiplayTestSurvivorState::Active;
+	LiveClient->SurvivorSpectatorView.bEnabled=true; LiveClient->SurvivorSpectatorView.Target=NewLivingPawn;
+	LiveClient->bLocalLevelTransitionFadeHeld=true;
+	LiveClient->ClientCompleteLevelTransition_Implementation(nullptr,true);
+	TestTrue(TEXT("Living arrival waits for its own Pawn, not the old observed player"),LiveClient->bClientArrivalViewPending && !LiveClient->SurvivorSpectatorView.bEnabled);
+	auto* OwnPawn=ClientWorld->SpawnActor<APlayerCharacter>(); LiveClient->SetPawn(OwnPawn);
+	LiveClient->TryCompleteClientArrivalView();
+	TestTrue(TEXT("Late own-Pawn replication restores direct play and self camera"),!LiveClient->bClientArrivalViewPending && !LiveClient->IsMoveInputIgnored() && !LiveClient->SurvivorSpectatorView.bEnabled && LiveClient->GetViewTarget()==OwnPawn);
 	}
 	return true;
 }

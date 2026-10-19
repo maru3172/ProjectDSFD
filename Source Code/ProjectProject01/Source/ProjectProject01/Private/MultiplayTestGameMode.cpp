@@ -1253,6 +1253,13 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 	{
 		return;
 	}
+	SpectatorRefreshSeconds+=DeltaSeconds;
+	if (SpectatorRefreshSeconds>=0.1f)
+	{
+		SpectatorRefreshSeconds=0;
+		FinalizeLevelTransitionArrivals();
+		RefreshSurvivorSpectatorTargets();
+	}
 
 	MultiplayerAIUpdateAccumulatorSeconds += DeltaSeconds;
 	if (MultiplayerAIUpdateAccumulatorSeconds >= FMath::Max(0.01f, MultiplayerRepathInterval))
@@ -2074,7 +2081,25 @@ void AMultiplayTestGameMode::FinalizeLevelTransitionArrivals()
 		{
 			InitialViewTarget = FindLivingSurvivorSpectatorTarget(Controller, 1);
 		}
+		if (!IsValid(InitialViewTarget) || InitialViewTarget->GetWorld()!=GetWorld() || InitialViewTarget->IsHidden()) continue;
+		if (const auto* Survivor=Cast<APlayerCharacter>(InitialViewTarget); Survivor && Survivor->IsGameOver()) continue;
 		Controller->CompleteLevelTransitionCarryover(InitialViewTarget, bCanPlay);
+	}
+}
+
+void AMultiplayTestGameMode::RefreshSurvivorSpectatorTargets()
+{
+	for (const auto& Pair : MatchPlayerRecords)
+	{
+		auto* Controller=Pair.Key.Get();
+		if (!IsValid(Controller) || Controller->IsLevelTransitionCarryover() || Pair.Value.Role!=TEXT("Survivor") ||
+			!Controller->SurvivorSpectatorView.bEnabled || Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active) continue;
+		auto* Current=Controller->SurvivorSpectatorView.Target.Get();
+		const auto* Record=IsValid(Current) ? FindSurvivorRecord(Current) : nullptr;
+		if (IsValid(Current) && Current->GetWorld()==GetWorld() && !Current->IsGameOver() && !Current->IsHidden() &&
+			Record && Record->SurvivorState==EMultiplayTestSurvivorState::Active && !Record->bForfeited && !Record->bDisconnected) continue;
+		auto* Target=FindLivingSurvivorSpectatorTarget(Controller,1);
+		if (Current!=Target) Controller->EnterSurvivorSpectator(Target,false);
 	}
 }
 
@@ -2130,16 +2155,13 @@ APlayerCharacter* AMultiplayTestGameMode::FindLivingSurvivorSpectatorTarget(
 	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
 	{
 		if (Pair.Key.Get() == RequestingController || Pair.Value.Role != TEXT("Survivor") ||
-			Pair.Value.SurvivorState != EMultiplayTestSurvivorState::Active)
+			Pair.Value.SurvivorState != EMultiplayTestSurvivorState::Active || Pair.Value.bForfeited || Pair.Value.bDisconnected)
 		{
 			continue;
 		}
-		APlayerCharacter* Candidate = Pair.Value.SurvivorPawn.Get();
-		if (!IsValid(Candidate) && Pair.Key.IsValid())
-		{
-			Candidate = Cast<APlayerCharacter>(Pair.Key->GetPawn());
-		}
-		if (IsValid(Candidate))
+		// A saved Pawn can still be valid while its old level is unloading. Observe current possession only.
+		APlayerCharacter* Candidate = Pair.Key.IsValid() ? Cast<APlayerCharacter>(Pair.Key->GetPawn()) : nullptr;
+		if (IsValid(Candidate) && Candidate->GetWorld()==GetWorld() && !Candidate->IsGameOver() && !Candidate->IsHidden())
 		{
 			LivingSurvivors.Add(Candidate);
 		}
