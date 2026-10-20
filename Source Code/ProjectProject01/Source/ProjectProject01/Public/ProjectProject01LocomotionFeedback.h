@@ -7,9 +7,9 @@ struct FProjectProject01LocomotionFeedback
 {
 	static constexpr float RightFootDepthScale = 1.10f;
 	static constexpr float RightFootPitchScale = 0.90f;
-	static constexpr float WalkDepth = 1.0f;
+	static constexpr float WalkDepth = 1.3f;
 	static constexpr float RunDepth = 1.6f;
-	static constexpr float WalkPitchDegrees = 0.10f;
+	static constexpr float WalkPitchDegrees = 0.13f;
 	static constexpr float RunPitchDegrees = 0.20f;
 	static float FootPitchScale(bool bRightFoot) { return bRightFoot ? RightFootPitchScale : 1.0f; }
 

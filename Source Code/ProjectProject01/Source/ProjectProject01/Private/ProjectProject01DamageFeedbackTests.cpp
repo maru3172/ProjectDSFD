@@ -15,6 +15,7 @@
 #include "RenderingThread.h"
 #include "PlayerCharacter.h"
 #include "UObject/UnrealType.h"
+#include <limits>
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectDamageFeedbackSeverityTest,"ProjectProject01.Player.DamageFeedbackSeverity",
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -124,6 +125,78 @@ bool FProjectDamageFeedbackRenderTest::RunTest(const FString&)
         TestTrue(TEXT("Existing two second release fades the same single mesh"),Fading[Edge].G>Peak[Edge].G&&Widget->CurrentOpacity>0);
         Widget->NativeTick(Geometry,1.6f);
         TestTrue(TEXT("Effect fully clears when original timeline ends"),Widget->CurrentOpacity==0&&Widget->CurrentThicknessPixels==0);
+        Widget->ReleaseSlateResources(true);FlushRenderingCommands();
+    }
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMannequinCaptureFeedbackRenderTest,"ProjectProject01.Player.MannequinCaptureFeedbackRender",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
+bool FProjectMannequinCaptureFeedbackRenderTest::RunTest(const FString&)
+{
+    const FString Directory=FPaths::ProjectSavedDir()/TEXT("MannequinCaptureFeedbackRefresh");
+    IFileManager::Get().MakeDirectory(*Directory,true);
+    for(const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600),FIntPoint(1920,800)})
+    {
+        auto* Widget=NewObject<UProjectProject01MannequinCaptureFeedbackWidget>();Widget->Initialize();
+        Widget->Configure(false,1.0f);Widget->PatternSeed=3172;
+        TestEqual(TEXT("Normal hit keeps the original short feedback duration"),Widget->DurationSeconds,0.68f);
+        TestEqual(TEXT("Feedback does not consume attack or mouse input"),Widget->GetVisibility(),ESlateVisibility::HitTestInvisible);
+        TSharedRef<SWidget> Slate=SNew(SOverlay)
+            +SOverlay::Slot()[SNew(SBorder).Padding(0).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")))
+                .BorderBackgroundColor(FLinearColor(0.55f,0.55f,0.55f,1))]
+            +SOverlay::Slot()[Widget->TakeWidget()];
+        FWidgetRenderer Renderer(true);
+        auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,true);
+        if(!TestNotNull(TEXT("Capture feedback render target"),Target))continue;
+        auto Capture=[&](float Seconds,const TCHAR* Name=nullptr)
+        {
+            Widget->ElapsedSeconds=Seconds;Widget->Invalidate(EInvalidateWidgetReason::Paint);
+            Renderer.DrawWidget(Target,Slate,FVector2D(Size),0.0f);FlushRenderingCommands();
+            TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(false);
+            TestTrue(TEXT("Read actual capture feedback Slate pixels"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags));
+            if(Name&&Pixels.Num()==Size.X*Size.Y)
+            {
+                TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);
+                TestTrue(TEXT("Save capture feedback visual QA"),FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("%s_%dx%d.png"),Name,Size.X,Size.Y))));
+            }
+            return Pixels;
+        };
+        const auto Before=Capture(0);
+        const auto Impact=Capture(0.08f,TEXT("Impact"));
+        const auto Repaint=Capture(0.08f);
+        const auto Tail=Capture(0.42f,TEXT("Release"));
+        const auto End=Capture(0.68f);
+        if(Before.Num()!=Size.X*Size.Y||Impact.Num()!=Before.Num()||Tail.Num()!=Before.Num())continue;
+        TestTrue(TEXT("Pattern stays stable on repeated paints rather than random flicker"),Impact==Repaint);
+        TestTrue(TEXT("No lingering blood after the original duration"),End==Before);
+        int32 Visible=0;int64 ImpactContrast=0,TailContrast=0;bool bCenterClear=true;
+        const int32 ClearRadius=FMath::Min(Size.X,Size.Y)*0.08f;
+        for(int32 Y=0;Y<Size.Y;++Y)for(int32 X=0;X<Size.X;++X)
+        {
+            const int32 I=Y*Size.X+X;
+            if(Impact[I]!=Before[I])++Visible;
+            ImpactContrast+=FMath::Abs(static_cast<int32>(Before[I].G)-Impact[I].G);
+            TailContrast+=FMath::Abs(static_cast<int32>(Before[I].G)-Tail[I].G);
+            if(FMath::Square(X-Size.X/2)+FMath::Square(Y-Size.Y/2)<FMath::Square(ClearRadius))
+                bCenterClear&=Impact[I]==Before[I]&&Tail[I]==Before[I];
+        }
+        TestTrue(TEXT("Impact is visible but sparse, never a full-screen flash"),Visible>100&&Visible<Before.Num()/20);
+        TestTrue(TEXT("Aim and target remain clear at screen center"),bCenterClear);
+        TestTrue(TEXT("Droplets release gradually after the fast impact"),TailContrast>0&&TailContrast<ImpactContrast);
+        Widget->PatternSeed=6178;const auto Alternate=Capture(0.08f);
+        TestTrue(TEXT("Different confirmed hits can vary their splash pattern"),Alternate!=Impact);
+        Widget->PatternSeed=3172;Widget->Configure(false,0.35f);Widget->PatternSeed=3172;
+        const auto Reduced=Capture(0.08f);int64 ReducedContrast=0;
+        if(Reduced.Num()==Before.Num())for(int32 I=0;I<Reduced.Num();++I)ReducedContrast+=FMath::Abs(static_cast<int32>(Before[I].G)-Reduced[I].G);
+        TestTrue(TEXT("Existing accessibility intensity scales the effect down"),ReducedContrast>0&&ReducedContrast<ImpactContrast);
+        Widget->Configure(false,0);TestTrue(TEXT("Zero intensity suppresses all splashes"),Capture(0.08f)==Before);
+        Widget->Configure(true,1);Widget->PatternSeed=3172;
+        TestEqual(TEXT("Elimination retains the original longer release"),Widget->DurationSeconds,0.95f);
+        const auto Elimination=Capture(0.08f,TEXT("Elimination"));
+        TestTrue(TEXT("Elimination has a distinct fuller impact"),Elimination!=Impact&&Elimination!=Before);
+        TestTrue(TEXT("Elimination also clears completely"),Capture(0.95f)==Before);
+        Widget->Configure(false,std::numeric_limits<float>::quiet_NaN());
+        TestTrue(TEXT("Invalid intensity cannot poison the renderer"),Capture(0.08f)==Before);
         Widget->ReleaseSlateResources(true);FlushRenderingCommands();
     }
     return true;

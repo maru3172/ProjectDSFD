@@ -89,6 +89,7 @@ UCLASS()
 class PROJECTPROJECT01_API UProjectProject01MannequinCaptureFeedbackWidget final : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class FProjectMannequinCaptureFeedbackRenderTest;
 
 public:
 	void Configure(bool bInElimination, float InIntensityScale = 1.0f);
@@ -111,4 +112,7 @@ private:
 	float DurationSeconds = 0.72f;
 	float ElapsedSeconds = 0.0f;
 	float IntensityScale = 1.0f;
+	// New pattern per confirmed hit, stable during painting (no frame-to-frame random flicker).
+	int32 PatternSeed = 0;
+	bool bElimination = false;
 };

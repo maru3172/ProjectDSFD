@@ -20,18 +20,18 @@ bool FProjectLocomotionFeedbackTest::RunTest(const FString&)
 	TestEqual(TEXT("No pitch jump on contact"), Walk.GetPitchOffset(), 0.0f);
 	Walk.Advance(0.32f * 0.28f); Right.Advance(0.32f * 0.28f); Run.Advance(0.26f * 0.28f);
 	RunRight.Advance(0.26f * 0.28f);
-	TestTrue(TEXT("Walk dip is a perceptible but small one centimetre"), FMath::IsNearlyEqual(Walk.GetOffset(), -1.0f));
-	TestTrue(TEXT("Right walking contact is ten percent deeper at 1.1 centimetres"), FMath::IsNearlyEqual(Right.GetOffset(), -1.1f, 0.00001f));
+	TestTrue(TEXT("Walking dip is thirty percent stronger at 1.3 centimetres"), FMath::IsNearlyEqual(Walk.GetOffset(), -1.3f));
+	TestTrue(TEXT("Right walking contact retains ten percent extra depth at 1.43 centimetres"), FMath::IsNearlyEqual(Right.GetOffset(), -1.43f, 0.00001f));
 	TestTrue(TEXT("Right running contact is ten percent deeper at 1.76 centimetres"), FMath::IsNearlyEqual(RunRight.GetOffset(), -1.76f, 0.00001f));
 	TestTrue(TEXT("Running dip is slightly stronger at 1.6 centimetres"), FMath::IsNearlyEqual(Run.GetOffset(), -1.6f));
-	TestTrue(TEXT("Walking nod peaks downward at 0.1 degrees"), FMath::IsNearlyEqual(Walk.GetPitchOffset(), -0.1f, 0.00001f));
+	TestTrue(TEXT("Walking nod remains small at 0.13 degrees"), FMath::IsNearlyEqual(Walk.GetPitchOffset(), -0.13f, 0.00001f));
 	TestTrue(TEXT("Running nod peaks downward at 0.2 degrees"), FMath::IsNearlyEqual(Run.GetPitchOffset(), -0.2f, 0.00001f));
-	TestTrue(TEXT("Right foot nod is also ten percent stronger"), FMath::IsNearlyEqual(Right.GetPitchOffset(), -0.11f, 0.00001f) &&
+	TestTrue(TEXT("Right foot nod is also ten percent stronger"), FMath::IsNearlyEqual(Right.GetPitchOffset(), -0.143f, 0.00001f) &&
 		FMath::IsNearlyEqual(RunRight.GetPitchOffset(), -0.22f, 0.00001f));
 	TestEqual(TEXT("Zero accessibility shake disables bob entirely"), Run.GetOffset(0), 0.0f);
 	TestEqual(TEXT("Zero accessibility shake disables nod entirely"), Run.GetPitchOffset(0), 0.0f);
-	TestTrue(TEXT("Partial shake setting scales displacement"), FMath::IsNearlyEqual(Walk.GetOffset(0.5f), -0.5f));
-	TestTrue(TEXT("Partial shake setting scales nod"), FMath::IsNearlyEqual(Walk.GetPitchOffset(0.5f), -0.05f, 0.00001f));
+	TestTrue(TEXT("Partial shake setting scales displacement"), FMath::IsNearlyEqual(Walk.GetOffset(0.5f), -0.65f));
+	TestTrue(TEXT("Partial shake setting scales nod"), FMath::IsNearlyEqual(Walk.GetPitchOffset(0.5f), -0.065f, 0.00001f));
 	TestTrue(TEXT("Right foot pitch is ten percent lower without louder gain"), FMath::IsNearlyEqual(
 		FProjectProject01LocomotionFeedback::FootPitchScale(true) / FProjectProject01LocomotionFeedback::FootPitchScale(false), 0.90f));
 	const float BeforeOverlap = Walk.GetOffset(), PitchBeforeOverlap = Walk.GetPitchOffset(); Walk.Contact(true, true);

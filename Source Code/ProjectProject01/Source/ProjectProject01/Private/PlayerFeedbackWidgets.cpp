@@ -262,7 +262,9 @@ void UProjectProject01MannequinCaptureFeedbackWidget::Configure(
 {
 	DurationSeconds = bInElimination ? 0.95f : 0.68f;
 	ElapsedSeconds = 0.0f;
-	IntensityScale = FMath::Clamp(InIntensityScale, 0.0f, 1.0f);
+	IntensityScale = FMath::IsFinite(InIntensityScale) ? FMath::Clamp(InIntensityScale, 0.0f, 1.0f) : 0.0f;
+	PatternSeed = FMath::Rand();
+	bElimination = bInElimination;
 	Invalidate(EInvalidateWidgetReason::Paint);
 }
 
@@ -297,29 +299,89 @@ int32 UProjectProject01MannequinCaptureFeedbackWidget::NativePaint(
 	}
 
 	const float Progress = FMath::Clamp(ElapsedSeconds / FMath::Max(DurationSeconds, 0.01f), 0.0f, 1.0f);
-	const float Fade = (1.0f - FMath::SmoothStep(0.0f, 1.0f, Progress)) * IntensityScale;
-	const float Expansion = FMath::InterpEaseOut(0.35f, 1.0f, FMath::Min(Progress * 5.0f, 1.0f), 2.0f);
-	const FVector2D Center = Size * 0.5f;
-	const FLinearColor BloodColor(0.48f, 0.005f, 0.008f, Fade * 0.82f);
-	const FVector2D Directions[] = {
-		FVector2D(-0.39f, -0.24f), FVector2D(-0.31f, 0.17f), FVector2D(-0.18f, -0.36f),
-		FVector2D(0.14f, -0.33f), FVector2D(0.34f, -0.13f), FVector2D(0.38f, 0.22f),
-		FVector2D(0.12f, 0.34f), FVector2D(-0.23f, 0.31f)
-	};
-	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Directions); ++Index)
+	// Fast, soft-edged impact followed by a slower release; no full-screen flash or central obstruction.
+	const float Attack = FMath::SmoothStep(0.0f, 0.025f, ElapsedSeconds);
+	const float Fade = Attack * (1.0f - FMath::SmoothStep(0.06f, DurationSeconds, ElapsedSeconds)) *
+		IntensityScale * InWidgetStyle.GetColorAndOpacityTint().A;
+	if (Fade <= UE_KINDA_SMALL_NUMBER || !FSlateApplication::IsInitialized()) return BaseLayer;
+	const float Burst = FMath::InterpEaseOut(0.68f, 1.0f, FMath::Clamp(ElapsedSeconds / 0.12f, 0.0f, 1.0f), 3.0f);
+	const float PixelScale = FMath::Min(Size.X, Size.Y) / 720.0f;
+	const FVector2f Center(Size.X * 0.5f, Size.Y * 0.5f);
+	const FVector2f Drift(0.0f, 12.0f * PixelScale * Progress * Progress);
+	FRandomStream Pattern(PatternSeed);
+	TArray<FSlateVertex> Vertices;
+	TArray<SlateIndex> Indices;
+	Vertices.Reserve(1000);
+	Indices.Reserve(4000);
+	const auto AddVertex = [&](const FVector2f& Position, float Alpha, float Red)
 	{
-		const FVector2D Direction = Directions[Index];
-		const FVector2D End = Center + FVector2D(Direction.X * Size.X, Direction.Y * Size.Y) * Expansion;
-		const FVector2D Start = FMath::Lerp(Center, End, 0.70f);
-		const FVector2D Normal(-Direction.Y, Direction.X);
-		TArray<FVector2d> Streak;
-		Streak.Reserve(3);
-		Streak.Add(FVector2d(Start));
-		Streak.Add(FVector2d(FMath::Lerp(Start, End, 0.55f) + Normal * (Index % 2 == 0 ? 7.0f : -6.0f)));
-		Streak.Add(FVector2d(End));
-		FSlateDrawElement::MakeLines(
-			OutDrawElements, BaseLayer + 1, AllottedGeometry.ToPaintGeometry(), Streak,
-			ESlateDrawEffect::None, BloodColor, true, 2.5f + static_cast<float>(Index % 3) * 1.5f);
+		Vertices.Add(FSlateVertex::Make<ESlateVertexRounding::Disabled>(
+			AllottedGeometry.GetAccumulatedRenderTransform(), Position, FVector2f(0.5f, 0.5f),
+			FLinearColor(Red, 0.005f, 0.012f, Fade * Alpha).ToFColorSRGB()));
+	};
+	constexpr int32 Slices = 10;
+	constexpr float Across[] = {-1.0f, -0.62f, 0.62f, 1.0f};
+	const int32 SplashCount = bElimination ? 11 : 9;
+	const float Rotation = Pattern.FRandRange(-UE_PI, UE_PI);
+	for (int32 Splash = 0; Splash < SplashCount; ++Splash)
+	{
+		const float Angle = Rotation + 2.0f * UE_PI * (Splash + Pattern.FRandRange(-0.3f, 0.3f)) / SplashCount;
+		const FVector2f Direction(FMath::Cos(Angle), FMath::Sin(Angle));
+		const FVector2f Normal(-Direction.Y, Direction.X);
+		const float Reach = Pattern.FRandRange(0.31f, 0.43f);
+		const FVector2f End = Center + FVector2f(Direction.X * Size.X, Direction.Y * Size.Y) * Reach * Burst + Drift;
+		const FVector2f Start = Center + (End - Center) * Pattern.FRandRange(0.60f, 0.78f);
+		const FVector2f Control = (Start + End) * 0.5f + Normal * Pattern.FRandRange(-18.0f, 18.0f) * PixelScale;
+		const float Width = Pattern.FRandRange(3.0f, 6.8f) * PixelScale * (bElimination ? 1.12f : 1.0f);
+		const float Density = Pattern.FRandRange(0.58f, 0.84f);
+		const float Red = Pattern.FRandRange(0.32f, 0.51f);
+		const SlateIndex First = static_cast<SlateIndex>(Vertices.Num());
+		for (int32 Slice = 0; Slice <= Slices; ++Slice)
+		{
+			const float T = static_cast<float>(Slice) / Slices;
+			const FVector2f Position = FMath::Square(1.0f - T) * Start + 2.0f * (1.0f - T) * T * Control + T * T * End;
+			const FVector2f Tangent = ((1.0f - T) * (Control - Start) + T * (End - Control)).GetSafeNormal();
+			const FVector2f Side(-Tangent.Y, Tangent.X);
+			const float Taper = FMath::Pow(FMath::Max(0.0f, FMath::Sin(UE_PI * T)), 0.7f) * FMath::Lerp(0.55f, 1.0f, T);
+			for (int32 Edge = 0; Edge < UE_ARRAY_COUNT(Across); ++Edge)
+				AddVertex(Position + Side * Across[Edge] * Width * Taper,
+					(Edge == 0 || Edge == 3) ? 0.0f : Density, Red);
+		}
+		for (int32 Slice = 0; Slice < Slices; ++Slice)
+			for (int32 Band = 0; Band < 3; ++Band)
+			{
+				const SlateIndex A = First + Slice * 4 + Band;
+				const SlateIndex B = A + 4;
+				Indices.Append({A, B, static_cast<SlateIndex>(A + 1), B, static_cast<SlateIndex>(B + 1), static_cast<SlateIndex>(A + 1)});
+			}
+		// Small detached droplets carry the impulse; feathered rims avoid hard graphic-looking dots.
+		for (int32 Drop = 0; Drop < 2; ++Drop)
+		{
+			const float Distance = Pattern.FRandRange(0.80f, 1.10f);
+			const FVector2f Position = Center + (End - Center) * Distance + Normal * Pattern.FRandRange(-22.0f, 22.0f) * PixelScale;
+			const float Radius = Pattern.FRandRange(1.5f, 3.6f) * PixelScale;
+			const float Stretch = Pattern.FRandRange(1.0f, 1.65f);
+			const SlateIndex Middle = static_cast<SlateIndex>(Vertices.Num());
+			AddVertex(Position, Density * 0.85f, Red);
+			constexpr int32 Sides = 12;
+			for (int32 Ring = 0; Ring < 2; ++Ring)
+				for (int32 Side = 0; Side < Sides; ++Side)
+				{
+					const float A = 2.0f * UE_PI * Side / Sides;
+					const float R = Radius * (Ring == 0 ? 0.65f : 1.0f);
+					AddVertex(Position + Direction * FMath::Cos(A) * R * Stretch + Normal * FMath::Sin(A) * R,
+						Ring == 0 ? Density * 0.85f : 0.0f, Red);
+				}
+			for (int32 Side = 0; Side < Sides; ++Side)
+			{
+				const SlateIndex A = Middle + 1 + Side, B = Middle + 1 + (Side + 1) % Sides;
+				const SlateIndex C = A + Sides, D = B + Sides;
+				Indices.Append({Middle, A, B, A, C, B, B, C, D});
+			}
+		}
 	}
+	const FSlateBrush* WhiteBrush = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
+	const auto Resource = FSlateApplication::Get().GetRenderer()->GetResourceHandle(*WhiteBrush);
+	FSlateDrawElement::MakeCustomVerts(OutDrawElements, BaseLayer + 1, Resource, Vertices, Indices, nullptr, 0, 0);
 	return BaseLayer + 1;
 }
