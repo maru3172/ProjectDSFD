@@ -12,13 +12,21 @@ UCLASS()
 class PROJECTPROJECT01_API AProjectProject01TitlePlayerController final : public APlayerController
 {
 	GENERATED_BODY()
+	friend class FProjectDFSDTitlePIETest;
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	void CompleteStartupIntro();
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectDFSDStartupIntro> StartupIntro;
+
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01TitleWidget> TitleWidget;
+	UPROPERTY(Transient)
+	TObjectPtr<class AProjectDFSDTitleScene> TitleScene;
 };
 
 UCLASS()

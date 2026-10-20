@@ -4,9 +4,9 @@
 using UnrealBuildTool;
 using System.Collections.Generic;
 
-public class ProjectProject01ServerTarget : TargetRules
+public class ProjectDFSDServerTarget : TargetRules
 {
-	public ProjectProject01ServerTarget(TargetInfo Target) : base(Target)
+	public ProjectDFSDServerTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Server;
 		DefaultBuildSettings = BuildSettingsVersion.V7;

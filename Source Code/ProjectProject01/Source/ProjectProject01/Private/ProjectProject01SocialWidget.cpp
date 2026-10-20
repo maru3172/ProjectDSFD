@@ -1,4 +1,5 @@
 #include "ProjectProject01SocialWidget.h"
+#include "ProjectDFSDUITheme.h"
 #include "ProjectProject01SocialSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01Localization.h"
@@ -29,18 +30,11 @@ TArray<TSharedPtr<FJsonValue>> Rows(const TSharedPtr<FJsonObject>& J,const TCHAR
 {const TArray<TSharedPtr<FJsonValue>>* A=nullptr;if(J)J->TryGetArrayField(Key,A);return A?*A:TArray<TSharedPtr<FJsonValue>>{};}
 const FEditableTextBoxStyle& SocialInputStyle()
 {
-    static const FEditableTextBoxStyle Style=[]
-    {
-        auto V=FCoreStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(TEXT("NormalEditableTextBox"));
-        V.SetBackgroundImageNormal(FSlateColorBrush(FLinearColor(.94f,.94f,.94f))).SetBackgroundImageHovered(FSlateColorBrush(FLinearColor::White))
-         .SetBackgroundImageFocused(FSlateColorBrush(FLinearColor::White)).SetBackgroundImageReadOnly(FSlateColorBrush(FLinearColor(.8f,.8f,.8f)))
-         .SetForegroundColor(FLinearColor::Black).SetFocusedForegroundColor(FLinearColor::Black).SetReadOnlyForegroundColor(FLinearColor::Black).SetPadding(FMargin(10,10));
-        V.TextStyle.SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18));return V;
-    }();return Style;
+    return ProjectDFSDUI::InputStyle();
 }
-TSharedRef<SWidget> Label(const FString& S){return SNew(STextBlock).Text(Txt(S)).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),14)).AutoWrapText(true).ColorAndOpacity(FLinearColor::White);}
+TSharedRef<SWidget> Label(const FString& S,int32 Size=16){return SNew(STextBlock).Text(Txt(S)).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),Size)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Text());}
 TSharedRef<SWidget> Btn(const FString& S,TFunction<void()> Action)
-{return SNew(SButton).OnClicked_Lambda([Action]{Action();return FReply::Handled();})[Label(S)];}
+{return SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).OnClicked_Lambda([Action]{Action();return FReply::Handled();})[Label(S)];}
 FString PresenceName(const FString& V)
 {return V==TEXT("Online")?TEXT("온라인"):V==TEXT("Away")?TEXT("자리비움"):V==TEXT("DoNotDisturb")?TEXT("방해금지"):TEXT("오프라인");}
 FString TitleName(const FString& V)
@@ -75,7 +69,7 @@ TSharedRef<SWidget> UProjectProject01SocialWidget::RebuildWidget()
             GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->Status.Reset();
             Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"));
         })];
-        Bar->AddSlot().AutoWidth()[SNew(SButton).ToolTipText(Txt(TEXT("알림"))).OnClicked_Lambda([this]{Open(TEXT("Notifications"));GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->Act(TEXT("Read"));return FReply::Handled();})
+        Bar->AddSlot().AutoWidth()[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).ToolTipText(Txt(TEXT("알림"))).OnClicked_Lambda([this]{Open(TEXT("Notifications"));GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->Act(TEXT("Read"));return FReply::Handled();})
           [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth()[SNew(SCommunityBell)]+SHorizontalBox::Slot().AutoWidth()[SAssignNew(BellDot,STextBlock).Text(FText::FromString(TEXT("●"))).ColorAndOpacity(FLinearColor::Red)]]];
     }
     return SNew(SOverlay).Visibility_Lambda([this]{auto* GI=GetGameInstance();auto* S=GI?GI->GetSubsystem<UProjectProject01SocialSubsystem>():nullptr;return S&&S->IsAuthenticated()?EVisibility::SelfHitTestInvisible:EVisibility::Collapsed;})
@@ -159,7 +153,7 @@ void UProjectProject01SocialWidget::BuildPanel()
     if(Page==TEXT("Friends"))
     {
         Body->AddSlot().AutoHeight().Padding(0,6)[SNew(SHorizontalBox)
-          +SHorizontalBox::Slot().FillWidth(1)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Filter)).HintText(Txt(TEXT("이름·계정 검색"))).ForegroundColor(FLinearColor::Black)
+          +SHorizontalBox::Slot().FillWidth(1)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Filter)).HintText(Txt(TEXT("이름·계정 검색"))).ForegroundColor(ProjectDFSDUI::Text())
             .OnTextChanged_Lambda([this](const FText& T){Filter=T.ToString();RefreshView();})
             .OnTextCommitted_Lambda([this](const FText& T,ETextCommit::Type C){if(C==ETextCommit::OnEnter)GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SearchPlayers(T.ToString());})]
           +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("검색"),[this]{GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SearchPlayers(Filter);})]];
@@ -171,7 +165,7 @@ void UProjectProject01SocialWidget::BuildPanel()
     {
         Body->AddSlot().AutoHeight()[Label(TEXT("로비·방에서만 대화할 수 있습니다."))];
         Body->AddSlot().AutoHeight().Padding(0,6)[SNew(SHorizontalBox)
-          +SHorizontalBox::Slot().FillWidth(1)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).HintText(Txt(TEXT("대화할 상대 계정 ID"))).ForegroundColor(FLinearColor::Black)
+          +SHorizontalBox::Slot().FillWidth(1)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).HintText(Txt(TEXT("대화할 상대 계정 ID"))).ForegroundColor(ProjectDFSDUI::Text())
             .OnTextCommitted_Lambda([this](const FText& T,ETextCommit::Type C){if(C==ETextCommit::OnEnter)OpenThread(T.ToString());})]
           +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("대화 열기"),[this]{OpenThread(TargetInput->GetText().ToString());})]];
     }
@@ -181,13 +175,13 @@ void UProjectProject01SocialWidget::BuildPanel()
         Body->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(300)[SAssignNew(MessageScroll,SScrollBox)+SScrollBox::Slot()[SAssignNew(MessageLog,STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18)).AutoWrapText(true).ColorAndOpacity(FLinearColor::White)]]];
         auto Send=[this]{if(MessageInput)GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->Act(TEXT("Whisper"),ThreadAccount,MessageInput->GetText().ToString());};
         Body->AddSlot().AutoHeight()[SNew(SHorizontalBox)
-          +SHorizontalBox::Slot().FillWidth(1)[SAssignNew(MessageInput,SEditableTextBox).Style(&SocialInputStyle()).HintText(Txt(TEXT("메시지 (500자 이내)"))).ForegroundColor(FLinearColor::Black).OnTextCommitted_Lambda([Send](const FText&,ETextCommit::Type C){if(C==ETextCommit::OnEnter)Send();})]
+          +SHorizontalBox::Slot().FillWidth(1)[SAssignNew(MessageInput,SEditableTextBox).Style(&SocialInputStyle()).HintText(Txt(TEXT("메시지 (500자 이내)"))).ForegroundColor(ProjectDFSDUI::Text()).OnTextCommitted_Lambda([Send](const FText&,ETextCommit::Type C){if(C==ETextCommit::OnEnter)Send();})]
           +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("보내기"),Send)]];
     }
     if(Page==TEXT("Profile"))Body->AddSlot().AutoHeight()[Btn(bRoomMemberProfile?TEXT("닫고 방으로 돌아가기"):TEXT("친구 목록으로"),[this]{if(bRoomMemberProfile)CloseRoomMemberProfile();else{Page=TEXT("Friends");BuildPanel();}})];
     if(Page!=TEXT("Thread"))Body->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(340)[SNew(SScrollBox)+SScrollBox::Slot()[SAssignNew(List,SVerticalBox)]]];
     Body->AddSlot().AutoHeight().Padding(0,6)[SAssignNew(Feedback,STextBlock).AutoWrapText(true).ColorAndOpacity(FLinearColor::White)];
-    if(!bBlocksOnly)Body->AddSlot().AutoHeight()[SNew(SComboButton)
+    if(!bBlocksOnly)Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle())
       .ButtonContent()[SNew(STextBlock).Text_Lambda([this]{return Txt(TEXT("내 상태: ")+PresenceName(GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->GetPresence()));}).ColorAndOpacity(FLinearColor::White)]
       .OnGetMenuContent_Lambda([this]()->TSharedRef<SWidget>
       {
@@ -195,7 +189,7 @@ void UProjectProject01SocialWidget::BuildPanel()
           for(const FString& V:TArray<FString>{TEXT("Online"),TEXT("Offline"),TEXT("Away"),TEXT("DoNotDisturb")})Choices->AddSlot().AutoHeight()[Btn(PresenceName(V),[this,V]{FSlateApplication::Get().DismissAllMenus();GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SetPresence(V);})];
           return Choices;
       })];
-    Panel->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.025f,.03f,.045f,1)).Padding(12)[Body]];
+    Panel->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(12)[Body]];
     RefreshView();S->Refresh();
 }
 void UProjectProject01SocialWidget::FriendMenu(const FString& Account,const FPointerEvent& Event)
@@ -267,7 +261,7 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
     Body->AddSlot().AutoHeight()[Label(Kind==TEXT("Report")||Kind==TEXT("AccountReport")?TEXT("플레이어 신고"):Kind==TEXT("Add")?TEXT("친구 요청 보내기"):Kind==TEXT("Edit")?TEXT("내 프로필 꾸미기"):Kind==TEXT("FriendRequest")?TEXT("친구 요청 수신"):TEXT("방 초대"))];
     if(Kind==TEXT("Add"))
     {
-        TSharedRef<SEditableTextBox> Input=SNew(SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Target)).HintText(Txt(TEXT("상대 계정 ID"))).ForegroundColor(FLinearColor::Black);
+        TSharedRef<SEditableTextBox> Input=SNew(SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Target)).HintText(Txt(TEXT("상대 계정 ID"))).ForegroundColor(ProjectDFSDUI::Text());
         Body->AddSlot().AutoHeight().Padding(0,8)[Input];Body->AddSlot().AutoHeight()[Btn(TEXT("친구 요청 보내기"),[this,Input]{GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->Act(TEXT("Request"),Input->GetText().ToString());})];
     }
     else if(Kind==TEXT("Report")||Kind==TEXT("AccountReport"))
@@ -276,10 +270,10 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
         if(Kind==TEXT("AccountReport"))
         {
             Body->AddSlot().AutoHeight().Padding(0,6)[Label(TEXT("상대 계정 아이디 (닉네임이 아닌 로그인 아이디)"))];
-            Body->AddSlot().AutoHeight()[SAssignNew(AccountInput,SEditableTextBox).Style(&SocialInputStyle()).ForegroundColor(FLinearColor::Black)];
+            Body->AddSlot().AutoHeight()[SAssignNew(AccountInput,SEditableTextBox).Style(&SocialInputStyle()).ForegroundColor(ProjectDFSDUI::Text())];
         }
         else Body->AddSlot().AutoHeight().Padding(0,8)[Label(TEXT("신고 대상: ")+Description)];
-        Body->AddSlot().AutoHeight()[SNew(SComboButton).ButtonContent()[SNew(STextBlock).Text_Lambda([this]
+        Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle()).ButtonContent()[SNew(STextBlock).Text_Lambda([this]
         {return Txt(ReportReason==TEXT("Abuse")?TEXT("신고 사유: 욕설·괴롭힘"):ReportReason==TEXT("Cheating")?TEXT("신고 사유: 부정행위 의심"):ReportReason==TEXT("Griefing")?TEXT("신고 사유: 게임 진행 방해"):ReportReason==TEXT("Other")?TEXT("신고 사유: 기타"):TEXT("신고 사유 선택 (필수)"));}).ColorAndOpacity(FLinearColor::White)]
           .OnGetMenuContent_Lambda([this]()->TSharedRef<SWidget>
           {
@@ -288,7 +282,7 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
                   L->AddSlot().AutoHeight()[Btn(E.Key,[this,V=E.Value]{ReportReason=V;FSlateApplication::Get().DismissAllMenus();})];return L;
           })];
         Body->AddSlot().AutoHeight().Padding(0,6)[Label(TEXT("상세 신고 사유 (필수, 1000자 이내)"))];
-        auto Input=SNew(SMultiLineEditableTextBox).Style(&SocialInputStyle()).AutoWrapText(true).ForegroundColor(FLinearColor::Black);
+        auto Input=SNew(SMultiLineEditableTextBox).Style(&SocialInputStyle()).AutoWrapText(true).ForegroundColor(ProjectDFSDUI::Text());
         Body->AddSlot().AutoHeight().Padding(0,8)[SNew(SBox).HeightOverride(150)[Input]];
         Body->AddSlot().AutoHeight()[Label(TEXT("신고 내용은 운영자만 확인합니다. 신고만으로 자동 제재하지 않습니다."))];
         Body->AddSlot().AutoHeight()[Btn(TEXT("신고 제출"),[this,Input,AccountInput]
@@ -303,13 +297,13 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
         const TSharedPtr<FJsonObject>* Me=nullptr;if(S->Snapshot)S->Snapshot->TryGetObjectField(TEXT("me"),Me);
         auto J=Me?*Me:TSharedPtr<FJsonObject>();DraftAccent=Str(J,TEXT("accent"));DraftTitle=Str(J,TEXT("title"));if(DraftAccent.IsEmpty())DraftAccent=TEXT("Slate");if(DraftTitle.IsEmpty())DraftTitle=TEXT("Rookie");
         Body->AddSlot().AutoHeight()[Label(TEXT("상태메시지는 모든 로그인 플레이어에게 공개됩니다. (160자)"))];
-        auto StatusInput=SNew(SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Str(J,TEXT("statusMessage")))).ForegroundColor(FLinearColor::Black);
-        auto BioInput=SNew(SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Str(J,TEXT("bio")))).HintText(Txt(TEXT("소개글 (500자)"))).ForegroundColor(FLinearColor::Black);
+        auto StatusInput=SNew(SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Str(J,TEXT("statusMessage")))).ForegroundColor(ProjectDFSDUI::Text());
+        auto BioInput=SNew(SEditableTextBox).Style(&SocialInputStyle()).Text(FText::FromString(Str(J,TEXT("bio")))).HintText(Txt(TEXT("소개글 (500자)"))).ForegroundColor(ProjectDFSDUI::Text());
         Body->AddSlot().AutoHeight().Padding(0,6)[StatusInput];Body->AddSlot().AutoHeight().Padding(0,6)[BioInput];
         Body->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor_Lambda([this]{return AccentColor(DraftAccent);}).Padding(8)[Label(TEXT("프로필 색상 미리보기"))]];
-        Body->AddSlot().AutoHeight()[SNew(SComboButton).ButtonContent()[SNew(STextBlock).Text_Lambda([this]{return Txt(TEXT("색상: ")+DraftAccent);})]
+        Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle()).ButtonContent()[SNew(STextBlock).Text_Lambda([this]{return Txt(TEXT("색상: ")+DraftAccent);})]
           .OnGetMenuContent_Lambda([this]()->TSharedRef<SWidget>{auto L=SNew(SVerticalBox);for(const FString& V:TArray<FString>{TEXT("Slate"),TEXT("Crimson"),TEXT("Ocean"),TEXT("Forest"),TEXT("Gold")})L->AddSlot().AutoHeight()[Btn(V,[this,V]{DraftAccent=V;FSlateApplication::Get().DismissAllMenus();})];return L;})];
-        Body->AddSlot().AutoHeight()[SNew(SComboButton).ButtonContent()[SNew(STextBlock).Text_Lambda([this]{return Txt(TEXT("칭호: ")+TitleName(DraftTitle));})]
+        Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle()).ButtonContent()[SNew(STextBlock).Text_Lambda([this]{return Txt(TEXT("칭호: ")+TitleName(DraftTitle));})]
           .OnGetMenuContent_Lambda([this]()->TSharedRef<SWidget>{auto L=SNew(SVerticalBox);for(const FString& V:TArray<FString>{TEXT("Rookie"),TEXT("Survivor"),TEXT("Mannequin"),TEXT("Explorer")})L->AddSlot().AutoHeight()[Btn(TitleName(V),[this,V]{DraftTitle=V;FSlateApplication::Get().DismissAllMenus();})];return L;})];
         Body->AddSlot().AutoHeight().Padding(0,6)[Btn(TEXT("프로필 저장"),[this,StatusInput,BioInput]{GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SaveProfile(StatusInput->GetText().ToString(),BioInput->GetText().ToString(),DraftAccent,DraftTitle);})];
         const FString OwnAccount=Str(J,TEXT("accountId"));
@@ -329,7 +323,7 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
     }
     Body->AddSlot().AutoHeight()[SNew(STextBlock).Text_Lambda([this]{return Txt(GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->Status);}).AutoWrapText(true).ColorAndOpacity(FLinearColor::White)];
     Body->AddSlot().AutoHeight()[Btn(TEXT("닫기"),[this]{CloseModal();RefreshView();})];
-    Modal->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.06f,.08f,.12f,1)).Padding(18)[Body]];
+    Modal->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(18)[Body]];
 }
 void UProjectProject01SocialWidget::RefreshView()
 {

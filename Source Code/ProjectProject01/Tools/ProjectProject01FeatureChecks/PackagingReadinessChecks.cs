@@ -43,6 +43,13 @@ internal static class PackagingReadinessChecks
         check(MainForm.MissingPrerequisiteInstallers(engine).Length==0,"필수 설치 파일이 모두 있을 때 사전 검사 허용");
         string config=File.ReadAllText(Path.Combine("Config","DefaultGame.ini"));
         check(config.Contains("IncludePrerequisites=True"),"에디터 패키징 설정에도 필수 런타임 포함");
+        check(File.Exists("ProjectDFSD.uproject")&&!File.Exists("ProjectProject01.uproject"),"프로젝트 파일 이름은 ProjectDFSD로 통일");
+        check(File.Exists("Source/ProjectDFSD.Target.cs")&&File.Exists("Source/ProjectDFSDEditor.Target.cs")&&File.Exists("Source/ProjectDFSDServer.Target.cs"),"게임/에디터/데디 대상 이름 변경 연결");
+        check(config.Contains("ProjectName=백화점 화재사건")&&config.Contains("CompanyName=Team DSFD"),"게임명과 팀 표시 설정");
+        check(config.Contains("+DirectoriesToAlwaysStageAsNonUFS=(Path=\"Branding\")")&&File.Exists("Content/Branding/UniversityLogo.png"),"런타임 인트로 PNG 패키징 포함");
+        check(config.Contains("+DirectoriesToAlwaysCook=(Path=\"/Game/MyProject/Title\")")&&
+            new[]{"M_TitleSurface","M_TitleMist","M_TitleDust"}.All(name=>File.Exists($"Content/MyProject/Title/{name}.uasset")),
+            "타이틀 전용 3D 표면·안개·먼지 머티리얼 쿠킹 포함");
         check(config.Contains("+DirectoriesToAlwaysCook=(Path=\"/Game/MyProject/Data\")"),"경로 기반 튜닝 데이터테이블 쿠킹 보장");
         check(!Regex.IsMatch(config,@"DirectoriesToAlwaysStage[^\r\n]*MyProject/Data"),"개발용 튜닝 CSV 별도 배포 없음");
         var maps=Regex.Matches(config,@"\+MapsToCook=\(FilePath=""([^""]+)""\)");

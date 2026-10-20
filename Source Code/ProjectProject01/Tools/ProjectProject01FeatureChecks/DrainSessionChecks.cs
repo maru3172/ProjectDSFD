@@ -11,7 +11,7 @@ internal static class DrainSessionChecks
     internal static async Task RunAsync(AuthDatabase database,HttpClient admin,GameServerDemandManager manager,DemandSessionChecks.FakeFactory factory,string output)
     {
         string fixture=Path.Combine(output,"DrainFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);
-        string exe=Path.Combine(fixture,"ProjectProject01Server.exe");await File.WriteAllTextAsync(exe,"fixture only; never executed");
+        string exe=Path.Combine(fixture,"ProjectDFSDServer.exe");await File.WriteAllTextAsync(exe,"fixture only; never executed");
         var clients=new List<HttpClient>();string[] roomIds=new string[2];
         async Task<JsonElement> State(int room=0)=>(await Read(clients[room*3].GetAsync("/api/rooms/current"))).GetProperty("room");
         async Task Queue(int room)

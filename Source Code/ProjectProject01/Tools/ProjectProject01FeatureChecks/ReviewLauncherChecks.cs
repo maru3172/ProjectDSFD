@@ -16,10 +16,10 @@ internal static class ReviewLauncherChecks
         check(urls=="http://127.0.0.1:5080;http://192.168.1.12:5080","F18 외부 PC/분리된 VPN의 저장 주소를 바인딩하지 않고 현재 LAN과 루프백 유지");
         check(MainForm.BuildBackendListenUrls(Array.Empty<string>(),"25.1.2.3",local.Contains).Contains("http://25.1.2.3:5080"),"F18 실제 로컬 인터페이스에 할당된 VPN 주소만 바인딩");
         check(MainForm.BuildBackendListenUrls(Array.Empty<string>(),"25.1.2.3",_=>false)=="http://127.0.0.1:5080","F18 인터페이스가 사라진 뒤에도 루프백으로 백엔드 시작 가능");
-        string executable=Path.Combine(root,"ProjectProject01.exe");
+        string executable=Path.Combine(root,"ProjectDFSD.exe");
         await File.WriteAllTextAsync(executable,"fixture only; never executed");
         check(LauncherForm.ResolveInstalledExecutable(root)==executable,"F09 매니페스트 없는 첫 배포의 실행 파일은 설치 루트 안으로 해석");
-        string relative="ProjectProject01/Binaries/Win64/ProjectProject01-Win64-Shipping.exe";
+        string relative="ProjectDFSD/Binaries/Win64/ProjectDFSD-Win64-Shipping.exe";
         string nested=Path.GetFullPath(Path.Combine(root,relative));Directory.CreateDirectory(Path.GetDirectoryName(nested)!);
         await File.WriteAllTextAsync(nested,"fixture only; never executed");
         var manifest=new ClientUpdateManifest("review","1",DateTime.UtcNow,relative,[]);

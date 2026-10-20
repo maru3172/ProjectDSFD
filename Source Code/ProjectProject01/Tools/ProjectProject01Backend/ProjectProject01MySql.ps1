@@ -417,7 +417,7 @@ function Test-ProjectBackupFile {
 
 function Assert-RecoveryServicesStopped {
     if([Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object Port -eq 5080){throw 'Stop the backend before restoring.'}
-    if(Get-Process -Name 'ProjectProject01Server*' -ErrorAction SilentlyContinue){throw 'Stop all dedicated game servers before restoring.'}
+    if(Get-Process -Name 'ProjectDFSDServer*','ProjectProject01Server*' -ErrorAction SilentlyContinue){throw 'Stop all dedicated game servers before restoring.'}
 }
 
 function Import-ProjectDatabase {

@@ -32,7 +32,7 @@ internal sealed record SmokeOptions(string BaseUrl, string ProjectRoot, TimeSpan
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory != null)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "ProjectProject01.uproject"))) return directory.FullName;
+            if (File.Exists(Path.Combine(directory.FullName, "ProjectDFSD.uproject"))) return directory.FullName;
             directory = directory.Parent;
         }
         return null;

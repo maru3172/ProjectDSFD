@@ -311,6 +311,8 @@ class PROJECTPROJECT01_API UProjectProject01GameInstance final : public UGameIns
 	GENERATED_BODY()
 
 public:
+	/** Process-local: returning to title does not replay startup logos. No account/save state is changed. */
+	bool ConsumeStartupIntro() { if (bStartupIntroShown) return false; bStartupIntroShown = true; return true; }
 	/** Server-only transient history; never replicated and never written to account/save data. */
 	TSharedPtr<FProjectMatchTimelineLog> ServerMatchTimeline;
     TSharedPtr<FMultiplayTestMatchCarryover> ServerMatchCarryover;
@@ -414,6 +416,7 @@ private:
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
 		ENetworkFailure::Type FailureType, const FString& ErrorString);
 	void BeginSafeLogoutAfterGameServerFailure();
+	bool bStartupIntroShown = false;
 	bool bPendingSinglePlayerLevelTransitionFade = false;
 	bool bSurveyLoginRequested = false;
 	FString ServerBootId;

@@ -65,9 +65,9 @@ internal sealed partial class LauncherForm
             using var picker=new FolderBrowserDialog {Description=existing?"기존 Windows 게임 폴더를 선택하세요.":"새 게임을 설치할 전용 폴더를 선택하세요.",UseDescriptionForTitle=true,InitialDirectory=installRoot};
             if(picker.ShowDialog(dialog)!=DialogResult.OK)return Task.CompletedTask;
             string selected=ValidateInstallRoot(picker.SelectedPath);
-            if(existing&&!File.Exists(Path.Combine(selected,"ProjectProject01.exe"))&&!File.Exists(Path.Combine(selected,LocalManifestFileName)))throw new InvalidOperationException("게임 실행 파일 또는 설치 목록이 없는 폴더입니다.");
+            if(existing&&!File.Exists(Path.Combine(selected,"ProjectDFSD.exe"))&&!File.Exists(Path.Combine(selected,"ProjectProject01.exe"))&&!File.Exists(Path.Combine(selected,LocalManifestFileName)))throw new InvalidOperationException("게임 실행 파일 또는 설치 목록이 없는 폴더입니다.");
             if(!existing&&Directory.Exists(selected)&&Directory.EnumerateFileSystemEntries(selected).Any())throw new InvalidOperationException("새 설치에는 비어 있는 전용 폴더를 선택하세요. 기존 게임은 '기존 설치 지정'을 사용하세요.");
-            EnsureGameIsNotRunning("ProjectProject01.exe");installRoot=selected;Directory.CreateDirectory(installRoot);location.Text=installRoot;SaveSettings();SetStatus("설치 위치를 저장했습니다.");return Task.CompletedTask;
+            EnsureGameIsNotRunning("ProjectDFSD.exe");installRoot=selected;Directory.CreateDirectory(installRoot);location.Text=installRoot;SaveSettings();SetStatus("설치 위치를 저장했습니다.");return Task.CompletedTask;
         }
         Add(layout,"새 설치 위치 선택",()=>Choose(false));Add(layout,"기존 게임 설치 위치 지정",()=>Choose(true));
         Add(layout,"선택한 위치에 설치 / 복구",()=>RunBusyAsync(()=>UpdateAsync(false)));
@@ -78,7 +78,7 @@ internal sealed partial class LauncherForm
         }));
         Add(layout,"캐시 삭제",()=>
         {
-            EnsureGameIsNotRunning("ProjectProject01.exe");
+            EnsureGameIsNotRunning("ProjectDFSD.exe");
             if(MessageBox.Show(dialog,"이어받기 다운로드 캐시와 게임 셰이더 캐시만 삭제합니다. 저장소·환경설정·설치된 게임 파일은 유지됩니다. 계속할까요?","캐시 삭제",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return Task.CompletedTask;
             using var guard=AcquireInstallLock();
             foreach(string relative in new[]{".update-cache","ProjectProject01/Saved/DerivedDataCache","ProjectProject01/Saved/Shaders"})

@@ -1,4 +1,5 @@
 #include "ProjectProject01VoiceSettingsWidget.h"
+#include "ProjectDFSDUITheme.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/VerticalBox.h"
@@ -25,16 +26,16 @@ bool UProjectProject01VoiceSettingsWidget::Initialize()
 	UScrollBox* Scroll=WidgetTree->ConstructWidget<UScrollBox>();ContentFrame->AddChild(Scroll);
 	UVerticalBox* Panel=WidgetTree->ConstructWidget<UVerticalBox>();Scroll->AddChild(Panel);
 	auto Label=[&](const FString& Text){UTextBlock* Item=WidgetTree->ConstructWidget<UTextBlock>();Item->SetText(FText::FromString(Text));Item->SetColorAndOpacity(FLinearColor::White);Item->SetAutoWrapText(true);FSlateFontInfo Font=Item->GetFont();Font.Size=18;Item->SetFont(Font);Panel->AddChild(Item);return Item;};
-	auto Button=[&](const FString& Text,FName Handler){UButton* Item=WidgetTree->ConstructWidget<UButton>();UTextBlock* Caption=WidgetTree->ConstructWidget<UTextBlock>();Caption->SetText(FText::FromString(Text));Caption->SetColorAndOpacity(FLinearColor::Black);FSlateFontInfo Font=Caption->GetFont();Font.Size=18;Caption->SetFont(Font);Item->AddChild(Caption);Panel->AddChild(Item);FScriptDelegate Delegate;Delegate.BindUFunction(this,Handler);Item->OnClicked.Add(Delegate);return Item;};
-	Label(TEXT("음성 채팅 설정"));Label(TEXT("입력 장치"));Inputs=WidgetTree->ConstructWidget<UComboBoxString>();Panel->AddChild(Inputs);
-	Label(TEXT("출력 장치"));Outputs=WidgetTree->ConstructWidget<UComboBoxString>();Panel->AddChild(Outputs);
+	auto Button=[&](const FString& Text,FName Handler){UButton* Item=WidgetTree->ConstructWidget<UButton>();UTextBlock* Caption=WidgetTree->ConstructWidget<UTextBlock>();Caption->SetText(FText::FromString(Text));Caption->SetColorAndOpacity(ProjectDFSDUI::Text());FSlateFontInfo Font=Caption->GetFont();Font.Size=18;Caption->SetFont(Font);Item->AddChild(Caption);Panel->AddChild(Item);FScriptDelegate Delegate;Delegate.BindUFunction(this,Handler);Item->OnClicked.Add(Delegate);return Item;};
+	Label(TEXT("음성 채팅 설정"));Label(TEXT("입력 장치"));Inputs=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();Panel->AddChild(Inputs);
+	Label(TEXT("출력 장치"));Outputs=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();Panel->AddChild(Outputs);
 	Button(TEXT("장치 새로고침"),TEXT("RefreshDevices"));
 	VolumeText=Label(TEXT("보이스 수신 음량 100%"));Volume=WidgetTree->ConstructWidget<USlider>();Volume->SetMinValue(0);Volume->SetMaxValue(1);Volume->SetStepSize(0.01f);Volume->SetValue(1);Panel->AddChild(Volume);
 	Volume->OnValueChanged.AddUniqueDynamic(this,&UProjectProject01VoiceSettingsWidget::VolumeChanged);
 	Inputs->OnSelectionChanged.AddUniqueDynamic(this,&UProjectProject01VoiceSettingsWidget::InputChanged);
 	Button(TEXT("마이크 테스트 시작 / 중지"),TEXT("ToggleMicrophoneTest"));Meter=WidgetTree->ConstructWidget<UProgressBar>();Panel->AddChild(Meter);
 	Label(TEXT("테스트는 입력 게이지만 표시합니다. 녹음 파일을 만들거나 서버에 보내지 않습니다."));
-	Label(TEXT("경기 중 동료 생존자 음성"));Participants=WidgetTree->ConstructWidget<UComboBoxString>();Panel->AddChild(Participants);
+	Label(TEXT("경기 중 동료 생존자 음성"));Participants=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();Panel->AddChild(Participants);
 	Participants->OnSelectionChanged.AddUniqueDynamic(this,&UProjectProject01VoiceSettingsWidget::ParticipantChanged);
 	MuteText=Label(TEXT("참가한 생존자 음성 채널에서만 사용 가능합니다."));ParticipantMuteButton=Button(TEXT("선택한 동료 음소거 / 해제"),TEXT("ToggleMute"));
 	ParticipantVolumeText=Label(TEXT("선택한 동료 음량 100%"));ParticipantVolume=WidgetTree->ConstructWidget<USlider>();ParticipantVolume->SetMinValue(0);ParticipantVolume->SetMaxValue(1);ParticipantVolume->SetStepSize(0.01f);ParticipantVolume->SetValue(1);Panel->AddChild(ParticipantVolume);
@@ -44,6 +45,7 @@ bool UProjectProject01VoiceSettingsWidget::Initialize()
 	Status=Label(TEXT("장치 선택과 전체 수신 음량은 적용 버튼으로 저장합니다."));
 	Button(TEXT("적용"),TEXT("Apply"));Button(TEXT("음성 설정 초기화"),TEXT("Reset"));Button(TEXT("돌아가기"),TEXT("Back"));
 	RefreshSelectedParticipant();
+	ProjectDFSDUI::ApplyTree(WidgetTree);
 	return true;
 }
 void UProjectProject01VoiceSettingsWidget::NativeConstruct()

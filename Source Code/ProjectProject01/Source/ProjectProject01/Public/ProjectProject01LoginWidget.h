@@ -224,6 +224,7 @@ class PROJECTPROJECT01_API UProjectProject01TitleWidget final : public UUserWidg
 {
 	GENERATED_BODY()
 	friend class FProjectCheckpointSlotPreviewWidgetTest;
+	friend class FProjectDFSDTitleSceneRenderTest;
 
 protected:
 	virtual bool Initialize() override;

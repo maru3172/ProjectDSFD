@@ -20,7 +20,7 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
             {
                 string root=Path.GetFullPath(Path.Combine(environment.ContentRootPath,"..",".."));
                 var roots=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                if(File.Exists(Path.Combine(root,"ProjectProject01.uproject")))roots.Add(Path.Combine(root,"Saved","MatchResultOutbox"));
+                if(File.Exists(Path.Combine(root,"ProjectDFSD.uproject")))roots.Add(Path.Combine(root,"Saved","MatchResultOutbox"));
                 string? configured=manager.ResultOutboxDirectory;
                 if(configured is not null)roots.Add(configured);
                 string[] addresses=server.Features.Get<IServerAddressesFeature>()?.Addresses.ToArray()??[];

@@ -3,9 +3,9 @@
 using UnrealBuildTool;
 using System.Collections.Generic;
 
-public class ProjectProject01EditorTarget : TargetRules
+public class ProjectDFSDEditorTarget : TargetRules
 {
-	public ProjectProject01EditorTarget( TargetInfo Target) : base(Target)
+	public ProjectDFSDEditorTarget( TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V7;

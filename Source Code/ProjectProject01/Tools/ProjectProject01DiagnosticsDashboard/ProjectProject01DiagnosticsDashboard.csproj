@@ -7,5 +7,6 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ProjectDFSDDiagnosticsDashboard</AssemblyName>
   </PropertyGroup>
 </Project>

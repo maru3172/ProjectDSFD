@@ -70,7 +70,7 @@ internal sealed class SurveyAdministrationForm : Form
         this.administratorKey = administratorKey;
         this.log = log;
         baseUrl = new TextBox { Dock = DockStyle.Fill, Text = initialBaseUrl };
-        Text = "ProjectProject01 피드백/설문조사 관리";
+        Text = "ProjectDFSD 피드백/설문조사 관리";
         Width = 980;
         Height = 760;
         MinimumSize = new Size(850, 650);

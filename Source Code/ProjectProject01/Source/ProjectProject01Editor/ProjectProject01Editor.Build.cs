@@ -11,7 +11,7 @@ public class ProjectProject01Editor : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "ProjectProject01" });
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"AssetTools", "ContentBrowser", "EditorFramework", "LevelEditor", "MaterialEditor", "NavigationSystem", "Slate", "SlateCore", "ToolMenus", "UnrealEd"
+			"AssetTools", "ContentBrowser", "EditorFramework", "LevelEditor", "MaterialEditor", "NavigationSystem", "Slate", "SlateCore", "ToolMenus", "UMG", "UnrealEd"
 		});
 	}
 }

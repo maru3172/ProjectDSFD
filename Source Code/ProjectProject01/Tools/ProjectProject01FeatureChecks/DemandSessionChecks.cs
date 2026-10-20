@@ -30,7 +30,7 @@ internal static class DemandSessionChecks
     {
         // Actual HTTP and the parent's validated isolated MySQL. Never execute the fixture EXE.
         string fixture=Path.Combine(output,"DemandFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);
-        string executable=Path.Combine(fixture,"ProjectProject01Server.exe");await File.WriteAllTextAsync(executable,"test fixture: FakeFactory only");
+        string executable=Path.Combine(fixture,"ProjectDFSDServer.exe");await File.WriteAllTextAsync(executable,"test fixture: FakeFactory only");
         var clients=new List<HttpClient>();var rooms=new string[3];
         using var server=new HttpClient {BaseAddress=admin.BaseAddress};server.DefaultRequestHeaders.Add("X-ProjectProject01-Server-Secret",new string('s',48));
         async Task<JsonElement> State(int room=0)=>(await Read(clients[room*3].GetAsync("/api/rooms/current"))).GetProperty("room");

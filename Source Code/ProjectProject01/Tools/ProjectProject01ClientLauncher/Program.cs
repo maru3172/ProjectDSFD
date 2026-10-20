@@ -32,7 +32,7 @@ internal static class Program
         {
             MessageBox.Show(
                 "이 설치 폴더의 업데이트 런처가 이미 실행 중입니다.",
-                "ProjectProject01 업데이트 런처",
+                "백화점 화재사건 업데이트 런처",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
@@ -87,7 +87,7 @@ internal sealed partial class LauncherForm : Form
     public LauncherForm(string? installationRoot=null)
     {
         installRoot=Path.GetFullPath(installationRoot??AppContext.BaseDirectory);
-        Text = "ProjectProject01 업데이트 런처";
+        Text = "백화점 화재사건 업데이트 런처";
         Width = 760;
         Height = 500;
         MinimumSize = new Size(640, 420);
@@ -141,7 +141,7 @@ internal sealed partial class LauncherForm : Form
         {
             AutoSize = true,
             Font = new Font(Font.FontFamily, 18, FontStyle.Bold),
-            Text = "ProjectProject01"
+            Text = "백화점 화재사건"
         };
         var heading=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=2};
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -617,7 +617,7 @@ internal sealed partial class LauncherForm : Form
     private void EnsureGameIsNotRunning(string executablePath)
     {
         string processName = Path.GetFileNameWithoutExtension(executablePath);
-        foreach(string name in new[]{processName,"ProjectProject01-Win64-Shipping"}.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach(string name in new[]{processName,"ProjectDFSD","ProjectDFSD-Win64-Shipping","ProjectProject01","ProjectProject01-Win64-Shipping"}.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var processes=Process.GetProcessesByName(name);
             try{if(processes.Length>0)throw new InvalidOperationException("게임이 실행 중입니다. 게임을 완전히 종료한 뒤 업데이트하세요.");}
@@ -659,11 +659,12 @@ internal sealed partial class LauncherForm : Form
                         File.ReadAllText(ResolveInsideRoot(installRoot, LocalManifestFileName)), JsonOptions)
                     : null;
                 resolvedExecutable = local?.ExecutablePath ?? Directory
-                    .EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.TopDirectoryOnly)
+                    .EnumerateFiles(installRoot, "ProjectDFSD.exe", SearchOption.TopDirectoryOnly)
+                    .Concat(Directory.EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.TopDirectoryOnly))
                     .Select(path=>Path.GetRelativePath(installRoot,path)).FirstOrDefault();
             }
             if (string.IsNullOrWhiteSpace(resolvedExecutable))
-                throw new FileNotFoundException("ProjectProject01.exe를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
+                throw new FileNotFoundException("ProjectDFSD.exe를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
             string gamePath = ResolveInsideRoot(installRoot, NormalizeRelativePath(resolvedExecutable));
             if (!File.Exists(gamePath)) throw new FileNotFoundException("게임 실행 파일이 없습니다.", gamePath);
             return gamePath;

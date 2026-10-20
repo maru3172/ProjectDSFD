@@ -252,7 +252,7 @@ internal sealed class DashboardForm : Form
 
     public DashboardForm()
     {
-        Text = "ProjectProject01 Diagnostics Dashboard";
+        Text = "ProjectDFSD Diagnostics Dashboard";
         Width = 1380;
         Height = 860;
         StartPosition = FormStartPosition.CenterScreen;
@@ -883,10 +883,10 @@ internal sealed class DashboardForm : Form
         var summary = SelectedRun();
         if (summary is null) return;
         var projectRoot = FindProjectRoot(rootPath.Text);
-        var projectFile = projectRoot is null ? null : Path.Combine(projectRoot, "ProjectProject01.uproject");
+        var projectFile = projectRoot is null ? null : Path.Combine(projectRoot, "ProjectDFSD.uproject");
         if (projectFile is null || !File.Exists(projectFile))
         {
-            MessageBox.Show(this, "ProjectProject01.uproject could not be found above the Diagnostics directory.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "ProjectDFSD.uproject could not be found above the Diagnostics directory.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         button.Enabled = false;
@@ -896,7 +896,7 @@ internal sealed class DashboardForm : Form
             Directory.CreateDirectory(verificationDirectory);
             const string buildTool = @"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat";
             const string editorCmd = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe";
-            var build = await RunProcessAsync(buildTool, ["ProjectProject01Editor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReload"],windowLifetime.Token);
+            var build = await RunProcessAsync(buildTool, ["ProjectDFSDEditor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReload"],windowLifetime.Token);
             File.WriteAllText(Path.Combine(verificationDirectory, "Build.log"), build.Output, Encoding.UTF8);
             ProcessResult automation = new(-1, "Automation was not started because the build failed.");
             var automationReport = Path.Combine(verificationDirectory, "AutomationReport");
@@ -1311,7 +1311,7 @@ internal sealed class DashboardForm : Form
         var directory = new DirectoryInfo(diagnosticsPath);
         while (directory is not null)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "ProjectProject01.uproject"))) return directory.FullName;
+            if (File.Exists(Path.Combine(directory.FullName, "ProjectDFSD.uproject"))) return directory.FullName;
             directory = directory.Parent;
         }
         return null;

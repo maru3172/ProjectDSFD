@@ -109,7 +109,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
             if(!security.IsGameServerSecurityConfigured)throw new InvalidOperationException("게임 서버 보안 설정이 없습니다.");
             if(value.MaximumConcurrent is <1 or >100||value.FirstPort<1024||value.FirstPort+value.MaximumConcurrent-1>65535)throw new InvalidOperationException("동시 경기 한도와 포트 범위를 확인하세요.");
             string path=Path.GetFullPath(value.Executable);
-            if(!File.Exists(path)||!Path.GetFileName(path).Equals("ProjectProject01Server.exe",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("패키징된 ProjectProject01Server.exe를 지정하세요.");
+            if(!File.Exists(path)||!(Path.GetFileName(path).Equals("ProjectDFSDServer.exe",StringComparison.OrdinalIgnoreCase)||Path.GetFileName(path).Equals("ProjectProject01Server.exe",StringComparison.OrdinalIgnoreCase)))throw new InvalidOperationException("패키징된 ProjectDFSDServer.exe를 지정하세요.");
             if(value.Arguments.Contains("ProjectProject01Managed",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("ProjectProject01ResultOutbox",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("-abslog",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("세션 식별자와 종료/로그/결과 경로는 자동 지정됩니다.");
             value=value with {Executable=path,ProjectRoot=Path.GetFullPath(value.ProjectRoot)};
         }

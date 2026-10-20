@@ -19,7 +19,7 @@ internal static class FeatureChecks
             if(args.Length==2 && args[0]=="--prepare-voice-runtime")
             {
                 string backend=Path.Combine(Environment.CurrentDirectory,"Tools","ProjectProject01Backend");
-                if(!File.Exists(Path.Combine(Environment.CurrentDirectory,"ProjectProject01.uproject")) ||
+                if(!File.Exists(Path.Combine(Environment.CurrentDirectory,"ProjectDFSD.uproject")) ||
                     !File.Exists(Path.Combine(backend,"ProjectProject01Backend.csproj"))) return 25;
                 var bundle=global::EosRuntimeBundle.Prepare(backend,args[1],
                     Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_SDK_PATH"),

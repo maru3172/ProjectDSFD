@@ -131,7 +131,7 @@ internal sealed class ServerAdministrationForm : Form
     {
         this.projectRoot = projectRoot;
         this.mainLog = mainLog;
-        Text = "ProjectProject01 서버 운영";
+        Text = "ProjectDFSD 서버 운영";
         Width = 840;
         Height = 850;
         MinimumSize = new Size(740, 590);

@@ -34,7 +34,7 @@ internal static class MatchmakingChecks
             string invite=(await Read(clients[b].Client.GetAsync("/api/social"))).GetProperty("invites")[0].GetProperty("inviteId").GetString()!;
             await Read(clients[b].Client.PostAsJsonAsync("/api/social/action",new{operation="AcceptInvite",target=invite}));
         }
-        string fixture=Path.Combine(output,"MatchmakingFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);string executable=Path.Combine(fixture,"ProjectProject01Server.exe");await File.WriteAllTextAsync(executable,"FakeFactory only; never executed");
+        string fixture=Path.Combine(output,"MatchmakingFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);string executable=Path.Combine(fixture,"ProjectDFSDServer.exe");await File.WriteAllTextAsync(executable,"FakeFactory only; never executed");
         int oldMaximum;
         await using(var c=await db.OpenConnectionAsync(default))oldMaximum=Convert.ToInt32((await CommunityEndpoints.Rows(c,null,"SELECT max_rooms FROM lobby_state WHERE id=1",default))[0]["max_rooms"]);
         using var anon=new HttpClient{BaseAddress=admin.BaseAddress};

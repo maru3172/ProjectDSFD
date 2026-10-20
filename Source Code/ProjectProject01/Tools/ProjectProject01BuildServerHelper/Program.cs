@@ -42,12 +42,12 @@ internal sealed partial class MainForm : Form
 
     public MainForm()
     {
-        Text = "ProjectProject01 Build + Server Helper";
+        Text = "ProjectDFSD Build + Server Helper";
         Width = 1160;
         Height = 760;
         MinimumSize = new Size(900, 620);
         engineRoot.Text = FindPreferredEngineRoot();
-        projectFile.Text = FindProjectFile() ?? @"C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\ProjectProject01.uproject";
+        projectFile.Text = FindProjectFile() ?? @"C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\ProjectDFSD.uproject";
         archiveRoot.Text = Path.Combine(Path.GetDirectoryName(projectFile.Text) ?? Environment.CurrentDirectory, "Builds");
         LoadHelperSettings();
         BuildUi();
@@ -308,7 +308,7 @@ internal sealed partial class MainForm : Form
     {
         string clientArchive = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string? gameExecutable = Directory.Exists(clientArchive)
-            ? EnumerateSafePackageFiles(clientArchive).Where(path=>Path.GetFileName(path).Equals("ProjectProject01.exe",StringComparison.OrdinalIgnoreCase))
+            ? EnumerateSafePackageFiles(clientArchive).Where(path=>Path.GetFileName(path).Equals("ProjectDFSD.exe",StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault()
             : null;
@@ -344,18 +344,18 @@ internal sealed partial class MainForm : Form
             return;
         }
 
-        string launcherSource = Path.Combine(launcherPublish, "ProjectProject01ClientLauncher.exe");
+        string launcherSource = Path.Combine(launcherPublish, "ProjectDFSDClientLauncher.exe");
         if (!File.Exists(launcherSource))
         {
             Append("[실패] 게시된 런처 실행 파일을 찾지 못했습니다.");
             SetStatus("업데이트 런처 준비 실패");
             return;
         }
-        string launcherTarget = Path.Combine(publishedRoot, "ProjectProject01ClientLauncher.exe");
+        string launcherTarget = Path.Combine(publishedRoot, "ProjectDFSDClientLauncher.exe");
         bool launcherUpdated = await TryUpdatePublishedLauncherAsync(launcherSource, launcherTarget);
         await File.WriteAllTextAsync(
             Path.Combine(publishedRoot, "업데이트_실행방법.txt"),
-            "ProjectProject01ClientLauncher.exe를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
+            "ProjectDFSDClientLauncher.exe를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
             "'업데이트 및 실행'을 누르세요.\r\n게임 실행 파일을 직접 실행하면 자동 업데이트를 확인하지 않습니다.\r\n" +
             "게임 실행에는 Unreal Engine 설치가 필요하지 않습니다. Windows 폴더 전체를 유지하세요.\r\n" +
             "새 PC에서 VC++ 런타임 오류가 나면 Engine\\Extras\\Redist\\en-us\\vc_redist.x64.exe를 설치한 뒤 다시 실행하세요.\r\n" +
@@ -543,6 +543,7 @@ internal sealed partial class MainForm : Form
             relative.StartsWith(".update-temp/", StringComparison.OrdinalIgnoreCase) ||
             relative.StartsWith(".update-backup/", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith("ProjectProject01ClientLauncher", StringComparison.OrdinalIgnoreCase) ||
+            fileName.StartsWith("ProjectDFSDClientLauncher", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith("Manifest_DebugFiles_", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".pdb", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".map", StringComparison.OrdinalIgnoreCase);
@@ -771,7 +772,7 @@ internal sealed partial class MainForm : Form
             return;
         }
         string? serverExecutable = Directory.Exists(archiveRoot.Text.Trim())
-            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories)
+            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectDFSDServer.exe", SearchOption.AllDirectories)
                 .FirstOrDefault()
             : null;
         var script = new StringBuilder("$ErrorActionPreference='Stop';");
@@ -894,8 +895,8 @@ internal sealed partial class MainForm : Form
             return;
         }
         string[] candidates = Directory.Exists(archiveRoot.Text.Trim())
-            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectProject01Server.exe", SearchOption.AllDirectories) : [];
-        if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectProject01Server.exe가 없습니다."); return; }
+            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectDFSDServer.exe", SearchOption.AllDirectories) : [];
+        if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectDFSDServer.exe가 없습니다."); return; }
         if (!ValidatePackagedNetworkCompatibility()) return;
         string arguments = serverArgs.Text.Trim();
         int requestedCount=(int)serverCount.Value;
@@ -986,7 +987,7 @@ internal sealed partial class MainForm : Form
         string serverRoot = Path.GetFullPath(Path.Combine(archiveRoot.Text.Trim(), "Server"));
         string rootWithSeparator = Path.TrimEndingDirectorySeparator(serverRoot) + Path.DirectorySeparatorChar;
         var result = new List<Process>();
-        foreach (Process process in Process.GetProcessesByName("ProjectProject01Server"))
+        foreach (Process process in Process.GetProcessesByName("ProjectDFSDServer"))
         {
             try
             {
@@ -1012,12 +1013,12 @@ internal sealed partial class MainForm : Form
         string clientRoot = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string serverRoot = Path.Combine(archiveRoot.Text.Trim(), "Server");
         string? clientBinary = Directory.Exists(clientRoot)
-            ? Directory.EnumerateFiles(clientRoot, "ProjectProject01.exe", SearchOption.AllDirectories)
+            ? Directory.EnumerateFiles(clientRoot, "ProjectDFSD.exe", SearchOption.AllDirectories)
                 .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar))
                 .FirstOrDefault()
             : null;
         string? serverBinary = Directory.Exists(serverRoot)
-            ? Directory.EnumerateFiles(serverRoot, "ProjectProject01Server.exe", SearchOption.AllDirectories)
+            ? Directory.EnumerateFiles(serverRoot, "ProjectDFSDServer.exe", SearchOption.AllDirectories)
                 .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar))
                 .FirstOrDefault()
             : null;
@@ -1163,7 +1164,12 @@ internal sealed partial class MainForm : Form
             BuildServerHelperSettings? settings = JsonSerializer.Deserialize<BuildServerHelperSettings>(
                 File.ReadAllText(helperSettingsPath));
             if (!string.IsNullOrWhiteSpace(settings?.EngineRoot)) engineRoot.Text = settings.EngineRoot;
-            if (!string.IsNullOrWhiteSpace(settings?.ProjectFile)) projectFile.Text = settings.ProjectFile;
+            if (!string.IsNullOrWhiteSpace(settings?.ProjectFile))
+            {
+                string configured = settings.ProjectFile;
+                string renamed = Path.Combine(Path.GetDirectoryName(configured) ?? "", "ProjectDFSD.uproject");
+                projectFile.Text = !File.Exists(configured) && File.Exists(renamed) ? renamed : configured;
+            }
             if (!string.IsNullOrWhiteSpace(settings?.ArchiveRoot)) archiveRoot.Text = settings.ArchiveRoot;
             if (!string.IsNullOrWhiteSpace(settings?.ServerArguments)) serverArgs.Text = settings.ServerArguments;
             serverCount.Value=Math.Clamp(settings?.ServerCount??1,1,100);
@@ -1218,7 +1224,7 @@ internal sealed partial class MainForm : Form
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory != null)
         {
-            string candidate = Path.Combine(directory.FullName, "ProjectProject01.uproject");
+            string candidate = Path.Combine(directory.FullName, "ProjectDFSD.uproject");
             if (File.Exists(candidate)) return candidate;
             directory = directory.Parent;
         }

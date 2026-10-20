@@ -5,7 +5,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>ProjectProject01BuildServerHelper</AssemblyName>
+    <AssemblyName>ProjectDFSDBuildServerHelper</AssemblyName>
+    <Product>백화점 화재사건 서버 도우미</Product>
     <DefineConstants>$(DefineConstants);PROJECT_SERVER_HELPER</DefineConstants>
   </PropertyGroup>
   <ItemGroup>

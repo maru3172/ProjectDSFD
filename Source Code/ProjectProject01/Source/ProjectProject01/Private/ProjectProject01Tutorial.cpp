@@ -1,4 +1,5 @@
 #include "ProjectProject01Tutorial.h"
+#include "ProjectDFSDUITheme.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LoginWidget.h"
 #include "PlayerCharacter.h"
@@ -57,8 +58,8 @@ namespace ProjectTutorial
 	UButton* Button(UWidgetTree* Tree,UVerticalBox* Root,const TCHAR* Caption)
 	{
 		auto* B=Tree->ConstructWidget<UButton>(); auto* T=Tree->ConstructWidget<UTextBlock>();
-		T->SetText(Text(Caption)); T->SetColorAndOpacity(FLinearColor::Black);
-		auto Font=T->GetFont(); Font.Size=20; T->SetFont(Font); B->AddChild(T);
+		T->SetText(Text(Caption)); T->SetColorAndOpacity(ProjectDFSDUI::Text());
+		auto Font=T->GetFont(); Font.Size=20; T->SetFont(Font); B->AddChild(T);ProjectDFSDUI::Apply(B);
 		Root->AddChildToVerticalBox(B)->SetPadding(FMargin(8)); return B;
 	}
 }
@@ -443,7 +444,7 @@ bool UProjectProject01TutorialWidget::Initialize()
 	ScreenButton=WidgetTree->ConstructWidget<UButton>();
 	ScreenButton->SetBackgroundColor(FLinearColor(0,0,0,0.55f));
 	auto* BackSlot=Canvas->AddChildToCanvas(ScreenButton); BackSlot->SetAnchors(FAnchors(0,0,1,1)); BackSlot->SetOffsets(FMargin(0));
-	Panel=WidgetTree->ConstructWidget<UBorder>(); Panel->SetPadding(FMargin(14)); Panel->SetBrushColor(FLinearColor(0.025f,0.025f,0.03f,0.94f));
+	Panel=WidgetTree->ConstructWidget<UBorder>(); Panel->SetPadding(FMargin(24)); Panel->SetBrushColor(ProjectDFSDUI::Panel().CopyWithNewOpacity(.96f));
 	auto* CanvasSlot=Canvas->AddChildToCanvas(Panel); CanvasSlot->SetAnchors(FAnchors(0.5f,0.5f)); CanvasSlot->SetAlignment(FVector2D(0.5f,0.5f)); CanvasSlot->SetAutoSize(true);
 	auto* Bounds=WidgetTree->ConstructWidget<USizeBox>(); Bounds->SetWidthOverride(620); Bounds->SetMaxDesiredHeight(620); Panel->AddChild(Bounds);
 	auto* Scroll=WidgetTree->ConstructWidget<UScrollBox>(); Bounds->AddChild(Scroll);

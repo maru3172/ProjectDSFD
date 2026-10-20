@@ -2,7 +2,7 @@
 	"FileVersion": 3,
 	"EngineAssociation": "5.8",
 	"Category": "",
-	"Description": "",
+	"Description": "백화점 화재사건 — Team DSFD",
 	"Modules": [
 		{
 			"Name": "ProjectProject01",

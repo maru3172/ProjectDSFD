@@ -3,9 +3,9 @@
 using UnrealBuildTool;
 using System.Collections.Generic;
 
-public class ProjectProject01Target : TargetRules
+public class ProjectDFSDTarget : TargetRules
 {
-	public ProjectProject01Target(TargetInfo Target) : base(Target)
+	public ProjectDFSDTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
