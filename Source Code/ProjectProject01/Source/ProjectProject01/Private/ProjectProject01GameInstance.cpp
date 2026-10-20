@@ -1269,7 +1269,8 @@ bool UProjectProject01GameInstance::TickEntireScreenFade(const float DeltaSecond
 	}
 	EntireScreenFadeElapsedSeconds = FMath::Min(
 		EntireScreenFadeDurationSeconds,
-		EntireScreenFadeElapsedSeconds + FMath::Max(0.0f, DeltaSeconds));
+		// A loading hitch must not consume the whole visible fade in a single frame.
+		EntireScreenFadeElapsedSeconds + FMath::Clamp(DeltaSeconds, 0.0f, 0.05f));
 	const float Progress = EntireScreenFadeDurationSeconds > UE_KINDA_SMALL_NUMBER
 		? EntireScreenFadeElapsedSeconds / EntireScreenFadeDurationSeconds : 1.0f;
 	const float SmoothedProgress = FMath::InterpEaseInOut(0.0f, 1.0f,

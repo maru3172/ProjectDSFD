@@ -203,6 +203,14 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     TestTrue(TEXT("Leaderboard opens from the matching-mode selection page"),
         Lobby->OpenLeaderboardTestButton->GetParent()==Lobby->ModesLogoutButton->GetParent());
     auto* State=Instance->GetSubsystem<UProjectProject01LobbySubsystem>();
+    Lobby->HandleTutorialClicked();
+    TestEqual(TEXT("Tutorial role chooser is separate from both matching flows"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),6);
+    TestTrue(TEXT("Opening tutorial selection does not join a room or queue"),!State->HasCurrentRoom() && !State->IsMatchmaking());
+    Render(Lobby,TEXT("TutorialRoles"));
+    Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Periodic lobby refresh preserves tutorial role selection"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),6);
+    Lobby->HandleLobbyModesClicked();
+    TestEqual(TEXT("Tutorial back returns to matching choices"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),4);
     State->CurrentRoom.RoomId=TEXT("fixture-party");State->CurrentRoom.bRandomParty=true;State->CurrentRoom.bIsHost=true;
     FProjectProject01RoomMember P;P.UserId=TEXT("1");P.DisplayName=TEXT("개인 참가자");P.bIsHost=true;State->CurrentRoom.Members={P};
     Lobby->RefreshCurrentRoomView();Render(Lobby,TEXT("RandomSolo"));

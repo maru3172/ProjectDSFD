@@ -11,6 +11,7 @@
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "ProjectProject01Tutorial.h"
 #include "ProjectPracticeGameModeBase.h"
 
 #include "GameFramework/SpringArmComponent.h"
@@ -657,7 +658,7 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 	bShouldShowSurvivorGuide = IsValid(Auth) && Auth->IsSignedIn() &&
 		!Auth->HasSeenSurvivorGuideForAccount();
 #endif
-	if (bIsMultiplayer && bShouldShowSurvivorGuide && !bRoleGuideShownForThisPawn)
+	if (bIsMultiplayer && bShouldShowSurvivorGuide && !bRoleGuideShownForThisPawn && !AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld()))
 	{
 		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
 			PlayerController, UProjectProject01GameGuideWidget::StaticClass());

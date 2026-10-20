@@ -48,12 +48,14 @@ struct FMultiplayTestMatchCarryover
  * 기존 AProjectPracticeGameModeBase를 상속하지 않으므로 조력자를 자동 생성하지 않습니다.
  */
 UCLASS(Config=Game)
-class PROJECTPROJECT01_API AMultiplayTestGameMode final : public AGameModeBase
+class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 {
 	GENERATED_BODY()
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
+	friend class FProjectSpectatorFadeTest;
+	friend class AProjectProject01TutorialGameMode;
 
 public:
 	const FString& GetServerMatchId() const { return AuthoritativeMatchId; }
@@ -91,6 +93,7 @@ public:
 	bool IsAuthoritativeMatchInProgress() const { return AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress; }
 	/** seamless travel 직전 각 컨트롤러의 다음 맵 스폰 여부와 암전을 준비합니다. */
 	void PrepareLevelTransitionTravel(float FadeSeconds = 0.6f);
+	bool AreLevelTransitionClientsBlack() const;
 	/** Old-world travel rejection/timeout: undo only transition-owned state. */
 	void CancelLevelTransitionTravel();
 
@@ -191,7 +194,7 @@ private:
 	void TryStartAuthoritativeMatch();
 	void SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase NewPhase);
 	void CheckForMatchCompletion();
-	void FinishAuthoritativeMatch(const FString& Reason);
+	virtual void FinishAuthoritativeMatch(const FString& Reason);
 	void SubmitAuthoritativeResults();
 	void HandleResultSubmissionComplete(
 		TWeakObjectPtr<class AMultiplayTestPlayerController> Controller,
@@ -322,6 +325,8 @@ private:
 	bool bMatchEndedByForfeit = false;
 	bool bSurvivorVictoryByMannequinForfeit = false;
 	bool bGlobalMannequinCatchDamageEnabled = true;
+	/** This GameMode owns departure. Only the NEW map's GameMode may finalize arrival. */
+	bool bLevelTransitionDeparting = false;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Match", meta = (ClampMin = "1", UIMin = "1"))
 	int32 ExpectedMatchPlayers = 3;

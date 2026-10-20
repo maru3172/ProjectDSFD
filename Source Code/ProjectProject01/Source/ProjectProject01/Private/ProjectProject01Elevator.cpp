@@ -111,6 +111,8 @@ float AProjectProject01Elevator::MotorGainForPhase() const
 void AProjectProject01Elevator::SetPhase(EProjectElevatorPhase NewPhase)
 {
 	if (!HasAuthority()) return;
+	if (NewPhase==EProjectElevatorPhase::WaitingForArrival || NewPhase==EProjectElevatorPhase::ArrivalRide)
+		State.bArrivalTrip=true;
 	State.DoorStart=DoorFraction(); // Reopening during closing must not snap the doors shut first.
 	State.Phase = NewPhase; State.StartedAt = ServerNow(); ForceNetUpdate(); OnRep_State();
 	UE_LOG(LogTemp, Log, TEXT("[Elevator] %s phase=%s time=%.2f"), *GetPathName(),
@@ -120,10 +122,11 @@ float AProjectProject01Elevator::DoorFraction() const
 {
 	if (State.Phase==EProjectElevatorPhase::Open) return 1;
 	if (State.Phase==EProjectElevatorPhase::Disabled) return State.DoorStart;
-	const float Duration=State.Phase==EProjectElevatorPhase::Closing ? CloseDoorSeconds : DoorSeconds;
+	const bool bClosing=State.Phase==EProjectElevatorPhase::Closing || State.Phase==EProjectElevatorPhase::ArrivalClosing;
+	const float Duration=bClosing ? CloseDoorSeconds : DoorSeconds;
 	const float T=FMath::SmoothStep(0.0f,1.0f,FMath::Clamp(PhaseElapsed()/FMath::Max(0.1f,Duration),0.0f,1.0f));
 	if (State.Phase==EProjectElevatorPhase::Opening) return FMath::Lerp(State.DoorStart,1.0f,T);
-	if (State.Phase==EProjectElevatorPhase::Closing) return FMath::Lerp(State.DoorStart,0.0f,T);
+	if (bClosing) return FMath::Lerp(State.DoorStart,0.0f,T);
 	return 0;
 }
 void AProjectProject01Elevator::OnRep_State()
@@ -136,7 +139,7 @@ void AProjectProject01Elevator::OnRep_State()
 	{
 		LastMotorGain=MotorGainForPhase();
 		ElevatorAudio->SetMotor(bMotorPlaying,LastMotorGain);
-		if ((P==EProjectElevatorPhase::Opening || P==EProjectElevatorPhase::Closing) && PhaseElapsed()<0.5f)
+		if ((P==EProjectElevatorPhase::Opening || P==EProjectElevatorPhase::Closing || P==EProjectElevatorPhase::ArrivalClosing) && PhaseElapsed()<0.5f)
 		{
 			ElevatorAudio->Ding(); LastDingAt = GetWorld()->GetTimeSeconds();
 		}
@@ -174,6 +177,7 @@ void AProjectProject01Elevator::AdvanceServerState()
 		return;
 	}
 	const bool bAllowed = Mode->CanUseEmergencyElevator() && !bArrivalOnly;
+	const bool bArrivalOccupied=State.bArrivalTrip && HasArrivalOccupants();
 	switch (P)
 	{
 	case EProjectElevatorPhase::Locked: if (bAllowed && !DestinationArrivalId.IsNone() && IsDestinationAvailable()) SetPhase(EProjectElevatorPhase::Ready); break;
@@ -181,6 +185,14 @@ void AProjectProject01Elevator::AdvanceServerState()
 	case EProjectElevatorPhase::CallDelay: if (PhaseElapsed()>=FMath::Clamp(CallDelaySeconds,0.0f,300.0f)) SetPhase(EProjectElevatorPhase::Rising); break;
 	case EProjectElevatorPhase::Rising: if (PhaseElapsed()>=FMath::Clamp(RiseSeconds,0.1f,60.0f)) SetPhase(EProjectElevatorPhase::Opening); break;
 	case EProjectElevatorPhase::Opening: if (PhaseElapsed()>=FMath::Clamp(DoorSeconds,0.1f,15.0f)) SetPhase(EProjectElevatorPhase::Open); break;
+	case EProjectElevatorPhase::Open:
+		// Never close an empty cabin before the destination Pawn has actually spawned inside it.
+		if (State.bArrivalTrip && ArrivalPassengers.Num()>0 && !bArrivalOccupied) SetPhase(EProjectElevatorPhase::ArrivalClosing);
+		break;
+	case EProjectElevatorPhase::ArrivalClosing:
+		if (bArrivalOccupied) { SetPhase(EProjectElevatorPhase::Opening); break; }
+		if (PhaseElapsed()>=FMath::Clamp(CloseDoorSeconds,0.1f,15.0f)) SetPhase(EProjectElevatorPhase::ArrivalClosed);
+		break;
 	case EProjectElevatorPhase::Closing:
 		if (!IsEligibleInteractor(Passenger.Get()) || !IsInsideCabin(Passenger.Get()))
 		{ Passenger.Reset(); SetPhase(EProjectElevatorPhase::Opening); break; }
@@ -206,7 +218,8 @@ void AProjectProject01Elevator::UpdateVisuals()
 	float Rise = 1;
 	if (P==EProjectElevatorPhase::Locked || P==EProjectElevatorPhase::Ready || P==EProjectElevatorPhase::CallDelay) Rise=0;
 	if (P==EProjectElevatorPhase::Rising) Rise=FMath::Clamp(PhaseElapsed()/FMath::Max(0.1f,RiseSeconds),0.0f,1.0f);
-	CabinRoot->SetRelativeLocation(CabinHome+BelowLandingOffset*(1-FMath::SmoothStep(0.0f,1.0f,Rise)));
+	const FVector WaitingOffset(BelowLandingOffset.X, BelowLandingOffset.Y, -FMath::Max(0.0f, BelowLandingDepth));
+	CabinRoot->SetRelativeLocation(CabinHome+WaitingOffset*(1-FMath::SmoothStep(0.0f,1.0f,Rise)));
 	const float SmoothDoor=DoorFraction();
 	LeftDoor->SetRelativeLocation(LeftDoorHome+LeftDoorOpenOffset*SmoothDoor);
 	RightDoor->SetRelativeLocation(RightDoorHome+RightDoorOpenOffset*SmoothDoor);
@@ -238,6 +251,27 @@ bool AProjectProject01Elevator::IsInsideCabin(const APawn* Pawn) const
 	const FVector Extent = CabinVolume->GetUnscaledBoxExtent();
 	return FMath::Abs(Local.X)<=Extent.X && FMath::Abs(Local.Y)<=Extent.Y && FMath::Abs(Local.Z)<=Extent.Z;
 }
+bool AProjectProject01Elevator::HasArrivalOccupants()
+{
+	const auto* Mode=GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();
+	if (!Mode) return false;
+	bool bOccupied=false;
+	const auto Transform=CabinVolume->GetComponentTransform();
+	const FVector Scale=Transform.GetScale3D().GetAbs().ComponentMax(FVector(UE_SMALL_NUMBER));
+	for (TActorIterator<APlayerCharacter> It(GetWorld());It;++It)
+	{
+		auto* Survivor=*It;
+		if (!Mode->IsRegisteredActiveSurvivor(Survivor) || Survivor->IsGameOver() || Survivor->IsHidden()) continue;
+		if (IsInsideCabin(Survivor)) ArrivalPassengers.Add(Survivor);
+		// Include the survivor's body, not only its centre, plus a little doorway clearance.
+		const float Radius=Survivor->GetSimpleCollisionRadius()+FMath::Max(0.0f,ArrivalExitClearance);
+		const FVector Margin(Radius/Scale.X,Radius/Scale.Y,Survivor->GetSimpleCollisionHalfHeight()/Scale.Z);
+		const FVector Extent=CabinVolume->GetUnscaledBoxExtent()+Margin;
+		const FVector Local=Transform.InverseTransformPosition(Survivor->GetActorLocation());
+		bOccupied |= FMath::Abs(Local.X)<=Extent.X && FMath::Abs(Local.Y)<=Extent.Y && FMath::Abs(Local.Z)<=Extent.Z;
+	}
+	return bOccupied;
+}
 UPrimitiveComponent* AProjectProject01Elevator::TraceButton(APawn* Pawn) const
 {
 	if (!IsValid(Pawn) || !IsValid(Pawn->GetController())) return nullptr;
@@ -254,7 +288,7 @@ bool AProjectProject01Elevator::CanInteract_Implementation(APawn* Interactor) co
 }
 bool AProjectProject01Elevator::CanUseButton(APawn* Interactor, const UPrimitiveComponent* Button) const
 {
-	if (bArrivalOnly || !IsEligibleInteractor(Interactor)) return false;
+	if (bArrivalOnly || State.bArrivalTrip || !IsEligibleInteractor(Interactor)) return false;
 	if (HasAuthority())
 	{
 		const auto* Mode=GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();

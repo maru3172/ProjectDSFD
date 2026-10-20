@@ -1,5 +1,7 @@
 # 생존자 비상 엘리베이터
 
+하차 자동 닫힘 최종 검사: `Saved/ReviewRemediation/TutorialConfirmAndArrivalClose-Final-20261020/index.json`의 `ProjectProject01.Elevator.Flow/Audio` 성공(경고/실패 0). 서버 권위 하차 인원·문 앞 캡슐/여유 범위·한 명이 남은 경우 대기·사망 관전자 제외·하차 벨 상태·닫힘 보간·재진입 시 현재 위치에서 재열림·착륙 위치 정지와 추가 이동/모터 없음 검사를 포함한다. 실제 귀로 듣는 체감과 여러 PC에서 문 애니메이션 동기화는 별도 확인 대상이다.
+
 ## 동작
 
 - 멀티 경기 진행 중 다른 생존자가 **사망/포획으로 탈락하거나 기권 확정**된 경우에만 호출 가능.
@@ -19,11 +21,13 @@
 4. `CallButtonVolume`(바깥 호출 버튼), `InsideButtonVolume`(내부 버튼)의 위치/크기를 조정한다. `Visibility` 트레이스를 막는 볼륨이다. 벽/문에 버튼이 묻히지 않게 한다.
 5. `CabinVolume`은 생존자의 캡슐 중심이 내부에 들어와야 하는 영역이다. `ArrivalSpawn`은 도착 캡슐 중심/시선 방향이다. 기본 위치는 바닥 위 100cm이며 출입구는 액터의 +X 방향이다.
 6. 목적지 1층에도 이 액터를 배치하고 **Arrival Only**를 켠다. **Arrival Id**는 출발 쪽 `Destination Arrival Id`와 같게 설정한다. 동일 ID의 도착 엘리베이터는 맵에 하나만 둔다.
+
+   도착 후 문이 열리고 생존자가 완전히 내리면 띵 소리와 함께 문이 닫힌다. 여러 생존자가 탑승하면 전원 하차를 기다리며, 사망/관전자·마네킹은 인원으로 세지 않는다. `Arrival Exit Clearance`는 캡슐 바깥에 추가하는 문 앞 안전 여유(cm, 기본 50)다. 닫히는 중 생존자가 문 앞으로 다시 들어오면 현재 문 위치에서 자연스럽게 다시 연다. 하차 후 닫힘은 하강·모터음·추가 맵 이동 없이 착륙 위치에서 종료한다. 도착 Pawn이 아직 생성되지 않은 빈 객실은 미리 닫지 않는다.
 7. 기본 바닥/벽/문/버튼은 엔진 Cube를 이용한 교체 가능한 테스트 외형이다. 블루프린트에서 메시/재질을 바꾸고, 이동 부품은 `CabinRoot` 밑에 둔다. 문은 `LeftDoor`, `RightDoor`의 상대 위치를 기준으로 열린다.
-8. 출발 층에는 실제 승강로와 열린 바닥 공간을 마련한다. 기본 상승 시작점은 도착 높이보다 800cm 아래다. 기존 맵 바닥이 승강로를 덮으면 엘리베이터가 바닥을 통과해 보이므로 공간을 비워야 한다.
+8. 출발 층에는 실제 승강로와 열린 바닥 공간을 마련한다. 기본 상승 시작점은 도착 높이보다 **1200cm(12m) 아래**다. `Below Landing Depth`에서 깊이(cm)를 바꾼다. 기존 맵 바닥이 승강로를 덮으면 바닥을 통과해 보이므로 공간을 비워야 한다.
 9. 새 목적지 맵을 만들었다면 패키징 대상 `MapsToCook`에도 추가한다. 목적지 미지정/누락 시 호출이 활성화되지 않는다. 이번 작업은 기존 맵/블루프린트 바이너리를 수정하거나 패키징하지 않는다.
 
-`Call Delay Seconds`, `Rise Seconds`, `Door Seconds`(열림), `Close Door Seconds`, `Descent Sound Seconds`, `Departure Fade Seconds`, `Arrival Ride Seconds`, `Below Landing Offset`, 좌/우 문 오프셋을 조정할 수 있다. 출발/도착 액터 모두 같은 블루프린트로 만들어 타이밍/외형을 일치시키면 된다.
+`Call Delay Seconds`, `Rise Seconds`, `Door Seconds`(열림), `Close Door Seconds`, `Descent Sound Seconds`, `Departure Fade Seconds`, `Arrival Ride Seconds`, `Below Landing Depth`, 좌/우 문 오프셋을 조정할 수 있다. 기존 `Below Landing Offset`은 수평 X/Y 보정만 사용하며 Z 대신 새 깊이 설정을 사용한다. 기존 배치에도 기본 12m가 적용된다.
 
 ## 안전 처리와 테스트
 

@@ -46,7 +46,7 @@ internal static class PackagingReadinessChecks
         check(config.Contains("+DirectoriesToAlwaysCook=(Path=\"/Game/MyProject/Data\")"),"경로 기반 튜닝 데이터테이블 쿠킹 보장");
         check(!Regex.IsMatch(config,@"DirectoriesToAlwaysStage[^\r\n]*MyProject/Data"),"개발용 튜닝 CSV 별도 배포 없음");
         var maps=Regex.Matches(config,@"\+MapsToCook=\(FilePath=""([^""]+)""\)");
-        check(maps.Count==8&&maps.All(map=>File.Exists("Content"+map.Groups[1].Value[5..]+".umap")),"기본·목적지 8개 맵 파일과 쿠킹 설정 일치");
+        check(maps.Count==9&&maps.All(map=>File.Exists("Content"+map.Groups[1].Value[5..]+".umap")),"기본·목적지·튜토리얼 9개 맵 파일과 쿠킹 설정 일치");
     }
 
     private static void WriteFixture(string path,ushort machine)

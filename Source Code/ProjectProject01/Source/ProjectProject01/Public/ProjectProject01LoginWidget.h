@@ -1012,6 +1012,12 @@ protected:
 
 private:
     UFUNCTION() void HandleOpenMatchClicked();
+    UFUNCTION() void HandleTutorialClicked();
+    UFUNCTION() void HandleSurvivorTutorialClicked();
+    UFUNCTION() void HandleMannequinTutorialClicked();
+    void StartTutorial(bool bMannequin);
+    bool bShowingTutorial=false;
+    FTimerHandle TutorialTravelTimer;
     UFUNCTION() void HandleRandomMatchClicked();
     UFUNCTION() void HandleMatchStartClicked();
     UFUNCTION() void HandleMatchCancelClicked();

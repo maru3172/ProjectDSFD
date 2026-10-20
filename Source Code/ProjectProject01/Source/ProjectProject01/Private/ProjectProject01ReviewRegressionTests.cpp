@@ -152,11 +152,26 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	Previous->DisconnectedMatchRecords.Add(Left.UserId,Left);
 	Players[1]->SurvivorSpectatorView.bEnabled=true; // A living survivor waiting at the trigger, not permanently dead.
 	Players[2]->SurvivorSpectatorView.bEnabled=bDeathBeforeWaiting; // Or the death handoff timer never ran before travel.
+	// A mannequin camera already exists in the DEPARTING world. This is the
+	// case the earlier arrival-only fixture missed while the GameMode kept ticking.
+	auto* OldMannequin=World->SpawnActor<AMannequinAICharacter>();
+	Players[0]->ViewedMannequin=OldMannequin;
 #if WITH_EDITOR
 	// Reproduce ticket-free PIE: the server match record exists but the ticket identity is empty.
 	Players[0]->SetAuthenticatedLobbyIdentity(FProjectProject01ValidatedJoinClaim());
 #endif
 	Previous->PrepareLevelTransitionTravel();
+	const uint32 DepartureSerial=Players[0]->TransitionFadeSerial;
+	for (int32 Frame=0;Frame<10;++Frame)
+	{
+		Previous->FinalizeLevelTransitionArrivals();
+		Previous->PrepareLevelTransitionTravel();
+	}
+	TestTrue(TEXT("Old-map arrival ticks cannot consume the mannequin's departure flags"),Players[0]->IsLevelTransitionCarryover());
+	TestEqual(TEXT("Old-map ticks cannot restart the mannequin's blackout serial"),Players[0]->TransitionFadeSerial,DepartureSerial);
+	for (auto* PC:Players) PC->ServerConfirmLevelTransitionBlack_Implementation(PC->TransitionFadeSerial);
+	Previous->FinalizeLevelTransitionArrivals();
+	TestTrue(TEXT("The complete blackout barrier survives old-map ticks until travel"),Previous->AreLevelTransitionClientsBlack());
 	TestTrue(TEXT("Travel snapshot includes connected dead spectators, not departed players"),Instance->ServerMatchCarryover&&Instance->ServerMatchCarryover->Players.Num()==3);
 	TestFalse(TEXT("Dead or forfeited survivor cannot spawn after travel"),Players[2]->ShouldSpawnAfterLevelTransition());
 	TestTrue(TEXT("Only the advancing survivor is marked for a new spawn"),Players[1]->ShouldSpawnAfterLevelTransition());
@@ -169,6 +184,7 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	TestTrue(TEXT("PIE enables seamless travel instead of silently starting a fresh match"),SeamlessSetting && SeamlessSetting->GetInt()==1);
 	TestEqual(TEXT("PIE mannequin identity and role survive the next GameMode"),Players[0]->GetAuthenticatedRole(),FString(TEXT("Mannequin")));
 #endif
+	Players[0]->ViewedMannequin=nullptr; // Old-map actor references are not destination-ready.
 	auto* Next=World->SpawnActor<AMultiplayTestGameMode>();
 	for(auto* PC:Players)Next->RegisterMatchPlayer(PC);
 	TestEqual(TEXT("Next map does not wait for departed controllers"),Next->ExpectedMatchPlayers,3);
@@ -227,8 +243,12 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	auto* NewLivingPawn=ClientWorld->SpawnActor<APlayerCharacter>();
 	DeadClient->SurvivorSpectatorView.Target=NewLivingPawn;
 	DeadClient->OnRep_SurvivorSpectatorView();
+	TestTrue(TEXT("A mapped actor alone cannot reveal a world that has not begun play"),DeadClient->bClientArrivalViewPending);
+	ClientWorld->SetBegunPlay(true);
+	for (int32 Frame=0;Frame<5;++Frame) DeadClient->TryCompleteClientArrivalView(0.05f);
 	TestTrue(TEXT("Late target replication completes dead-client spectating"),!DeadClient->bClientArrivalViewPending && !DeadClient->bLocalLevelTransitionFadeHeld && DeadClient->GetViewTarget()==NewLivingPawn && DeadClient->IsMoveInputIgnored());
 	DeadClient->ClientCompleteLevelTransition_Implementation(nullptr,false);
+	for (int32 Frame=0;Frame<5;++Frame) DeadClient->TryCompleteClientArrivalView(0.05f);
 	TestTrue(TEXT("A null RPC parameter cannot erase an already-replicated spectator target"),!DeadClient->bClientArrivalViewPending && DeadClient->GetViewTarget()==NewLivingPawn);
 	auto* LiveClient=ClientWorld->SpawnActor<AMultiplayTestPlayerController>(); LiveClient->SetAsLocalPlayerController();
 	LiveClient->PlayerCameraManager=ClientWorld->SpawnActor<APlayerCameraManager>(); LiveClient->PlayerCameraManager->InitializeFor(LiveClient);
@@ -239,7 +259,23 @@ bool FProjectReviewMatchCarryoverTest::RunTest(const FString&)
 	TestTrue(TEXT("Living arrival waits for its own Pawn, not the old observed player"),LiveClient->bClientArrivalViewPending && !LiveClient->SurvivorSpectatorView.bEnabled);
 	auto* OwnPawn=ClientWorld->SpawnActor<APlayerCharacter>(); LiveClient->SetPawn(OwnPawn);
 	LiveClient->TryCompleteClientArrivalView();
+	TestTrue(TEXT("Arrival needs stable ready frames rather than an instantaneous Pawn notification"),LiveClient->bClientArrivalViewPending);
+	for (int32 Frame=0;Frame<5;++Frame) LiveClient->TryCompleteClientArrivalView(0.05f);
 	TestTrue(TEXT("Late own-Pawn replication restores direct play and self camera"),!LiveClient->bClientArrivalViewPending && !LiveClient->IsMoveInputIgnored() && !LiveClient->SurvivorSpectatorView.bEnabled && LiveClient->GetViewTarget()==OwnPawn);
+	ClientWorld->SetBegunPlay(false);
+	auto* MannequinClient=ClientWorld->SpawnActor<AMultiplayTestPlayerController>(); MannequinClient->SetAsLocalPlayerController();
+	MannequinClient->PlayerCameraManager=ClientWorld->SpawnActor<APlayerCameraManager>(); MannequinClient->PlayerCameraManager->InitializeFor(MannequinClient);
+	MannequinClient->bLocalMultiplayerMannequinRole=true; MannequinClient->bLocalLevelTransitionFadeHeld=true;
+	MannequinClient->ClientCompleteLevelTransition_Implementation(nullptr,true);
+	TestTrue(TEXT("Mannequin stays black while its new view is unmapped"),MannequinClient->bClientArrivalViewPending && MannequinClient->bLocalLevelTransitionFadeHeld);
+	auto* NewMannequin=ClientWorld->SpawnActor<AMannequinAICharacter>(); MannequinClient->ViewedMannequin=NewMannequin;
+	ClientWorld->SetBegunPlay(true);
+	for (int32 Notify=0;Notify<10;++Notify) MannequinClient->TryCompleteClientArrivalView();
+	TestTrue(TEXT("Repeated mannequin notifications in one frame cannot consume readiness time"),MannequinClient->bClientArrivalViewPending);
+	for (int32 Frame=0;Frame<5;++Frame) MannequinClient->TryCompleteClientArrivalView(0.05f);
+	TestTrue(TEXT("Ready mannequin switches to its new body before reveal"),!MannequinClient->bClientArrivalViewPending && !MannequinClient->bLocalLevelTransitionFadeHeld && MannequinClient->GetViewTarget()==NewMannequin);
+	// This fixture toggles readiness directly; restore it before destroying the synthetic world.
+	ClientWorld->SetBegunPlay(false);
 	}
 	return true;
 }
@@ -265,6 +301,7 @@ bool FProjectReviewTravelRollbackTest::RunTest(const FString&)
 	Mode->PrepareLevelTransitionTravel();Mode->PrepareLevelTransitionTravel();
 	TestTrue(TEXT("Waiting survivor is hidden, locked and snapshotted"),Survivor->IsHidden()&&PC->IsMoveInputIgnored()&&Instance->ServerMatchCarryover.IsValid());
 	Mode->CancelLevelTransitionTravel();
+	TestFalse(TEXT("Rollback clears departure-only arrival suppression"),Mode->bLevelTransitionDeparting);
 	TestTrue(TEXT("Rejected travel restores movement, visibility and collision"),!Survivor->IsHidden()&&Survivor->GetActorEnableCollision()&&Survivor->GetCharacterMovement()->MovementMode==MOVE_Walking);
 	TestTrue(TEXT("Rejected travel restores original pawn view"),PC->GetViewTarget()==Survivor);
 	TestFalse(TEXT("Rejected travel clears stacked movement locks"),PC->IsMoveInputIgnored());

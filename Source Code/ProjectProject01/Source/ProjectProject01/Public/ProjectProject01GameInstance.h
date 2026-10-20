@@ -406,9 +406,11 @@ public:
 	void HoldEntireScreenBlack();
 	void FadeEntireScreenFromBlack(float DurationSeconds);
 	void ClearEntireScreenFade();
+	bool IsEntireScreenBlack() const { return !bEntireScreenFadeAnimating && EntireScreenFadeOpacity >= 1.0f; }
 
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
+	friend class FProjectSpectatorFadeTest;
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
 		ENetworkFailure::Type FailureType, const FString& ErrorString);
 	void BeginSafeLogoutAfterGameServerFailure();

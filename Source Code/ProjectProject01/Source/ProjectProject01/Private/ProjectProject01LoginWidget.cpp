@@ -5146,6 +5146,7 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 
 void UProjectProject01LobbyWidget::NativeDestruct()
 {
+	if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(TutorialTravelTimer);
     GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SetLobbyVisible(false);
     if(IsValid(LobbySettingsWidget))LobbySettingsWidget->RemoveFromParent();
     LobbySettingsWidget=nullptr;
@@ -5215,6 +5216,29 @@ void UProjectProject01LobbyWidget::HandleOpenMatchClicked()
     HandleCloseCodeJoinClicked();
     bShowingOpenMatching=true;bShowingMatchmaking=false;bShowingCreateRoom=false;ShowLobbyView(0);
 }
+void UProjectProject01LobbyWidget::HandleTutorialClicked()
+{
+	auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
+	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || bTravelRequested || bGameStartFadeActive) return;
+	bShowingTutorial=true; ShowLobbyView(6);
+}
+void UProjectProject01LobbyWidget::HandleSurvivorTutorialClicked() { StartTutorial(false); }
+void UProjectProject01LobbyWidget::HandleMannequinTutorialClicked() { StartTutorial(true); }
+void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin)
+{
+	auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
+	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || Lobby->IsRequestInFlight() || bTravelRequested || bGameStartFadeActive) return;
+	const FName TutorialMap(TEXT("/Game/MyProject/Level/MultiplayerTutorial"));
+	if (!FPackageName::DoesPackageExist(TutorialMap.ToString()))
+	{ SetStatus(TEXT("튜토리얼 맵이 없습니다. MultiplayerTutorial 맵을 준비하세요."),true); return; }
+	bTravelRequested=true; SetIsEnabled(false);
+	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenToBlack(0.6f);
+	const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
+	GetWorld()->GetTimerManager().SetTimer(TutorialTravelTimer,[Weak,bMannequin,TutorialMap]()
+	{
+		if (auto* Self=Weak.Get()) UGameplayStatics::OpenLevel(Self,TutorialMap,true,bMannequin ? TEXT("TutorialRole=Mannequin") : TEXT("TutorialRole=Survivor"));
+	},0.65f,false);
+}
 void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
 {
     HandleCloseCodeJoinClicked();
@@ -5222,6 +5246,7 @@ void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
 }
 void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
 {
+    bShowingTutorial=false;
     auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
     if(Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||(Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomMatch))return;
     if(Lobby->HasCurrentRoom()&&!Lobby->GetCurrentRoom().bRandomParty)return;
@@ -5888,7 +5913,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     RefreshMatchmakingView();
     const bool RandomStart=bInRoom&&Lobby->GetCurrentRoom().bRandomMatch;
 	const bool bCodeJoinOpen=CodeJoinPanel&&CodeJoinPanel->GetVisibility()!=ESlateVisibility::Collapsed;
-	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingOpenMatching?0:4);
+	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingTutorial?6:bShowingOpenMatching?0:4);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
     if(OpenCodeJoinButton)OpenCodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
@@ -6432,6 +6457,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("매칭 방식 선택"),26);
     auto* Random=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("랜덤 매칭"));Random->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRandomMatchClicked);
     auto* Open=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("오픈 매칭"));Open->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenMatchClicked);
+    auto* Tutorial=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("튜토리얼"));Tutorial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleTutorialClicked);
 	OpenLeaderboardTestButton = ProjectProject01LoginUI::AddButton(WidgetTree, Modes, TEXT("리더보드 열기"));
     ModesLogoutButton=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("로그아웃 / 로그인 화면으로"));
     ModesLogoutButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
@@ -6455,6 +6481,16 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     CodeJoinButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleJoinByCodeClicked);
     auto* CloseCodeJoin=ProjectProject01LoginUI::AddButton(WidgetTree,CodeJoinPanel,TEXT("뒤로가기"));
     CloseCodeJoin->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCloseCodeJoinClicked);
+
+    auto* TutorialRoles=MakeScrollablePanel(); // 6: practice is outside both matchmaking queues.
+    ProjectProject01LoginUI::AddLabel(WidgetTree,TutorialRoles,TEXT("멀티 튜토리얼 · 역할 선택"),26);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,TutorialRoles,TEXT("별도 연습장에서 목표와 조작을 배우고 직접 연습합니다. 실제 경기 기록에는 반영하지 않습니다."),20);
+    auto* SurvivorTutorial=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("생존자 튜토리얼"));
+    SurvivorTutorial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleSurvivorTutorialClicked);
+    auto* MannequinTutorial=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("마네킹 튜토리얼"));
+    MannequinTutorial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMannequinTutorialClicked);
+    auto* TutorialBack=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("뒤로가기"));
+    TutorialBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
 
     // Compact only the matching panels; social overlays and other game menus retain their layout.
     for(UVerticalBox* Panel : {BrowserPanel,Matching,Modes,CodeJoinPanel.Get()})

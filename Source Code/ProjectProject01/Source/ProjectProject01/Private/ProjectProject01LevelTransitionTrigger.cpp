@@ -112,7 +112,9 @@ void AProjectProject01LevelTransitionTrigger::HandleBeginOverlap(
 	}
 
 	UWorld* World = GetWorld();
-	if (IsValid(World) && World->GetNetMode() != NM_Standalone)
+	// A local multiplayer PIE/listen test can report Standalone. Use its actual
+	// rules, not NetMode, or only player 0 fades and the mannequin stays visible.
+	if (IsValid(World) && World->GetAuthGameMode<AMultiplayTestGameMode>())
 	{
 		AMultiplayTestGameMode* GameMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
 		AMultiplayTestPlayerController* Controller =
@@ -246,7 +248,7 @@ void AProjectProject01LevelTransitionTrigger::EvaluateTransition()
 		return;
 	}
 
-	if (World->GetNetMode() == NM_Standalone)
+	if (World->GetNetMode() == NM_Standalone && !World->GetAuthGameMode<AMultiplayTestGameMode>())
 	{
 		BeginTransition();
 		return;
@@ -274,11 +276,12 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 	}
 
 	bTransitionStarted = true;
+	TransitionFadeWaitStartedAt = FPlatformTime::Seconds();
 	GetWorldTimerManager().ClearTimer(EvaluationTimer);
 	TransitionVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
-		if (World->GetNetMode() == NM_Standalone)
+		if (World->GetNetMode() == NM_Standalone && !World->GetAuthGameMode<AMultiplayTestGameMode>())
 		{
 			if (UProjectProject01GameInstance* GameInstance =
 				Cast<UProjectProject01GameInstance>(GetGameInstance()))
@@ -305,7 +308,8 @@ void AProjectProject01LevelTransitionTrigger::BeginTransition()
 	UE_LOG(LogTemp, Log, TEXT("Level transition trigger '%s' accepted. Destination=%s"),
 		*GetActorNameOrLabel(), *DestinationPackage);
 
-	const float DelaySeconds=GetTravelDelaySeconds();
+	// Placed actors can retain an older, shorter delay. Never cut off their fade.
+	const float DelaySeconds=FMath::Max(GetTravelDelaySeconds(),GetTransitionFadeSeconds()+0.05f);
 	if (DelaySeconds <= 0.0f)
 	{
 		ExecuteTransition();
@@ -398,7 +402,7 @@ void AProjectProject01LevelTransitionTrigger::RollbackTransition(const FString& 
 	{
 		if (auto* Context = GEngine->GetWorldContextFromWorld(World)) Context->TravelURL.Reset();
 	}
-	if (World->GetNetMode() == NM_Standalone)
+	if (World->GetNetMode() == NM_Standalone && !World->GetAuthGameMode<AMultiplayTestGameMode>())
 	{
 		if (auto* Controller = SingleTransitionController.Get())
 		{
@@ -445,12 +449,10 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		RollbackTransition(TEXT("Destination disappeared before travel"));
 		return;
 	}
-	World->GetTimerManager().SetTimer(TravelWatchdogTimer, this,
-		&AProjectProject01LevelTransitionTrigger::HandleTravelTimeout, 30.0f, false);
-    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->ArmLevelTransitionWatchdog();
-
-	if (World->GetNetMode() == NM_Standalone)
+	if (World->GetNetMode() == NM_Standalone && !World->GetAuthGameMode<AMultiplayTestGameMode>())
 	{
+		World->GetTimerManager().SetTimer(TravelWatchdogTimer,this,&ThisClass::HandleTravelTimeout,30.0f,false);
+		if (auto* Instance=GetGameInstance<UProjectProject01GameInstance>()) Instance->ArmLevelTransitionWatchdog();
 		if (UProjectProject01GameInstance* GameInstance =
 			Cast<UProjectProject01GameInstance>(GetGameInstance()))
 		{
@@ -461,8 +463,29 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		return;
 	}
 
-	// 서버 이동은 현재 접속한 모든 클라이언트를 같은 목적지로 함께 전환합니다.
-    if(auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>())Mode->PrepareLevelTransitionTravel(GetTransitionFadeSeconds());
+	// A server timer is not proof that remote observers/mannequins have finished fading.
+	// Wait for every connected owner; roll back rather than travel mid-fade or wait forever.
+	if (auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>())
+	{
+		if (!Mode->IsAuthoritativeMatchInProgress())
+		{
+			RollbackTransition(TEXT("Match ended while waiting for travel blackout"));
+			return;
+		}
+		if (!Mode->AreLevelTransitionClientsBlack())
+		{
+			if (FPlatformTime::Seconds()-TransitionFadeWaitStartedAt>GetTransitionFadeSeconds()+5.0f)
+			{
+				RollbackTransition(TEXT("A connected client did not finish its travel blackout in time"));
+				return;
+			}
+			World->GetTimerManager().SetTimer(TravelTimer,this,&ThisClass::ExecuteTransition,0.05f,false);
+			return;
+		}
+		// Refresh the snapshot once at actual departure (late deaths/disconnects),
+		// not on every acknowledgement poll. Prepared controllers keep their serial.
+		Mode->PrepareLevelTransitionTravel(GetTransitionFadeSeconds());
+	}
 #if WITH_EDITOR
 	if (World->WorldType==EWorldType::PIE)
 	{
@@ -474,6 +497,8 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		}
 	}
 #endif
+	World->GetTimerManager().SetTimer(TravelWatchdogTimer,this,&ThisClass::HandleTravelTimeout,30.0f,false);
+	if (auto* Instance=GetGameInstance<UProjectProject01GameInstance>()) Instance->ArmLevelTransitionWatchdog();
 	if (!World->ServerTravel(DestinationPackage, false))
 	{
 		RollbackTransition(FString::Printf(TEXT("ServerTravel rejected destination '%s'"), *DestinationPackage));

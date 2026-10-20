@@ -6,6 +6,7 @@
 #include "InputCoreTypes.h"
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "ProjectProject01Tutorial.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
@@ -67,6 +68,7 @@ bool FProjectProject01SurvivorVoiceRoleIsolationTest::RunTest(const FString& Par
 
 AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 {
+	CreateDefaultSubobject<UProjectProject01ObjectiveComponent>(TEXT("MultiplayerObjective"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> Look(TEXT("/Game/MyProject/Input/IA_Player_Look.IA_Player_Look"));
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> Mapping(TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
 	MannequinCameraLookAction=Look.Object;MannequinCameraInputContext=Mapping.Object;
@@ -161,6 +163,13 @@ void AMultiplayTestPlayerController::SeamlessTravelFrom(APlayerController* OldPC
 	bLocalLevelTransitionFadeHeld = Previous->bLocalLevelTransitionFadeHeld;
 	bHadAuthenticatedSession = Previous->bHadAuthenticatedSession;
 	SurvivorSpectatorView = Previous->SurvivorSpectatorView;
+	SpectatorRequestSerial=Previous->SpectatorRequestSerial;
+	LastSpectatorFadeRequest=Previous->LastSpectatorFadeRequest;
+	TransitionFadeSerial=Previous->TransitionFadeSerial;
+	LocalTransitionFadeSerial=Previous->LocalTransitionFadeSerial;
+	bServerTransitionBlackReady=Previous->bServerTransitionBlackReady;
+	bLocalTransitionBlackConfirmed=Previous->bLocalTransitionBlackConfirmed;
+	ClientDepartureWorld=Previous->ClientDepartureWorld;
 }
 
 void AMultiplayTestPlayerController::PostSeamlessTravel()
@@ -187,19 +196,38 @@ void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 	if (!IsLocalController()) return;
-	TryCompleteClientArrivalView();
+	TryConfirmLevelTransitionBlack();
+	TryCompleteClientArrivalView(DeltaTime);
+	TryFinishSpectatorFade();
 	if (SurvivorSpectatorView.bEnabled) ApplySurvivorSpectatorView();
 }
 
 void AMultiplayTestPlayerController::OnRep_SurvivorSpectatorView()
 {
+	// Keep the server's view target for network relevancy, but let this owner
+	// control the visible handoff. Implicit ClientSetViewTarget must not jump early.
+	if (IsLocalController() && PlayerCameraManager)
+		PlayerCameraManager->bClientSimulatingViewTarget=SurvivorSpectatorView.bEnabled;
+	// Property replication can beat the reliable RPC. Both paths start the same fade only once.
+	if (SurvivorSpectatorView.bEnabled && SurvivorSpectatorView.RequestId != LastSpectatorFadeRequest)
+	{
+		LastSpectatorFadeRequest = SurvivorSpectatorView.RequestId;
+		if (SurvivorSpectatorView.bFadeTransition && !bLocalLevelTransitionFadeHeld && !bClientArrivalViewPending)
+		{
+			bSpectatorFadePending = true;
+			SpectatorSwitchReadyAt = GetWorld()->GetTimeSeconds() + 0.5;
+			if (auto* GI = GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenToBlack(0.5f);
+			else if (PlayerCameraManager) PlayerCameraManager->StartCameraFade(0,1,0.5f,FLinearColor::Black,false,true);
+			GetWorldTimerManager().SetTimer(SpectatorFadeTimer,this,&ThisClass::TryFinishSpectatorFade,0.5f,false);
+		}
+	}
 	TryCompleteClientArrivalView();
 	ApplySurvivorSpectatorView();
 }
 
 void AMultiplayTestPlayerController::ApplySurvivorSpectatorView()
 {
-	if (bLocalLevelTransitionFadeHeld || bClientArrivalViewPending ||
+	if (bLocalLevelTransitionFadeHeld || bClientArrivalViewPending || bSpectatorFadePending ||
 		GetWorldTimerManager().IsTimerActive(SpectatorFadeTimer)) return;
 	if (SurvivorSpectatorView.bEnabled)
 	{
@@ -259,6 +287,7 @@ void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 
 void AMultiplayTestPlayerController::PollMultiplayerService()
 {
+	if (AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) return;
 	if (!IsLocalController())
 	{
 		return;
@@ -389,7 +418,8 @@ void AMultiplayTestPlayerController::ServerRequestTeamPing_Implementation(const 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(ProjectProject01TeamPing), false, GetPawn());
 	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, ECC_Visibility, Params);
-	GameMode->TryBroadcastSurvivorPing(this, Type, bHit ? Hit.ImpactPoint : End);
+	if (GameMode->TryBroadcastSurvivorPing(this, Type, bHit ? Hit.ImpactPoint : End))
+		if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::Ping);
 }
 
 void AMultiplayTestPlayerController::ClientReceiveTeamPing_Implementation(
@@ -417,12 +447,13 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 	const FString& MatchId,
 	const FString& InRole)
 {
-	const bool bAllowSurvivorVoice = ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
+	const bool bTutorial=AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld());
+	const bool bAllowSurvivorVoice = !bTutorial && ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
 	if (!InRole.Equals(TEXT("Mannequin"),ESearchCase::IgnoreCase)) RemoveMannequinLookBinding();
-	if (bAllowSurvivorVoice || InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+	if (ProjectProject01SurvivorVoice::IsAllowedRole(InRole) || InRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
 	{
 		bLocalMultiplayerRoleKnown = true;
-		bLocalMultiplayerMannequinRole = !bAllowSurvivorVoice;
+		bLocalMultiplayerMannequinRole = InRole.Equals(TEXT("Mannequin"),ESearchCase::IgnoreCase);
 	}
 	else
 	{
@@ -436,7 +467,7 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 	{
 		if (UProjectProject01VoiceChatSubsystem* Voice = GI->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
 		{
-			Voice->ConfigureForMatch(UserId, MatchId, InRole, this);
+			Voice->ConfigureForMatch(bTutorial ? FString() : UserId, bTutorial ? FString() : MatchId, bTutorial ? TEXT("Disabled") : InRole, this);
 		}
 	}
 	TryRevealInitialGameplayFade();
@@ -643,6 +674,10 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 
 void AMultiplayTestPlayerController::ToggleSessionMenu()
 {
+	if (auto* Tutorial=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>())
+	{
+		Tutorial->ToggleTutorialMenu(); return;
+	}
 	if (!IsLocalController())
 	{
 		return;
@@ -823,10 +858,17 @@ void AMultiplayTestPlayerController::EnterSurvivorSpectator(
 	SetIgnoreLookInput(false);
 	SurvivorSpectatorView.bEnabled=true;
 	SurvivorSpectatorView.Target=Cast<APlayerCharacter>(InitialTarget);
+	SurvivorSpectatorView.bFadeTransition=bFadeTransition;
+	SurvivorSpectatorView.RequestId=++SpectatorRequestSerial;
 	bAutoManageActiveCameraTarget=false;
-	if (IsValid(SurvivorSpectatorView.Target)) SetViewTarget(SurvivorSpectatorView.Target);
+	// SetViewTarget on the server sends an implicit ClientSetViewTarget RPC, which used
+	// to expose the observer camera BEFORE ClientEnterSurvivorSpectator could fade it.
 	ForceNetUpdate();
-	ClientEnterSurvivorSpectator(InitialTarget, bFadeTransition);
+	ClientEnterSurvivorSpectator(SurvivorSpectatorView);
+	// Queue our owner intent before the engine's implicit view RPC. Remote clients
+	// ignore that RPC while simulating the fade, but the server still follows the
+	// observed survivor for relevancy even when the survivor is far from the corpse.
+	if (!IsLocalController() && IsValid(SurvivorSpectatorView.Target)) SetViewTarget(SurvivorSpectatorView.Target);
 }
 
 void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
@@ -845,10 +887,11 @@ void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
 	}
 	CaptureLevelTransitionState();
 	bLevelTransitionCarryover = true;
+	bServerTransitionBlackReady = false;
 	bSpawnAfterLevelTransition = bSpawnInNextLevel;
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
-	ClientPrepareForLevelTransition(FadeSeconds);
+	ClientPrepareForLevelTransition(FadeSeconds, ++TransitionFadeSerial);
 }
 
 void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
@@ -874,6 +917,7 @@ void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
 	}
 	ClientCompleteLevelTransition(InitialViewTarget, bCanPlay);
 	bLevelTransitionCarryover = false;
+	bServerTransitionBlackReady = false;
 	bSpawnAfterLevelTransition = false;
 	ServerTransitionSnapshot = {};
 }
@@ -918,6 +962,7 @@ void AMultiplayTestPlayerController::CancelLevelTransitionCarryover(const bool b
 	if (bRestoreGameplay) ServerTransitionSnapshot.Restore(this);
 	ServerTransitionSnapshot = {};
 	bLevelTransitionCarryover = false;
+	bServerTransitionBlackReady = false;
 	bSpawnAfterLevelTransition = false;
 	ClientCancelLevelTransition(bRestoreGameplay);
 }
@@ -925,11 +970,16 @@ void AMultiplayTestPlayerController::CancelLevelTransitionCarryover(const bool b
 void AMultiplayTestPlayerController::ClientCancelLevelTransition_Implementation(const bool bRestoreGameplay)
 {
 	if (!IsLocalController()) return;
+	bSpectatorFadePending=false;
 	bClientArrivalViewPending=false;
 	ClientArrivalViewTarget.Reset();
 	if (!LocalTransitionSnapshot.bCaptured && !bLocalLevelTransitionFadeHeld) return;
 	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
 	bLocalLevelTransitionFadeHeld = false;
+	bLocalTransitionBlackConfirmed = false;
+	ClientDepartureWorld.Reset();
+	ClientArrivalStableTarget.Reset();
+	ClientArrivalStableSeconds = 0;
 	if (bRestoreGameplay)
 	{
 		LocalTransitionSnapshot.Restore(this);
@@ -967,6 +1017,11 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
+	if ((bSpectatorFadePending || bLocalLevelTransitionFadeHeld) && PlayerCameraManager)
+		PlayerCameraManager->StartCameraFade(1,1,0,FLinearColor::Black,false,true);
+	bSpectatorFadePending=false;
+	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
+	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->ClearEntireScreenFade();
 	bClientArrivalViewPending=false;
 	ClientArrivalViewTarget.Reset();
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
@@ -1069,78 +1124,59 @@ void AMultiplayTestPlayerController::StopMatchGameplayAudio()
 }
 
 void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation(
-	AActor* InitialTarget,
-	const bool bFadeTransition)
+	const FMultiplaySurvivorSpectatorView& View)
 {
 	if (!IsLocalController())
 	{
 		return;
 	}
+	if (View.RequestId < SurvivorSpectatorView.RequestId) return;
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(false);
-	SurvivorSpectatorView.bEnabled=true;
-	InitialTarget=Cast<APlayerCharacter>(InitialTarget);
-	SurvivorSpectatorView.Target=Cast<APlayerCharacter>(InitialTarget);
+	SurvivorSpectatorView=View;
 	bAutoManageActiveCameraTarget=false;
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
-	if (!bFadeTransition)
-	{
-		if (IsValid(InitialTarget))
-		{
-			SetViewTarget(InitialTarget);
-			if (!bLocalLevelTransitionFadeHeld && IsValid(PlayerCameraManager)) PlayerCameraManager->StopCameraFade();
-		}
-		return;
-	}
-	if (!IsValid(PlayerCameraManager) || !IsValid(GetWorld()))
-	{
-		if (IsValid(InitialTarget))
-		{
-			SetViewTarget(InitialTarget);
-		}
-		return;
-	}
-
-	PlayerCameraManager->StartCameraFade(0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
-	// 마지막 생존자의 탈락처럼 관전 대상이 없는 경우에는 암전을 유지한다.
-	// 곧 표시되는 경기 결과 위젯은 검은 게임 화면 위에 정상적으로 나타난다.
-	if (!IsValid(InitialTarget))
-	{
-		return;
-	}
-	const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(this);
-	const TWeakObjectPtr<AActor> WeakTarget(InitialTarget);
-	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
-	GetWorld()->GetTimerManager().SetTimer(SpectatorFadeTimer, [WeakController, WeakTarget]()
-	{
-		AMultiplayTestPlayerController* Controller = WeakController.Get();
-		AActor* Target = WeakTarget.Get();
-		if (!IsValid(Controller) || !IsValid(Target))
-		{
-			return;
-		}
-		Controller->SetViewTarget(Target);
-		if (IsValid(Controller->PlayerCameraManager))
-		{
-			Controller->PlayerCameraManager->StartCameraFade(
-				1.0f, 0.0f, 0.5f, FLinearColor::Black, false, false);
-		}
-	}, 0.5f, false);
+	OnRep_SurvivorSpectatorView();
+	if (!bSpectatorFadePending && !bLocalLevelTransitionFadeHeld && IsValid(PlayerCameraManager)) PlayerCameraManager->StopCameraFade();
 }
 
-void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementation(const float FadeSeconds)
+void AMultiplayTestPlayerController::TryFinishSpectatorFade()
+{
+	if (!bSpectatorFadePending || bLocalLevelTransitionFadeHeld || bClientArrivalViewPending ||
+		GetWorld()->GetTimeSeconds()+0.001 < SpectatorSwitchReadyAt) return;
+	auto* Target=SurvivorSpectatorView.Target.Get();
+	if (!IsValid(Target) || Target->GetWorld()!=GetWorld() || Target->IsHidden() || Target->IsGameOver()) return;
+	auto* GI=GetGameInstance<UProjectProject01GameInstance>();
+	if (GI) GI->HoldEntireScreenBlack();
+	SetViewTarget(Target);
+	bSpectatorFadePending=false;
+	if (PlayerCameraManager) PlayerCameraManager->StopCameraFade();
+	if (GI) GI->FadeEntireScreenFromBlack(0.5f);
+	else if (PlayerCameraManager) PlayerCameraManager->StartCameraFade(1,0,0.5f,FLinearColor::Black,false,false);
+}
+
+void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementation(const float FadeSeconds, const uint32 RequestId)
 {
 	if (!IsLocalController())
 	{
 		return;
 	}
+	// A duplicate prepare must not restart a nearly finished fade.
+	if (bLocalLevelTransitionFadeHeld && LocalTransitionFadeSerial == RequestId) return;
+	LocalTransitionFadeSerial = RequestId;
+	bLocalTransitionBlackConfirmed = false;
+	LocalTransitionBlackSince = 0;
+	ClientDepartureWorld = GetWorld();
+	ClientArrivalStableTarget.Reset();
+	ClientArrivalStableSeconds = 0;
 
 	bInitialGameplayFadePending = false;
 	bInitialGameplayFadeScheduled = false;
 	bClientArrivalViewPending=false;
 	ClientArrivalViewTarget.Reset();
 	bLocalLevelTransitionFadeHeld = true;
+	bSpectatorFadePending = false;
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(InitialGameplayRevealTimer);
@@ -1160,6 +1196,35 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 	{
 		ProjectGameInstance->FadeEntireScreenToBlack(FMath::Clamp(FadeSeconds,0.1f,10.0f));
 	}
+	else if (PlayerCameraManager)
+	{
+		PlayerCameraManager->StartCameraFade(PlayerCameraManager->FadeAmount,1,
+			FMath::Clamp(FadeSeconds,0.1f,10.0f),FLinearColor::Black,false,true);
+	}
+}
+
+void AMultiplayTestPlayerController::TryConfirmLevelTransitionBlack()
+{
+	if (!IsLocalController() || !bLocalLevelTransitionFadeHeld || bLocalTransitionBlackConfirmed) return;
+	const auto* GI=GetGameInstance<UProjectProject01GameInstance>();
+	const bool bBlack=GI ? GI->IsEntireScreenBlack() :
+		(PlayerCameraManager && PlayerCameraManager->FadeAmount >= 1.0f);
+	if (!bBlack) { LocalTransitionBlackSince=0; return; }
+	// Let at least one fully black frame reach the viewport before allowing travel.
+	if (LocalTransitionBlackSince==0) { LocalTransitionBlackSince=FPlatformTime::Seconds(); return; }
+	if (FPlatformTime::Seconds()-LocalTransitionBlackSince<0.05) return;
+	bLocalTransitionBlackConfirmed=true;
+	ServerConfirmLevelTransitionBlack(LocalTransitionFadeSerial);
+}
+
+void AMultiplayTestPlayerController::ServerConfirmLevelTransitionBlack_Implementation(const uint32 RequestId)
+{
+	// An old/delayed acknowledgement cannot unlock a new transition.
+	if (bLevelTransitionCarryover && RequestId==TransitionFadeSerial)
+	{
+		bServerTransitionBlackReady=true;
+		UE_LOG(LogTemp,Log,TEXT("Travel blackout confirmed: Controller=%s Request=%u"),*GetName(),RequestId);
+	}
 }
 
 void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementation(
@@ -1172,6 +1237,8 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 	}
 
 	bClientArrivalViewPending=true;
+	ClientArrivalStableTarget.Reset();
+	ClientArrivalStableSeconds=0;
 	bClientArrivalCanPlay=bCanPlay;
 	ClientArrivalViewTarget=InitialViewTarget;
 	SurvivorSpectatorView.bEnabled=!bCanPlay;
@@ -1181,9 +1248,16 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 	TryCompleteClientArrivalView();
 }
 
-void AMultiplayTestPlayerController::TryCompleteClientArrivalView()
+void AMultiplayTestPlayerController::TryCompleteClientArrivalView(const float ReadyDeltaSeconds)
 {
 	if (!IsLocalController() || !bClientArrivalViewPending) return;
+	UWorld* World=GetWorld();
+	bool bWorldReady=IsValid(World) && World!=ClientDepartureWorld.Get() && World->HasBegunPlay() && !IsAsyncLoading();
+	if (bWorldReady)
+		for (const ULevelStreaming* Level:World->GetStreamingLevels())
+			if (IsValid(Level) && ((Level->ShouldBeLoaded() && !Level->IsLevelLoaded()) ||
+				(Level->ShouldBeVisible() && !Level->IsLevelVisible()))) { bWorldReady=false; break; }
+	if (!bWorldReady) { ClientArrivalStableTarget.Reset(); ClientArrivalStableSeconds=0; return; }
 	AActor* ReadyTarget=nullptr;
 	if (!bClientArrivalCanPlay) ReadyTarget=SurvivorSpectatorView.Target;
 	else if (bLocalMultiplayerMannequinRole)
@@ -1192,15 +1266,31 @@ void AMultiplayTestPlayerController::TryCompleteClientArrivalView()
 		if (!IsValid(ReadyTarget)) ReadyTarget=ClientArrivalViewTarget.Get();
 	}
 	else ReadyTarget=GetPawn();
-	if (!IsValid(ReadyTarget) || ReadyTarget->GetWorld()!=GetWorld() || ReadyTarget->IsHidden()) return;
-	if (const auto* Survivor=Cast<APlayerCharacter>(ReadyTarget); Survivor && Survivor->IsGameOver()) return;
+	if (!IsValid(ReadyTarget) || ReadyTarget->GetWorld()!=World || ReadyTarget->IsHidden() ||
+		(Cast<APlayerCharacter>(ReadyTarget) && Cast<APlayerCharacter>(ReadyTarget)->IsGameOver()))
+	{
+		ClientArrivalStableTarget.Reset(); ClientArrivalStableSeconds=0; return;
+	}
 	// Never expose a default/spectator camera while the new Pawn reference is still unmapped.
 	if (bClientArrivalCanPlay && !bLocalMultiplayerMannequinRole && !ReadyTarget->IsA<APlayerCharacter>()) return;
+	if (ClientArrivalStableTarget.Get()!=ReadyTarget)
+	{
+		ClientArrivalStableTarget=ReadyTarget; ClientArrivalStableSeconds=0; return;
+	}
+	// Do not spend the reveal in the loading hitch. Require several ready frames.
+	// Only PlayerTick supplies delta: multiple replication notifications in one frame do not count as stability.
+	ClientArrivalStableSeconds+=FMath::Clamp(ReadyDeltaSeconds,0.0f,0.05f);
+	if (ClientArrivalStableSeconds<0.15f) return;
+	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->HoldEntireScreenBlack();
 	if (bClientArrivalCanPlay) SurvivorSpectatorView={};
+	if (PlayerCameraManager) PlayerCameraManager->bClientSimulatingViewTarget=!bClientArrivalCanPlay;
 	bClientArrivalViewPending=false;
 	ClientArrivalViewTarget.Reset();
 	bAutoManageActiveCameraTarget=bClientArrivalCanPlay && !bLocalMultiplayerMannequinRole;
+	bSpectatorFadePending=false;
 	SetViewTarget(ReadyTarget);
+	UE_LOG(LogTemp,Log,TEXT("Travel view ready; revealing: World=%s Target=%s Observer=%d Mannequin=%d"),
+		*World->GetName(),*ReadyTarget->GetName(),!bClientArrivalCanPlay,bLocalMultiplayerMannequinRole);
 	ResetIgnoreMoveInput();
 	ResetIgnoreLookInput();
 	SetIgnoreMoveInput(!bClientArrivalCanPlay);
@@ -1210,6 +1300,9 @@ void AMultiplayTestPlayerController::TryCompleteClientArrivalView()
 	SetInputMode(FInputModeGameOnly());
 	bInitialGameplayFadePending = false;
 	bLocalLevelTransitionFadeHeld = false;
+	ClientDepartureWorld.Reset();
+	ClientArrivalStableTarget.Reset();
+	ClientArrivalStableSeconds=0;
 	if (IsValid(PlayerCameraManager))
 	{
 		// 전역 오버레이가 새 맵을 가린 상태에서 기존 카메라 검정만 먼저 제거한다.
@@ -1220,6 +1313,7 @@ void AMultiplayTestPlayerController::TryCompleteClientArrivalView()
 	{
 		ProjectGameInstance->FadeEntireScreenFromBlack(0.6f);
 	}
+	else if (PlayerCameraManager) PlayerCameraManager->StartCameraFade(1,0,0.6f,FLinearColor::Black,false,false);
 }
 
 void AMultiplayTestPlayerController::OnRep_ViewedMannequin()
@@ -1266,7 +1360,7 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 	bShouldShowMannequinGuide = IsValid(Auth) && Auth->IsSignedIn() &&
 		!Auth->HasSeenMannequinGuideForAccount();
 #endif
-	if (bShouldShowMannequinGuide && !bRoleGuideShownForThisController)
+	if (bShouldShowMannequinGuide && !bRoleGuideShownForThisController && !AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld()))
 	{
 		UProjectProject01GameGuideWidget* Guide = CreateWidget<UProjectProject01GameGuideWidget>(
 			this, UProjectProject01GameGuideWidget::StaticClass());
@@ -1388,7 +1482,8 @@ void AMultiplayTestPlayerController::ServerRequestMannequinSlot_Implementation(i
 		return;
 	}
 
-	GameMode->TryPossessMannequin(this, Slot);
+	if (GameMode->TryPossessMannequin(this, Slot))
+		if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::SelectMannequin);
 }
 
 bool AMultiplayTestPlayerController::ServerRequestMannequinSlot_Validate(const int32 Slot)
@@ -1411,7 +1506,8 @@ void AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Impleme
 		return;
 	}
 
-	GameMode->TryEnableMannequinManualControl(this);
+	if (GameMode->TryEnableMannequinManualControl(this))
+		if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::ManualControl);
 }
 
 bool AMultiplayTestPlayerController::ServerRequestMannequinManualControl_Validate()
@@ -1426,7 +1522,8 @@ void AMultiplayTestPlayerController::ServerRequestMannequinCommand_Implementatio
 	if (AMultiplayTestGameMode* GameMode = GetWorld()
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
-		GameMode->TryIssueMannequinCommand(this, Command);
+		if (GameMode->TryIssueMannequinCommand(this, Command))
+			if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::IssueCommand);
 	}
 }
 
@@ -1455,6 +1552,7 @@ bool AMultiplayTestPlayerController::ServerResetFollowingMannequins_Validate()
 
 void AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Implementation()
 {
+	if (AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) { ClientNotifyMannequinCatchDamage(false); return; }
 	if (!AllowServerRequest(8, 2, 1.0f)) return;
 	if (AMultiplayTestGameMode* GameMode = GetWorld()
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))

@@ -12,6 +12,7 @@
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01RoleSpawnPoint.h"
+#include "ProjectProject01Tutorial.h"
 #include "ProjectProject01Elevator.h"
 #include "ProjectProject01VersionContract.h"
 #include "Components/CapsuleComponent.h"
@@ -338,7 +339,7 @@ void AMultiplayTestGameMode::BeginPlay()
 	Super::BeginPlay();
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
 	InitializeRoleSpawnPoints();
-	BindEscapeTriggers();
+	if (!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) BindEscapeTriggers();
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		if (UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
@@ -1467,7 +1468,8 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 
 	// 스폰 후보는 이미 무작위로 골랐고, 여기서 다시 0~9 중 하나를 무작위로 골라
 	// 마네킹 플레이어가 실제로 빙의한 상태로 시작한다(이중 무작위 배정).
-	if (IsMannequinController(NewMultiplayController))
+	if (IsMannequinController(NewMultiplayController) &&
+		(!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld()) || GetWorld()->HasBegunPlay()))
 	{
 		AssignRandomInitialMannequinView(NewMultiplayController);
 	}
@@ -2057,6 +2059,10 @@ void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
 
 void AMultiplayTestGameMode::FinalizeLevelTransitionArrivals()
 {
+	// The old world also ticks during the fade/ack barrier. Its already-existing
+	// mannequin is NOT a destination spawn; consuming carryover here restarts its
+	// fade every retry and prevents the owner's acknowledgement from ever winning.
+	if (bLevelTransitionDeparting) return;
 	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair :
 		MatchPlayerRecords)
 	{
@@ -2488,12 +2494,13 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
 	{
 		return;
 	}
+	bLevelTransitionDeparting = true;
 #if WITH_EDITOR
 	if (IsLocalEditorPlaySession(GetWorld()))
 	{
 		// PIE otherwise silently falls back to a fresh login/new match, losing dead players' flags.
-		if (auto* Setting=IConsoleManager::Get().FindConsoleVariable(TEXT("net.AllowPIESeamlessTravel")))
-			Setting->SetWithCurrentPriority(1);
+		if (auto* Setting=IConsoleManager::Get().FindConsoleVariable(TEXT("net.AllowPIESeamlessTravel")); Setting && Setting->GetInt()!=1)
+			Setting->SetWithCurrentPriority(1,NAME_None,ECVF_SetByConsole,ECVF_SetByCode);
 		// Ticket-free PIE identities must also survive the new GameMode and role assignment.
 		for (const auto& Pair : MatchPlayerRecords)
 			if (auto* Controller=Pair.Key.Get(); IsValid(Controller) && Controller->GetAuthenticatedUserId().IsEmpty())
@@ -2536,9 +2543,17 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
 	}
 }
 
+bool AMultiplayTestGameMode::AreLevelTransitionClientsBlack() const
+{
+	for (const auto& Pair:MatchPlayerRecords)
+		if (const auto* Controller=Pair.Key.Get(); IsValid(Controller) && !Controller->IsLevelTransitionBlackReady()) return false;
+	return true;
+}
+
 void AMultiplayTestGameMode::CancelLevelTransitionTravel()
 {
 	if (!HasAuthority()) return;
+	bLevelTransitionDeparting = false;
 	const bool bRestoreGameplay = AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress;
 	for (auto& Pair : MatchPlayerRecords)
 	{

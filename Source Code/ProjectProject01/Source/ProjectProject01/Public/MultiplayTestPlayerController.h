@@ -49,6 +49,8 @@ struct FMultiplaySurvivorSpectatorView
 	GENERATED_BODY()
 	UPROPERTY() bool bEnabled = false;
 	UPROPERTY() TObjectPtr<class APlayerCharacter> Target;
+	UPROPERTY() bool bFadeTransition = false;
+	UPROPERTY() uint32 RequestId = 0;
 };
 
 /** 서버가 확정하여 해당 소유 클라이언트에만 전달하는 한 경기의 결과입니다. */
@@ -111,6 +113,7 @@ public:
 	AMultiplayTestPlayerController();
 	friend class FProjectElevatorTest;
 	friend class FProjectReviewMatchCarryoverTest;
+	friend class FProjectSpectatorFadeTest;
 	UFUNCTION(Client,Unreliable)
 	void ClientUpdateVoiceAudibility(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers);
 	class AMannequinAICharacter* GetViewedMannequin() const;
@@ -127,6 +130,7 @@ public:
 	/** 서버의 seamless map travel에서 이 컨트롤러와 다음 맵 생존 여부를 보존합니다. */
 	void PrepareLevelTransitionCarryover(bool bSpawnInNextLevel, float FadeSeconds = 0.6f);
 	bool IsLevelTransitionCarryover() const { return bLevelTransitionCarryover; }
+	bool IsLevelTransitionBlackReady() const { return bLevelTransitionCarryover && bServerTransitionBlackReady; }
 	bool ShouldSpawnAfterLevelTransition() const { return bSpawnAfterLevelTransition; }
 	void CompleteLevelTransitionCarryover(class AActor* InitialViewTarget, bool bCanPlay);
 	void CaptureLevelTransitionState();
@@ -153,7 +157,21 @@ protected:
 private:
 	UFUNCTION() void OnRep_SurvivorSpectatorView();
 	void ApplySurvivorSpectatorView();
-	void TryCompleteClientArrivalView();
+	void TryFinishSpectatorFade();
+	uint32 LastSpectatorFadeRequest = 0;
+	uint32 SpectatorRequestSerial = 0;
+	bool bSpectatorFadePending = false;
+	double SpectatorSwitchReadyAt = 0;
+	void TryCompleteClientArrivalView(float ReadyDeltaSeconds = 0.0f);
+	void TryConfirmLevelTransitionBlack();
+	uint32 TransitionFadeSerial = 0;
+	uint32 LocalTransitionFadeSerial = 0;
+	bool bServerTransitionBlackReady = false;
+	bool bLocalTransitionBlackConfirmed = false;
+	double LocalTransitionBlackSince = 0;
+	TWeakObjectPtr<UWorld> ClientDepartureWorld;
+	TWeakObjectPtr<AActor> ClientArrivalStableTarget;
+	float ClientArrivalStableSeconds = 0;
 	UPROPERTY(ReplicatedUsing=OnRep_SurvivorSpectatorView)
 	FMultiplaySurvivorSpectatorView SurvivorSpectatorView;
 	bool bClientArrivalViewPending = false;
@@ -246,10 +264,12 @@ private:
 	void ClientPresentMatchResult(const FMultiplayTestMatchResult& Result);
 
 	UFUNCTION(Client, Reliable)
-	void ClientEnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition);
+	void ClientEnterSurvivorSpectator(const FMultiplaySurvivorSpectatorView& View);
 
 	UFUNCTION(Client, Reliable)
-	void ClientPrepareForLevelTransition(float FadeSeconds);
+	void ClientPrepareForLevelTransition(float FadeSeconds, uint32 RequestId);
+	UFUNCTION(Server, Reliable)
+	void ServerConfirmLevelTransitionBlack(uint32 RequestId);
 
 	UFUNCTION(Client, Reliable)
 	void ClientCompleteLevelTransition(class AActor* InitialViewTarget, bool bCanPlay);

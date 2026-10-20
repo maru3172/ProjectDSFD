@@ -43,6 +43,7 @@
 #include "Modules/ModuleManager.h"
 #include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectProject01TutorialEditorLibrary.h"
 #include "Serialization/Csv/CsvParser.h"
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
@@ -856,6 +857,7 @@ public:
 
 	virtual void ShutdownModule() override
 	{
+		UProjectProject01TutorialEditorLibrary::ShutdownPractice();
 		FGameDelegates::Get().GetModifyCookDelegate().RemoveAll(this);
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
@@ -894,6 +896,7 @@ private:
 			FUIAction(FExecuteAction::CreateRaw(this, &FProjectProject01EditorModule::CreateHeartbeatVFXMaterial)));
 
 		RegisterProjectProject01DiagnosticsMenus();
+		UProjectProject01TutorialEditorLibrary::RegisterMenus();
 	}
 
 	void ReimportAndValidate()

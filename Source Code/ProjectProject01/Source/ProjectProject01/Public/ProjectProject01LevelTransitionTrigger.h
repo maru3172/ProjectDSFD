@@ -92,6 +92,7 @@ private:
 	float EvaluationIntervalSeconds = 0.25f;
 
 	bool bTransitionStarted = false;
+	double TransitionFadeWaitStartedAt = 0;
 	TSet<TWeakObjectPtr<AMultiplayTestPlayerController>> AcceptedSurvivors;
 	FTimerHandle EvaluationTimer;
 	FTimerHandle TravelTimer;

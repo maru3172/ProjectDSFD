@@ -14,7 +14,7 @@ UENUM(BlueprintType)
 enum class EProjectElevatorPhase : uint8
 {
 	Locked, Ready, CallDelay, Rising, Opening, Open, Closing, Travelling,
-	WaitingForArrival, ArrivalRide, Disabled, Descending
+	WaitingForArrival, ArrivalRide, Disabled, Descending, ArrivalClosing, ArrivalClosed
 };
 
 USTRUCT()
@@ -24,6 +24,7 @@ struct FProjectElevatorState
 	UPROPERTY() EProjectElevatorPhase Phase = EProjectElevatorPhase::Locked;
 	UPROPERTY() double StartedAt = 0;
 	UPROPERTY() float DoorStart = 0;
+	UPROPERTY() bool bArrivalTrip = false;
 };
 
 /** 배치한 버튼 볼륨에 상호작용 시선이 적중해야 작동하는 서버 권위 엘리베이터. */
@@ -65,6 +66,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Arrival") FName ArrivalId = TEXT("Elevator_1F");
 	/** 도착 맵에서는 켜 두세요. 목적지 지정/호출을 요구하지 않습니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Arrival") bool bArrivalOnly = false;
+	/** 하차 후 문 앞 안전 여유(cm). 모든 생존자의 캡슐이 이 여유까지 벗어나야 닫힙니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Arrival", meta=(ClampMin="0", Units="cm")) float ArrivalExitClearance = 50;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Timing", meta=(ClampMin="0", ClampMax="300", Units="s")) float CallDelaySeconds = 20;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Timing", meta=(ClampMin="0.1", ClampMax="60", Units="s")) float RiseSeconds = 4;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Timing", meta=(ClampMin="0.1", ClampMax="15", Units="s")) float DoorSeconds = 1.5f;
@@ -72,6 +75,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Timing", meta=(ClampMin="0.1", ClampMax="30", Units="s")) float DescentSoundSeconds = 2.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Timing", meta=(ClampMin="0.1", ClampMax="10", Units="s")) float DepartureFadeSeconds = 1.5f;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Timing", meta=(ClampMin="0.7", ClampMax="30", Units="s")) float ArrivalRideSeconds = 2;
+	/** 출발 대기 중 착륙 지점 아래의 깊이(cm). 1200cm = 12m. 기존 배치에도 적용됩니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Movement", meta=(ClampMin="0", Units="cm")) float BelowLandingDepth = 1200;
+	/** 수평 보정값. 수직 깊이는 BelowLandingDepth로 지정합니다(기존 에셋의 Z는 무시). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Movement") FVector BelowLandingOffset = FVector(0,0,-800);
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Movement") FVector LeftDoorOpenOffset = FVector(0,-150,0);
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Elevator|Movement") FVector RightDoorOpenOffset = FVector(0,150,0);
@@ -83,6 +89,7 @@ private:
 	void UpdateVisuals();
 	bool IsEligibleInteractor(const APawn* Pawn) const;
 	bool IsInsideCabin(const APawn* Pawn) const;
+	bool HasArrivalOccupants();
 	bool CanUseButton(APawn* Interactor, const UPrimitiveComponent* Button) const;
 	void BeginButtonInteraction(APawn* Interactor);
 	UPrimitiveComponent* TraceButton(APawn* Pawn) const;
@@ -92,6 +99,7 @@ private:
 	float DoorFraction() const;
 	UPROPERTY(Transient) TObjectPtr<APlayerStart> ArrivalStart;
 	TWeakObjectPtr<APlayerCharacter> Passenger;
+	TSet<TWeakObjectPtr<APlayerCharacter>> ArrivalPassengers;
 	FVector CabinHome = FVector::ZeroVector, LeftDoorHome = FVector::ZeroVector, RightDoorHome = FVector::ZeroVector;
 	bool bPresentationReady = false;
 	bool bMotorPlaying = false;
