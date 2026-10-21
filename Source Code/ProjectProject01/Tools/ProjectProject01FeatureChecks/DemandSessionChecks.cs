@@ -83,12 +83,14 @@ internal static class DemandSessionChecks
             await Status(clients[0].PostAsJsonAsync("/api/rooms/current/confirm-start",new {}),HttpStatusCode.Conflict,"5초 전 세션 찾기 진입 차단");
             await Cancel();await manager.TickAsync(default);Check(factory.Live==0&&(await State()).GetProperty("canStart").GetBoolean(),"카운트다운 취소 시 방·로그인 유지");
             var searching=await Queue();
+            Check(searching.GetProperty("sessionWaitPhase").GetString()=="Queued"&&searching.GetProperty("sessionWaitElapsedSeconds").GetInt32()>=0,"빈자리 대기 단계와 경과 초를 별도로 제공");
             Check(searching.GetProperty("serverPreparing").GetBoolean()&&!searching.GetProperty("starting").GetBoolean()&&!searching.GetProperty("started").GetBoolean(),"카운트다운 후 세션 찾는 상태로 전환");
             Check(searching.GetProperty("members").EnumerateArray().All(m=>string.IsNullOrEmpty(m.GetProperty("assignedRole").GetString())),"찾는 동안 역할은 배정하지 않음");
             var duplicateQueue=await Read(clients[0].PostAsJsonAsync("/api/rooms/current/confirm-start",new {}));
             Check(duplicateQueue.GetProperty("room").GetProperty("serverPreparing").GetBoolean()&&factory.Live==0,"대기 진입 응답 재시도도 중복 예약·실행 없음");
             await Status(clients[0].PostAsJsonAsync("/api/game-tickets",new {}),HttpStatusCode.Conflict,"준비 전 입장 허가 없음");
             await manager.TickAsync(default);Check(factory.Live==1,"대기열에서 자리를 얻은 방만 서버 실행");
+            Check((await State()).GetProperty("sessionWaitPhase").GetString()=="Preparing","서버 실행 단계는 빈자리 대기와 구분");
             await Status(admin.PutAsJsonAsync("/api/admin/game-server-demand/capacity",new {maximumConcurrent=2}),HttpStatusCode.Conflict,"준비 중 한도 변경 거부·기존 세션 보존");
             await Heartbeat(false);await manager.TickAsync(default);Check(!(await State()).GetProperty("started").GetBoolean(),"서버 준비 완료 전 게임 시작 금지");
             await Status(server.PostAsJsonAsync("/api/server/heartbeat",new {port=24577,bootId="stale",ready=true,managedId=Guid.NewGuid().ToString("N")}),HttpStatusCode.Conflict,"다른 세대 heartbeat 거부");
@@ -98,6 +100,7 @@ internal static class DemandSessionChecks
             await Cancel(1);Check(!(await State(1)).GetProperty("serverPreparing").GetBoolean(),"자리 없는 방도 세션 대기 취소 가능");
             await Queue(1); // Room 2 now precedes room 1.
             await Heartbeat(true);await manager.TickAsync(default);var started=await State();
+            Check(started.GetProperty("sessionWaitPhase").GetString()==""&&started.GetProperty("sessionWaitElapsedSeconds").GetInt32()==0,"입장 허가 이후 대기 단계·시간 제거");
             Check(started.GetProperty("started").GetBoolean()&&!started.GetProperty("starting").GetBoolean(),"준비 완료하면 두 번째 카운트다운 없이 실제 시작");
             var members=started.GetProperty("members").EnumerateArray().ToArray();
             Check(members.Count(m=>m.GetProperty("assignedRole").GetString()=="Mannequin")==1&&members.Count(m=>m.GetProperty("assignedRole").GetString()=="Survivor")==2,"실제 시작 시에만 역할 1:2 배정");

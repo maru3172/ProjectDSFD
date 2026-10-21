@@ -75,6 +75,7 @@ internal static class EditorSessionSmokeChecks
                 using(var early=await group[0].PostAsJsonAsync("/api/game-tickets",new{}))
                     if(early.StatusCode is not (HttpStatusCode.Conflict or HttpStatusCode.ServiceUnavailable))throw new Exception($"Unexpected pre-heartbeat ticket response {(int)early.StatusCode}");
                 var deadline=DateTime.UtcNow.AddSeconds(85);
+                var preparationWatch=System.Diagnostics.Stopwatch.StartNew();
                 while(true)
                 {
                     await manager.TickAsync(default);
@@ -95,7 +96,7 @@ internal static class EditorSessionSmokeChecks
                     if(ticket.GetProperty("travelUrl").GetString()!="127.0.0.1:27777")throw new Exception("Editor ticket targets wrong server");
                 }
                 if(mannequins!=1)throw new Exception("Editor match does not have one mannequin and two survivors");
-                Console.WriteLine($"PASS real editor {(round==0?"open":"random")} flow: countdown -> managed Unreal server -> heartbeat -> 3 authenticated tickets (1:2)");
+                Console.WriteLine($"PASS real editor {(round==0?"open":"random")} flow: countdown -> managed Unreal server -> heartbeat -> 3 authenticated tickets (1:2); session preparation {preparationWatch.Elapsed.TotalSeconds:F2}s");
                 await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new {enabled=false}));await manager.TickAsync(default);
                 foreach(var client in group)await Read(client.PostAsJsonAsync("/api/rooms/current/leave",new{}));
             }

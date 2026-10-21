@@ -8,6 +8,7 @@
 #include "MultiplayTestPlayerController.h"
 #include "MultiplayMannequinTypes.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectLoadingBarrier.h"
 #include "MultiplayTestGameMode.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Multiplayer, Log, All);
@@ -62,6 +63,8 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 public:
 	const FString& GetServerMatchId() const { return AuthoritativeMatchId; }
 	bool IsReadyForServerAllocation();
+	void InitializeLoadingGate(AMultiplayTestPlayerController* Controller);
+	void ReceiveLoadingStage(AMultiplayTestPlayerController* Controller,const FString& Epoch,uint8 Progress);
 	AMultiplayTestGameMode();
 	virtual void BeginPlay() override;
 
@@ -152,6 +155,12 @@ private:
 	TMap<TWeakObjectPtr<APlayerCharacter>, FTransitionPawnSnapshot> TransitionPawnSnapshots;
 	friend class FProjectMatchTimelineServerTest;
 	friend class FProjectMannequinSearchTest;
+	bool bServerWorldInitialized = false;
+	bool bServerReadinessLogged = false;
+	bool TickLoadingGate(float Delta);
+	FProjectLoadingBarrier LoadingGate;
+	float LoadingBroadcastSeconds=0;
+	TMap<TWeakObjectPtr<ACharacter>,TPair<uint8,uint8>> LoadingMovementModes;
 	bool ContinueLastSeenSearch(class AMannequinAICharacter* Mannequin, class AAIController* Controller, double Now);
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FMultiplayMannequinSearchState> MultiplayerSearchStates;
 	UPROPERTY(EditDefaultsOnly, Category="Multiplayer|Mannequin AI|Search", meta=(ClampMin="1.0",Units="s"))

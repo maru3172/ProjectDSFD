@@ -5,6 +5,9 @@
 #include "ProjectProject01LevelTransitionTrigger.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
+#include "ProjectLoadingScreenSubsystem.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Camera/CameraComponent.h"
 #include "PlayerCharacter.h"
 #include "MannequinAICharacter.h"
 #include "Editor.h"
@@ -14,9 +17,33 @@
 #include "Settings/LevelEditorPlaySettings.h"
 #include "UObject/UnrealType.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/SceneCapture2D.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 namespace ProjectPlayTests
 {
+	bool SaveSpectatorView(APlayerController* PC,const FString& Name)
+	{
+		auto* Capture=PC->GetWorld()->SpawnActor<ASceneCapture2D>();
+		auto* Component=Capture->GetCaptureComponent2D();
+		auto* Texture=NewObject<UTextureRenderTarget2D>(Capture);Texture->InitAutoFormat(960,540);
+		Component->TextureTarget=Texture;Component->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR;
+		Component->bCaptureEveryFrame=false;Component->bCaptureOnMovement=false;
+		Component->FOVAngle=PC->PlayerCameraManager->GetFOVAngle();
+		Capture->SetActorLocationAndRotation(PC->PlayerCameraManager->GetCameraLocation(),PC->PlayerCameraManager->GetCameraRotation());
+		Component->CaptureScene();TArray<FColor> Pixels;
+		const bool bRead=Texture->GameThread_GetRenderTargetResource()->ReadPixels(Pixels);
+		TArray64<uint8> PNG;if(bRead)FImageUtils::PNGCompressImageArray(960,540,Pixels,PNG);
+		const FString Directory=FPaths::ProjectSavedDir()/TEXT("SpectatorCameraQA");
+		IFileManager::Get().MakeDirectory(*Directory,true);
+		const bool bSaved=bRead && FFileHelper::SaveArrayToFile(PNG,*(Directory/(Name+TEXT(".png"))));
+		Capture->Destroy();return bSaved;
+	}
 	void EndSession(FAutomationTestBase* Test,TFunction<void()> Cleanup={})
 	{
 		GEditor->RequestEndPlayMap();
@@ -123,7 +150,7 @@ bool FProjectThreeClientTravelTest::RunTest(const FString&)
 	Request.GameModeOverride=AMultiplayTestGameMode::StaticClass();
 	GEditor->RequestPlaySession(Request); GEditor->StartQueuedPlaySessionRequest();
 	const double Deadline=FPlatformTime::Seconds()+90;
-	struct FState { int32 Stage=0; double At=0; TWeakObjectPtr<UWorld> Source; TWeakObjectPtr<APlayerCharacter> Live; };
+	struct FState { int32 Stage=0; double At=0; bool bCameraRendered=false; TWeakObjectPtr<UWorld> Source; TWeakObjectPtr<APlayerCharacter> Live; };
 	const auto State=MakeShared<FState>();
 	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,State,Deadline,Cleanup]()
 	{
@@ -173,10 +200,38 @@ bool FProjectThreeClientTravelTest::RunTest(const FString&)
 			if (!World || World->WorldType!=EWorldType::PIE || World->GetNetMode()!=NM_Client || !World->GetPackage()->GetName().Contains(TEXT("MultiplayTest1"))) continue;
 			auto* PC=Cast<AMultiplayTestPlayerController>(World->GetFirstPlayerController());
 			if (!PC || PC->GetMatchPhase()!=EMultiplayTestMatchPhase::InProgress) continue;
+			if(auto* Loading=World->GetGameInstance()->GetSubsystem<UProjectLoadingScreenSubsystem>();Loading && Loading->IsLoading())continue;
 			if (PC->GetSurvivorState()==EMultiplayTestSurvivorState::Eliminated)
 			{
 				auto* Target=Cast<APlayerCharacter>(PC->GetViewTarget());
-				if (Target && !Target->IsGameOver() && !Target->IsHidden()) { ++Ready; ++Observers; }
+				if (Target && !Target->IsGameOver() && !Target->IsHidden())
+				{
+					const FVector ObserverOffset=PC->PlayerCameraManager->GetCameraLocation()-Target->GetActorLocation();
+					for(const auto& OtherContext:GEngine->GetWorldContexts())
+					{
+						auto* OtherWorld=OtherContext.World();if(!OtherWorld || OtherWorld->WorldType!=EWorldType::PIE || OtherWorld->GetNetMode()!=NM_Client)continue;
+						auto* OwnerPC=OtherWorld->GetFirstPlayerController();APawn* OwnerPawn=OwnerPC?OwnerPC->GetPawn().Get():nullptr;
+						if(!OwnerPawn || OwnerPawn->GetFName()!=Target->GetFName() || !OwnerPC->PlayerCameraManager)continue;
+						AddInfo(FString::Printf(TEXT("Camera alignment: observer=%s owner=%s observerFOV=%.1f ownerFOV=%.1f"),*ObserverOffset.ToString(),
+							*(OwnerPC->PlayerCameraManager->GetCameraLocation()-OwnerPawn->GetActorLocation()).ToString(),PC->PlayerCameraManager->GetFOVAngle(),OwnerPC->PlayerCameraManager->GetFOVAngle()));
+					}
+					const auto Body=Target->GetActorTransform();PC->SetControlRotation(FRotator(10,123,0));PC->PlayerCameraManager->UpdateCamera(.016f);
+					TestTrue(TEXT("Network dead observer freely rotates view after travel"),PC->PlayerCameraManager->GetCameraRotation().Equals(FRotator(10,123,0),.1f));
+					TestTrue(TEXT("Network observer cannot move or turn the target"),PC->IsMoveInputIgnored() && Target->GetActorTransform().Equals(Body));
+					if(!State->bCameraRendered)
+					{
+						FVector Mount=FVector::ZeroVector;
+						for(const int32 YawOffset:{0,90,180})
+						{
+							PC->SetControlRotation(FRotator(0,Target->GetActorRotation().Yaw+YawOffset,0));PC->PlayerCameraManager->UpdateCamera(.016f);
+							if(YawOffset==0)Mount=PC->PlayerCameraManager->GetCameraLocation();
+							else TestTrue(TEXT("Actual survivor BP does not move spectator mount when looking back/sideways"),PC->PlayerCameraManager->GetCameraLocation().Equals(Mount,.1f));
+							TestTrue(TEXT("Actual network spectator view renders without hiding the target"),ProjectPlayTests::SaveSpectatorView(PC,FString::Printf(TEXT("BodyMount_%d"),YawOffset)));
+						}
+						State->bCameraRendered=true;
+					}
+					++Ready;++Observers;
+				}
 			}
 			else if (PC->GetViewedMannequin() && PC->GetViewTarget()==PC->GetViewedMannequin()) { ++Ready; ++Mannequins; }
 			else if (PC->GetPawn() && PC->GetViewTarget()==PC->GetPawn()) ++Ready;
@@ -184,7 +239,7 @@ bool FProjectThreeClientTravelTest::RunTest(const FString&)
 		if (Ready!=3) return false;
 		TestEqual(TEXT("Dead survivor remains an observer after real network travel"),Observers,1);
 		TestEqual(TEXT("Mannequin travels without operating a trigger"),Mannequins,1);
-		AddInfo(TEXT("Three actual PIE network clients reached MultiplayTest1: survivor, dead observer and mannequin."));
+		AddInfo(TEXT("Three actual PIE clients passed initial and travel loading gates: survivor, dead free-look observer and mannequin."));
 		ProjectPlayTests::EndSession(this,Cleanup); return true;
 	}));
 	return true;

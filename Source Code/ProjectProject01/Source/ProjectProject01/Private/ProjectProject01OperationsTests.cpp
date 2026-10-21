@@ -28,6 +28,8 @@
 #include "HAL/FileManager.h"
 #include "Misc/ScopeExit.h"
 #include "RenderingThread.h"
+#include "ProjectLoadingScreenSubsystem.h"
+#include "ProjectLoadingScreenState.h"
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 
@@ -85,25 +87,55 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectLobbySessionPresentationTest,"ProjectPr
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectLobbySessionPresentationTest::RunTest(const FString&)
 {
-	UUserWidget* Base=NewObject<UProjectProject01LobbyWidget>();
+	auto* World=UWorld::CreateWorld(EWorldType::Game,false);auto* Instance=NewObject<UGameInstance>();World->SetGameInstance(Instance);Instance->Init();
+	UUserWidget* Base=NewObject<UProjectProject01LobbyWidget>(World);
 	if(!TestTrue(TEXT("Lobby initializes"),Base->Initialize()))return false;
 	auto* Lobby=CastChecked<UProjectProject01LobbyWidget>(Base);
+	ON_SCOPE_EXIT{Lobby->CancelGameStartCountdown();Instance->Shutdown();World->SetGameInstance(nullptr);World->DestroyWorld(false);};
+	auto* State=Instance->GetSubsystem<UProjectProject01LobbySubsystem>();auto* Loading=Instance->GetSubsystem<UProjectLoadingScreenSubsystem>();
+	if(!TestNotNull(TEXT("Loading presentation subsystem exists"),Loading))return false;
+	FProjectProject01RoomState Room;Room.RoomId=TEXT("fixture-room");Room.bStarting=true;Room.bIsHost=true;
+	State->CurrentRoom=Room;
+	TArray<FString> Requests;State->ReviewRequestSink=[&Requests](const FString& Endpoint){Requests.Add(Endpoint);};
 	Lobby->BeginGameStartCountdown();
 	TestEqual(TEXT("Countdown starts at five"),Lobby->GameStartCountdownNumber,5);
-	TestFalse(TEXT("Not starting game before a ready session"),Lobby->StartCountdownText->GetText().ToString().Contains(TEXT("게임을 시작합니다")));
+	TestTrue(TEXT("Countdown presents the start, without granting admission"),Lobby->StartCountdownText->GetText().ToString().Contains(TEXT("게임을 시작합니다")));
 	TestFalse(TEXT("No fade during countdown"),Lobby->bGameStartFadeActive);
 	Lobby->AdvanceGameStartCountdown();
-	TestEqual(TEXT("Only one countdown number shown"),Lobby->StartCountdownText->GetText().ToString(),FString(TEXT("게임 시작 준비\n4...")));
-	Lobby->CancelGameStartCountdown();Lobby->ShowGameSessionSearch();
-	TestEqual(TEXT("Search message"),Lobby->StartCountdownText->GetText().ToString(),FString(TEXT("세션 찾는 중…")));
-	TestFalse(TEXT("Search keeps room screen visible"),Lobby->bGameStartFadeActive);
-	TestTrue(TEXT("Search does not obscure cancel controls"),Lobby->StartCountdownPanel->GetVisibility()==ESlateVisibility::HitTestInvisible);
-	FProjectProject01RoomState Room;Lobby->bGameStartCountdownComplete=true;
-	Lobby->BeginGameStartFade(Room);TestFalse(TEXT("Cannot fade before server allows start"),Lobby->bGameStartFadeActive);
-	Room.bStarted=true;Room.AssignedRole=TEXT("Mannequin");Lobby->BeginGameStartFade(Room);
-	TestTrue(TEXT("Ready session begins cinematic fade"),Lobby->bGameStartFadeActive);
-	TestEqual(TEXT("Start and role shown only at admission"),Lobby->StartCountdownText->GetText().ToString(),FString(TEXT("게임을 시작합니다\n역할: 마네킹")));
+	TestEqual(TEXT("Only one countdown number shown"),Lobby->StartCountdownText->GetText().ToString(),FString(TEXT("게임을 시작합니다\n4...")));
+	for(int32 Count=0;Count<4;++Count)Lobby->AdvanceGameStartCountdown();
+	TestTrue(TEXT("Countdown ends in fade even while server is still Starting"),Lobby->bGameStartFadeActive && !State->GetCurrentRoom().bStarted);
+	TestEqual(TEXT("Fade must not suppress the host's confirm request"),Requests.Num(),1);
+	TestFalse(TEXT("Loading overlay is not exposed before fading black"),Loading->IsLoading());
+	Lobby->CompleteGameStartFade();
+	TestTrue(TEXT("Same loading screen takes over after blackout"),Loading->IsLoading() && Loading->bAwaitingServer);
+	TestTrue(TEXT("Old lobby countdown panel is removed"),Lobby->StartCountdownPanel->GetVisibility()==ESlateVisibility::Collapsed);
+	TestTrue(TEXT("Session status is inside the loading state"),Loading->State->Read().Stage.Contains(TEXT("세션 접속 중")));
+	State->CurrentRoom.bStarting=false;State->CurrentRoom.bServerPreparing=true;State->CurrentRoom.SessionWaitPhase=TEXT("Queued");
+	Lobby->RefreshCurrentRoomView();
+	TestTrue(TEXT("Queue polling does not reset the completed countdown or hide loading"),Lobby->bGameStartCountdownComplete && Loading->IsLoading());
+	TestEqual(TEXT("Queue phase stays in loading screen"),Loading->State->Read().Progress,uint8(5));
+	TestTrue(TEXT("Open host retains cancel inside the loading screen"),Loading->State->Read().CanCancel);
+	State->CurrentRoom.SessionWaitPhase=TEXT("Preparing");Lobby->ContinueGameAdmission(1);
+	TestEqual(TEXT("Server startup updates the same loading screen"),Loading->State->Read().Stage,FString(TEXT("게임 서버 준비 중…")));
+	{FScopeLock Lock(&Loading->State->Mutex);Loading->State->Data.Started=FPlatformTime::Seconds()-180;}
+	Loading->TickLoading(.05f);
+	TestTrue(TEXT("Allocation wait does not consume map-loading timeout"),Loading->IsLoading());
+	TestEqual(TEXT("Allocation never requests a ticket early"),Requests.Num(),1);
+	State->CurrentRoom.bServerPreparing=false;State->CurrentRoom.bStarted=true;State->CurrentRoom.MatchId=TEXT("match-a");
+	Lobby->ContinueGameAdmission(0);
+	TestEqual(TEXT("Only a started session requests admission ticket"),Requests.Num(),2);
+	TestEqual(TEXT("Admission is represented inside loading, not a separate label"),Loading->State->Read().Progress,uint8(15));
+	TestFalse(TEXT("Random/committed admission cannot be cancelled by a loading button"),Loading->State->Read().CanCancel);
+	Loading->BeginServerTravel();
+	TestEqual(TEXT("Server connection continues on the same progress bar"),Loading->State->Read().Stage,FString(TEXT("게임 서버 접속 중…")));
+	TestFalse(TEXT("Connection phase is no longer allocation"),Loading->bAwaitingServer);
 	Lobby->CancelGameStartCountdown();
+	TestFalse(TEXT("Rollback removes loading and clears preparation callbacks"),Loading->IsLoading());
+	int32 Cancellations=0;Loading->ShowSessionPreparation(TEXT("세션 접속 중…"),5,true,FSimpleDelegate::CreateLambda([&Cancellations](){++Cancellations;}));
+	Loading->RequestCancelPreparation();Loading->RequestCancelPreparation();
+	TestEqual(TEXT("Repeated cancel clicks issue only one action until the next state update"),Cancellations,1);
+	Loading->CancelLoading();
 	TestTrue(TEXT("Cancel clears every start/search message"),Lobby->StartCountdownText->GetText().IsEmpty());
 	TestTrue(TEXT("Cancel hides overlay"),Lobby->StartCountdownPanel->GetVisibility()==ESlateVisibility::Collapsed);
 	return true;

@@ -738,6 +738,10 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	StateJson->TryGetBoolField(TEXT("returnedToRoom"), Parsed.bReturnedToRoom);
 	StateJson->TryGetStringField(TEXT("matchId"), Parsed.MatchId);
 	StateJson->TryGetBoolField(TEXT("serverPreparing"), Parsed.bServerPreparing);
+	StateJson->TryGetStringField(TEXT("sessionWaitPhase"), Parsed.SessionWaitPhase);
+	double WaitSeconds=0;
+	if (StateJson->TryGetNumberField(TEXT("sessionWaitElapsedSeconds"),WaitSeconds) && FMath::IsFinite(WaitSeconds))
+		Parsed.SessionWaitElapsedSeconds=static_cast<int32>(FMath::Clamp(WaitSeconds,0.0,3600.0));
     StateJson->TryGetBoolField(TEXT("randomMatch"),Parsed.bRandomMatch);
     StateJson->TryGetBoolField(TEXT("randomParty"),Parsed.bRandomParty);
     StateJson->TryGetStringField(TEXT("matchSearchId"),Parsed.MatchSearchId);

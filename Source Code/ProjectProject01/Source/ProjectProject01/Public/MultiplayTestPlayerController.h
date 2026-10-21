@@ -8,6 +8,7 @@
 #include "MultiplayMannequinTypes.h"
 #include "ProjectProject01MatchTimeline.h"
 #include "ProjectProject01VoiceAudibility.h"
+#include "ProjectLoadingScreenSubsystem.h"
 #include "MultiplayTestPlayerController.generated.h"
 
 struct FProjectProject01ValidatedJoinClaim;
@@ -114,6 +115,7 @@ public:
 	friend class FProjectElevatorTest;
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectSpectatorFadeTest;
+	friend class FProjectDeadSpectatorTest;
 	UFUNCTION(Client,Unreliable)
 	void ClientUpdateVoiceAudibility(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers);
 	class AMannequinAICharacter* GetViewedMannequin() const;
@@ -129,6 +131,7 @@ public:
 	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
 	void DeclareVoluntaryExit();
 	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
+	bool IsFreeSpectatingTarget(const AActor* Target) const;
 	/** 서버의 seamless map travel에서 이 컨트롤러와 다음 맵 생존 여부를 보존합니다. */
 	void PrepareLevelTransitionCarryover(bool bSpawnInNextLevel, float FadeSeconds = 0.6f);
 	bool IsLevelTransitionCarryover() const { return bLevelTransitionCarryover; }
@@ -150,6 +153,15 @@ public:
 	virtual void SeamlessTravelFrom(APlayerController* OldPC) override;
 	virtual void PostSeamlessTravel() override;
 	virtual void PlayerTick(float DeltaTime) override;
+	UFUNCTION(Client,Reliable) void ClientBeginLoadingGate(const FString& Epoch,const FString& OwnId,const FString& OwnName,int32 Expected,bool bReleased);
+	UFUNCTION(Client,Unreliable) void ClientUpdateLoadingParticipants(const FString& Epoch,const TArray<FProjectLoadingParticipant>& Participants);
+	UFUNCTION(Client,Reliable) void ClientReleaseLoadingGate(const FString& Epoch);
+	UFUNCTION(Client,Reliable) void ClientFailLoadingGate(const FString& Message);
+	UFUNCTION(Server,Reliable) void ServerReportLoadingStage(const FString& Epoch,uint8 Progress);
+	bool TryPassLoadingGate();
+	FString LoadingGateEpoch;
+	bool bLoadingGateRequired=false,bLoadingGateReleased=false;
+	uint8 LastReportedLoadingStage=0;
 
 protected:
 	virtual void BeginPlay() override;
@@ -177,6 +189,7 @@ private:
 	float ClientArrivalStableSeconds = 0;
 	UPROPERTY(ReplicatedUsing=OnRep_SurvivorSpectatorView)
 	FMultiplaySurvivorSpectatorView SurvivorSpectatorView;
+	TWeakObjectPtr<AActor> LocalSpectatorLookTarget;
 	bool bClientArrivalViewPending = false;
 	bool bClientArrivalCanPlay = false;
 	TWeakObjectPtr<AActor> ClientArrivalViewTarget;

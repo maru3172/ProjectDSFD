@@ -41,6 +41,8 @@ public:
 	bool CanRetryVoiceConnection() const { return bConfiguredForSurvivor && ConnectionPhase==EProjectVoiceConnectionPhase::Failed; }
 	void SetPushToTalkHeld(bool bHeld);
 	void ToggleOpenMic();
+	void StopSpeaking();
+	bool CanLocalTransmit() const;
 	bool PrepareAudioDevices();
 	TArray<FProjectVoiceDevice> GetInputDevices() const;
 	TArray<FProjectVoiceDevice> GetOutputDevices() const;
@@ -74,13 +76,14 @@ public:
 	bool IsPushToTalkHeld() const { return bPushToTalkHeld; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
-	bool IsTransmitting() const { return bJoinedChannel && HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
+	bool IsTransmitting() const { return bJoinedChannel && CanLocalTransmit() && HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
 
 private:
 	friend class FProjectVoiceParticipantIsolationTest;
 	friend class FProjectVoiceLifecycleTest;
 	friend class FProjectVoiceAudibilityTest;
 	friend class FProjectVoiceGainSmoothingTest;
+	friend class FProjectDeadSpectatorTest;
 	void StopSession(bool bPreservePreferences);
 	void CancelVoiceRequests();
 	void BeginConnectionAttempt();

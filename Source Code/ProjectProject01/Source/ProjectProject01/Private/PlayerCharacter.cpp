@@ -2,6 +2,7 @@
 
 
 #include "PlayerCharacter.h"
+#include "ProjectReplicationBudgetComponent.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01GameInstance.h"
@@ -280,6 +281,7 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 {
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+	CreateDefaultSubobject<UProjectReplicationBudgetComponent>(TEXT("Replication Budget"));
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("Spring Arm"));
 	SpringArm->SetupAttachment(RootComponent);

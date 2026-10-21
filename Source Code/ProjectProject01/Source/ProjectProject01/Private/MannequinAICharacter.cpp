@@ -27,6 +27,7 @@
 #include "Sound/SoundAttenuation.h"
 #include "ProjectProject01SpatialAudio.h"
 #include "FootstepSynthComponent.h"
+#include "ProjectReplicationBudgetComponent.h"
 
 
 // Sets default values
@@ -34,6 +35,7 @@ AMannequinAICharacter::AMannequinAICharacter()
 {
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+	CreateDefaultSubobject<UProjectReplicationBudgetComponent>(TEXT("Replication Budget"));
 	FootstepSFXComponent = CreateDefaultSubobject<UFootstepSynthComponent>(TEXT("Footstep SFX Component"));
 	FootstepSFXComponent->SetupAttachment(RootComponent);
 	FootstepSFXComponent->Configure(EProjectProject01FootstepStyle::MarblePlastic, 0.9f, false);

@@ -27,6 +27,7 @@
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
+#include "Engine/NetDriver.h"
 #include "NavigationPath.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
@@ -340,14 +341,6 @@ void AMultiplayTestGameMode::BeginPlay()
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
 	InitializeRoleSpawnPoints();
 	if (!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) BindEscapeTriggers();
-	if (GetNetMode() == NM_DedicatedServer)
-	{
-		if (UProjectProject01GameInstance* GameInstance = Cast<UProjectProject01GameInstance>(GetGameInstance()))
-		{
-			GameInstance->SendGameServerHeartbeat();
-		}
-	}
-
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
@@ -359,6 +352,12 @@ void AMultiplayTestGameMode::BeginPlay()
 			}
 		}
 	}
+	bServerWorldInitialized = true;
+	if (GetNetMode() == NM_DedicatedServer)
+		GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this,[this]()
+		{
+			if (auto* Instance=GetGameInstance<UProjectProject01GameInstance>()) Instance->SendGameServerHeartbeat();
+		}));
 }
 
 void AMultiplayTestGameMode::InitializeRoleSpawnPoints()
@@ -1275,6 +1274,7 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 		}
 	}
 
+	if(TickLoadingGate(DeltaSeconds))return;
 	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		MatchTimeLimitSeconds > 0.0f && GetElapsedMatchSeconds() >= MatchTimeLimitSeconds)
 	{
@@ -1324,7 +1324,17 @@ void AMultiplayTestGameMode::UpdateVoiceAudibility()
 			return AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress && !Player.bDisconnected && !Player.bForfeited &&
 				Player.SurvivorState==EMultiplayTestSurvivorState::Active && Player.SurvivorPawn.IsValid();
 		};
-		const bool bAllowed=IsAudible(Record);
+		APlayerCharacter* ListenerPawn=IsAudible(Record)?Record.SurvivorPawn.Get():nullptr;
+		// A dead observer hears from the living target's position, but is never a speaker.
+		if(!ListenerPawn && !Record.bDisconnected && !Record.bForfeited &&
+			Record.SurvivorState==EMultiplayTestSurvivorState::Eliminated &&
+			AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)
+		{
+			auto* Observed=PC->SurvivorSpectatorView.Target.Get();
+			for(const auto& Candidate:MatchPlayerRecords)
+				if(IsAudible(Candidate.Value) && Candidate.Value.SurvivorPawn.Get()==Observed){ListenerPawn=Observed;break;}
+		}
+		const bool bAllowed=IsValid(ListenerPawn);
 		TArray<FProjectVoiceAudibility> Peers;
 		for(const auto& Other:MatchPlayerRecords)
 		{
@@ -1332,7 +1342,7 @@ void AMultiplayTestGameMode::UpdateVoiceAudibility()
 			FProjectVoiceAudibility Peer;Peer.UserId=Other.Value.UserId;
 			if(bAllowed && IsAudible(Other.Value))
 			{
-				const float Distance=FVector::Distance(Record.SurvivorPawn->GetActorLocation(),Other.Value.SurvivorPawn->GetActorLocation());
+				const float Distance=FVector::Distance(ListenerPawn->GetActorLocation(),Other.Value.SurvivorPawn->GetActorLocation());
 				Peer.Gain=Voice?Voice->CalculateDistanceGain(Distance):ProjectVoiceAudibility::DistanceGain(Distance,350,1800,1);
 			}
 			Peers.Add(MoveTemp(Peer));
@@ -1495,6 +1505,7 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 		if (RestoreDisconnectedMatchPlayer(NewMultiplayController))
 		{
+			InitializeLoadingGate(NewMultiplayController);
 			return;
 		}
 	}
@@ -1508,6 +1519,7 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 	}
 
 	RegisterMatchPlayer(NewMultiplayController);
+	InitializeLoadingGate(NewMultiplayController);
 	TryStartAuthoritativeMatch();
 }
 
@@ -1558,6 +1570,7 @@ void AMultiplayTestGameMode::HandleSeamlessTravelPlayer(AController*& Controller
 	}
 
 	RegisterMatchPlayer(MultiplayController);
+	InitializeLoadingGate(MultiplayController);
 	TryStartAuthoritativeMatch();
 }
 
@@ -2022,6 +2035,7 @@ void AMultiplayTestGameMode::NotifySurvivorDeathCountLost(APlayerCharacter* Surv
 
 void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
 {
+	if(!LoadingGate.Epoch.IsEmpty() && AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment)return;
 	if (!HasAuthority() || AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress ||
 		AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Ending ||
 		AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Results ||
@@ -2082,8 +2096,11 @@ void AMultiplayTestGameMode::TryStartAuthoritativeMatch()
     }
 	CompletedResultsByUserId.Reset();
 	ResultVerificationStatus.Reset();
-	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
-	BeginMatchTimeline();
+	const bool WaitForLoading=!LoadingGate.Epoch.IsEmpty() && !LoadingGate.Released;
+	SetAuthoritativeMatchPhase(WaitForLoading?EMultiplayTestMatchPhase::RoleAssignment:EMultiplayTestMatchPhase::InProgress);
+	if(!WaitForLoading)BeginMatchTimeline();
+	else for(TActorIterator<ACharacter> It(GetWorld());It;++It)if(auto* Move=It->GetCharacterMovement())
+	{if(!LoadingMovementModes.Contains(*It))LoadingMovementModes.Add(*It,TPair<uint8,uint8>(uint8(Move->MovementMode),Move->CustomMovementMode));Move->DisableMovement();}
 	FinalizeLevelTransitionArrivals();
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("Authoritative match %s started with %d player(s)."),
@@ -2920,8 +2937,19 @@ void AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty()
 
 bool AMultiplayTestGameMode::IsReadyForServerAllocation()
 {
-	return AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Waiting && AuthoritativeMatchId.IsEmpty() &&
-		GetNumPlayers() == 0 && IsValid(GetWorld()) && GetWorld()->GetTimeSeconds() >= 10.0f;
+	UWorld* World=GetWorld();
+	UNetDriver* Driver=World?World->GetNetDriver():nullptr;
+	// Readiness is evidence, not an arbitrary ten-second sleep after map loading.
+	const bool Ready=bServerWorldInitialized && HasActorBegunPlay() && World && World->HasBegunPlay() &&
+		World->AreActorsInitialized() && Driver && Driver->IsServer() && Driver->IsNetResourceValid() &&
+		AuthoritativeMatchPhase==EMultiplayTestMatchPhase::Waiting && AuthoritativeMatchId.IsEmpty() && GetNumPlayers()==0 &&
+		!UNavigationSystemV1::IsNavigationBeingBuiltOrLocked(World);
+	if (Ready && !bServerReadinessLogged)
+	{
+		bServerReadinessLogged=true;
+		UE_LOG(LogProjectProject01Multiplayer,Log,TEXT("Game server allocation ready: world=%.2fs; actors, navigation and listening socket verified."),World->GetTimeSeconds());
+	}
+	return Ready;
 }
 
 void AMultiplayTestGameMode::SetPlayerDefaults(APawn* PlayerPawn)

@@ -2,6 +2,7 @@
 // Build target: ProjectProject01 / ProjectProject01Server, Unreal Engine 5.8.2
 
 #include "ProjectProject01GameInstance.h"
+#include "ProjectLoadingScreenSubsystem.h"
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01CrashFiles.h"
 #include "ProjectProject01ResultOutbox.h"
@@ -1317,6 +1318,8 @@ void UProjectProject01GameInstance::HoldEntireScreenBlack()
 
 void UProjectProject01GameInstance::FadeEntireScreenFromBlack(const float DurationSeconds)
 {
+	if(auto* Loading=GetSubsystem<UProjectLoadingScreenSubsystem>();Loading && Loading->FinishPresentation(DurationSeconds))
+	{HoldEntireScreenBlack();return;}
 	EnsureEntireScreenFadeOverlay();
 	// 새 월드 첫 프레임이 밝게 비치는 일을 막기 위해 해제는 언제나 완전한 검정에서 시작한다.
 	EntireScreenFadeOpacity = 1.0f;

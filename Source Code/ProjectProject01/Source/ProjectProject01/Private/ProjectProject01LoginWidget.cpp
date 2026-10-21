@@ -2,6 +2,7 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01LoginWidget.h"
+#include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01SocialSubsystem.h"
@@ -6009,7 +6010,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		CurrentRoomText->SetText(FText::FromString(FString::Printf(
 			TEXT("방: %s\n참가 코드: %s\n인원: %d/3\n경기 세션: %s"),
 			*Room.Name, *Room.JoinCode, Room.Members.Num(),
-			Room.bServerPreparing ? TEXT("세션 찾는 중…") : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"))));
+			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"))));
 	}
 	PopulateRoomMemberProfiles(Room.Members,bGameStartFadeActive||bGameStartFadeComplete);
     TArray<TPair<FString,FString>> HostEntries;
@@ -6053,14 +6054,17 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(ChatLogText)) ChatLogText->SetText(FText::FromString(ChatText));
 	if (Room.bServerPreparing)
 	{
-		CancelGameStartCountdown();
 		bServerPreparationPending = true;
-		ShowGameSessionSearch();
+		// A late-created UI may first see allocation, after the shared countdown.
+		if(!bGameStartCountdownActive && !bGameStartCountdownComplete)bGameStartCountdownComplete=true;
+		if(bGameStartCountdownComplete)BeginGameStartFade(Room);
+		ShowGameSessionSearch(&Room);
 	}
 	else if (Room.bStarting)
 	{
 		bServerPreparationPending = false;
 		BeginGameStartCountdown();
+		if(bGameStartCountdownComplete)BeginGameStartFade(Room);
 		if (bGameStartCountdownComplete && Room.bIsHost && !bStartConfirmationRequested &&
 			!Lobby->IsRequestInFlight())
 		{
@@ -6147,18 +6151,28 @@ void UProjectProject01LobbyWidget::TravelToStartedGame(const FProjectProject01Ro
 		*Lobby->GetGameTicketRoomId(), *Lobby->GetGameTicketMatchId());
 	SetStatus(FString::Printf(TEXT("검증된 MultiplayTest 서버로 이동합니다. 역할: %s"),
 		*Lobby->GetGameTicketRole()), false);
+	if(auto* Loading=GameInstance->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->BeginServerTravel();
 	PlayerController->ClientTravel(TravelUrl, TRAVEL_Absolute);
 }
 
-void UProjectProject01LobbyWidget::ShowGameSessionSearch()
+void UProjectProject01LobbyWidget::ShowGameSessionSearch(const FProjectProject01RoomState* RoomState)
 {
-	if (IsValid(StartCountdownPanel))
+	if(!bGameStartFadeComplete || bTravelRequested)return;
+	const auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+	const FProjectProject01RoomState Room=RoomState?*RoomState:Lobby?Lobby->GetCurrentRoom():FProjectProject01RoomState();
+	FString Label=TEXT("세션 접속 중…");uint8 Progress=2;
+	if (Room.SessionWaitPhase==TEXT("Preparing"))
 	{
-		StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
-		StartCountdownPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Label=TEXT("게임 서버 준비 중…");Progress=10;
 	}
-	if (IsValid(StartCountdownText)) StartCountdownText->SetText(FText::FromString(TEXT("세션 찾는 중…")));
-	SetStatus(TEXT("세션 찾는 중… 빈 세션이 준비되면 자동으로 시작합니다. 대기 취소도 가능합니다."), false);
+	else if (Room.SessionWaitPhase==TEXT("Queued"))
+	{
+		Label=TEXT("세션 접속 중… 빈 경기 세션 대기");Progress=5;
+	}
+	if(Room.bStarted){Label=TEXT("게임 서버 접속 허가 확인 중…");Progress=15;}
+	if(auto* Instance=GetGameInstance())if(auto* Loading=Instance->GetSubsystem<UProjectLoadingScreenSubsystem>())
+		Loading->ShowSessionPreparation(Label,Progress,Room.bServerPreparing && Room.bIsHost && !Room.bRandomMatch && Lobby && !Lobby->IsRequestInFlight(),
+			FSimpleDelegate::CreateUObject(this,&ThisClass::HandleStartRoomClicked));
 }
 
 void UProjectProject01LobbyWidget::BeginGameStartCountdown()
@@ -6210,7 +6224,6 @@ void UProjectProject01LobbyWidget::AdvanceGameStartCountdown()
 
 	bGameStartCountdownActive = false;
 	bGameStartCountdownComplete = true;
-	ShowGameSessionSearch();
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(GameStartCountdownTimer);
@@ -6225,9 +6238,10 @@ void UProjectProject01LobbyWidget::AdvanceGameStartCountdown()
 		return;
 	}
 	const FProjectProject01RoomState& Room = Lobby->GetCurrentRoom();
+	BeginGameStartFade(Room);
 	if (Room.bStarted)
 	{
-		BeginGameStartFade(Room);
+		ContinueGameAdmission(0);
 	}
 	else if (Room.bStarting && Room.bIsHost && !bStartConfirmationRequested && !Lobby->IsRequestInFlight())
 	{
@@ -6243,14 +6257,14 @@ void UProjectProject01LobbyWidget::AdvanceGameStartCountdown()
 void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01RoomState& RoomState)
 {
 	if (bTravelRequested || bGameStartFadeActive || bGameStartFadeComplete ||
-		!bGameStartCountdownComplete || !RoomState.bStarted)
+		!bGameStartCountdownComplete || (!RoomState.bStarting && !RoomState.bServerPreparing && !RoomState.bStarted))
 	{
 		return;
 	}
 	bGameStartFadeActive = true;
     AdmissionRoomId=RoomState.RoomId;AdmissionMatchId=RoomState.MatchId;AdmissionWaitSeconds=0;AdmissionRetrySeconds=0;AdmissionTicketAttempts=0;
 	GameStartFadeElapsedSeconds = 0.0f;
-	bStartConfirmationRequested = true;
+	if(RoomState.bStarted)bStartConfirmationRequested = true;
 	const FString RoleText = RoomState.AssignedRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
 		? TEXT("마네킹") : TEXT("생존자");
 	if (IsValid(StartCountdownPanel))
@@ -6259,8 +6273,8 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 	}
 	if (IsValid(StartCountdownText))
 	{
-		StartCountdownText->SetText(FText::FromString(FString::Printf(
-			TEXT("게임을 시작합니다\n역할: %s"), *RoleText)));
+		StartCountdownText->SetText(FText::FromString(RoomState.AssignedRole.IsEmpty()?FString(TEXT("게임을 시작합니다")):
+			FString::Printf(TEXT("게임을 시작합니다\n역할: %s"), *RoleText)));
 	}
 	if (IsValid(StartRoomButton))
 	{
@@ -6268,6 +6282,7 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 	}
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
+		if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->FadeEntireScreenToBlack(GameStartFadeDurationSeconds);
 		World->GetTimerManager().SetTimer(
 			GameStartFadeTimer, this, &UProjectProject01LobbyWidget::CompleteGameStartFade,
 			GameStartFadeDurationSeconds, false);
@@ -6280,11 +6295,18 @@ void UProjectProject01LobbyWidget::UpdateStartCountdownText()
     const bool Random=L&&L->HasCurrentRoom()&&L->GetCurrentRoom().bRandomMatch;
     const FString Role=Random?(L->GetCurrentRoom().AssignedRole==TEXT("Mannequin")?TEXT("마네킹"):TEXT("생존자")):FString();
     StartCountdownText->SetText(FText::FromString(Random?FString::Printf(TEXT("게임이 시작됩니다\n역할: %s\n%d..."),*Role,GameStartCountdownNumber)
-        :FString::Printf(TEXT("게임 시작 준비\n%d..."),GameStartCountdownNumber)));
+        :FString::Printf(TEXT("게임을 시작합니다\n%d..."),GameStartCountdownNumber)));
 }
 
 void UProjectProject01LobbyWidget::CompleteGameStartFade()
 {
+	// The full-viewport fade ticks conservatively through hitches. A world timer
+	// finishing must not expose loading before the last black frame is reached.
+	if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();bGameStartFadeActive && Instance && !Instance->IsEntireScreenBlack())
+	{
+		if(auto* World=GetWorld())World->GetTimerManager().SetTimer(GameStartFadeTimer,this,&ThisClass::CompleteGameStartFade,.05f,false);
+		return;
+	}
 	bGameStartFadeActive = false;
 	bGameStartFadeComplete = true;
 	GameStartFadeElapsedSeconds = GameStartFadeDurationSeconds;
@@ -6300,11 +6322,14 @@ void UProjectProject01LobbyWidget::CompleteGameStartFade()
 	UGameInstance* GameInstance = GetGameInstance();
 	UProjectProject01LobbySubsystem* Lobby = IsValid(GameInstance)
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
-	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().bStarted)
+	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom() ||
+		(!Lobby->GetCurrentRoom().bStarting && !Lobby->GetCurrentRoom().bServerPreparing && !Lobby->GetCurrentRoom().bStarted))
 	{
 		CancelGameStartCountdown();
 		return;
 	}
+	if (IsValid(StartCountdownPanel))StartCountdownPanel->SetVisibility(ESlateVisibility::Collapsed);
+	ShowGameSessionSearch();
 	if (Lobby->HasGameJoinTicketForCurrentRoom())
 	{
 		TravelToStartedGame(Lobby->GetCurrentRoom());
@@ -6317,8 +6342,17 @@ void UProjectProject01LobbyWidget::ContinueGameAdmission(float DeltaSeconds)
 	if (bLobbyLogoutInProgress) return;
     if(!bGameStartFadeComplete||bTravelRequested)return;
     auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
-    if(!Lobby||!Lobby->HasCurrentRoom()||!Lobby->GetCurrentRoom().bStarted||Lobby->GetCurrentRoom().bReturnedToRoom||Lobby->GetCurrentRoom().RoomId!=AdmissionRoomId||Lobby->GetCurrentRoom().MatchId!=AdmissionMatchId)
+    if(!Lobby||!Lobby->HasCurrentRoom()||Lobby->GetCurrentRoom().bReturnedToRoom||Lobby->GetCurrentRoom().RoomId!=AdmissionRoomId)
     {CancelGameStartCountdown();return;}
+	const auto& Room=Lobby->GetCurrentRoom();
+	if(!Room.bStarted)
+	{
+		if(Room.bStarting || Room.bServerPreparing){ShowGameSessionSearch(&Room);return;}
+		CancelGameStartCountdown();return;
+	}
+	if(AdmissionMatchId.IsEmpty())AdmissionMatchId=Room.MatchId;
+	else if(Room.MatchId!=AdmissionMatchId){CancelGameStartCountdown();return;}
+	ShowGameSessionSearch(&Room);
     AdmissionWaitSeconds+=FMath::Max(0.f,DeltaSeconds);
 	AdmissionRetrySeconds=FMath::Max(0.f,AdmissionRetrySeconds-FMath::Max(0.f,DeltaSeconds));
     if(AdmissionWaitSeconds>=15 || (!Lobby->IsRequestInFlight() && AdmissionTicketAttempts>=3 && !Lobby->HasGameJoinTicketForCurrentRoom()))
@@ -6360,6 +6394,7 @@ void UProjectProject01LobbyWidget::CancelGameStartCountdown()
 	}
 	if (bHadCountdown && !bTravelRequested)
 	{
+		if(auto* Instance=GetGameInstance())if(auto* Loading=Instance->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->CancelLoading();
 		if (UProjectProject01GameInstance* ProjectGameInstance =
 			Cast<UProjectProject01GameInstance>(GetGameInstance()))
 		{

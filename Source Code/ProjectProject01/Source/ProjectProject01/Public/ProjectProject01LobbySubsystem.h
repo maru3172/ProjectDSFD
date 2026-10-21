@@ -228,6 +228,10 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 	UPROPERTY(BlueprintReadOnly)
 	bool bServerPreparing = false;
 
+	/** Queued: capacity wait; Preparing: a reserved server is starting. Optional for older backends. */
+	UPROPERTY(BlueprintReadOnly) FString SessionWaitPhase;
+	UPROPERTY(BlueprintReadOnly) int32 SessionWaitElapsedSeconds = 0;
+
 	UPROPERTY(BlueprintReadOnly)
 	bool bStarted = false;
 
@@ -414,6 +418,7 @@ private:
     FString MatchSearchId;
     bool ParseMatchmaking(const TSharedPtr<class FJsonObject>& Json,FString& Error);
 	friend class FProjectRoomPreparationStateTest;
+	friend class FProjectLobbySessionPresentationTest;
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
 		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0);
 	void HandleRequestComplete(

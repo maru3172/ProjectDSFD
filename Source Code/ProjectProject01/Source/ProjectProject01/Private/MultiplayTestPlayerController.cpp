@@ -17,6 +17,7 @@
 #include "PlayerFeedbackWidgets.h"
 #include "PlayerHeartbeatComponent.h"
 #include "Camera/PlayerCameraManager.h"
+#include "ProjectSpectatorCameraManager.h"
 #include "Components/SynthComponent.h"
 #include "InputKeyEventArgs.h"
 #include "EngineUtils.h"
@@ -68,6 +69,7 @@ bool FProjectProject01SurvivorVoiceRoleIsolationTest::RunTest(const FString& Par
 
 AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 {
+	PlayerCameraManagerClass=AProjectSpectatorCameraManager::StaticClass();
 	CreateDefaultSubobject<UProjectProject01ObjectiveComponent>(TEXT("MultiplayerObjective"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> Look(TEXT("/Game/MyProject/Input/IA_Player_Look.IA_Player_Look"));
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> Mapping(TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
@@ -86,6 +88,7 @@ void AMultiplayTestPlayerController::BeginPlay()
 	}
 
 	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
+	if(GetNetMode()!=NM_Standalone && !AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld()) && LoadingGateEpoch.IsEmpty())bLoadingGateRequired=true;
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
 	bInitialGameplayFadePending = true;
@@ -197,6 +200,12 @@ void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 	Super::PlayerTick(DeltaTime);
 	if (!IsLocalController()) return;
 	TryConfirmLevelTransitionBlack();
+	if(bLoadingGateRequired && !LoadingGateEpoch.IsEmpty())
+		if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())
+		{
+			const uint8 Stage=Loading->GetLocalProgress();
+			if(Stage>LastReportedLoadingStage){LastReportedLoadingStage=Stage;ServerReportLoadingStage(LoadingGateEpoch,Stage);}
+		}
 	TryCompleteClientArrivalView(DeltaTime);
 	TryFinishSpectatorFade();
 	if (SurvivorSpectatorView.bEnabled) ApplySurvivorSpectatorView();
@@ -231,13 +240,19 @@ void AMultiplayTestPlayerController::ApplySurvivorSpectatorView()
 		GetWorldTimerManager().IsTimerActive(SpectatorFadeTimer)) return;
 	if (SurvivorSpectatorView.bEnabled)
 	{
+		EnsureMannequinLookBinding();
 		bAutoManageActiveCameraTarget=false;
 		auto* Target=SurvivorSpectatorView.Target.Get();
 		if (IsValid(Target) && Target->GetWorld()==GetWorld() && !Target->IsGameOver() && !Target->IsHidden())
+		{
+			if (LocalSpectatorLookTarget.Get()!=Target)
+			{LocalSpectatorLookTarget=Target;SetControlRotation(Target->GetViewRotation());RotationInput=FRotator::ZeroRotator;}
 			if (GetViewTarget()!=Target) SetViewTarget(Target);
+		}
 	}
 	else if (SurvivorState==EMultiplayTestSurvivorState::Active)
 	{
+		if(LocalSpectatorLookTarget.IsValid()){LocalSpectatorLookTarget.Reset();RemoveMannequinLookBinding();}
 		bAutoManageActiveCameraTarget=true;
 		auto* OwnPawn=Cast<APlayerCharacter>(GetPawn());
 		if (IsValid(OwnPawn) && OwnPawn->GetWorld()==GetWorld() && !OwnPawn->IsGameOver() && !OwnPawn->IsHidden())
@@ -602,6 +617,7 @@ void AMultiplayTestPlayerController::TryRevealInitialGameplayFade()
 	{
 		return;
 	}
+	if(!TryPassLoadingGate())return;
 
 	// 역할 RPC가 첫 화면이 실제로 그려지기 전에 도착할 수 있다. 즉시 해제를 시작하면
 	// 로딩 중에 페이드 시간이 소모되므로 짧은 검은 화면 고정 뒤 해제를 시작한다.
@@ -732,11 +748,11 @@ void AMultiplayTestPlayerController::RemoveMannequinLookBinding()
 void AMultiplayTestPlayerController::HandleMannequinLook(const FInputActionValue& Value)
 {
 	AMannequinAICharacter* Mannequin=GetViewedMannequin();
-	if (!IsLocalController() || !Mannequin || bShowMouseCursor || IsLookInputIgnored() ||
+	const bool bSpectating=IsFreeSpectatingTarget(GetViewTarget());
+	if (!IsLocalController() || (!Mannequin && !bSpectating) || bShowMouseCursor || IsLookInputIgnored() ||
 		MatchPhase==EMultiplayTestMatchPhase::Ending || MatchPhase==EMultiplayTestMatchPhase::Results ||
 		MatchPhase==EMultiplayTestMatchPhase::ReturningToRoom) return;
-	ResolveMannequinCameraRotation(Mannequin,0);
-	if (bManualCameraAligning) return;
+	if(!bSpectating){ResolveMannequinCameraRotation(Mannequin,0);if (bManualCameraAligning) return;}
 	const FVector2D Delta=Value.Get<FVector2D>();
 	const auto* Settings=UProjectProject01GameUserSettings::Get();
 	const float Sensitivity=Settings?Settings->GetMouseSensitivity():1;
@@ -798,6 +814,7 @@ void AMultiplayTestPlayerController::SetViewedMannequin(AMannequinAICharacter* M
 	}
 
 	ViewedMannequin = Mannequin;
+	Mannequin->ForceNetUpdate(); // A camera switch must not wait for an offscreen transport budget.
 	// Network relevancy uses the SERVER view target, not the owner RPC's local camera.
 	SetViewTarget(Mannequin);
 	ApplyViewedMannequinCamera(Mannequin);
@@ -834,7 +851,8 @@ void AMultiplayTestPlayerController::SetServerMatchState(
 		SurvivorSpectatorView={};
 	ForceNetUpdate();
 	if (PreviousSurvivorState == EMultiplayTestSurvivorState::Active &&
-		NewSurvivorState != EMultiplayTestSurvivorState::Active)
+		NewSurvivorState != EMultiplayTestSurvivorState::Active &&
+		NewSurvivorState != EMultiplayTestSurvivorState::Eliminated)
 	{
 		ClientConfigureSurvivorCommunication(FString(), FString(), TEXT("Disabled"));
 	}
@@ -980,6 +998,8 @@ void AMultiplayTestPlayerController::CancelLevelTransitionCarryover(const bool b
 
 void AMultiplayTestPlayerController::ClientCancelLevelTransition_Implementation(const bool bRestoreGameplay)
 {
+	bLoadingGateRequired=false;bLoadingGateReleased=false;LoadingGateEpoch.Reset();
+	if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->CancelLoading();
 	if (!IsLocalController()) return;
 	bSpectatorFadePending=false;
 	bClientArrivalViewPending=false;
@@ -1021,6 +1041,8 @@ void AMultiplayTestPlayerController::ClientApplyViewedMannequin_Implementation(A
 void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 	const FMultiplayTestMatchResult& Result)
 {
+	bLoadingGateRequired=false;LoadingGateEpoch.Reset();
+	if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->CancelLoading();
 	if (!IsLocalController())
 	{
 		return;
@@ -1145,6 +1167,7 @@ void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(false);
 	SurvivorSpectatorView=View;
+	if(auto* Instance=GetGameInstance())if(auto* Voice=Instance->GetSubsystem<UProjectProject01VoiceChatSubsystem>())Voice->StopSpeaking();
 	bAutoManageActiveCameraTarget=false;
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
@@ -1175,6 +1198,7 @@ void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementat
 	}
 	// A duplicate prepare must not restart a nearly finished fade.
 	if (bLocalLevelTransitionFadeHeld && LocalTransitionFadeSerial == RequestId) return;
+	bLoadingGateRequired=GetNetMode()!=NM_Standalone;bLoadingGateReleased=false;LoadingGateEpoch.Reset();LastReportedLoadingStage=0;
 	LocalTransitionFadeSerial = RequestId;
 	bLocalTransitionBlackConfirmed = false;
 	LocalTransitionBlackSince = 0;
@@ -1225,6 +1249,7 @@ void AMultiplayTestPlayerController::TryConfirmLevelTransitionBlack()
 	if (LocalTransitionBlackSince==0) { LocalTransitionBlackSince=FPlatformTime::Seconds(); return; }
 	if (FPlatformTime::Seconds()-LocalTransitionBlackSince<0.05) return;
 	bLocalTransitionBlackConfirmed=true;
+	if(auto* Instance=GetGameInstance())if(auto* Loading=Instance->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->BeginLoading(GetNetMode()!=NM_Standalone);
 	ServerConfirmLevelTransitionBlack(LocalTransitionFadeSerial);
 }
 
@@ -1292,6 +1317,7 @@ void AMultiplayTestPlayerController::TryCompleteClientArrivalView(const float Re
 	// Only PlayerTick supplies delta: multiple replication notifications in one frame do not count as stability.
 	ClientArrivalStableSeconds+=FMath::Clamp(ReadyDeltaSeconds,0.0f,0.05f);
 	if (ClientArrivalStableSeconds<0.15f) return;
+	if(!TryPassLoadingGate())return;
 	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->HoldEntireScreenBlack();
 	if (bClientArrivalCanPlay) SurvivorSpectatorView={};
 	if (PlayerCameraManager) PlayerCameraManager->bClientSimulatingViewTarget=!bClientArrivalCanPlay;

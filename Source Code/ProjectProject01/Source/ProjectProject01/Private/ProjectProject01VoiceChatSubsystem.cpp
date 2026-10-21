@@ -2,6 +2,7 @@
 #include "ProjectProject01VersionContract.h"
 
 #include "ProjectProject01AuthSubsystem.h"
+#include "MultiplayTestPlayerController.h"
 #include "EOSVoiceChat.h"
 #include "IEOSSDKManager.h"
 #include "VoiceChat.h"
@@ -218,7 +219,7 @@ FString UProjectProject01VoiceChatSubsystem::GetConnectionStatusText() const
 
 void UProjectProject01VoiceChatSubsystem::SetPushToTalkHeld(const bool bHeld)
 {
-	if (!bConfiguredForSurvivor)
+	if (!bConfiguredForSurvivor || (bHeld && !CanLocalTransmit()))
 	{
 		bPushToTalkHeld = false;
 		ApplyTransmitMode();
@@ -230,7 +231,7 @@ void UProjectProject01VoiceChatSubsystem::SetPushToTalkHeld(const bool bHeld)
 
 void UProjectProject01VoiceChatSubsystem::ToggleOpenMic()
 {
-	if (!bConfiguredForSurvivor) return;
+	if (!bConfiguredForSurvivor || (!bOpenMic && !CanLocalTransmit())) return;
 	bOpenMic = !bOpenMic;
 	ApplyTransmitMode();
 	if (GEngine)
@@ -576,8 +577,9 @@ void UProjectProject01VoiceChatSubsystem::HandleJoinCredentialResponse(
 
 void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 {
+	if(!CanLocalTransmit()){bPushToTalkHeld=false;bOpenMic=false;}
 	if (VoiceUser == nullptr || !bJoinedChannel) return;
-	const bool bTransmit=HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld);
+	const bool bTransmit=IsTransmitting();
 	if(AppliedTransmitState==static_cast<int8>(bTransmit))return;
 	AppliedTransmitState=static_cast<int8>(bTransmit);
 	if (bTransmit)
@@ -590,6 +592,18 @@ void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 	{
 		VoiceUser->TransmitToNoChannels();
 	}
+}
+
+bool UProjectProject01VoiceChatSubsystem::CanLocalTransmit() const
+{
+	const auto* Controller=Cast<AMultiplayTestPlayerController>(OwnerController.Get());
+	return bConfiguredForSurvivor && Controller && Controller->GetMatchPhase()==EMultiplayTestMatchPhase::InProgress &&
+		Controller->GetSurvivorState()==EMultiplayTestSurvivorState::Active;
+}
+
+void UProjectProject01VoiceChatSubsystem::StopSpeaking()
+{
+	bPushToTalkHeld=false;bOpenMic=false;ApplyTransmitMode();
 }
 
 void UProjectProject01VoiceChatSubsystem::HandleInitialized(const FVoiceChatResult& Result)

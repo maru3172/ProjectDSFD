@@ -239,7 +239,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
                         start.Parameters.AddWithValue("@room",entry.Room);start.Parameters.AddWithValue("@match",match);start.Parameters.AddWithValue("@mannequin",await LobbyEndpoints.ChooseMatchMannequinAsync(connection,tx,entry.Room,memberIds,ct));
                         await start.ExecuteNonQueryAsync(ct);
                         await AuthoritativeMatchLedger.CaptureAsync(connection,tx,match,ct);
-                        await tx.CommitAsync(ct);logger.LogInformation("경기 세션 준비 완료: 방 {Room}, 역할 배정 및 입장 허용",entry.Room);
+                        await tx.CommitAsync(ct);logger.LogInformation("경기 세션 준비 완료: 방 {Room}, {Seconds:F1}초 경과, 역할 배정 및 입장 허용 (에디터={Editor})",entry.Room,(clock.GetUtcNow()-entry.Created).TotalSeconds,settings.EditorLocalTest);
                     }
                     else if(status=="Started"&&entry.ObservedMatch&&ready){await RemoveAsync(entry,true,ct);}
                 }

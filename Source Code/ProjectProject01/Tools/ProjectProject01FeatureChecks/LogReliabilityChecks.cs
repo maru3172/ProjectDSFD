@@ -59,7 +59,7 @@ internal static class LogReliabilityChecks
             {
                 [VersionCompatibilityOptions.ClientBuildHeader]="1.0.0",[VersionCompatibilityOptions.DedicatedServerBuildHeader]="1.0.0",
                 [VersionCompatibilityOptions.ApiVersionHeader]="1",[VersionCompatibilityOptions.GameDataVersionHeader]="1",
-                [VersionCompatibilityOptions.NetworkProtocolHeader]="3"
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="4"
             };
             string payload=JsonSerializer.Serialize(new {schema=1,backend,route,headers,body=JsonSerializer.Serialize(new {matchId=match,userId="1",role="Survivor",success=true})});
             string sha1=Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(payload)));

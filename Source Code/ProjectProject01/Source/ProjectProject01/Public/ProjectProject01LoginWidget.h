@@ -1143,7 +1143,7 @@ private:
 	void RefreshCurrentRoomView();
 	void BeginLogout();
 	void BeginGameStartCountdown();
-	void ShowGameSessionSearch();
+	void ShowGameSessionSearch(const FProjectProject01RoomState* RoomState=nullptr);
 	void AdvanceGameStartCountdown();
 	void BeginGameStartFade(const FProjectProject01RoomState& RoomState);
 	void CompleteGameStartFade();
