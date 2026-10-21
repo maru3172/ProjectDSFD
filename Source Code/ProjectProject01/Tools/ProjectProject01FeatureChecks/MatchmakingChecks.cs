@@ -90,8 +90,26 @@ internal static class MatchmakingChecks
             var process=factory.Started.Last();using var server=new HttpClient{BaseAddress=admin.BaseAddress};server.DefaultRequestHeaders.Add("X-ProjectProject01-Server-Secret",new string('s',48));
             await Read(server.PostAsJsonAsync("/api/server/heartbeat",new{port=process.Port,bootId="mm-boot",ready=true,managedId=process.Instance}));await manager.TickAsync(default);
             foreach(int i in new[]{0,1,2}){var r=await Room(i);Check(r.GetProperty("started").GetBoolean()&&r.GetProperty("assignedRole").GetString()==roles[i],"실제 시작 후 역할 재배정 없이 유지 "+i);}
-            foreach(int i in new[]{0,1,2})await Read(clients[i].Client.PostAsJsonAsync("/api/rooms/current/return",new{}));
-            await Read(server.PostAsJsonAsync("/api/server/matches/complete",new {matchId=(await Room(0)).GetProperty("matchId").GetString()}));
+            string completedMatch=(await Room(0)).GetProperty("matchId").GetString()!;
+            await Read(clients[0].Client.PostAsJsonAsync("/api/rooms/current/return",new{}));
+            Check((await Room(0)).GetProperty("roomId").GetString()==roomId,"클라이언트 복귀만으로 진행 중인 경기 종료·재매칭 금지");
+            await Task.WhenAll(Read(server.PostAsJsonAsync("/api/server/matches/complete",new {matchId=completedMatch})),
+                Read(clients[0].Client.PostAsJsonAsync("/api/rooms/current/return",new{})));
+            Check(true,"서버 종료 확인과 클라이언트 복귀가 동시에 도착해도 잠금 경합 없이 처리");
+            var firstReturn=await Room(0);
+            Check(firstReturn.GetProperty("members").GetArrayLength()==1&&!firstReturn.GetProperty("started").GetBoolean()&&!firstReturn.GetProperty("randomMatch").GetBoolean(),"랜덤 경기 종료 후 첫 복귀자는 다른 두 명을 기다리지 않고 개인 대기로 복귀");
+            Check((await Room(1)).GetProperty("roomId").GetString()==roomId&&(await Room(1)).GetProperty("started").GetBoolean(),"미복귀 참가자의 결과 화면·원래 경기 유지");
+            await Read(clients[0].Client.PostAsJsonAsync("/api/rooms/current/return",new{}));
+            Check((await Room(0)).GetProperty("roomId").GetString()==firstReturn.GetProperty("roomId").GetString(),"중복 복귀 요청은 개인 대기 공간을 중복 생성하지 않음");
+            string nextSearch=Guid.NewGuid().ToString("D");
+            Check((await Join(0,nextSearch)).GetProperty("state").GetString()=="Waiting","다른 참가자가 결과를 보는 동안 새 개인 매칭 신청 가능");
+            await Cancel(0,nextSearch);
+            await Task.WhenAll(new[]{1,2}.Select(i=>Read(clients[i].Client.PostAsJsonAsync("/api/rooms/current/return",new{}))));
+            await using(var verify=await db.OpenConnectionAsync(default))
+            {
+                Check((await CommunityEndpoints.Rows(verify,null,"SELECT id FROM game_rooms WHERE id=@r",default,("r",roomId))).Count==0,"마지막 랜덤 참가자 복귀 시 이전 경기 방 제거");
+                Check((await CommunityEndpoints.Rows(verify,null,"SELECT user_id FROM authoritative_match_players WHERE match_id=@m",default,("m",completedMatch))).Count==3,"개인 복귀·방 제거 후에도 확정된 경기 기록의 참가자 보존");
+            }
             var returned=new HashSet<string>();
             foreach(int i in new[]{0,1,2})
             {

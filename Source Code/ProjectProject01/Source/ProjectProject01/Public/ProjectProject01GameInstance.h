@@ -80,7 +80,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
 	float GetScreenDistortionScale() const { return ScreenDistortionScale; }
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
-	float GetScreenShakeScale() const { return ScreenShakeScale; }
+	float GetScreenShakeScale() const { return bCameraShakeEnabled ? ScreenShakeScale : 0.0f; }
+	bool IsCameraShakeEnabled() const { return bCameraShakeEnabled; }
+	float GetConfiguredScreenShakeScale() const { return ScreenShakeScale; }
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Accessibility")
 	float GetUIReadableScale() const { return UIReadableScale; }
 	float GetLocalFlashScale() const { return GetLocalVFXScale() * ScreenFlashScale; }
@@ -118,6 +120,7 @@ public:
 	void SetScreenFlashScale(float Value) { ScreenFlashScale = Value; }
 	void SetScreenDistortionScale(float Value) { ScreenDistortionScale = Value; }
 	void SetScreenShakeScale(float Value) { ScreenShakeScale = Value; }
+	void SetCameraShakeEnabled(bool bValue) { bCameraShakeEnabled = bValue; }
 	void SetUIReadableScale(float Value) { UIReadableScale = Value; }
 	void SetDirectServerAddress(const FString& Value) { DirectServerAddress = Value; }
 	void SetMoveForwardKey(FKey Key) { MoveForwardKeyName = Key.GetFName(); }
@@ -194,6 +197,9 @@ private:
 
 	UPROPERTY(Config)
 	float ScreenShakeScale = 1.0f;
+
+	UPROPERTY(Config)
+	bool bCameraShakeEnabled = true;
 
 	UPROPERTY(Config)
 	float UIReadableScale = 1.0f;

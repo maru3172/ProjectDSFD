@@ -572,6 +572,16 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, ControlSlot);
 }
 
+bool AMannequinAICharacter::IsNetRelevantFor(const AActor* RealViewer, const AActor* ViewTarget, const FVector& SrcLocation) const
+{
+	// The mannequin player needs all numbered bodies, even outside the current
+	// camera's cull distance. Do not change survivor or single-player relevancy.
+	const auto* Viewer = Cast<AMultiplayTestPlayerController>(RealViewer);
+	if (ControlSlot >= 0 && Viewer && Viewer->GetWorld() == GetWorld() &&
+		Viewer->GetAuthenticatedRole().Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)) return true;
+	return Super::IsNetRelevantFor(RealViewer, ViewTarget, SrcLocation);
+}
+
 // 발소리 함수
 void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 {

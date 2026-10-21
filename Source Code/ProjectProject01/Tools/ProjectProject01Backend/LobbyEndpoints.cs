@@ -370,6 +370,7 @@ internal static partial class LobbyEndpoints
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
                 await using var transaction = await connection.BeginTransactionAsync(ct);
+                await LockLobbyStateAsync(connection, transaction, ct);
                 var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
                 if (membership is null)
                 {
@@ -378,6 +379,13 @@ internal static partial class LobbyEndpoints
                 }
                 if (!string.Equals(membership.Status, "Started", StringComparison.Ordinal))
                 {
+                    // A lost response may cause a return retry after this solo was already restored.
+                    if (membership.Status == "Waiting" && await IsRandomPartyAsync(connection, transaction, membership.RoomId, ct))
+                    {
+                        var restored = await LoadCurrentRoomAsync(connection, transaction, user.Id, CanLaunchOrConnect(), ct);
+                        await transaction.CommitAsync(ct);
+                        return Results.Ok(new { message = "랜덤 매칭 대기 화면으로 복귀했습니다.", room = restored });
+                    }
                     await transaction.RollbackAsync(ct);
                     return Results.Conflict(new LobbyFailure("현재 진행 중인 경기가 없습니다."));
                 }
@@ -396,7 +404,9 @@ internal static partial class LobbyEndpoints
                     ? Results.NotFound(new LobbyFailure("복귀할 방이 더 이상 존재하지 않습니다."))
                     : Results.Ok(new
                     {
-                        message = allReturned
+                        message = room.RandomParty && !room.RandomMatch
+                            ? "랜덤 매칭 대기 화면으로 복귀했습니다. 시작을 누르면 새로 매칭합니다."
+                            : allReturned
                             ? "남아 있는 모든 플레이어가 복귀하여 방을 다시 대기 상태로 전환했습니다."
                             : "게임 서버 접속을 종료하고 방으로 복귀했습니다.",
                         room
@@ -1082,6 +1092,7 @@ internal static partial class LobbyEndpoints
             {
                 await using var connection=await database.OpenConnectionAsync(ct);
                 await using var transaction=await connection.BeginTransactionAsync(ct);
+                await LockLobbyStateAsync(connection,transaction,ct);
                 if(!await AuthoritativeMatchLedger.EndAsync(connection,transaction,match.ToString("D"),ct))return Results.NotFound();
                 await transaction.CommitAsync(ct);return Results.Ok(new {message="경기 종료를 확인했습니다."});
             }
@@ -1122,6 +1133,7 @@ internal static partial class LobbyEndpoints
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
                 await using var transaction=await connection.BeginTransactionAsync(ct);
+                await LockLobbyStateAsync(connection,transaction,ct);
                 await AuthoritativeMatchLedger.CaptureAsync(connection,transaction,matchId.ToString("D"),ct);
                 string roomId;
                 await using (var membership = new MySqlCommand(
@@ -2079,6 +2091,7 @@ internal static partial class LobbyEndpoints
         // Client return flags are not authority to terminate an active match.
         await using(var ended=new MySqlCommand("SELECT 1 FROM game_rooms r JOIN authoritative_matches a ON a.match_id=r.match_id WHERE r.id=@room AND r.status='Started' AND a.ended_at_utc IS NOT NULL FOR UPDATE;",connection,transaction))
         {ended.Parameters.AddWithValue("@room",roomId);if(await ended.ExecuteScalarAsync(ct) is null)return false;}
+        if (await RestoreReturnedRandomPlayersAsync(connection, transaction, roomId, ct)) return true;
         var returnedStates = new List<bool>();
         await using (var command = new MySqlCommand(
             "SELECT returned_to_room FROM room_members WHERE room_id = @roomId FOR UPDATE;",

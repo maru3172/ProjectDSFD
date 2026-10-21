@@ -144,6 +144,7 @@ public:
 	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	bool HasQueuedManualMannequinCommand() const { return bManualMannequinCommandIssued; }
+	FString GetMannequinCommandNotice() const;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 	virtual void SeamlessTravelFrom(APlayerController* OldPC) override;
@@ -289,6 +290,11 @@ private:
 
 	UFUNCTION(Client, Reliable)
 	void ClientNotifyMannequinCatchDamage(bool bEnabled);
+
+	UFUNCTION(Client, Reliable)
+	void ClientNotifyMannequinCommand(const FString& Message);
+	FString MannequinCommandNotice;
+	float MannequinCommandNoticeUntil = 0;
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayMannequinCaptureFeedback(bool bElimination);

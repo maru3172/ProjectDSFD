@@ -44,6 +44,7 @@
 #include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01TutorialEditorLibrary.h"
+#include "ProjectEditorLocalMatchServer.h"
 #include "Serialization/Csv/CsvParser.h"
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
@@ -852,12 +853,14 @@ public:
 	virtual void StartupModule() override
 	{
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FProjectProject01EditorModule::RegisterMenus));
+		ProjectEditorLocalMatchServer::Startup();
 		FGameDelegates::Get().GetModifyCookDelegate().AddRaw(this, &FProjectProject01EditorModule::ModifyHeartbeatCook);
 	}
 
 	virtual void ShutdownModule() override
 	{
 		UProjectProject01TutorialEditorLibrary::ShutdownPractice();
+		ProjectEditorLocalMatchServer::Shutdown();
 		FGameDelegates::Get().GetModifyCookDelegate().RemoveAll(this);
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);

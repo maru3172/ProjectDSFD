@@ -7,6 +7,7 @@
 #include "Dom/JsonObject.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
 #include "HttpModule.h"
+#include "HAL/PlatformTime.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 #include "ProjectProject01AuthSubsystem.h"
@@ -16,6 +17,15 @@
 #include "Serialization/JsonWriter.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01Lobby, Log, All);
+
+#if WITH_EDITOR
+TFunction<void(TFunction<void(bool,const FString&)>)> UProjectProject01LobbySubsystem::PrepareEditorLocalServer;
+bool UProjectProject01LobbySubsystem::IsEditorLoopbackTest() const
+{
+	return GIsEditor && GetWorld() && GetWorld()->WorldType==EWorldType::PIE &&
+		ApiBaseUrl.Equals(TEXT("http://127.0.0.1:5080"),ESearchCase::IgnoreCase) && !!PrepareEditorLocalServer;
+}
+#endif
 
 namespace ProjectProject01Lobby
 {
@@ -95,6 +105,8 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 {
 	++RequestGeneration;
+	bEditorServerPreparationPending=false;
+	bEditorServerPrepared=false;
 	if (ActiveRequest.IsValid())
 	{
 		ActiveRequest->OnProcessRequestComplete().Unbind();
@@ -103,6 +115,7 @@ void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 	}
 	Rooms.Reset();
     bMatchmaking=false;bCancelMatchmaking=false;MatchSearchId.Reset();MatchmakingMessage.Reset();MatchmakingWaiting=0;MatchmakingPosition=0;MatchmakingSeconds=0;
+    MatchmakingStartedAtSeconds=0;
 	CurrentRoom = FProjectProject01RoomState();
 	LeaderboardEntries.Reset();
     DesiredLeaderboardEndpoint.Reset();bLeaderboardRefreshQueued=false;
@@ -138,6 +151,7 @@ void UProjectProject01LobbySubsystem::JoinMatchmaking()
 {
     if(!HasCurrentRoom()||!CurrentRoom.bRandomParty||!CurrentRoom.bIsHost||CurrentRoom.Members.Num()!=1||bMatchmaking||IsRequestInFlight())return;
     MatchSearchId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);bMatchmaking=true;bCancelMatchmaking=false;
+    MatchmakingStartedAtSeconds=FPlatformTime::Seconds();
     MatchmakingMessage=TEXT("매칭 신청 중…");
     SendRequest(EProjectProject01LobbyOperation::JoinMatchmaking,TEXT("POST"),TEXT("/api/rooms/matchmaking/join"),TEXT("{\"searchId\":\"")+MatchSearchId+TEXT("\"}"));
 }
@@ -145,6 +159,13 @@ void UProjectProject01LobbySubsystem::CreateMatchParty()
 {
     if(IsRequestInFlight()||HasCurrentRoom())return;
     SendRequest(EProjectProject01LobbyOperation::CreateMatchParty,TEXT("POST"),TEXT("/api/rooms/matchmaking/party"),TEXT("{}"));
+}
+int32 UProjectProject01LobbySubsystem::GetMatchmakingElapsedSeconds() const
+{
+    // Monotonic local time keeps the display ticking between server polls and
+    // ignores wall-clock changes. It is not the server's queue-expiry countdown.
+    return bMatchmaking && MatchmakingStartedAtSeconds>0
+        ? FMath::Max(0,FMath::FloorToInt(FPlatformTime::Seconds()-MatchmakingStartedAtSeconds)) : 0;
 }
 void UProjectProject01LobbySubsystem::PollMatchmaking()
 {
@@ -166,6 +187,8 @@ bool UProjectProject01LobbySubsystem::ParseMatchmaking(const TSharedPtr<FJsonObj
     N=0;Json->TryGetNumberField(TEXT("position"),N);MatchmakingPosition=FMath::Max(0,(int32)N);
     N=0;Json->TryGetNumberField(TEXT("secondsRemaining"),N);MatchmakingSeconds=FMath::Max(0,(int32)N);
     bMatchmaking=State==TEXT("Waiting");
+    if(bMatchmaking && MatchmakingStartedAtSeconds<=0)MatchmakingStartedAtSeconds=FPlatformTime::Seconds();
+    if(!bMatchmaking)MatchmakingStartedAtSeconds=0;
     if(!bMatchmaking)bCancelMatchmaking=false;
     const TSharedPtr<FJsonObject>* Room=nullptr;
     if(Json->TryGetObjectField(TEXT("room"),Room))return ParseRoomState(Json,Error);
@@ -428,6 +451,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 		}
 		return;
 	}
+	if (bEditorServerPreparationPending) return;
 	++RequestGeneration;
 
 	const UGameInstance* GameInstance = GetGameInstance();
@@ -446,6 +470,27 @@ void UProjectProject01LobbySubsystem::SendRequest(
 		return;
 	}
 
+#if WITH_EDITOR
+	if (!bEditorServerPrepared && IsEditorLoopbackTest() &&
+		(Operation==EProjectProject01LobbyOperation::RefreshRooms || Operation==EProjectProject01LobbyOperation::RefreshCurrentRoom ||
+		 Operation==EProjectProject01LobbyOperation::StartRoom || Operation==EProjectProject01LobbyOperation::CreateMatchParty || Operation==EProjectProject01LobbyOperation::JoinMatchmaking))
+	{
+		bEditorServerPreparationPending=true;
+		const uint64 Generation=RequestGeneration;
+		const TWeakObjectPtr<UProjectProject01LobbySubsystem> Weak(this);
+		PrepareEditorLocalServer([Weak,Generation,Operation,Verb,Endpoint,JsonBody,RetryIndex](bool bOK,const FString& Message)
+		{
+			if (auto* Self=Weak.Get();Self && Self->RequestGeneration==Generation)
+			{
+				Self->bEditorServerPreparationPending=false;
+				Self->bEditorServerPrepared=bOK;
+				if (bOK) Self->SendRequest(Operation,Verb,Endpoint,JsonBody,RetryIndex);
+				else Self->Complete(Operation,false,Message);
+			}
+		});
+		return;
+	}
+#endif
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(ApiBaseUrl + Endpoint);
 	Request->SetVerb(Verb);

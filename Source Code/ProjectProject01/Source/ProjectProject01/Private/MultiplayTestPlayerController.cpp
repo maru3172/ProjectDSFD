@@ -782,7 +782,12 @@ FRotator AMultiplayTestPlayerController::ResolveMannequinCameraRotation(AMannequ
 AMannequinAICharacter* AMultiplayTestPlayerController::GetViewedMannequin() const
 {
 	if (IsValid(ViewedMannequin)) return ViewedMannequin.Get();
-	return Cast<AMannequinAICharacter>(GetPawn());
+	if (auto* Owned = Cast<AMannequinAICharacter>(GetPawn()); IsValid(Owned)) return Owned;
+	// View-only players have no possessed pawn. A resolved camera is still a valid
+	// identity while the owner-only actor property is being mapped/replicated.
+	if (IsLocalMannequinPlayer())
+		if (auto* Viewed = Cast<AMannequinAICharacter>(GetViewTarget()); IsValid(Viewed) && Viewed->GetWorld()==GetWorld()) return Viewed;
+	return nullptr;
 }
 
 void AMultiplayTestPlayerController::SetViewedMannequin(AMannequinAICharacter* Mannequin)
@@ -793,6 +798,8 @@ void AMultiplayTestPlayerController::SetViewedMannequin(AMannequinAICharacter* M
 	}
 
 	ViewedMannequin = Mannequin;
+	// Network relevancy uses the SERVER view target, not the owner RPC's local camera.
+	SetViewTarget(Mannequin);
 	ApplyViewedMannequinCamera(Mannequin);
 	ForceNetUpdate();
 	ClientApplyViewedMannequin(Mannequin);
@@ -1527,9 +1534,14 @@ void AMultiplayTestPlayerController::ServerRequestMannequinCommand_Implementatio
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
 		if (GameMode->TryIssueMannequinCommand(this, Command))
+		{
+			const TCHAR* Name=Command==EMultiplayMannequinCommand::Patrol?TEXT("정찰"):
+				Command==EMultiplayMannequinCommand::ChaseInDetectionRange?TEXT("감지 범위 추격"):TEXT("마네킹 플레이어 추종");
+			ClientNotifyMannequinCommand(FString::Printf(TEXT("%d번: %s 명령 지정"),GetViewedMannequin()->GetControlSlot(),Name));
 			if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode))
 				Tutorial->RecordAction(this,Command==EMultiplayMannequinCommand::Patrol ? EProjectTutorialCondition::PatrolCommand :
 					Command==EMultiplayMannequinCommand::ChaseInDetectionRange ? EProjectTutorialCondition::ChaseCommand : EProjectTutorialCondition::FollowCommand);
+		}
 	}
 }
 
@@ -1547,7 +1559,10 @@ void AMultiplayTestPlayerController::ServerResetFollowingMannequins_Implementati
 	if (AMultiplayTestGameMode* GameMode = GetWorld()
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
-		if (GameMode->TryResetFollowingMannequins(this))
+		const bool bChanged=GameMode->TryResetFollowingMannequins(this);
+		if (SurvivorState==EMultiplayTestSurvivorState::NotApplicable && GetViewedMannequin() && MatchPhase==EMultiplayTestMatchPhase::InProgress)
+			ClientNotifyMannequinCommand(bChanged?TEXT("추종 해제: 따라오던 마네킹이 정찰 상태로 변경되었습니다."):TEXT("추종 중인 마네킹이 없습니다."));
+		if (bChanged)
 			if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::ResetFollow);
 	}
 }
@@ -1594,9 +1609,21 @@ bool AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Validate()
 
 void AMultiplayTestPlayerController::ClientNotifyMannequinCatchDamage_Implementation(const bool bEnabled)
 {
+	ClientNotifyMannequinCommand_Implementation(bEnabled?TEXT("전체 AI 데스카운트 소모: 활성"):TEXT("전체 AI 데스카운트 소모: 비활성"));
 	ClientMessage(bEnabled
 		? TEXT("전체 AI 마네킹의 데스카운트 소모: 활성")
 		: TEXT("전체 AI 마네킹의 데스카운트 소모: 비활성"));
+}
+
+void AMultiplayTestPlayerController::ClientNotifyMannequinCommand_Implementation(const FString& Message)
+{
+	MannequinCommandNotice=Message;
+	MannequinCommandNoticeUntil=GetWorld()?GetWorld()->GetTimeSeconds()+3.f:0.f;
+}
+
+FString AMultiplayTestPlayerController::GetMannequinCommandNotice() const
+{
+	return GetWorld() && GetWorld()->GetTimeSeconds()<MannequinCommandNoticeUntil?MannequinCommandNotice:FString();
 }
 
 void AMultiplayTestPlayerController::ClientPlayMannequinCaptureFeedback_Implementation(

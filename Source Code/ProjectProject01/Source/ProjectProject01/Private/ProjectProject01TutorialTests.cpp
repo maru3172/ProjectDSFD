@@ -2,6 +2,7 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/ScopeExit.h"
 #include "ProjectProject01Tutorial.h"
+#include "ProjectProject01GameInstance.h"
 #include "PlayerCharacter.h"
 #include "MannequinAICharacter.h"
 #include "Camera/CameraActor.h"
@@ -30,6 +31,39 @@
 #include "AIController.h"
 #include "UnrealClient.h"
 #include "Misc/PackageName.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMannequinViewCommandTest,"ProjectProject01.Multiplayer.ViewOnlyCommands",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectMannequinViewCommandTest::RunTest(const FString&)
+{
+	const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+	auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+	ON_SCOPE_EXIT { if (World) World->DestroyWorld(false); };
+	World->SetGameInstance(NewObject<UGameInstance>());
+	FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));
+	if (!TestTrue(TEXT("Real multiplayer game mode"),World->SetGameMode(URL))) return false;
+	auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();
+	auto* PC=World->SpawnActor<AMultiplayTestPlayerController>();
+	FProjectProject01ValidatedJoinClaim Claim;Claim.Role=TEXT("Mannequin");Claim.UserId=TEXT("Test.Man");Claim.MatchId=TEXT("Test.Match");
+	PC->SetAuthenticatedLobbyIdentity(Claim);
+	auto* Body=World->SpawnActor<AMannequinAICharacter>();
+	auto* AI=World->SpawnActor<AAIController>();AI->Possess(Body);PC->SetViewedMannequin(Body);
+	Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+	for (auto Command:{EMultiplayMannequinCommand::Patrol,EMultiplayMannequinCommand::ChaseInDetectionRange,EMultiplayMannequinCommand::FollowMannequinPlayer})
+	{
+		TestTrue(TEXT("Z/X/C accepted while only viewing"),Mode->TryIssueMannequinCommand(PC,Command));
+		TestEqual(TEXT("Selected body's persistent command changes immediately"),Body->GetMultiplayCommand(),Command);
+		TestTrue(TEXT("Command preserves AI possession and view-only mode"),Body->GetController()==AI && !Body->IsManualControlEnabled() && PC->GetPawn()==nullptr);
+	}
+	TestTrue(TEXT("Q accepted without direct control"),Mode->TryResetFollowingMannequins(PC));
+	TestEqual(TEXT("Q returns followers to patrol"),Body->GetMultiplayCommand(),EMultiplayMannequinCommand::Patrol);
+	Mode->ToggleMannequinCatchDamage(PC);TestFalse(TEXT("B remains available without direct control"),Body->IsCatchDamageEnabled());
+	auto* Survivor=World->SpawnActor<AMultiplayTestPlayerController>();Survivor->SetViewedMannequin(Body);
+	TestFalse(TEXT("Survivor cannot issue mannequin commands"),Mode->TryIssueMannequinCommand(Survivor,EMultiplayMannequinCommand::Patrol));
+	Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Results);
+	TestFalse(TEXT("Commands after match end are rejected"),Mode->TryIssueMannequinCommand(PC,EMultiplayMannequinCommand::Patrol));
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectTutorialTest,"ProjectProject01.Multiplayer.TutorialFlow",
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -69,6 +103,10 @@ bool FProjectTutorialTest::RunTest(const FString&)
 	TestTrue(TEXT("Acknowledging intro displays the walk explanation"),Mode->StepIndex==1 && Mode->bAwaitingRead);
 	Mode->ContinueTutorial();
 	TestFalse(TEXT("Acknowledging instructions enables actual practice"),Mode->bAwaitingRead);
+	TestTrue(TEXT("Walk goal displays required meters"),Mode->GetPracticeStatusText().ToString().Contains(TEXT("0.0 / 10.0 m")));
+	Mode->Progress=250;
+	TestTrue(TEXT("Walk distance is converted from centimeters"),Mode->GetPracticeStatusText().ToString().Contains(TEXT("2.5 / 10.0 m")));
+	Mode->Progress=0;
 	TestFalse(TEXT("A message trigger cannot bypass its step prerequisite"),Mode->ShowMessage(PC,FText::FromString(TEXT("설명")),TEXT("Other")));
 	TestTrue(TEXT("An authored explanation pauses the current practice"),Mode->ShowMessage(PC,FText::FromString(TEXT("충분히 읽은 뒤 계속하세요.")),TEXT("Survivor.Walk")));
 	Mode->ContinueTutorial();
@@ -96,20 +134,27 @@ bool FProjectTutorialTest::RunTest(const FString&)
 	// Role separation, authored line breaks and deliberate practice requirements.
 	TestEqual(TEXT("Survivor has five independent pages and no ping/voice exercise"),Mode->Plan->SurvivorSteps.Num(),5);
 	TestEqual(TEXT("Mannequin has its own seven pages"),Mode->Plan->MannequinSteps.Num(),7);
+	TestFalse(TEXT("Command tutorial no longer requires manual control first"),Mode->Plan->MannequinSteps[4].Instructions.ToString().Contains(TEXT("직접 조작 상태에서")));
 	TestEqual(TEXT("Commanded handoff requires three repetitions"),Mode->Plan->MannequinSteps[5].RequiredAmount,3.f);
-	TestTrue(TEXT("Capture instructions explain the manual player's damage exception"),Mode->Plan->MannequinSteps.Last().Instructions.ToString().Contains(TEXT("(단, 마네킹 플레이어는 접촉 데스카운트를 비활성화 시켜도 언제든 소모시킬 수 있습니다.)")));
+	TestTrue(TEXT("Capture instructions retain the damage exception with readable line breaks"),Mode->Plan->MannequinSteps.Last().Instructions.ToString().Contains(TEXT("비활성화 시켜도 언제든 소모시킬 수 있습니다.)")));
 	TestEqual(TEXT("Survivor must continuously observe for three seconds"),Mode->Plan->SurvivorSteps[3].RequiredAmount,3.f);
-	TestTrue(TEXT("Both movement exercises require sustained active practice"),Mode->Plan->SurvivorSteps[1].MinimumPracticeSeconds>=4 && Mode->Plan->SurvivorSteps[2].MinimumPracticeSeconds>=4);
+	TestEqual(TEXT("Default survivor walk goal is ten metres"),Mode->Plan->SurvivorSteps[1].RequiredAmount,1000.f);
+	TestEqual(TEXT("Default survivor sprint goal is twenty metres"),Mode->Plan->SurvivorSteps[2].RequiredAmount,2000.f);
+	TestEqual(TEXT("Default mannequin movement goal is ten metres"),Mode->Plan->MannequinSteps[3].RequiredAmount,1000.f);
+	TestFalse(TEXT("Removed command explanation is not in native defaults"),Mode->Plan->MannequinSteps[4].Instructions.ToString().Contains(TEXT("직접 조작하지 않아도")));
 	Mode->bFinishing=false; Mode->bResultVisible=false; Mode->bClosingConfirmed=false;
 	Mode->StepIndex=2; Mode->EnterStep(); UI->NativeTick(FGeometry(),0);
 	TestEqual(TEXT("Survivor page has only the survivor heading"),UI->Heading->GetText().ToString(),FString(TEXT("생존자 튜토리얼")));
 	TestTrue(TEXT("Sprint explanation retains a blank line after its opening sentence"),UI->Body->GetText().ToString().Contains(TEXT("달릴 수 있습니다.\n\n달릴 때 스태미나가 소모되며")));
 	TestFalse(TEXT("Author's practice notes never become visible instructions"),UI->Body->GetText().ToString().Contains(TEXT("목표 갱신")));
-	Mode->ContinueTutorial(); Mode->Progress=Mode->GetCurrentStep()->RequiredAmount;
-	Mode->PracticeSeconds=1;
-	TestFalse(TEXT("Distance alone cannot skip a sustained movement exercise"),Mode->TryFinishPracticeStep());
-	Mode->PracticeSeconds=4;
-	TestTrue(TEXT("Distance and active time together complete movement"),Mode->TryFinishPracticeStep());
+	Mode->ContinueTutorial();
+	Mode->Steps[Mode->StepIndex].MinimumPracticeSeconds=99; // Serialized legacy values must not retain a hidden wait.
+	Mode->Progress=Mode->GetCurrentStep()->RequiredAmount-1;
+	TestFalse(TEXT("Movement cannot complete below the exact distance goal"),Mode->TryFinishPracticeStep());
+	TestFalse(TEXT("UI does not round an unfinished distance up to its completed target"),Mode->GetPracticeStatusText().ToString().Contains(TEXT("20.0 / 20.0")));
+	Mode->Progress=Mode->GetCurrentStep()->RequiredAmount;
+	TestFalse(TEXT("No vague extra practice prompt remains"),Mode->GetPracticeStatusText().ToString().Contains(TEXT("조금 더")));
+	TestTrue(TEXT("Visible distance goal completes immediately despite legacy hidden timer"),Mode->TryFinishPracticeStep());
 	TestTrue(TEXT("Sprint leads to observation, never to mannequin controls"),Mode->GetCurrentStep()->Condition==EProjectTutorialCondition::ObserveMannequin);
 
 	Mode->bMannequin=true; Mode->Steps=Mode->Plan->MannequinSteps;
@@ -132,41 +177,35 @@ bool FProjectTutorialTest::RunTest(const FString&)
 	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
 	TestEqual(TEXT("Commands during the explanation do not count"),Mode->Progress,0.f);
 	Mode->ContinueTutorial();
+	// The exercise also accepts commands issued while only sharing a body's view.
+	PC->UnPossess();Second->SetManualControlEnabled(false);Second->SpawnDefaultController();
 	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
 	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
-	TestEqual(TEXT("Rapid commands wait for the resulting state to be visible"),Mode->Progress,0.f);
+	TestEqual(TEXT("Each successful command counts immediately, including repeats"),Mode->Progress,2.f);
 	UI->NativeTick(FGeometry(),.1f);
 	TestTrue(TEXT("Goal text is below the role HUD, not at its old overlapping position"),CastChecked<UCanvasPanelSlot>(UI->ObjectiveStack->GetParent()->Slot)->GetPosition().Y>PC->GetMannequinStatusBottom());
 	TestTrue(TEXT("The active goal stack is visible during practice"),UI->ObjectiveStack->GetVisibility()==ESlateVisibility::HitTestInvisible);
-	for (int32 Frame=0;Frame<11;++Frame) Mode->Tick(.1f);
-	TestEqual(TEXT("One observed command counts once"),Mode->Progress,1.f);
 	for (auto Action:{EProjectTutorialCondition::ResetFollow,EProjectTutorialCondition::ToggleContactDamage,EProjectTutorialCondition::DirectAttack}) Mode->RecordAction(PC,Action);
 	Mode->Tick(.1f);
-	TestEqual(TEXT("Q/B/attack are optional, not required command checks"),Mode->Progress,1.f);
-	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
-	for (int32 Frame=0;Frame<11;++Frame) Mode->Tick(.1f);
-	TestEqual(TEXT("The same patrol command may be practiced again"),Mode->Progress,2.f);
+	TestEqual(TEXT("Q/B/attack are optional, not required command checks"),Mode->Progress,2.f);
 	Mode->RecordAction(PC,EProjectTutorialCondition::ChaseCommand);
-	for (int32 Frame=0;Frame<11;++Frame) Mode->Tick(.1f);
-	TestEqual(TEXT("Any three observed Z/X/C commands reach the handoff exercise"),Mode->StepIndex,5);
+	TestEqual(TEXT("Third valid Z/X/C command reaches the next page without an extra timer"),Mode->StepIndex,5);
 	Mode->ContinueTutorial();
 	PC->UnPossess(); Second->SetManualControlEnabled(false); PC->SetViewedMannequin(First);
 	Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
 	TestFalse(TEXT("Switching without a preceding command cannot satisfy a handoff"),Mode->ReleasedMannequin.IsValid());
-	// Three commanded releases must return to AI and be observed.
+	// Three commanded releases must really return to AI, without a hidden two-second wait.
 	Mode->Steps.Last().Condition=EProjectTutorialCondition::Continue; // No final NPC spawn in this isolated fixture.
 	for (int32 Cycle=0;Cycle<3;++Cycle)
 	{
-		PC->Possess(Second); Second->SetManualControlEnabled(true); PC->SetViewedMannequin(Second);
+		PC->UnPossess(); Second->SetManualControlEnabled(false); PC->SetViewedMannequin(Second);
 		Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
 		Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
 		PC->UnPossess(); Second->SetManualControlEnabled(false); Second->SpawnDefaultController(); PC->SetViewedMannequin(First);
 		Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
 		TestTrue(TEXT("Commanded body is tracked after another number is selected"),Mode->ReleasedMannequin==Second);
 		TestNotNull(TEXT("The released mannequin has a real AI controller"),Cast<AAIController>(Second->GetController()));
-		for (int32 Frame=0;Frame<10;++Frame) Mode->Tick(.1f);
-		TestEqual(TEXT("One second of observation cannot finish a handoff"),Mode->StepIndex,5);
-		for (int32 Frame=0;Frame<12;++Frame) Mode->Tick(.1f);
+		Mode->Tick(.016f);
 		TestEqual(TEXT("Each completed handoff counts once; three are required"),Mode->StepIndex,Cycle<2 ? 5 : 6);
 	}
 
@@ -185,6 +224,31 @@ bool FProjectTutorialTest::RunTest(const FString&)
 	TestTrue(TEXT("Goal completion is stored, not just a transient UI string"),Objective->GetObjective().bCompleted);
 	FString Error; Mode->PreLogin(TEXT(""),TEXT("127.0.0.1"),FUniqueNetIdRepl(),Error);
 	TestFalse(TEXT("Tutorial never accepts network clients"),Error.IsEmpty());
+	// Render every native tutorial page for text wrapping/alignment review.
+	const FString Directory=FPaths::ProjectSavedDir()/TEXT("ReviewRemediation/TutorialReadability-20261021");
+	IFileManager::Get().MakeDirectory(*Directory,true);
+	FWidgetRenderer Renderer(true);const FVector2D Size(1280,720);
+	for(bool MannequinRole:{false,true})
+	{
+		Mode->bMannequin=MannequinRole;Mode->bFinishing=false;Mode->bResultVisible=false;
+		Mode->Steps=MannequinRole?Mode->Plan->MannequinSteps:Mode->Plan->SurvivorSteps;
+		for(int32 Page=0;Page<Mode->Steps.Num();++Page)
+		{
+			if(Mode->Steps[Page].Condition==EProjectTutorialCondition::Capture)Mode->Steps[Page].Condition=EProjectTutorialCondition::Continue;
+			Mode->StepIndex=Page;Mode->EnterStep();UI->NativeTick(FGeometry(),0);
+			TestEqual(TEXT("All explanation paragraphs use a consistent readable width"),UI->Body->GetWrapTextAt(),620.f);
+			TestFalse(TEXT("No native tutorial page displays the removed sentence"),UI->Body->GetText().ToString().Contains(TEXT("직접 조작하지 않아도")));
+			const auto Slate=UI->WidgetTree->RootWidget->TakeWidget();
+			auto* Target=Renderer.DrawWidget(Slate,Size);Renderer.DrawWidget(Target,Slate,Size,.016f);FlushRenderingCommands();FBufferArchive Image;
+			TestTrue(TEXT("Tutorial page rendered"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));
+			TestTrue(TEXT("Tutorial page screenshot saved"),FFileHelper::SaveArrayToFile(Image,*(Directory/FString::Printf(TEXT("%s-%02d.png"),MannequinRole?TEXT("Mannequin"):TEXT("Survivor"),Page))));
+		}
+	}
+	Mode->StepIndex=4;Mode->EnterStep();
+	Mode->Steps[4].Instructions=FText::FromString(TEXT("시점을 선택한 마네킹에게 명령을 내릴 수 있습니다.\n직접 조작하지 않아도 명령할 수 있으며, 직접 조작 중 내린 명령은 조작 해제 후 수행합니다.\nZ: 정찰"));
+	UI->NativeTick(FGeometry(),0);
+	TestFalse(TEXT("Old serialized instruction also removes the requested sentence"),UI->Body->GetText().ToString().Contains(TEXT("직접 조작하지 않아도")));
+	TestTrue(TEXT("Removing the legacy sentence preserves its neighbouring instructions"),UI->Body->GetText().ToString().Contains(TEXT("Z: 정찰")));
 	return true;
 }
 
@@ -281,6 +345,8 @@ bool FProjectTutorialRuntimeTest::RunTest(const FString&)
 	if (!Mode->Learner || !Mode->Widget) return false;
 	if (Mode->IsMannequinTutorial())
 	{
+		TestEqual(TEXT("Saved map uses the ten-metre mannequin goal"),Mode->Steps[3].RequiredAmount,1000.f);
+		TestFalse(TEXT("Saved map no longer shows the removed manual/release sentence"),Mode->Steps[4].Instructions.ToString().Contains(TEXT("직접 조작하지 않아도")));
 		TestEqual(TEXT("The saved map uses the three-command practice requirement"),Mode->Steps[4].RequiredAmount,3.f);
 		TestEqual(TEXT("The saved map also requires three commanded handoffs"),Mode->Steps[5].RequiredAmount,3.f);
 	}
@@ -439,16 +505,17 @@ bool FProjectPracticeDirectorTest::RunTest(const FString&)
 	auto* A=Bodies[0];auto* B=Bodies[1];auto* C=Bodies[2];
 	Mode->SelectPracticeDirectorBody(A);
 	TestTrue(TEXT("Number selection changes focus without starting manual control"),Mode->GetMannequinPlayerFocusPawn()==A && !A->IsManualControlEnabled());
-	TestFalse(TEXT("View-only state cannot issue commands"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer));
+	TestTrue(TEXT("View-only state can issue commands"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer));
 	A->SetManualControlEnabled(true);
-	TestTrue(TEXT("C is accepted only on the controlled body"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer));
+	TestTrue(TEXT("C is also accepted on the controlled body"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer));
 	Mode->SelectPracticeDirectorBody(B);
 	TestTrue(TEXT("C persists when the simulated player leaves its body"),!A->IsManualControlEnabled() && A->GetMultiplayCommand()==EMultiplayMannequinCommand::FollowMannequinPlayer);
 	TestEqual(TEXT("The native follower leader changes with the player's selected body"),Mode->GetMannequinPlayerFocusPawn(),B);
-	B->SetManualControlEnabled(true);Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::ChaseInDetectionRange);
+	Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::ChaseInDetectionRange);
 	TestTrue(TEXT("Q actually resets existing followers"),Mode->ResetPracticeDirectorFollowers());
 	TestTrue(TEXT("Q restores patrol without overwriting unrelated chase commands"),A->GetMultiplayCommand()==EMultiplayMannequinCommand::Patrol && B->GetMultiplayCommand()==EMultiplayMannequinCommand::ChaseInDetectionRange);
 	TestFalse(TEXT("Choosing no further command cannot erase an already issued X"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::HoldPosition));
+	B->SetManualControlEnabled(true);
 	Mode->SelectPracticeDirectorBody(C);
 	TestEqual(TEXT("X persists after handoff"),B->GetMultiplayCommand(),EMultiplayMannequinCommand::ChaseInDetectionRange);
 	C->SetManualControlEnabled(true);Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::HoldPosition);Mode->SelectPracticeDirectorBody(A);

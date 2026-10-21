@@ -39,9 +39,21 @@ namespace ProjectTutorial
 {
 	const FName Map(TEXT("/Game/MyProject/Level/MultiplayerTutorial"));
 	FText Text(const TCHAR* Value) { return FText::FromString(Value); }
+	FString RemoveObsoleteCommandSentence(FString Result)
+	{
+		// Strip this removed sentence from already-saved plans as well as native defaults.
+		for (const TCHAR* Removed : {
+			TEXT("직접 조작하지 않아도 명령할 수 있으며, 직접 조작 중 내린 명령은 조작 해제 후 수행합니다."),
+			TEXT("직접 조작하지 않아도 명령을 수행할 수 있으며, 직접 조작 중 내린 명령은 조작 해제 후 수행합니다.") })
+		{
+			Result.ReplaceInline(*(FString(Removed)+TEXT("\n")),TEXT(""));
+			Result.ReplaceInline(Removed,TEXT(""));
+		}
+		return Result;
+	}
 	FText ResolveText(const FText& Value)
 	{
-		FString Result=Value.ToString();
+		FString Result=RemoveObsoleteCommandSentence(Value.ToString());
 		// Keep already-saved tutorial plans consistent with the explicit confirmation button.
 		Result.ReplaceInline(TEXT("‘조작 연습 시작’"),TEXT("‘확인’"));
 		if (auto* S=UProjectProject01GameUserSettings::Get())
@@ -61,7 +73,8 @@ namespace ProjectTutorial
 	UTextBlock* Label(UWidgetTree* Tree,UVerticalBox* Root,int32 Size)
 	{
 		auto* T=Tree->ConstructWidget<UTextBlock>();
-		T->SetColorAndOpacity(FLinearColor::White); T->SetAutoWrapText(true); T->SetWrapTextAt(560);
+		T->SetColorAndOpacity(FLinearColor::White); T->SetAutoWrapText(true); T->SetWrapTextAt(620);
+		T->SetJustification(ETextJustify::Left); T->SetLineHeightPercentage(1.2f);
 		auto Font=T->GetFont(); Font.Size=Size; T->SetFont(Font);
 		Root->AddChildToVerticalBox(T)->SetPadding(FMargin(8)); return T;
 	}
@@ -137,21 +150,18 @@ AProjectProject01TutorialPlan::AProjectProject01TutorialPlan()
 	{
 		FProjectTutorialStep S; S.Id=Id; S.Title=ProjectTutorial::Text(Title); S.Instructions=ProjectTutorial::Text(Hint); S.Condition=Condition; S.RequiredAmount=Amount; S.Event=Event; Out.Add(S);
 	};
-	Add(SurvivorSteps,TEXT("Survivor.Intro"),TEXT("동료와 협력하여 탈출하세요."),TEXT("당신은 생존자입니다.\n마네킹을 바라보면서 자신에게 접근하지 못하게 막고,\n무사히 마지막 탈출구까지 도달하는 것이 최종 목표입니다."),EProjectTutorialCondition::Continue);
-	Add(SurvivorSteps,TEXT("Survivor.Walk"),TEXT("{Move}로 이동하며 마우스를 통해 시점을 움직일 수 있습니다."),TEXT(""),EProjectTutorialCondition::Walk,800);
-	SurvivorSteps.Last().MinimumPracticeSeconds=4;
-	Add(SurvivorSteps,TEXT("Survivor.Sprint"),TEXT("이동하며 {Sprint}를 눌러 달릴 수 있습니다."),TEXT("달릴 때 스태미나가 소모되며 싱글 플레이와는 다르게 스태미나가 전부 소모되면 달릴 수 없습니다."),EProjectTutorialCondition::Sprint,1200);
-	SurvivorSteps.Last().MinimumPracticeSeconds=4;
-	Add(SurvivorSteps,TEXT("Survivor.Observe"),TEXT("마네킹을 바라보면 적이 다가오지 못하게 막을 수 있습니다."),TEXT("싱글 플레이에서는 파트너가 존재하나 여기서는 존재하지 않습니다.\n동료와 협력하여 사방을 주의하면서 다니는 것이 중요합니다."),EProjectTutorialCondition::ObserveMannequin,3);
+	Add(SurvivorSteps,TEXT("Survivor.Intro"),TEXT("동료와 협력하여 탈출하세요."),TEXT("당신은 생존자입니다.\n\n마네킹을 바라보면서 자신에게 접근하지 못하게 막고,\n무사히 마지막 탈출구까지 도달하는 것이\n최종 목표입니다."),EProjectTutorialCondition::Continue);
+	Add(SurvivorSteps,TEXT("Survivor.Walk"),TEXT("{Move}로 이동하며\n마우스를 통해 시점을 움직일 수 있습니다."),TEXT(""),EProjectTutorialCondition::Walk,1000);
+	Add(SurvivorSteps,TEXT("Survivor.Sprint"),TEXT("이동하며 {Sprint}를 눌러 달릴 수 있습니다."),TEXT("달릴 때 스태미나가 소모되며\n싱글 플레이와는 다르게 스태미나가 전부 소모되면\n달릴 수 없습니다."),EProjectTutorialCondition::Sprint,2000);
+	Add(SurvivorSteps,TEXT("Survivor.Observe"),TEXT("마네킹을 바라보면\n적이 다가오지 못하게 막을 수 있습니다."),TEXT("싱글 플레이에서는 파트너가 존재하나\n여기서는 존재하지 않습니다.\n\n동료와 협력하여\n사방을 주의하면서 다니는 것이 중요합니다."),EProjectTutorialCondition::ObserveMannequin,3);
 	Add(SurvivorSteps,TEXT("Survivor.Escape"),TEXT("이제 탈출구로 이동할 시간입니다."),TEXT("배운 조작을 활용해 탈출 지점에 도달하세요."),EProjectTutorialCondition::Trigger,1,TEXT("Tutorial.Escape"));
-	Add(MannequinSteps,TEXT("Mannequin.Intro"),TEXT("생존자의 탈출을 저지하세요"),TEXT("당신은 마네킹 플레이어입니다.\n마네킹의 시점을 선택하고 명령을 내리거나 직접 조작할 수 있습니다.\n생존자 전원을 붙잡아 탈출을 막는 것이 최종 목표입니다.\n생존자가 바라보는 마네킹은 멈추게 되며\n이들이 바라보지 않는 시야에서 잡는 것이 중요한 관건입니다."),EProjectTutorialCondition::Continue);
-	Add(MannequinSteps,TEXT("Mannequin.Select"),TEXT("다른 마네킹에게 빙의를 할지 선택할 수 있습니다."),TEXT("머리 위의 번호를 확인하고 0~9의 숫자 키 중 원하는 번호를 눌러\n다른 마네킹으로 시점을 전환할 수 있습니다."),EProjectTutorialCondition::SelectMannequin,3);
+	Add(MannequinSteps,TEXT("Mannequin.Intro"),TEXT("생존자의 탈출을 저지하세요"),TEXT("당신은 마네킹 플레이어입니다.\n마네킹의 시점을 선택하고 명령을 내리거나\n직접 조작할 수 있습니다.\n\n생존자 전원을 붙잡아 탈출을 막는 것이\n최종 목표입니다.\n생존자가 바라보는 마네킹은 멈추게 되며\n이들이 바라보지 않는 시야에서 잡는 것이\n중요한 관건입니다."),EProjectTutorialCondition::Continue);
+	Add(MannequinSteps,TEXT("Mannequin.Select"),TEXT("다른 마네킹에게 빙의를 할지 선택할 수 있습니다."),TEXT("머리 위의 번호를 확인하고\n0~9의 숫자 키 중 원하는 번호를 눌러\n다른 마네킹으로 시점을 전환할 수 있습니다."),EProjectTutorialCondition::SelectMannequin,3);
 	Add(MannequinSteps,TEXT("Mannequin.Manual"),TEXT("자신이 선택한 마네킹을 직접 조종할 수 있습니다."),TEXT("V키를 눌러 직접 조작을 시작하세요."),EProjectTutorialCondition::ManualControl);
-	Add(MannequinSteps,TEXT("Mannequin.Move"),TEXT("{Move}로 이동하며 마우스를 통해 시점을 움직일 수 있습니다."),TEXT("직접 조작 중에만 마네킹을 조종해 이동시킬 수 있습니다."),EProjectTutorialCondition::MoveMannequin,800);
-	MannequinSteps.Last().MinimumPracticeSeconds=4;
-	Add(MannequinSteps,TEXT("Mannequin.Command"),TEXT("마네킹에게 맡길 명령을 지정하세요."),TEXT("직접 조작 중 해당 키를 누르면 빙의 해제 시 지정한 명령을 유지합니다.\nZ: 정찰 / X: 감지 범위 추격 / C: 자신을 따라오기\n아무것도 지정 안함: 정지 상태\nQ: 직접 조작 상태에서 C를 통해 빙의한 플레이어를 그만 따라오게 하는 명령\nB: 전체 마네킹의 접촉 데스카운트 소모 활성/비활성화\n마우스 좌클릭: 직접 공격"),EProjectTutorialCondition::CommandPractice,3);
-	Add(MannequinSteps,TEXT("Mannequin.Release"),TEXT("이제 빙의를 다른 번호의 마네킹을 선택해 명령을 내리세요."),TEXT("다음 맵으로 이동하기 전까지 한번 내린 명령은 유지됩니다."),EProjectTutorialCondition::ReleaseMannequin,3);
-	Add(MannequinSteps,TEXT("Mannequin.Capture"),TEXT("연습용 생존자 1명이 나타났습니다."),TEXT("직접 마네킹을 조작하여 생존자의 시야를 피해 붙잡으세요.\n(단, 마네킹 플레이어는 접촉 데스카운트를 비활성화 시켜도 언제든 소모시킬 수 있습니다.)"),EProjectTutorialCondition::Capture);
+	Add(MannequinSteps,TEXT("Mannequin.Move"),TEXT("{Move}로 이동하며\n마우스를 통해 시점을 움직일 수 있습니다."),TEXT("직접 조작 중에만\n마네킹을 조종해 이동시킬 수 있습니다."),EProjectTutorialCondition::MoveMannequin,1000);
+	Add(MannequinSteps,TEXT("Mannequin.Command"),TEXT("마네킹에게 맡길 명령을 지정하세요."),TEXT("시점을 선택한 마네킹에게 명령을 내릴 수 있습니다.\n\nZ: 정찰\nX: 감지 범위 추격\nC: 자신을 따라오기\nQ: 따라오는 마네킹을 정찰 상태로 변경\n\nB: 전체 마네킹의 접촉 데스카운트 소모\n    활성/비활성화\n마우스 좌클릭: 직접 조작 중 공격"),EProjectTutorialCondition::CommandPractice,3);
+	Add(MannequinSteps,TEXT("Mannequin.Release"),TEXT("이제 빙의를 다른 번호의 마네킹을 선택해\n명령을 내리세요."),TEXT("다음 맵으로 이동하기 전까지\n한번 내린 명령은 유지됩니다."),EProjectTutorialCondition::ReleaseMannequin,3);
+	Add(MannequinSteps,TEXT("Mannequin.Capture"),TEXT("연습용 생존자 1명이 나타났습니다."),TEXT("직접 마네킹을 조작하여\n생존자의 시야를 피해 붙잡으세요.\n\n(단, 마네킹 플레이어는 접촉 데스카운트를\n비활성화 시켜도 언제든 소모시킬 수 있습니다.)"),EProjectTutorialCondition::Capture);
 	SurvivorClosing=ProjectTutorial::Text(TEXT("동료와 함께 무사히 탈출하시길 바랍니다.\n건승을 빕니다!"));
 	MannequinClosing=ProjectTutorial::Text(TEXT("생존자가 탈출할 수 없게 저지하시길 바랍니다.\n건승을 빕니다!"));
 }
@@ -281,6 +291,38 @@ void AProjectProject01TutorialGameMode::BeginPlay()
 	for (TActorIterator<AProjectProject01TutorialPlan> It(GetWorld()); It; ++It) { Plan=*It; break; }
 	if (!Plan) Plan=GetWorld()->SpawnActor<AProjectProject01TutorialPlan>();
 	Steps=bMannequin ? Plan->MannequinSteps : Plan->SurvivorSteps;
+	// Upgrade only the obsolete built-in explanation serialized in older maps.
+	// Keep authored steps, distances and unrelated custom instructions intact.
+	for (auto& Step:Steps)
+	{
+		if (Step.Id==TEXT("Mannequin.Command") && Step.Instructions.ToString().Contains(TEXT("직접 조작 중 해당 키를 누르면")))
+			for (const auto& Default:GetDefault<AProjectProject01TutorialPlan>()->MannequinSteps)
+				if (Default.Id==Step.Id) { Step.Instructions=Default.Instructions;break; }
+		if ((Step.Id==TEXT("Survivor.Walk") || Step.Id==TEXT("Mannequin.Move")) && FMath::IsNearlyEqual(Step.RequiredAmount,800.f)) Step.RequiredAmount=1000.f;
+		if (Step.Id==TEXT("Survivor.Sprint") && FMath::IsNearlyEqual(Step.RequiredAmount,1200.f)) Step.RequiredAmount=2000.f;
+		Step.Instructions=FText::FromString(ProjectTutorial::RemoveObsoleteCommandSentence(Step.Instructions.ToString()));
+		auto Canonical=[](const FText& Text)
+		{
+			FString Out;for (TCHAR Character:Text.ToString()) if (!FChar::IsWhitespace(Character)) Out.AppendChar(Character);
+			return Out;
+		};
+		const auto& Defaults=bMannequin ? GetDefault<AProjectProject01TutorialPlan>()->MannequinSteps : GetDefault<AProjectProject01TutorialPlan>()->SurvivorSteps;
+		for (const auto& Default:Defaults) if (Default.Id==Step.Id)
+		{
+			if (Canonical(Step.Title)==Canonical(Default.Title)) Step.Title=Default.Title;
+			if (Canonical(Step.Instructions)==Canonical(Default.Instructions)) Step.Instructions=Default.Instructions;
+			// Old command lists used inline separators; migrate their standard layout only.
+			if (Step.Id==TEXT("Mannequin.Command") && Step.Instructions.ToString().Contains(TEXT("Z: 정찰 / X: 감지 범위 추격 / C: 자신을 따라오기")))
+			{
+				FString Layout=Step.Instructions.ToString();
+				Layout.ReplaceInline(TEXT("Z: 정찰 / X: 감지 범위 추격 / C: 자신을 따라오기"),TEXT("Z: 정찰\nX: 감지 범위 추격\nC: 자신을 따라오기"));
+				Layout.ReplaceInline(TEXT("\nZ:"),TEXT("\n\nZ:"));Layout.ReplaceInline(TEXT("\nB:"),TEXT("\n\nB:"));
+				Layout.ReplaceInline(TEXT("B: 전체 마네킹의 접촉 데스카운트 소모 활성/비활성화"),TEXT("B: 전체 마네킹의 접촉 데스카운트 소모\n    활성/비활성화"));
+				Step.Instructions=FText::FromString(Layout);
+			}
+			break;
+		}
+	}
 	InitializePractice();
 }
 void AProjectProject01TutorialGameMode::InitializePractice()
@@ -331,7 +373,7 @@ void AProjectProject01TutorialGameMode::SetMenuInput(bool bCursor)
 void AProjectProject01TutorialGameMode::EnterStep()
 {
 	const auto* S=GetCurrentStep(); if (!S || !Learner) return;
-	Progress=0; PracticeSeconds=0; bCommandReviewPending=false; CommandReviewSeconds=0; ReleaseWatchSeconds=0;
+	Progress=0;
 	CommandedMannequin.Reset(); ReleasedMannequin.Reset(); LastSelectedMannequin=Learner->GetViewedMannequin();
 	LastLocation=Learner->GetPawn() ? Learner->GetPawn()->GetActorLocation() : FVector::ZeroVector;
 	bAwaitingRead=true;
@@ -357,23 +399,22 @@ void AProjectProject01TutorialGameMode::RecordAction(AMultiplayTestPlayerControl
 		if (S->Condition==EProjectTutorialCondition::ReleaseMannequin)
 		{
 			if (auto* Commanded=CommandedMannequin.Get(); Commanded && Commanded!=Viewed && !PC->GetPawn() && !Commanded->IsManualControlEnabled())
-			{ ReleasedMannequin=Commanded; CommandedMannequin.Reset(); ReleaseWatchSeconds=0; }
+			{ ReleasedMannequin=Commanded; CommandedMannequin.Reset(); }
 			return;
 		}
 	}
 	const bool bPersistentCommand=Action==EProjectTutorialCondition::PatrolCommand || Action==EProjectTutorialCondition::ChaseCommand || Action==EProjectTutorialCondition::FollowCommand;
 	if (bPersistentCommand && S->Condition==EProjectTutorialCondition::ReleaseMannequin)
 	{
-		if (!ReleasedMannequin.IsValid()) CommandedMannequin=Cast<AMannequinAICharacter>(PC->GetPawn());
+		if (!ReleasedMannequin.IsValid()) CommandedMannequin=PC->GetViewedMannequin();
 		return;
 	}
 	if (S->Condition==EProjectTutorialCondition::CommandPractice)
 	{
-		auto* Controlled=Cast<AMannequinAICharacter>(PC->GetPawn());
-		if (!bPersistentCommand || !Controlled || !Controlled->IsManualControlEnabled() || Controlled!=PC->GetViewedMannequin()) return;
-		// Each valid Z/X/C command may count, including repeats, after its resulting
-		// state has remained visible for a moment. Fast repeats restart this window.
-		bCommandReviewPending=true; CommandReviewSeconds=0; return;
+		if (!bPersistentCommand || !IsValid(PC->GetViewedMannequin())) return;
+		// RecordAction is called after the authoritative command succeeds. There is
+		// no additional hidden review timer once the visible action goal is complete.
+		++Progress; TryFinishPracticeStep(); return;
 	}
 	if (S->Condition==Action || (S->Condition==EProjectTutorialCondition::IssueCommand && bPersistentCommand))
 	{ ++Progress; TryFinishPracticeStep(); }
@@ -381,7 +422,7 @@ void AProjectProject01TutorialGameMode::RecordAction(AMultiplayTestPlayerControl
 bool AProjectProject01TutorialGameMode::TryFinishPracticeStep()
 {
 	const auto* S=GetCurrentStep();
-	if (!S || bAwaitingRead || bFinishing || Progress<FMath::Max(.1f,S->RequiredAmount) || PracticeSeconds<S->MinimumPracticeSeconds) return false;
+	if (!S || bAwaitingRead || bFinishing || Progress<FMath::Max(.1f,S->RequiredAmount)) return false;
 	AdvanceStep(); return true;
 }
 FText AProjectProject01TutorialGameMode::GetPracticeStatusText() const
@@ -391,13 +432,17 @@ FText AProjectProject01TutorialGameMode::GetPracticeStatusText() const
 	if (S->Condition==EProjectTutorialCondition::CommandPractice)
 	{
 		Hint+=FString::Printf(TEXT("\n명령 상태 확인 %d/%d\nZ / X / C 중 원하는 명령을 선택하세요."),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
-		if (bCommandReviewPending) Hint+=TEXT("\n위 상태창에서 선택한 명령을 확인하세요.");
 	}
 	else if (S->Condition==EProjectTutorialCondition::ReleaseMannequin)
-		Hint+=FString::Printf(TEXT("\n명령 맡기기 %d/%d\nV로 직접 조작 → Z/X/C 명령 → 다른 번호 선택\n%s"),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount),ReleasedMannequin.IsValid()?TEXT("명령을 수행하는 모습을 잠시 살펴보세요."):TEXT("명령을 내린 뒤 다른 마네킹으로 시점을 옮기세요."));
+		Hint+=FString::Printf(TEXT("\n명령 맡기기 %d/%d\nZ/X/C 명령 → 다른 번호 선택"),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
 	else if (S->Condition==EProjectTutorialCondition::SelectMannequin)
 		Hint+=FString::Printf(TEXT("\n시점 전환 %d/%d"),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
-	else if (S->Condition==EProjectTutorialCondition::ObserveMannequin) Hint+=FString::Printf(TEXT("\n마네킹을 %g초 동안 계속 바라보세요."),S->RequiredAmount);
+	else if (S->Condition==EProjectTutorialCondition::ObserveMannequin) Hint+=FString::Printf(TEXT("\n마네킹 주시 %.1f / %g 초"),FMath::FloorToFloat(FMath::Min(Progress,S->RequiredAmount)*10.f)/10.f,S->RequiredAmount);
+	else if (S->Condition==EProjectTutorialCondition::Walk || S->Condition==EProjectTutorialCondition::Sprint || S->Condition==EProjectTutorialCondition::MoveMannequin)
+	{
+		Hint+=FString::Printf(TEXT("\n%s %.1f / %.1f m"),S->Condition==EProjectTutorialCondition::Sprint?TEXT("달리기"):TEXT("이동"),
+			FMath::FloorToFloat(FMath::Min(Progress,S->RequiredAmount)/10.f)/10.f,S->RequiredAmount/100.f);
+	}
 	return FText::FromString(Hint);
 }
 bool AProjectProject01TutorialGameMode::SignalEvent(AMultiplayTestPlayerController* PC,FName Event)
@@ -498,36 +543,31 @@ void AProjectProject01TutorialGameMode::Tick(float Delta)
 		return;
 	}
 	APawn* Pawn=Learner->GetPawn();
-	if (S->Condition==EProjectTutorialCondition::CommandPractice && bCommandReviewPending)
-	{
-		CommandReviewSeconds+=FMath::Min(Delta,.1f);
-		if (CommandReviewSeconds>=1.f) { bCommandReviewPending=false; ++Progress; TryFinishPracticeStep(); }
-	}
 	if (Pawn)
 	{
 		const float Distance=FVector::Dist2D(Pawn->GetActorLocation(),LastLocation); LastLocation=Pawn->GetActorLocation();
 		const auto* Survivor=Cast<APlayerCharacter>(Pawn);
-		const bool bMove=S->Condition==EProjectTutorialCondition::Walk || (S->Condition==EProjectTutorialCondition::MoveMannequin && Cast<AMannequinAICharacter>(Pawn));
+		const bool bMove=(S->Condition==EProjectTutorialCondition::Walk && Survivor && !Survivor->IsSprintingForBreathing()) || (S->Condition==EProjectTutorialCondition::MoveMannequin && Cast<AMannequinAICharacter>(Pawn));
 		const bool bSprint=S->Condition==EProjectTutorialCondition::Sprint && Survivor && Survivor->IsSprintingForBreathing();
 		if ((bMove || bSprint) && !Learner->IsMoveInputIgnored() && Pawn->GetVelocity().SizeSquared2D()>25 && Distance>0.1f)
-		{ Progress+=FMath::Min(Distance,100.0f); PracticeSeconds+=FMath::Min(Delta,0.1f); }
+		{ Progress+=FMath::Min(Distance,100.0f); }
 	}
 	if (S->Condition==EProjectTutorialCondition::ObserveMannequin)
 	{
 		bool bObserved=false;
 		for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
 			if (It->IsFrozenBySurvivorVision()) { bObserved=true; break; }
-		Progress=bObserved ? Progress+FMath::Min(Delta,0.1f) : 0;
+		Progress=bObserved ? Progress+FMath::Max(0.f,Delta) : 0;
 	}
 	if (S->Condition==EProjectTutorialCondition::ReleaseMannequin)
 	{
 		if (auto* Released=ReleasedMannequin.Get())
 		{
-			if (Released->IsManualControlEnabled()) { ReleasedMannequin.Reset(); ReleaseWatchSeconds=0; }
+			if (Released->IsManualControlEnabled()) ReleasedMannequin.Reset();
 			else if (Cast<AAIController>(Released->GetController()))
 			{
-				ReleaseWatchSeconds+=FMath::Min(Delta,.1f);
-				if (ReleaseWatchSeconds>=2) { ++Progress; ReleasedMannequin.Reset(); TryFinishPracticeStep(); }
+				++Progress; ReleasedMannequin.Reset();
+				if (TryFinishPracticeStep()) return;
 			}
 		}
 	}
@@ -589,7 +629,7 @@ void AProjectProject01TutorialGameMode::SelectPracticeDirectorBody(AMannequinAIC
 bool AProjectProject01TutorialGameMode::IssuePracticeDirectorCommand(EMultiplayMannequinCommand Command)
 {
 	auto* Body=PracticeDirectorBody.Get();
-	if (!IsPracticeDirectorEnabled() || !Body || !Body->IsManualControlEnabled()) return false;
+	if (!IsPracticeDirectorEnabled() || !Body) return false;
 	if (Command==EMultiplayMannequinCommand::HoldPosition)
 	{
 		// No Z/X/C before changing bodies means hold, exactly like a real player.
@@ -601,7 +641,7 @@ bool AProjectProject01TutorialGameMode::IssuePracticeDirectorCommand(EMultiplayM
 bool AProjectProject01TutorialGameMode::ResetPracticeDirectorFollowers()
 {
 	auto* Body=PracticeDirectorBody.Get();
-	return IsPracticeDirectorEnabled() && Body && Body->IsManualControlEnabled() && ResetFollowingMannequinCommands();
+	return IsPracticeDirectorEnabled() && Body && ResetFollowingMannequinCommands();
 }
 
 bool AProjectProject01TutorialGameMode::SetPracticeDirectorContactDamage(bool bEnabled)
@@ -671,9 +711,9 @@ void AProjectProject01TutorialGameMode::TickPracticeMannequinDirector(float Delt
 	}
 	auto* Body=PracticeDirectorBody.Get();if (!Body) return;
 	auto* AI=Cast<AAIController>(Body->GetController());if (!AI) return;
-	if (!Body->IsManualControlEnabled())
+	if (!Body->IsManualControlEnabled() && Now>=DirectorManualReadyAt)
 	{
-		if (Now<DirectorManualReadyAt) return;
+		bDirectorCommandIssued=false;
 		Body->SetManualControlEnabled(true); // AIController supplies physical movement, not a second human/network client.
 	}
 	const bool bSeesTarget=AI->LineOfSightTo(Target);
@@ -690,7 +730,7 @@ void AProjectProject01TutorialGameMode::TickPracticeMannequinDirector(float Delt
 		else if (Followers>0 && Roll<.36f) ResetPracticeDirectorFollowers();
 		else
 		{
-			// Commands are recorded on the currently controlled body and survive handoff.
+			// View-only commands run immediately; manual orders survive handoff.
 			// Fewer followers favours recruiting; visible prey favours range pursuit.
 			const float Pick=PracticeRandom.FRand();
 			const float FollowWeight=Followers<2?.35f:.15f;
@@ -699,6 +739,7 @@ void AProjectProject01TutorialGameMode::TickPracticeMannequinDirector(float Delt
 				Pick<.9f?EMultiplayMannequinCommand::Patrol:EMultiplayMannequinCommand::HoldPosition);
 		}
 	}
+	if (!Body->IsManualControlEnabled()) return; // View sharing cannot directly move or attack.
 	if (Body->IsFrozenBySurvivorVision()) { AI->StopMovement();NextDirectorMove=0;return; }
 	if (DirectorBeat==3) { AI->StopMovement();return; }
 	if (Now>=NextDirectorMove)
@@ -1130,10 +1171,14 @@ bool UProjectProject01TutorialWidget::Initialize()
 	auto* BackSlot=Canvas->AddChildToCanvas(ScreenButton); BackSlot->SetAnchors(FAnchors(0,0,1,1)); BackSlot->SetOffsets(FMargin(0));
 	Panel=WidgetTree->ConstructWidget<UBorder>(); Panel->SetPadding(FMargin(24)); Panel->SetBrushColor(ProjectDFSDUI::Panel().CopyWithNewOpacity(.96f));
 	auto* CanvasSlot=Canvas->AddChildToCanvas(Panel); CanvasSlot->SetAnchors(FAnchors(0.5f,0.5f)); CanvasSlot->SetAlignment(FVector2D(0.5f,0.5f)); CanvasSlot->SetAutoSize(true);
-	auto* Bounds=WidgetTree->ConstructWidget<USizeBox>(); Bounds->SetWidthOverride(620); Bounds->SetMaxDesiredHeight(620); Panel->AddChild(Bounds);
-	auto* Scroll=WidgetTree->ConstructWidget<UScrollBox>(); Bounds->AddChild(Scroll);
-	auto* Root=WidgetTree->ConstructWidget<UVerticalBox>(); Scroll->AddChild(Root);
-	Heading=ProjectTutorial::Label(WidgetTree,Root,26); Body=ProjectTutorial::Label(WidgetTree,Root,21);
+	auto* Bounds=WidgetTree->ConstructWidget<USizeBox>(); Bounds->SetWidthOverride(660); Bounds->SetMaxDesiredHeight(620); Panel->AddChild(Bounds);
+	auto* Root=WidgetTree->ConstructWidget<UVerticalBox>(); Bounds->AddChild(Root);
+	Heading=ProjectTutorial::Label(WidgetTree,Root,26);
+	// Only the explanation scrolls; confirmation/return controls never move out of view.
+	auto* BodyBounds=WidgetTree->ConstructWidget<USizeBox>();BodyBounds->SetMaxDesiredHeight(420);Root->AddChildToVerticalBox(BodyBounds);
+	auto* Scroll=WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(),TEXT("TutorialInstructionsScroll"));BodyBounds->AddChild(Scroll);
+	auto* Paragraph=WidgetTree->ConstructWidget<UVerticalBox>();Scroll->AddChild(Paragraph);
+	Body=ProjectTutorial::Label(WidgetTree,Paragraph,19);Body->SetLineHeightPercentage(1.1f);
 	auto* ObjectiveWidth=WidgetTree->ConstructWidget<USizeBox>();ObjectiveWidth->SetWidthOverride(560);
 	auto* ObjectiveSlot=Canvas->AddChildToCanvas(ObjectiveWidth); ObjectiveSlot->SetPosition(FVector2D(28,260)); ObjectiveSlot->SetAutoSize(true);
 	ObjectiveStack=WidgetTree->ConstructWidget<UVerticalBox>();
@@ -1155,10 +1200,13 @@ void UProjectProject01TutorialWidget::NativeTick(const FGeometry& G,float Delta)
 	auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>(); if (!Mode) return;
 	const auto* Step=Mode->GetCurrentStep(); const bool Result=Mode->IsResultVisible(), Finish=Mode->IsFinishing();
 	Heading->SetText(ProjectTutorial::Text(Result ? TEXT("튜토리얼 완료") : Mode->IsMannequinTutorial() ? TEXT("마네킹 튜토리얼") : TEXT("생존자 튜토리얼")));
+	const FText PreviousBody=Body->GetText();
 	Body->SetText(Finish ? Mode->GetClosingText() : !Mode->GetExtraMessage().IsEmpty() ? Mode->GetExtraMessage() : Step ?
 		(Step->Instructions.IsEmpty() ? ProjectTutorial::ResolveText(Step->Title) : FText::Format(FText::FromString(TEXT("{0}\n\n{1}")),ProjectTutorial::ResolveText(Step->Title),ProjectTutorial::ResolveText(Step->Instructions))) : FText::GetEmpty());
 	if (Result) Body->SetText(FText::Format(FText::FromString(TEXT("{0}\n\n{1}")),
 		ProjectTutorial::Text(Mode->IsMannequinTutorial() ? TEXT("연습 결과: 생존자 1명 붙잡기 성공") : TEXT("연습 결과: 무사히 탈출했습니다.")),Mode->GetClosingText()));
+	if (!PreviousBody.EqualTo(Body->GetText()))
+		if (auto* Scroll=Cast<UScrollBox>(WidgetTree->FindWidget(TEXT("TutorialInstructionsScroll")))) Scroll->ScrollToStart();
 	ContinueButton->SetVisibility(!Result ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	RestartButton->SetVisibility(Result ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	FullRestartButton->SetVisibility(Result ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);

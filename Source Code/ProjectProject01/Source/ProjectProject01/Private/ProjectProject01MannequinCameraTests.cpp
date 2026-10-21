@@ -10,6 +10,7 @@
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "Camera/CameraTypes.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/TextBlock.h"
 #include "Components/PanelWidget.h"
 
@@ -82,15 +83,65 @@ bool FProjectMannequinCameraTest::RunTest(const FString&)
     auto* Frozen=World->SpawnActor<AMannequinAICharacter>(AlertSpawn);Frozen->SetControlSlotForGameMode(2);
     Frozen->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);Frozen->SetFrozenBySurvivorVision(true);
     PC->bLocalMultiplayerRoleKnown=true;PC->bLocalMultiplayerMannequinRole=true;
+    PC->PlayerCameraManager=World->SpawnActor<APlayerCameraManager>();PC->PlayerCameraManager->InitializeFor(PC);
+    PC->SetViewTarget(Pawn);
     auto* LocalPlayer=NewObject<ULocalPlayer>(GEngine);LocalPlayer->PlayerController=PC;PC->Player=LocalPlayer;
     HUD->SetOwningPlayer(PC);HUD->RefreshMannequinStates();
     TestTrue(TEXT("HUD preserves possessed mannequin identity"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 빙의한 마네킹: 3번")));
     TestTrue(TEXT("All chasing IDs are sorted and displayed"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 추격 중: 1번, 3번")));
     TestTrue(TEXT("Frozen IDs appear separately, never as moving chasers"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 시야로 정지: 2번")));
+    Pawn->SetManualControlEnabled(true);PC->bManualMannequinCommandIssued=false;
+    Pawn->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("Manual control without a new order displays the real release default, not a stale AI order"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 상태: 직접 조작\n명령 상태: 정지")));
+    PC->bManualMannequinCommandIssued=true;
+    for(auto Command:{EMultiplayMannequinCommand::Patrol,EMultiplayMannequinCommand::ChaseInDetectionRange,EMultiplayMannequinCommand::FollowMannequinPlayer,EMultiplayMannequinCommand::HoldPosition})
+    {
+        Pawn->SetMultiplayCommand(Command);HUD->RefreshMannequinStates();
+        const FString Text=HUD->StatusText->GetText().ToString();
+        TestTrue(TEXT("Manual state stays separate from the queued command"),Text.Contains(TEXT("현재 상태: 직접 조작\n명령 상태:")));
+        TestFalse(TEXT("HUD no longer labels activity as after manual release"),Text.Contains(TEXT("직접 조작 해제 후")));
+        const TCHAR* Expected=Command==EMultiplayMannequinCommand::Patrol?TEXT("정찰"):Command==EMultiplayMannequinCommand::ChaseInDetectionRange?TEXT("감지 범위 추격"):Command==EMultiplayMannequinCommand::FollowMannequinPlayer?TEXT("마네킹 플레이어 추종"):TEXT("정지");
+        TestTrue(TEXT("Separate command row reflects each selected command"),Text.Contains(FString(TEXT("명령 상태: "))+Expected));
+    }
+    Pawn->SetManualControlEnabled(false);PC->bManualMannequinCommandIssued=false;
     Chaser->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
     Pawn->SetMultiplayActivity(EMultiplayMannequinActivity::Searching);Frozen->SetFrozenBySurvivorVision(false);
     Frozen->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);HUD->RefreshMannequinStates();
     TestTrue(TEXT("Stale chase and freeze alerts clear automatically"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 추격 중: 없음\n생존자 시야로 정지: 없음")));
+    auto* Zero=World->SpawnActor<AMannequinAICharacter>(AlertSpawn);Zero->SetControlSlotForGameMode(0);
+    Zero->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);
+    PC->ViewedMannequin=Pawn;PC->SetPawn(nullptr);PC->SetViewTarget(Zero);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("HUD uses the visible camera body rather than an older selected actor reference"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 빙의한 마네킹: 0번")));
+    TestTrue(TEXT("Zero is a valid chasing ID, not excluded from alerts"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 추격 중: 0번")));
+    Zero->SetFrozenBySurvivorVision(true);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("Zero is also a valid vision-frozen ID"),HUD->StatusText->GetText().ToString().Contains(TEXT("생존자 시야로 정지: 0번")));
+    Zero->SetFrozenBySurvivorVision(false);Zero->SetMultiplayActivity(EMultiplayMannequinActivity::Holding);
+    PC->ViewedMannequin=nullptr;
+    TestTrue(TEXT("View-only actor remains resolvable without a possessed pawn or mapped owner property"),PC->GetViewedMannequin()==Zero);
+    HUD->RefreshMannequinStates();
+    TestTrue(TEXT("Resolved view-only camera cannot lose its HUD identity"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 빙의한 마네킹: 0번")));
+    TArray<AMannequinAICharacter*> Bodies={Zero,Chaser,Frozen,Pawn};
+    for(int32 Slot=4;Slot<10;++Slot){auto* Body=World->SpawnActor<AMannequinAICharacter>(AlertSpawn);Body->SetControlSlotForGameMode(Slot);Bodies.Add(Body);}
+    for(auto* Body:Bodies)
+    {
+        PC->ViewedMannequin=Pawn;PC->SetViewTarget(Body);HUD->RefreshMannequinStates();
+        TestTrue(FString::Printf(TEXT("View-only HUD preserves slot %d"),Body->GetControlSlot()),HUD->StatusText->GetText().ToString().Contains(FString::Printf(TEXT("현재 빙의한 마네킹: %d번"),Body->GetControlSlot())));
+    }
+    auto* Pending=World->SpawnActor<AMannequinAICharacter>(AlertSpawn);PC->SetViewTarget(Pending);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("An actor whose slot has not arrived is labelled as pending, never -1 or none"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 빙의한 마네킹: 번호 수신 중")));
+    Pending->SetControlSlotForGameMode(4);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("HUD recovers as soon as slot replication arrives"),HUD->StatusText->GetText().ToString().Contains(TEXT("현재 빙의한 마네킹: 4번")));
+    PC->ViewedMannequin=nullptr;PC->SetViewTarget(PC);HUD->RefreshMannequinStates();
+    TestTrue(TEXT("A genuinely pending identity is not reduced to a misleading none-only panel"),HUD->StatusText->GetText().ToString()==TEXT("현재 빙의한 마네킹: 정보 동기화 중"));
+    PC->SetViewedMannequin(Zero);
+    TestTrue(TEXT("Server and local camera selection use the same actor"),PC->GetViewTarget()==Zero && PC->GetViewedMannequin()==Zero);
+    Zero->SetActorLocation(FVector(1000000,0,0));Zero->bAlwaysRelevant=false;Zero->SetNetCullDistanceSquared(10000.f);
+    PC->AuthenticatedRole=TEXT("Mannequin");
+    TestTrue(TEXT("Mannequin role receives a far numbered body for camera selection and tactical status"),Zero->IsNetRelevantFor(PC,Pawn,FVector::ZeroVector));
+    PC->AuthenticatedRole=TEXT("Survivor");
+    TestFalse(TEXT("Survivor role does not gain global mannequin relevancy"),Zero->IsNetRelevantFor(PC,Pawn,FVector::ZeroVector));
+    PC->AuthenticatedRole.Reset();
+    TestFalse(TEXT("Single-player/unassigned controller keeps normal relevancy"),Zero->IsNetRelevantFor(PC,Pawn,FVector::ZeroVector));
     PC->bLocalMultiplayerMannequinRole=false;HUD->RefreshMannequinStates();
     TestTrue(TEXT("Survivors cannot see mannequin tactical HUD even if widget remains"),HUD->StatusText->GetText().IsEmpty()&&HUD->StatusText->GetParent()->GetVisibility()==ESlateVisibility::Collapsed);
     TestEqual(TEXT("Removed disguise is no longer an AI activity"),StaticEnum<EMultiplayMannequinActivity>()->GetIndexByNameString(TEXT("Disguised")),INDEX_NONE);

@@ -75,11 +75,16 @@ bool FProjectLocomotionFeedbackTest::RunTest(const FString&)
 	const float CameraFOV=Player->Camera->FieldOfView;
 	const FRotator ControlRotation=PC->GetControlRotation();
 	auto* Settings=UProjectProject01GameUserSettings::Get();
-	const float PreviousShake=Settings->GetScreenShakeScale();
+	const float PreviousShake=Settings->GetConfiguredScreenShakeScale();
+	const bool PreviousEnabled=Settings->IsCameraShakeEnabled();
+	Settings->SetCameraShakeEnabled(true);
 	Settings->SetScreenShakeScale(0); FMinimalViewInfo Still; Player->CalcCamera(0,Still);
 	Settings->SetScreenShakeScale(1); FMinimalViewInfo Bobbed; Player->CalcCamera(0,Bobbed);
 	FMinimalViewInfo Repeated; Player->CalcCamera(0,Repeated);
+	Settings->SetCameraShakeEnabled(false);FMinimalViewInfo Disabled;Player->CalcCamera(0,Disabled);
+	TestTrue(TEXT("Camera shaking toggle suppresses actual locomotion displacement and pitch"),Disabled.Location.Equals(Still.Location) && Disabled.Rotation.Equals(Still.Rotation));
 	Settings->SetScreenShakeScale(PreviousShake);
+	Settings->SetCameraShakeEnabled(PreviousEnabled);
 	TestTrue(TEXT("Actual CalcCamera adds only vertical translation and downward pitch"), Bobbed.Location.Z<Still.Location.Z &&
 		FMath::IsNearlyEqual(Bobbed.Location.X,Still.Location.X) && FMath::IsNearlyEqual(Bobbed.Location.Y,Still.Location.Y) &&
 		Bobbed.Rotation.Pitch<Still.Rotation.Pitch && FMath::IsNearlyEqual(Bobbed.Rotation.Yaw,Still.Rotation.Yaw) &&

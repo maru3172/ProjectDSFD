@@ -1,5 +1,5 @@
 #Requires -Version 7.0
-param([string]$ChecksAssembly='')
+param([string]$ChecksAssembly='',[string]$EditorServerExecutable='')
 $ErrorActionPreference='Stop'
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $mysqlBase='C:\Program Files\MySQL\MySQL Server 8.0'
@@ -26,7 +26,8 @@ try {
     }
     if(-not $ready){throw 'Isolated MySQL did not become ready.'}
     if([string]::IsNullOrWhiteSpace($ChecksAssembly)){$ChecksAssembly=Join-Path $PSScriptRoot 'bin\Debug\net9.0-windows\ProjectProject01FeatureChecks.dll'}
-    & dotnet $ChecksAssembly --integration $projectRoot 23307
+    if ($EditorServerExecutable) { & dotnet $ChecksAssembly --integration $projectRoot 23307 $EditorServerExecutable }
+    else { & dotnet $ChecksAssembly --integration $projectRoot 23307 }
     if($LASTEXITCODE -ne 0){throw 'Integration checks failed.'}
     & (Join-Path $PSScriptRoot 'RecoveryChecks.ps1') -ProjectRoot $projectRoot
 }

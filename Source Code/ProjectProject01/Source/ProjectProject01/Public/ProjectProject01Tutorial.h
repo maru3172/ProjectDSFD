@@ -69,8 +69,8 @@ struct FProjectTutorialStep
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EProjectTutorialCondition Condition = EProjectTutorialCondition::Continue;
 	/** 이동은 cm, 주시는 초. 나머지 조건은 유효한 행동 횟수입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0.1")) float RequiredAmount = 1;
-	/** 이동 조건에서 실제로 움직이며 연습해야 하는 최소 시간. 설명을 읽거나 가만히 있는 시간은 제외합니다. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0")) float MinimumPracticeSeconds = 0;
+	/** Legacy saved-plan compatibility only. Visible goal completion no longer has a hidden time gate. */
+	UPROPERTY() float MinimumPracticeSeconds = 0;
 	/** Trigger 조건일 때 ObjectiveTrigger의 TutorialEvent와 일치시킵니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FName Event;
 };
@@ -262,9 +262,6 @@ private:
 	TArray<FProjectTutorialStep> Steps;
 	int32 StepIndex=0;
 	float Progress=0, EndSeconds=0;
-	float PracticeSeconds=0, ReleaseWatchSeconds=0;
-	bool bCommandReviewPending=false;
-	float CommandReviewSeconds=0;
 	TWeakObjectPtr<class AMannequinAICharacter> LastSelectedMannequin, CommandedMannequin, ReleasedMannequin;
 	UPROPERTY(Transient) TArray<FProjectTutorialSurvivorBot> PracticeBots;
 	UPROPERTY(Transient) TObjectPtr<class UProjectProject01PracticeWidget> PracticeWidget;

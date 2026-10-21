@@ -804,6 +804,7 @@ private:
 	UFUNCTION() void HandleMuteWhenUnfocusedChanged(bool bChecked);
 	UFUNCTION() void HandleVSyncChanged(bool bChecked);
 	UFUNCTION() void HandleMotionBlurChanged(bool bChecked);
+	UFUNCTION() void HandleCameraShakeChanged(bool bChecked);
 	UFUNCTION() void HandleSubtitlesChanged(bool bChecked);
 	UFUNCTION() void HandleEnhancedVisualCuesChanged(bool bChecked);
 	UFUNCTION() void HandleWindowModeChanged(FString Item, ESelectInfo::Type SelectionType);
@@ -897,6 +898,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> MuteWhenUnfocusedCheckBox;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> VSyncCheckBox;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> MotionBlurCheckBox;
+	UPROPERTY(Transient) TObjectPtr<class UCheckBox> CameraShakeCheckBox;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> SubtitlesCheckBox;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> EnhancedVisualCuesCheckBox;
 	UPROPERTY(Transient) TObjectPtr<class UComboBoxString> WindowModeComboBox;
@@ -942,6 +944,7 @@ private:
 	bool bPendingMuteWhenUnfocused = true;
 	bool bPendingVSync = false;
 	bool bPendingMotionBlur = true;
+	bool bPendingCameraShake = true;
 	bool bPendingSubtitles = true;
 	bool bPendingEnhancedVisualCues = true;
 	FString PendingDirectServerAddress;
@@ -1031,6 +1034,7 @@ private:
     void UpdateStartCountdownText();
     bool bPartyCreationRequested=false;
     bool bShowingMatchmaking=false,bShowingOpenMatching=false;
+    int32 DisplayedMatchmakingElapsedSeconds=INDEX_NONE;
     UPROPERTY(Transient) TObjectPtr<class UButton> MatchStartButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> MatchCancelButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> MatchBackButton;

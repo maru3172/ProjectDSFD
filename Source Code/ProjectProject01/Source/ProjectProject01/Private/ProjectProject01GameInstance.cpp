@@ -115,6 +115,7 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	ScreenFlashScale = 1.0f;
 	ScreenDistortionScale = 1.0f;
 	ScreenShakeScale = 1.0f;
+	bCameraShakeEnabled = true;
 	UIReadableScale = 1.0f;
 	DirectServerAddress.Reset();
 	MoveForwardKeyName = EKeys::W.GetFName();
@@ -259,7 +260,7 @@ void UProjectProject01GameUserSettings::ApplyProjectSettings(const bool bApplica
 		{
 			FSlateApplication::Get().SetApplicationScale(UIReadableScale);
 		}
-		if (ScreenShakeScale <= KINDA_SMALL_NUMBER && GEngine)
+		if (GetScreenShakeScale() <= KINDA_SMALL_NUMBER && GEngine)
 		{
 			for (const FWorldContext& Context : GEngine->GetWorldContexts())
 			{
@@ -558,7 +559,9 @@ void UProjectProject01GameInstance::Init()
 				this, &UProjectProject01GameInstance::HandleAuthenticationSessionInvalidated);
 		}
 	}
-	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	// A dedicated process uses its authoritative server INI/launch configuration,
+	// never the operator's last client IP stored in GameUserSettings.
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings) && !IsRunningDedicatedServer())
 	{
 		Settings->LoadSettings(false);
 		FString LauncherServerAddress;

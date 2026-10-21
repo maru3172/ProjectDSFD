@@ -31,6 +31,13 @@ internal static class DemandSessionChecks
         // Actual HTTP and the parent's validated isolated MySQL. Never execute the fixture EXE.
         string fixture=Path.Combine(output,"DemandFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);
         string executable=Path.Combine(fixture,"ProjectDFSDServer.exe");await File.WriteAllTextAsync(executable,"test fixture: FakeFactory only");
+        string editor=Path.Combine(fixture,"UnrealEditor-Cmd.exe");await File.WriteAllTextAsync(editor,"test fixture: FakeFactory only");
+        await File.WriteAllTextAsync(Path.Combine(fixture,"ProjectDFSD.uproject"),"{}");
+        await Status(admin.PutAsJsonAsync("/api/admin/game-server-demand",new {enabled=true,executable=editor,projectRoot=fixture}),HttpStatusCode.Conflict,"Normal server mode rejects an editor executable");
+        await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new {enabled=true,executable=editor,projectRoot=fixture,editorLocalTest=true,firstPort=27777}));
+        var editorState=await Read(admin.GetAsync("/api/admin/game-server-demand"));
+        Check(editorState.GetProperty("editorLocalTest").GetBoolean() && editorState.GetProperty("activeSessions").GetInt32()==0,"Local authenticated editor setup does not prelaunch fake sessions or skip admission");
+        await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new {enabled=false}));
         var clients=new List<HttpClient>();var rooms=new string[3];
         using var server=new HttpClient {BaseAddress=admin.BaseAddress};server.DefaultRequestHeaders.Add("X-ProjectProject01-Server-Secret",new string('s',48));
         async Task<JsonElement> State(int room=0)=>(await Read(clients[room*3].GetAsync("/api/rooms/current"))).GetProperty("room");

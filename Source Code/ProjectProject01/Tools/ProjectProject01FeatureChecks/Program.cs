@@ -49,7 +49,7 @@ internal static class FeatureChecks
             }
             if (args.Length > 0 && args[0] == "--integration")
             {
-                IntegrationChecks.RunAsync(args[1],int.Parse(args[2])).GetAwaiter().GetResult();
+                IntegrationChecks.RunAsync(args[1],int.Parse(args[2]),args.Length>3?args[3]:null).GetAwaiter().GetResult();
                 return 0;
             }
             var compatibility=VersionCompatibilityOptions.FromConfiguration(

@@ -420,7 +420,6 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		{
 			SpawnPoints.Swap(Index, FMath::RandRange(0, Index));
 		}
-		SpawnPoints.SetNum(MannequinSpawnCount);
 	}
 
 	TArray<AMannequinAICharacter*> Mannequins;
@@ -436,24 +435,45 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		return Left.GetName() < Right.GetName();
 	});
 
-	while (bHasCompleteSpawnPointSet && Mannequins.Num() < MannequinSpawnCount)
+	// Validate every shuffled candidate before spawning or teleporting. PlayerStart
+	// transforms are not proof of a supporting floor or capsule clearance.
+	TMap<int32, FVector> SupportedSpawnLocations;
+	int32 CandidateIndex = 0;
+	for (int32 Slot = 0; bHasCompleteSpawnPointSet && Slot < MannequinSpawnCount; ++Slot)
 	{
-		if (!MannequinPawnClass)
+		AMannequinAICharacter* Existing = Mannequins.IsValidIndex(Slot) ? Mannequins[Slot] : nullptr;
+		const AMannequinAICharacter* Template = Existing ? Existing : MannequinPawnClass.GetDefaultObject();
+		if (!Template)
 		{
 			UE_LOG(LogProjectProject01Multiplayer, Error,
 				TEXT("Cannot create the required mannequins because MannequinPawnClass is not configured."));
 			break;
 		}
-		FActorSpawnParameters SpawnParameters;
-		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		AMannequinAICharacter* Spawned = World->SpawnActor<AMannequinAICharacter>(
-			MannequinPawnClass, SpawnPoints[Mannequins.Num()]->GetActorTransform(), SpawnParameters);
-		if (!IsValid(Spawned))
+		FVector Supported = FVector::ZeroVector;
+		AProjectProject01RoleSpawnPoint* Point = nullptr;
+		while (CandidateIndex < SpawnPoints.Num())
 		{
-			UE_LOG(LogProjectProject01Multiplayer, Error, TEXT("Failed to spawn a required mannequin actor."));
-			break;
+			Point = SpawnPoints[CandidateIndex++];
+			if (FindSupportedMannequinLocation(Template, Point->GetActorLocation(), Supported)) break;
+			UE_LOG(LogProjectProject01Multiplayer, Warning, TEXT("Skipping unsafe mannequin spawn %s at %s: no same-floor support or capsule clearance."),
+				*GetNameSafe(Point), *Point->GetActorLocation().ToCompactString());
+			Point = nullptr;
 		}
-		Mannequins.Add(Spawned);
+		if (!Point) break;
+		if (Existing)
+		{
+			Existing->SetActorLocationAndRotation(Supported, FRotator(0,Point->GetActorRotation().Yaw,0), false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		else
+		{
+			FActorSpawnParameters SpawnParameters;
+			SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::DontSpawnIfColliding;
+			AMannequinAICharacter* Spawned = World->SpawnActor<AMannequinAICharacter>(
+				MannequinPawnClass, Supported, FRotator(0,Point->GetActorRotation().Yaw,0), SpawnParameters);
+			if (!IsValid(Spawned)) { --Slot; continue; }
+			Mannequins.Add(Spawned);
+		}
+		SupportedSpawnLocations.Add(Slot, Supported);
 	}
 
 	for (int32 Index = 0; Index < Mannequins.Num(); ++Index)
@@ -475,12 +495,14 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 			continue;
 		}
 
-		if (bHasCompleteSpawnPointSet)
+		if (const FVector* Supported = SupportedSpawnLocations.Find(Index))
 		{
-			Mannequin->SetActorTransform(SpawnPoints[Index]->GetActorTransform(), false, nullptr,
-				ETeleportType::TeleportPhysics);
+			MultiplayerLastSupportedLocations.Add(Mannequin, *Supported);
 		}
+		if (auto* Movement = Mannequin->GetCharacterMovement()) Movement->bForceNextFloorCheck = true;
 		Mannequin->SetControlSlotForGameMode(Index);
+		Mannequin->SetReplicates(true);
+		Mannequin->SetReplicateMovement(true);
 		Mannequin->SetManualControlEnabled(false);
 		Mannequin->SetCatchDamageEnabled(bGlobalMannequinCatchDamageEnabled);
 		// Blueprint instances created before the multiplayer command enum was added can
@@ -651,6 +673,8 @@ void AMultiplayTestGameMode::StopAllMannequinsForMatchEnd()
 	MultiplayerPatrolTargetHistory.Reset();
 	MultiplayerObservedChaseTargets.Reset();
 	MultiplayerSearchStates.Reset();
+	MultiplayerNavigationStates.Reset();
+	MultiplayerLastSupportedLocations.Reset();
 }
 
 bool AMultiplayTestGameMode::SelectNextPatrolTarget(
@@ -693,6 +717,9 @@ bool AMultiplayTestGameMode::SelectNextPatrolTarget(
 		{
 			continue;
 		}
+		FVector Supported;
+		if (!FindSupportedMannequinLocation(Mannequin, CandidateLocation.Location +
+			FVector(0,0,Mannequin->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()+2.5f), Supported)) continue;
 
 		const TArray<FVector> EmptyHistory;
 		const TArray<FVector>& History = RecentTargets != nullptr ? *RecentTargets : EmptyHistory;
@@ -967,23 +994,9 @@ void AMultiplayTestGameMode::MoveMannequinToFollowTarget(
 		DesiredLocation = Leader->GetActorLocation() + AwayFromLeader * MultiplayerFollowDistance + SeparationOffset;
 	}
 
-	if (UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld()); IsValid(Navigation))
-	{
-		FNavLocation Projected;
-		if (Navigation->ProjectPointToNavigation(DesiredLocation, Projected))
-		{
-			DesiredLocation = Projected.Location;
-		}
-	}
-	const float FormationDeadZone = FMath::Max(MultiplayerAcceptanceRadius, MultiplayerFollowDistance * 0.15f);
-	if (FVector::DistSquared2D(Mannequin->GetActorLocation(), DesiredLocation) <=
-		FMath::Square(static_cast<double>(FormationDeadZone)))
-	{
-		StopMannequinAI(Mannequin);
-		return;
-	}
-	AIController->MoveToLocation(DesiredLocation, MultiplayerAcceptanceRadius,
-		true, true, true, true, nullptr, true);
+	DesiredLocation.Z -= Leader->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	MoveMannequinOnCompletePath(Mannequin, AIController, DesiredLocation,
+		FMath::Max(MultiplayerFollowDistance, MultiplayerFollowSeparation));
 }
 
 bool AMultiplayTestGameMode::ContinueLastSeenSearch(AMannequinAICharacter* Mannequin, AAIController* Controller, double Now)
@@ -1070,10 +1083,20 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		}
 		if (Mannequin->IsManualControlEnabled())
 		{
+			if (auto* Movement = Mannequin->GetCharacterMovement())
+			{
+				const auto* Defaults = Mannequin->GetClass()->GetDefaultObject<AMannequinAICharacter>()->GetCharacterMovement();
+				Movement->bCanWalkOffLedges = Defaults->bCanWalkOffLedges;
+				Movement->bCanWalkOffLedgesWhenCrouching = Defaults->bCanWalkOffLedgesWhenCrouching;
+				Movement->SetAvoidanceEnabled(Defaults->bUseRVOAvoidance);
+			}
+			MultiplayerNavigationStates.Remove(Mannequin);
+			MultiplayerLastSupportedLocations.Remove(Mannequin);
 			MultiplayerSearchStates.Remove(Mannequin);
 			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::ManualControl);
 			continue;
 		}
+		MaintainMannequinFloorSafety(Mannequin);
 		AAIController* AIController = Cast<AAIController>(Mannequin->GetController());
 		if (!IsValid(AIController))
 		{
@@ -1092,6 +1115,7 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		const EMultiplayMannequinCommand Command = Mannequin->GetMultiplayCommand();
 		if (Mannequin->IsFrozenBySurvivorVision() || Command == EMultiplayMannequinCommand::HoldPosition)
 		{
+			MultiplayerNavigationStates.Remove(Mannequin);
 			if (Command == EMultiplayMannequinCommand::HoldPosition) MultiplayerSearchStates.Remove(Mannequin);
 			Mannequin->SetMultiplayActivity(Mannequin->IsFrozenBySurvivorVision()
 				? EMultiplayMannequinActivity::FrozenByVision
@@ -1127,8 +1151,8 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 			MultiplayerObservationBaseYaw.Remove(Mannequin);
 			MultiplayerPatrolNextTargets.Remove(Mannequin);
 			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Chasing);
-			AIController->MoveToActor(ChaseTarget, MultiplayerAcceptanceRadius,
-				true, true, true, nullptr, true);
+			MultiplayerPatrolTargets.Remove(Mannequin);
+			MoveMannequinOnCompletePath(Mannequin, AIController, ChaseTarget->GetNavAgentLocation(), 150.f);
 			continue;
 		}
 		if (ContinueLastSeenSearch(Mannequin, AIController, GetWorld()->GetTimeSeconds())) continue;
@@ -1136,6 +1160,7 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		switch (Command)
 		{
 		case EMultiplayMannequinCommand::Patrol:
+			if (MultiplayerNavigationStates.Remove(Mannequin)>0) AIController->StopMovement();
 			Mannequin->SetMultiplayActivity(EMultiplayMannequinActivity::Patrolling);
 			MoveMannequinToPatrolTarget(Mannequin, AIController);
 			break;
@@ -1174,6 +1199,14 @@ void AMultiplayTestGameMode::UpdateMultiplayerMannequinAI()
 		{
 			It.RemoveCurrent();
 		}
+	}
+	for (auto It = MultiplayerNavigationStates.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
+	}
+	for (auto It = MultiplayerLastSupportedLocations.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid()) It.RemoveCurrent();
 	}
 	for (auto It = MultiplayerPatrolTargetHistory.CreateIterator(); It; ++It)
 	{
@@ -3035,19 +3068,21 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 		return false;
 	}
 
-	AMannequinAICharacter* Target = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
-	if (!IsValid(Target) || !Target->IsManualControlEnabled() ||
-		Target != RequestingController->GetViewedMannequin())
+	AMannequinAICharacter* Target = RequestingController->GetViewedMannequin();
+	if (!IsValid(Target) || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress ||
+		(Command != EMultiplayMannequinCommand::Patrol && Command != EMultiplayMannequinCommand::ChaseInDetectionRange &&
+		 Command != EMultiplayMannequinCommand::FollowMannequinPlayer) ||
+		(Target->IsManualControlEnabled() && Target->GetController() != RequestingController))
 	{
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
-			TEXT("Rejected mannequin command because %s is not directly controlling its viewed mannequin."),
+			TEXT("Rejected mannequin command because %s has no available selected mannequin."),
 			*GetNameSafe(RequestingController));
 		return false;
 	}
 
-	// 직접 조작은 계속 유지하고, 빙의 해제 뒤 AI가 이어서 수행할 명령만 저장한다.
+	// View-only commands execute now; manual-control commands execute after release.
 	AssignMannequinCommand(Target,Command);
-	RequestingController->bManualMannequinCommandIssued = true;
+	RequestingController->bManualMannequinCommandIssued = Target->IsManualControlEnabled();
 	RequestingController->ForceNetUpdate();
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 		TEXT("MultiplayerMannequinCommand"),
@@ -3071,10 +3106,8 @@ void AMultiplayTestGameMode::AssignMannequinCommand(AMannequinAICharacter* Targe
 
 bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerController* RequestingController)
 {
-	const AMannequinAICharacter* Controlled = IsValid(RequestingController)
-		? Cast<AMannequinAICharacter>(RequestingController->GetPawn()) : nullptr;
 	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
-		!IsValid(Controlled) || !Controlled->IsManualControlEnabled())
+		!IsValid(RequestingController->GetViewedMannequin()) || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
 	{
 		return false;
 	}
@@ -3309,7 +3342,7 @@ void AMultiplayTestGameMode::CompleteInitialMannequinViewAssignment(
 			{
 				AMultiplayTestPlayerController* RefreshController = WeakController.Get();
 				AMannequinAICharacter* RefreshTarget = WeakTarget.Get();
-				if (IsValid(RefreshController) && IsValid(RefreshTarget))
+				if (IsValid(RefreshController) && IsValid(RefreshTarget) && RefreshController->GetViewedMannequin()==RefreshTarget)
 				{
 					RefreshController->SetViewedMannequin(RefreshTarget);
 				}

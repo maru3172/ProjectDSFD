@@ -235,7 +235,23 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     State->CurrentRoom.Members.Add(P);Lobby->RefreshMatchmakingView();
     TestFalse(TEXT("Legacy multi-user party cannot start a solo search"),Lobby->MatchStartButton->GetIsEnabled());
     State->CurrentRoom.Members.SetNum(1);
-    State->bMatchmaking=true;State->MatchmakingWaiting=1;State->MatchmakingSeconds=175;Lobby->RefreshMatchmakingView();Render(Lobby,TEXT("RandomWaiting"));
+    State->bMatchmaking=true;State->MatchmakingWaiting=1;State->MatchmakingSeconds=175;State->MatchmakingStartedAtSeconds=FPlatformTime::Seconds();
+    Lobby->RefreshMatchmakingView();
+    TestTrue(TEXT("Waiting shows elapsed time from zero, not the expiry countdown"),Lobby->MatchStatusText->GetText().ToString().Contains(TEXT("매칭 경과 시간: 0분 00초")) && !Lobby->MatchStatusText->GetText().ToString().Contains(TEXT("남은 대기 시간")));
+    for(const int32 Elapsed:{59,60,125})
+    {
+        State->MatchmakingStartedAtSeconds=FPlatformTime::Seconds()-Elapsed-.01;
+        Lobby->NativeTick(FGeometry(),.016f);
+        TestTrue(TEXT("Elapsed display advances between polls and rolls seconds into minutes"),Lobby->MatchStatusText->GetText().ToString().Contains(FString::Printf(TEXT("%d분 %02d초"),Elapsed/60,Elapsed%60)));
+    }
+    auto WaitingResponse=MakeShared<FJsonObject>();WaitingResponse->SetStringField(TEXT("state"),TEXT("Waiting"));WaitingResponse->SetNumberField(TEXT("secondsRemaining"),10);
+    FString MatchError;State->ParseMatchmaking(WaitingResponse,MatchError);
+    TestTrue(TEXT("Polling remaining time cannot reset the elapsed stopwatch"),State->GetMatchmakingElapsedSeconds()>=125);
+    auto CancelledResponse=MakeShared<FJsonObject>();CancelledResponse->SetStringField(TEXT("state"),TEXT("Cancelled"));State->ParseMatchmaking(CancelledResponse,MatchError);
+    TestTrue(TEXT("Cancellation clears the elapsed stopwatch"),State->GetMatchmakingElapsedSeconds()==0 && State->MatchmakingStartedAtSeconds==0);
+    State->ReviewRequestSink=[](const FString&){};State->JoinMatchmaking();State->ReviewRequestSink=nullptr;
+    TestTrue(TEXT("A fresh search starts at zero with a fresh stopwatch"),State->IsMatchmaking() && State->GetMatchmakingElapsedSeconds()==0 && State->MatchmakingStartedAtSeconds>0);
+    State->MatchmakingStartedAtSeconds=FPlatformTime::Seconds()-65;Lobby->RefreshMatchmakingView();Render(Lobby,TEXT("RandomWaiting"));
     TestTrue(TEXT("Waiting offers cancellation but not back"),Lobby->MatchCancelButton->GetIsEnabled()&&!Lobby->MatchBackButton->GetIsEnabled());
     TestTrue(TEXT("Random matching queue permits logout"),Lobby->MatchLogoutButton->GetIsEnabled());
     State->bMatchmaking=false;State->CurrentRoom.bRandomMatch=true;State->CurrentRoom.bStarting=true;State->CurrentRoom.AssignedRole=TEXT("Survivor");

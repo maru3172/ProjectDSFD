@@ -54,6 +54,8 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
+	friend class FProjectMannequinViewCommandTest;
+	friend class FProjectMannequinNavigationSafetyTest;
 	friend class FProjectSpectatorFadeTest;
 	friend class AProjectProject01TutorialGameMode;
 
@@ -173,6 +175,24 @@ private:
 	void MoveMannequinToFollowTarget(class AMannequinAICharacter* Mannequin, class AAIController* AIController,
 		class AMannequinAICharacter* Leader, const TArray<class AMannequinAICharacter*>& Followers);
 	void StopMannequinAI(class AMannequinAICharacter* Mannequin) const;
+	bool FindSupportedMannequinLocation(const class AMannequinAICharacter* Mannequin,
+		const FVector& DesiredCenter, FVector& OutCenter) const;
+	void MaintainMannequinFloorSafety(class AMannequinAICharacter* Mannequin);
+	bool FindReachableMannequinGoal(class AMannequinAICharacter* Mannequin,
+		const FVector& DesiredFeet, float FallbackRadius, FVector& OutGoal, int32 Retry = 0) const;
+	void MoveMannequinOnCompletePath(class AMannequinAICharacter* Mannequin,
+		class AAIController* Controller, const FVector& DesiredFeet, float FallbackRadius);
+	struct FMannequinNavigationState
+	{
+		FVector RequestedGoal = FVector::ZeroVector;
+		FVector ResolvedGoal = FVector::ZeroVector;
+		FVector ProgressLocation = FVector::ZeroVector;
+		double LastProgressSeconds = 0.0;
+		double LastRequestSeconds = -1.0;
+		int32 Retry = 0;
+	};
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FMannequinNavigationState> MultiplayerNavigationStates;
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, FVector> MultiplayerLastSupportedLocations;
 	TArray<class AProjectProject01RoleSpawnPoint*> GetRoleSpawnPoints(
 		EProjectProject01SpawnRole SpawnRole) const;
 	class AMannequinAICharacter* FindMannequinBySlot(int32 Slot) const;

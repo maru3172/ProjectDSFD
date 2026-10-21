@@ -520,7 +520,7 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	TArray<int32> FrozenSlots;
 	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
 	{
-		if (!IsValid(*It) || It->GetControlSlot() < 1) continue;
+		if (!IsValid(*It) || It->GetControlSlot() < 0) continue;
 		if (It->IsFrozenBySurvivorVision() || It->GetMultiplayActivity() == EMultiplayMannequinActivity::FrozenByVision)
 			FrozenSlots.AddUnique(It->GetControlSlot());
 		else if (It->GetMultiplayActivity() == EMultiplayMannequinActivity::Chasing)
@@ -533,13 +533,17 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 		for (const int32 Slot : Slots) Labels.Add(FString::Printf(TEXT("%d번"), Slot));
 		return Labels.IsEmpty() ? FString(TEXT("없음")) : FString::Join(Labels, TEXT(", "));
 	};
-	const FString Alerts = FString::Printf(TEXT("생존자 추격 중: %s\n생존자 시야로 정지: %s"),
+	FString Alerts = FString::Printf(TEXT("생존자 추격 중: %s\n생존자 시야로 정지: %s"),
 		*FormatSlots(ChasingSlots), *FormatSlots(FrozenSlots));
-	const AMannequinAICharacter* Mannequin = IsValid(Controller)
-		? Controller->GetViewedMannequin() : nullptr;
+	if (Controller && !Controller->GetMannequinCommandNotice().IsEmpty()) Alerts+=TEXT("\n")+Controller->GetMannequinCommandNotice();
+	// Display the body actually supplying this local camera. RPC/property arrival
+	// order must not replace its identity with an empty or older selection.
+	const AMannequinAICharacter* Mannequin = Cast<AMannequinAICharacter>(Controller->GetViewTarget());
+	if (!IsValid(Mannequin) || Mannequin->GetWorld()!=GetWorld()) Mannequin = Controller->GetViewedMannequin();
+	if (IsValid(Mannequin) && Mannequin->GetWorld()!=GetWorld()) Mannequin = nullptr;
 	if (!IsValid(Mannequin))
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(Alerts));
+		StatusText->SetText(FProjectProject01Localization::Text(TEXT("현재 빙의한 마네킹: 정보 동기화 중")));
 		if (UPanelWidget* Background = StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		return;
 	}
@@ -558,33 +562,23 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	case EMultiplayMannequinActivity::Searching: Activity = TEXT("마지막 목격 지점 수색"); break;
 	default: Activity = TEXT("확인 중"); break;
 	}
-	if (Mannequin->IsManualControlEnabled() && IsValid(Controller) &&
-		Controller->HasQueuedManualMannequinCommand())
-	{
-		switch (Mannequin->GetMultiplayCommand())
-		{
-		case EMultiplayMannequinCommand::Patrol:
-			Activity = TEXT("직접 조작 해제 후 정찰");
-			break;
-		case EMultiplayMannequinCommand::ChaseInDetectionRange:
-			Activity = TEXT("직접 조작 해제 후 범위 내 추격");
-			break;
-		case EMultiplayMannequinCommand::FollowMannequinPlayer:
-			Activity = TEXT("직접 조작 해제 후 마네킹 플레이어 추종");
-			break;
-		case EMultiplayMannequinCommand::HoldPosition:
-		default:
-			Activity = TEXT("직접 조작 해제 후 정지");
-			break;
-		}
-	}
+	if (Mannequin->IsManualControlEnabled()) Activity = TEXT("직접 조작");
 	const bool bCatchDamageEnabled = Mannequin->IsCatchDamageEnabled();
+	// A fresh manual session with no order returns to hold, not the body's old AI order.
+	const auto DisplayCommand=Mannequin->IsManualControlEnabled() && Controller && !Controller->HasQueuedManualMannequinCommand()
+		? EMultiplayMannequinCommand::HoldPosition : Mannequin->GetMultiplayCommand();
+	const TCHAR* Command=DisplayCommand==EMultiplayMannequinCommand::Patrol?TEXT("정찰"):
+		DisplayCommand==EMultiplayMannequinCommand::ChaseInDetectionRange?TEXT("감지 범위 추격"):
+		DisplayCommand==EMultiplayMannequinCommand::FollowMannequinPlayer?TEXT("마네킹 플레이어 추종"):TEXT("정지");
 	const FString CatchDamageState = bCatchDamageEnabled ? TEXT("활성") : TEXT("비활성");
+	const FString Identity = Mannequin->GetControlSlot()>=0
+		? FString::Printf(TEXT("%d번"),Mannequin->GetControlSlot()) : TEXT("번호 수신 중");
 	StatusText->SetText(FProjectProject01Localization::Text(FString::Printf(
-		TEXT("현재 빙의한 마네킹: %d번\n")
+		TEXT("현재 빙의한 마네킹: %s\n")
 		TEXT("현재 상태: %s\n")
+		TEXT("명령 상태: %s\n")
 		TEXT("전체 AI 데스카운트 소모: %s\n\n%s"),
-		Mannequin->GetControlSlot(), *Activity, *CatchDamageState, *Alerts)));
+		*Identity, *Activity, Command, *CatchDamageState, *Alerts)));
 }
 
 bool UProjectProject01VoiceStatusWidget::Initialize()
@@ -2473,9 +2467,9 @@ void UProjectProject01GameGuideWidget::RefreshGuideText()
 			TEXT("조작키\n"
 				"0~9 : 머리 위 번호와 같은 마네킹 시점 선택\n"
 				"V : 선택한 마네킹 직접 조작\n"
-				"Z : 직접 조작 중 정찰 명령 저장\n"
-				"X : 직접 조작 중 감지 범위 추격 명령 저장\n"
-				"C : 직접 조작 중 마네킹 플레이어 추종 명령 저장\n"
+				"Z : 선택한 마네킹 정찰\n"
+				"X : 선택한 마네킹 감지 범위 추격\n"
+				"C : 선택한 마네킹 플레이어 추종\n"
 				"Q : 추종 중인 마네킹을 정찰 상태로 초기화\n"
 				"B : 전체 AI 마네킹 접촉 데스카운트 소모 켜기/끄기\n"
 				"마우스 좌클릭 : 직접 조작 중 공격 (직접 조작 공격·접촉은 항상 피해 적용)\n"
@@ -4114,6 +4108,7 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	MuteWhenUnfocusedCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged);
 	VSyncCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleVSyncChanged);
 	MotionBlurCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleMotionBlurChanged);
+	CameraShakeCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleCameraShakeChanged);
 	SubtitlesCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleSubtitlesChanged);
 	EnhancedVisualCuesCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleEnhancedVisualCuesChanged);
 	WindowModeComboBox->OnSelectionChanged.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleWindowModeChanged);
@@ -4170,6 +4165,7 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(MuteWhenUnfocusedCheckBox)) MuteWhenUnfocusedCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged);
 	if (IsValid(VSyncCheckBox)) VSyncCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleVSyncChanged);
 	if (IsValid(MotionBlurCheckBox)) MotionBlurCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMotionBlurChanged);
+	if (IsValid(CameraShakeCheckBox)) CameraShakeCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleCameraShakeChanged);
 	if (IsValid(SubtitlesCheckBox)) SubtitlesCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSubtitlesChanged);
 	if (IsValid(EnhancedVisualCuesCheckBox)) EnhancedVisualCuesCheckBox->OnCheckStateChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleEnhancedVisualCuesChanged);
 	if (IsValid(WindowModeComboBox)) WindowModeComboBox->OnSelectionChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleWindowModeChanged);
@@ -4246,6 +4242,7 @@ void UProjectProject01SettingsWidget::HandleMuteAllChanged(const bool bChecked) 
 void UProjectProject01SettingsWidget::HandleMuteWhenUnfocusedChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMuteWhenUnfocused = bChecked; }
 void UProjectProject01SettingsWidget::HandleVSyncChanged(const bool bChecked) { if (!bRefreshingControls) bPendingVSync = bChecked; }
 void UProjectProject01SettingsWidget::HandleMotionBlurChanged(const bool bChecked) { if (!bRefreshingControls) bPendingMotionBlur = bChecked; }
+void UProjectProject01SettingsWidget::HandleCameraShakeChanged(const bool bChecked) { if (!bRefreshingControls) { bPendingCameraShake = bChecked; ScreenShakeSlider->SetIsEnabled(bChecked); } }
 void UProjectProject01SettingsWidget::HandleSubtitlesChanged(const bool bChecked) { if (!bRefreshingControls) bPendingSubtitles = bChecked; }
 void UProjectProject01SettingsWidget::HandleEnhancedVisualCuesChanged(const bool bChecked) { if (!bRefreshingControls) bPendingEnhancedVisualCues = bChecked; }
 
@@ -4374,7 +4371,8 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 	PendingColorVisionSeverity = Settings->GetColorVisionSeverity();
 	PendingScreenFlashScale = Settings->GetScreenFlashScale();
 	PendingScreenDistortionScale = Settings->GetScreenDistortionScale();
-	PendingScreenShakeScale = Settings->GetScreenShakeScale();
+	PendingScreenShakeScale = Settings->GetConfiguredScreenShakeScale();
+	bPendingCameraShake = Settings->IsCameraShakeEnabled();
 	PendingUIReadableScale = Settings->GetUIReadableScale();
 	PendingWindowMode = Settings->GetFullscreenMode();
 	PendingResolution = Settings->GetScreenResolution();
@@ -4416,6 +4414,7 @@ void UProjectProject01SettingsWidget::SetPendingDefaults()
 	PendingScreenFlashScale = 1.0f;
 	PendingScreenDistortionScale = 1.0f;
 	PendingScreenShakeScale = 1.0f;
+	bPendingCameraShake = true;
 	PendingUIReadableScale = 1.0f;
 	PendingWindowMode = EWindowMode::WindowedFullscreen;
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
@@ -4453,6 +4452,8 @@ void UProjectProject01SettingsWidget::RefreshAllControls()
 	ScreenFlashSlider->SetValue(PendingScreenFlashScale);
 	ScreenDistortionSlider->SetValue(PendingScreenDistortionScale);
 	ScreenShakeSlider->SetValue(PendingScreenShakeScale);
+	CameraShakeCheckBox->SetIsChecked(bPendingCameraShake);
+	ScreenShakeSlider->SetIsEnabled(bPendingCameraShake);
 	UIReadableScaleSlider->SetValue(PendingUIReadableScale);
 	MuteAllCheckBox->SetIsChecked(bPendingMuteAll);
 	MuteWhenUnfocusedCheckBox->SetIsChecked(bPendingMuteWhenUnfocused);
@@ -4621,6 +4622,7 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetScreenFlashScale(PendingScreenFlashScale);
 	Settings->SetScreenDistortionScale(PendingScreenDistortionScale);
 	Settings->SetScreenShakeScale(PendingScreenShakeScale);
+	Settings->SetCameraShakeEnabled(bPendingCameraShake);
 	Settings->SetUIReadableScale(PendingUIReadableScale);
 	if (PendingOverallQuality >= 0)
 	{
@@ -4940,6 +4942,7 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 		WidgetTree, AccessibilityPage, TEXT("화면 번쩍임 강도"), 0.0f, 1.0f, 0.05f, ScreenFlashValueText);
 	ScreenDistortionSlider = ProjectProject01LoginUI::AddSliderRow(
 		WidgetTree, AccessibilityPage, TEXT("화면 일렁임 강도"), 0.0f, 1.0f, 0.05f, ScreenDistortionValueText);
+	CameraShakeCheckBox = ProjectProject01LoginUI::AddCheckRow(WidgetTree, AccessibilityPage, TEXT("카메라 셰이킹 활성화"));
 	ScreenShakeSlider = ProjectProject01LoginUI::AddSliderRow(
 		WidgetTree, AccessibilityPage, TEXT("화면 흔들림 강도"), 0.0f, 1.0f, 0.05f, ScreenShakeValueText);
 	UIReadableScaleSlider = ProjectProject01LoginUI::AddSliderRow(
@@ -5084,6 +5087,12 @@ bool FProjectProject01UserSettingsValidationTest::RunTest(const FString& Paramet
 	TestEqual(TEXT("Screen flash scale is clamped"), Settings->GetScreenFlashScale(), 0.0f);
 	TestEqual(TEXT("Screen distortion scale is clamped"), Settings->GetScreenDistortionScale(), 1.0f);
 	TestEqual(TEXT("Screen shake scale is clamped"), Settings->GetScreenShakeScale(), 0.0f);
+	Settings->SetScreenShakeScale(.65f);
+	Settings->SetCameraShakeEnabled(false);
+	TestEqual(TEXT("Disabled camera shaking has zero effective intensity"),Settings->GetScreenShakeScale(),0.f);
+	TestEqual(TEXT("Disabling preserves the configured intensity"),Settings->GetConfiguredScreenShakeScale(),.65f);
+	Settings->SetCameraShakeEnabled(true);
+	TestEqual(TEXT("Re-enabling restores configured intensity"),Settings->GetScreenShakeScale(),.65f);
 	TestEqual(TEXT("Readable UI scale is clamped"), Settings->GetUIReadableScale(), 1.3f);
 	TestTrue(TEXT("Reserved Escape restores safe sprint key"), Settings->GetSprintKey() == EKeys::LeftShift);
 
@@ -5239,6 +5248,10 @@ void UProjectProject01LobbyWidget::NativeTick(const FGeometry& MyGeometry, const
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
     ContinueGameAdmission(InDeltaTime);
+    if(IsValid(LobbyViewSwitcher) && LobbyViewSwitcher->GetActiveWidgetIndex()==3)
+        if(auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+            Lobby && Lobby->IsMatchmaking() && DisplayedMatchmakingElapsedSeconds!=Lobby->GetMatchmakingElapsedSeconds())
+            RefreshMatchmakingView();
 	if (!bGameStartFadeActive || !IsValid(StartCountdownPanel))
 	{
 		return;
@@ -5328,7 +5341,8 @@ void UProjectProject01LobbyWidget::RefreshMatchmakingView()
         ? (Lobby->MatchmakingWaiting>=3?TEXT("매칭 확정 대기 중 — 방 또는 서버 공간을 기다리고 있습니다.")
            :FString::Printf(TEXT("인원 모집 중 (%d/3)"),FMath::Clamp(Lobby->MatchmakingWaiting,1,2)))
         :!Party?TEXT("랜덤 매칭을 준비 중입니다. 실패했다면 뒤로가기 후 다시 시도하세요."):Lobby->GetCurrentRoom().Members.Num()!=1?TEXT("솔로 전용입니다. 뒤로가기 후 다시 입장하세요."):TEXT("시작을 누르면 개인 신청자 3명으로 랜덤 매칭합니다.");
-    if(Waiting)Text+=FString::Printf(TEXT("\n남은 대기 시간: %d초"),Lobby->MatchmakingSeconds);
+    DisplayedMatchmakingElapsedSeconds=Waiting?Lobby->GetMatchmakingElapsedSeconds():INDEX_NONE;
+    if(Waiting)Text+=FString::Printf(TEXT("\n매칭 경과 시간: %d분 %02d초"),DisplayedMatchmakingElapsedSeconds/60,DisplayedMatchmakingElapsedSeconds%60);
     if(!Waiting&&!Matched&&!Lobby->MatchmakingMessage.IsEmpty())Text+=TEXT("\n")+Lobby->MatchmakingMessage;
     if(Party)
     {

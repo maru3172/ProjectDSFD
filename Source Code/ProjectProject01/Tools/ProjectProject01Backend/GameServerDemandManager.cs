@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using MySqlConnector;
 
-internal sealed record GameServerDemandConfiguration(bool Enabled,string Executable="",string Arguments="MultiplayTest -log",int FirstPort=7777,int MaximumConcurrent=1,string ProjectRoot="");
+internal sealed record GameServerDemandConfiguration(bool Enabled,string Executable="",string Arguments="MultiplayTest -log",int FirstPort=7777,int MaximumConcurrent=1,string ProjectRoot="",bool EditorLocalTest=false,string EditorBackendUrl="http://127.0.0.1:5080");
 internal sealed record GameServerDemandCapacity(int MaximumConcurrent);
 internal sealed record GameServerDrainRequest(bool Cancel=false);
 internal interface IManagedGameProcess : IDisposable { bool HasExited {get;} void RequestStop(); void Stop(); }
@@ -67,7 +67,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     internal bool AcceptingNewMatches {get{lock(gate)return configuration.Enabled&&!draining;}}
     internal bool Configured {get{lock(gate)return !string.IsNullOrEmpty(configuration.Executable);}}
     internal string? ResultOutboxDirectory {get{lock(gate)return string.IsNullOrWhiteSpace(configuration.ProjectRoot)?null:Path.Combine(configuration.ProjectRoot,"Saved","MatchResultOutbox");}}
-    internal object Snapshot(){lock(gate)return new {enabled=configuration.Enabled,draining,drainCompleted,acceptingNewMatches=configuration.Enabled&&!draining,maximumConcurrent=configuration.MaximumConcurrent,activeSessions=entries.Count,firstPort=configuration.FirstPort,
+    internal object Snapshot(){lock(gate)return new {enabled=configuration.Enabled,editorLocalTest=configuration.EditorLocalTest,draining,drainCompleted,acceptingNewMatches=configuration.Enabled&&!draining,maximumConcurrent=configuration.MaximumConcurrent,activeSessions=entries.Count,firstPort=configuration.FirstPort,
         sessions=entries.Values.Select(e=>new {roomId=e.Room,port=e.Port,phase=e.ObservedMatch?"Playing":"Preparing"}).ToArray()};}
     internal bool OwnsHeartbeat(int port,string instance){lock(gate)return entries.Values.Any(e=>e.Port==port&&e.Instance==instance&&e.Committed);}
     internal bool HasManagedPort(int port){lock(gate)return entries.Values.Any(e=>e.Port==port);}
@@ -109,7 +109,19 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
             if(!security.IsGameServerSecurityConfigured)throw new InvalidOperationException("게임 서버 보안 설정이 없습니다.");
             if(value.MaximumConcurrent is <1 or >100||value.FirstPort<1024||value.FirstPort+value.MaximumConcurrent-1>65535)throw new InvalidOperationException("동시 경기 한도와 포트 범위를 확인하세요.");
             string path=Path.GetFullPath(value.Executable);
-            if(!File.Exists(path)||!(Path.GetFileName(path).Equals("ProjectDFSDServer.exe",StringComparison.OrdinalIgnoreCase)||Path.GetFileName(path).Equals("ProjectProject01Server.exe",StringComparison.OrdinalIgnoreCase)))throw new InvalidOperationException("패키징된 ProjectDFSDServer.exe를 지정하세요.");
+            if(value.EditorLocalTest)
+            {
+                string project=Path.Combine(Path.GetFullPath(value.ProjectRoot),"ProjectDFSD.uproject");
+                if(!File.Exists(path)||!Path.GetFileName(path).Equals("UnrealEditor-Cmd.exe",StringComparison.OrdinalIgnoreCase)||!File.Exists(project))
+                    throw new InvalidOperationException("로컬 에디터 테스트에는 UnrealEditor-Cmd.exe와 ProjectDFSD.uproject가 필요합니다.");
+                // Never accept arbitrary editor switches from a client. The operator's
+                // authenticated local setup selects the project; all server flags are fixed.
+                if(project.Contains('"')||project.Contains('\n')||project.Contains('\r'))throw new InvalidOperationException("올바르지 않은 프로젝트 경로입니다.");
+                if(!Uri.TryCreate(value.EditorBackendUrl,UriKind.Absolute,out var backend)||backend.Scheme!="http"||backend.Host!="127.0.0.1"||backend.AbsolutePath!="/"||backend.Query!=""||backend.Fragment!=""||backend.UserInfo!="")
+                    throw new InvalidOperationException("에디터 서버의 백엔드는 HTTP 127.0.0.1 루프백 주소만 사용할 수 있습니다.");
+                value=value with {Arguments=$"\"{project}\" /Game/MyProject/Level/MultiplayTest -server -game -unattended -nosound -nullrhi -NoSplash -log -ini:Game:[/Script/ProjectProject01.ProjectProject01GameInstance]:SecurityApiBaseUrl={backend.GetLeftPart(UriPartial.Authority)}"};
+            }
+            else if(!File.Exists(path)||!(Path.GetFileName(path).Equals("ProjectDFSDServer.exe",StringComparison.OrdinalIgnoreCase)||Path.GetFileName(path).Equals("ProjectProject01Server.exe",StringComparison.OrdinalIgnoreCase)))throw new InvalidOperationException("패키징된 ProjectDFSDServer.exe를 지정하세요.");
             if(value.Arguments.Contains("ProjectProject01Managed",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("ProjectProject01ResultOutbox",StringComparison.OrdinalIgnoreCase)||value.Arguments.Contains("-abslog",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("세션 식별자와 종료/로그/결과 경로는 자동 지정됩니다.");
             value=value with {Executable=path,ProjectRoot=Path.GetFullPath(value.ProjectRoot)};
         }
@@ -344,6 +356,8 @@ internal static class GameServerDemandEndpoints
         app.MapPut("/api/admin/game-server-demand",async(HttpRequest request,GameServerDemandConfiguration body,AdministratorOptions admin,GameServerDemandManager manager,AuthDatabase database,CancellationToken ct)=>
         {
             if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();
+            if(body.EditorLocalTest && (request.HttpContext.Connection.RemoteIpAddress is not { } ip || !System.Net.IPAddress.IsLoopback(ip)))
+                return Results.BadRequest(new {message="에디터 테스트 서버는 서버 PC의 루프백 요청으로만 설정할 수 있습니다."});
             if(body.Enabled)
             {
                 await using var connection=await database.OpenConnectionAsync(ct);await using var select=new MySqlCommand("SELECT max_rooms FROM lobby_state WHERE id=1",connection);

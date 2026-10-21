@@ -14,7 +14,7 @@ using MySqlConnector;
 internal static class IntegrationChecks
 {
     private static int passed;
-    public static async Task RunAsync(string projectRoot,int port)
+    public static async Task RunAsync(string projectRoot,int port,string? editorExecutable=null)
     {
         if(port!=23307)throw new InvalidOperationException("Only the isolated test MySQL port is allowed.");
         string output=Path.Combine(projectRoot,"Saved","FeatureChecks");
@@ -201,6 +201,7 @@ internal static class IntegrationChecks
             await MatchmakingChecks.RunAsync(database,admin,demand,demandFactory,output);
             await StartupRecoveryChecks.RunAsync(database,demand,Check);
             await ResultDeliveryChecks.RunAsync(database,admin,output,Check);
+            if(!string.IsNullOrWhiteSpace(editorExecutable))await EditorSessionSmokeChecks.RunAsync(database,projectRoot,editorExecutable);
             Console.WriteLine($"PASS: {passed} isolated API/database checks");
         }
         finally{await app.StopAsync();}

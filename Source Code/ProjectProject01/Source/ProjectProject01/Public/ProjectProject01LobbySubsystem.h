@@ -264,6 +264,11 @@ class PROJECTPROJECT01_API UProjectProject01LobbySubsystem final : public UGameI
 	GENERATED_BODY()
 
 public:
+	// Bound only by the editor module. No editor startup or admin credentials in packaged clients.
+#if WITH_EDITOR
+	static TFunction<void(TFunction<void(bool,const FString&)>)> PrepareEditorLocalServer;
+	bool IsEditorLoopbackTest() const;
+#endif
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
@@ -286,6 +291,7 @@ public:
     void PollMatchmaking();
     void CancelMatchmaking();
     bool IsMatchmaking() const { return bMatchmaking; }
+    int32 GetMatchmakingElapsedSeconds() const;
     bool IsCancellingMatchmaking() const { return bCancelMatchmaking; }
     FString MatchmakingMessage;
     int32 MatchmakingWaiting=0,MatchmakingPosition=0,MatchmakingSeconds=0;
@@ -374,7 +380,7 @@ public:
 	bool HasCurrentRoom() const { return CurrentRoom.IsValid(); }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
-	bool IsRequestInFlight() const { return ActiveRequest.IsValid(); }
+	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending; }
 
 	const TArray<FProjectProject01RoomSummary>& GetRooms() const { return Rooms; }
 	const FProjectProject01RoomState& GetCurrentRoom() const { return CurrentRoom; }
@@ -404,6 +410,7 @@ private:
     friend class FProjectLobbyReadabilityTest;
 	uint64 RequestGeneration=0;
     bool bMatchmaking=false,bCancelMatchmaking=false;
+    double MatchmakingStartedAtSeconds=0;
     FString MatchSearchId;
     bool ParseMatchmaking(const TSharedPtr<class FJsonObject>& Json,FString& Error);
 	friend class FProjectRoomPreparationStateTest;
@@ -434,6 +441,8 @@ private:
 
 	UPROPERTY(Config)
 	float RequestTimeoutSeconds = 10.0f;
+	bool bEditorServerPreparationPending = false;
+	bool bEditorServerPrepared = false;
 
 	UPROPERTY(Transient)
 	TArray<FProjectProject01RoomSummary> Rooms;

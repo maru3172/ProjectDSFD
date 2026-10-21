@@ -86,7 +86,7 @@ internal static partial class LobbyEndpoints
                 if(state=="Matched"&&current?.RoomId!=Convert.ToString(rows[0]["room_id"]))state="Idle";
                 var waiting=await CommunityEndpoints.Rows(c,tx,"SELECT q.search_id,COUNT(m.user_id) n FROM random_match_searches q JOIN random_match_search_members m ON m.search_id=q.search_id WHERE q.state='Waiting' GROUP BY q.search_id ORDER BY MIN(q.created_at_utc),q.search_id",ct);
                 int total=waiting.Sum(r=>Convert.ToInt32(r["n"])),position=waiting.FindIndex(r=>Convert.ToString(r["search_id"])==searchId)+1;
-                string message=state switch{"Waiting"=>"매칭 중… 개인 신청자 3명을 모집하고 있습니다.","Matched"=>"3/3 확정. 자기 역할을 확인하고 게임 시작을 기다려주세요.","Cancelled"=>"매칭을 취소했습니다. 시작 전 상태로 돌아갑니다.","Expired"=>"접속 확인 또는 대기 시간이 만료되었습니다. 다시 시작할 수 있습니다.","Unavailable"=>"게임 서버 운영 중지 또는 점검으로 매칭을 종료했습니다.",_=>"진행 중인 매칭이 없습니다."};
+                string message=state switch{"Waiting"=>"매칭 중… 개인 신청자 3명을 모집하고 있습니다.","Matched"=>"3/3 확정. 자기 역할을 확인하고 게임 시작을 기다려주세요.","Cancelled"=>"매칭을 취소했습니다.","Expired"=>"접속 확인 또는 대기 시간이 만료되었습니다. 다시 시작할 수 있습니다.","Unavailable"=>"게임 서버 운영 중지 또는 점검으로 매칭을 종료했습니다.",_=>"진행 중인 매칭이 없습니다."};
                 await tx.CommitAsync(ct);
                 return Results.Ok(new MatchSearchState(state,message,total,position,state=="Waiting"?Convert.ToInt32(rows[0]["remaining"]):0,current));
             }
@@ -182,6 +182,36 @@ internal static partial class LobbyEndpoints
             first=false;
         }
         await CommunityEndpoints.Exec(c,tx,"DELETE FROM random_match_origins WHERE room_id=@r;DELETE FROM random_match_rooms WHERE room_id=@r;UPDATE random_match_parties SET search_id=NULL WHERE room_id=@r",ct,("r",room));
+    }
+
+    // Called only after the authoritative match ledger says the match ended.
+    // Solo queue has no persistent group: each returning player gets their own idle staging room.
+    // Keep the old room/server/results intact for players still viewing their result screen.
+    private static async Task<bool> RestoreReturnedRandomPlayersAsync(MySqlConnection c,MySqlTransaction tx,string room,CancellationToken ct)
+    {
+        if((await CommunityEndpoints.Rows(c,tx,"SELECT room_id FROM random_match_rooms WHERE room_id=@r",ct,("r",room))).Count==0)return false;
+        var members=await CommunityEndpoints.Rows(c,tx,"SELECT user_id,returned_to_room FROM room_members WHERE room_id=@r ORDER BY joined_at_utc,user_id FOR UPDATE",ct,("r",room));
+        foreach(var member in members.Where(m=>Convert.ToBoolean(m["returned_to_room"])))
+        {
+            ulong user=Convert.ToUInt64(member["user_id"]);
+            string target=Guid.NewGuid().ToString("D"),code=await GenerateUniqueJoinCodeAsync(c,tx,ct);
+            // Formation reserved space for all original solos in CountRoomsAsync; returning
+            // is not a new room admission and must work even when that limit is full.
+            await CommunityEndpoints.Exec(c,tx,"""
+                INSERT INTO game_rooms(id,join_code,name,host_user_id,is_public) VALUES(@target,@code,@name,@u,FALSE);
+                INSERT INTO random_match_parties(room_id) VALUES(@target);
+                UPDATE room_members SET room_id=@target,is_ready=FALSE,assigned_role=NULL,returned_to_room=FALSE,last_seen_at_utc=UTC_TIMESTAMP(6)
+                  WHERE room_id=@r AND user_id=@u;
+                DELETE FROM game_join_tickets WHERE room_id=@r AND user_id=@u;
+                DELETE FROM random_match_origins WHERE room_id=@r AND user_id=@u;
+                """,ct,("target",target),("code",code),("name","랜덤 매칭 "+code),("u",user),("r",room));
+        }
+        var remaining=members.Where(m=>!Convert.ToBoolean(m["returned_to_room"])).ToArray();
+        if(remaining.Length>0)
+            await CommunityEndpoints.Exec(c,tx,"UPDATE game_rooms SET host_user_id=@u WHERE id=@r",ct,("u",remaining[0]["user_id"]),("r",room));
+        else
+            await CommunityEndpoints.Exec(c,tx,"DELETE FROM game_rooms WHERE id=@r",ct,("r",room));
+        return true;
     }
 }
 
