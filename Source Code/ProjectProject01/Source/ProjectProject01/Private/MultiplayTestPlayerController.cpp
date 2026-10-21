@@ -508,6 +508,10 @@ void AMultiplayTestPlayerController::SetSurvivorVoiceStatusVisible(const bool bV
 	}
 }
 
+float AMultiplayTestPlayerController::GetMannequinStatusBottom() const
+{
+	return IsValid(MannequinStatusWidget) ? MannequinStatusWidget->GetContentBottom() : 240.f;
+}
 void AMultiplayTestPlayerController::SetMannequinStatusVisible(const bool bVisible)
 {
 	if (!IsLocalController())
@@ -1523,7 +1527,9 @@ void AMultiplayTestPlayerController::ServerRequestMannequinCommand_Implementatio
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
 		if (GameMode->TryIssueMannequinCommand(this, Command))
-			if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::IssueCommand);
+			if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode))
+				Tutorial->RecordAction(this,Command==EMultiplayMannequinCommand::Patrol ? EProjectTutorialCondition::PatrolCommand :
+					Command==EMultiplayMannequinCommand::ChaseInDetectionRange ? EProjectTutorialCondition::ChaseCommand : EProjectTutorialCondition::FollowCommand);
 	}
 }
 
@@ -1541,7 +1547,8 @@ void AMultiplayTestPlayerController::ServerResetFollowingMannequins_Implementati
 	if (AMultiplayTestGameMode* GameMode = GetWorld()
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
-		GameMode->TryResetFollowingMannequins(this);
+		if (GameMode->TryResetFollowingMannequins(this))
+			if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::ResetFollow);
 	}
 }
 
@@ -1552,12 +1559,12 @@ bool AMultiplayTestPlayerController::ServerResetFollowingMannequins_Validate()
 
 void AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Implementation()
 {
-	if (AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) { ClientNotifyMannequinCatchDamage(false); return; }
 	if (!AllowServerRequest(8, 2, 1.0f)) return;
 	if (AMultiplayTestGameMode* GameMode = GetWorld()
 		? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr; IsValid(GameMode))
 	{
 		ClientNotifyMannequinCatchDamage(GameMode->ToggleMannequinCatchDamage(this));
+		if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(GameMode)) Tutorial->RecordAction(this,EProjectTutorialCondition::ToggleContactDamage);
 	}
 }
 
@@ -1571,7 +1578,11 @@ void AMultiplayTestPlayerController::ServerRequestMannequinAttack_Implementation
 {
 	if (!AllowServerRequest(9, 3, 1.0f)) return;
 	if (AMultiplayTestGameMode* Mode = GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(Mode))
+	{
 		Mode->TryMannequinAttack(this);
+		// In the controls exercise an air swing is enough; the final capture still requires an actual hit.
+		if (auto* Tutorial=Cast<AProjectProject01TutorialGameMode>(Mode)) Tutorial->RecordAction(this,EProjectTutorialCondition::DirectAttack);
+	}
 }
 
 bool AMultiplayTestPlayerController::ServerRequestMannequinAttack_Validate() { return true; }

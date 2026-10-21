@@ -103,6 +103,7 @@ void UProjectProject01VoiceChatSubsystem::HandleParticipantAdded(const FString& 
 {
 	if (!bConfiguredForSurvivor || !VoiceUser || JoinedChannel!=ChannelName || Id.IsEmpty() || Id==LocalUserId) return;
 	AppliedPeerGains.Remove(Id);
+	SmoothedPeerDistanceGains.Remove(Id);
 	VoiceUser->SetPlayerMuted(Id,IsParticipantMuted(Id));
 	ApplyParticipantReceiveSettings(Id);
 }
@@ -120,10 +121,21 @@ float UProjectProject01VoiceChatSubsystem::GetParticipantDistanceGain(const FStr
 	return Gain?*Gain:0;
 }
 
-void UProjectProject01VoiceChatSubsystem::ApplyParticipantReceiveSettings(const FString& Id)
+float UProjectProject01VoiceChatSubsystem::AdvanceParticipantDistanceGain(const FString& Id,float DeltaSeconds)
+{
+	const float Target=GetParticipantDistanceGain(Id);
+	auto& Ramp=SmoothedPeerDistanceGains.FindOrAdd(Id);
+	// Never retain voice after death, eligibility loss, unknown identity, stale
+	// server authority or the maximum audible range. All those paths yield zero.
+	if (Target<=0) { Ramp.Reset();return 0; }
+	const float Duration=FMath::IsFinite(DistanceGainInterpolationSeconds)?FMath::Clamp(DistanceGainInterpolationSeconds,.02f,1.f):.15f;
+	return Ramp.Advance(Target,DeltaSeconds,Duration);
+}
+
+void UProjectProject01VoiceChatSubsystem::ApplyParticipantReceiveSettings(const FString& Id,float DeltaSeconds)
 {
 	if(!VoiceUser)return;
-	const float Gain=GetParticipantVolume(Id)*GetParticipantDistanceGain(Id);
+	const float Gain=GetParticipantVolume(Id)*AdvanceParticipantDistanceGain(Id,DeltaSeconds);
 	const float* Applied=AppliedPeerGains.Find(Id);
 	if(!Applied || !FMath::IsNearlyEqual(*Applied,Gain,0.001f))
 	{

@@ -33,7 +33,12 @@ bool FProjectDFSDUIThemeContractTest::RunTest(const FString&)
 	TestTrue(TEXT("Normal/focused/read-only input captions remain bright"),Input.ForegroundColor.GetSpecifiedColor().R>.8f&&Input.FocusedForegroundColor.GetSpecifiedColor().R>.8f&&Input.ReadOnlyForegroundColor.GetSpecifiedColor().R>.8f);
 	TestTrue(TEXT("Input focus is visibly different from its resting border"),Input.BackgroundImageNormal.OutlineSettings.Color!=Input.BackgroundImageFocused.OutlineSettings.Color);
 	TestTrue(TEXT("Selected tabs have a persistent style, not only a hover color"),ProjectDFSDUI::ButtonStyle().Normal.TintColor!=ProjectDFSDUI::ButtonStyle(true).Normal.TintColor);
-	TestTrue(TEXT("Resting buttons retain the original title's translucent surface"),ProjectDFSDUI::ButtonStyle().Normal.TintColor.GetSpecifiedColor()==FLinearColor(.01f,.014f,.02f,.25f));
+	TestTrue(TEXT("Title buttons retain their original translucent surface"),ProjectDFSDUI::TitleButtonStyle().Normal.TintColor.GetSpecifiedColor()==FLinearColor(.01f,.014f,.02f,.25f));
+	const auto Normal=ProjectDFSDUI::ButtonStyle().Normal.TintColor.GetSpecifiedColor();
+	TestTrue(TEXT("Other windows have a slightly brighter surface and a visible outline"),Normal.R>.02f&&Normal.R<.04f&&Normal.A>.9f&&ProjectDFSDUI::ButtonStyle().Normal.OutlineSettings.Width==1.f);
+	TestTrue(TEXT("Body text stays comfortably readable on brighter buttons"),(L(ProjectDFSDUI::Text())+.05f)/(L(Normal)+.05f)>4.5f);
+	UUserWidget* Lobby=NewObject<UProjectProject01LobbyWidget>();Lobby->Initialize();
+	TestTrue(TEXT("Lobby supports keyboard focus when returning from settings or surveys"),Lobby->IsFocusable());
 	auto* Owner=NewObject<UProjectProject01LoginWidget>();static_cast<UUserWidget*>(Owner)->Initialize();auto* Tree=Owner->WidgetTree.Get();
 	auto* Root=Tree->ConstructWidget<UOverlay>();Tree->RootWidget=Root;
 	auto* Content=Tree->ConstructWidget<UVerticalBox>();Root->AddChildToOverlay(Content);

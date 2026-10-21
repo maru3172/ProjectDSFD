@@ -66,9 +66,17 @@ FString FProjectResultOutbox::Directory()
     return Override.IsEmpty()?FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("MatchResultOutbox"))):FPaths::ConvertRelativePathToFull(Override);
 }
 bool FProjectResultOutbox::IsTransient(int32 Code){return Code==0||Code==408||Code==429||Code>=500;}
+bool FProjectResultOutbox::IsProductionMatchId(const FString& MatchId)
+{
+    FGuid Parsed;return FGuid::Parse(MatchId,Parsed);
+}
 bool FProjectResultOutbox::Persist(const FString& Root,const FString& Backend,const FString& Route,const FString& Body,FString& OutPath)
 {
+    OutPath.Reset();
     if(Route!=TEXT("/api/server/matches/results")&&Route!=TEXT("/api/server/matches/complete"))return false;
+    TSharedPtr<FJsonObject> ParsedBody;FString MatchId;
+    if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),ParsedBody)||!ParsedBody.IsValid()||
+        !ParsedBody->TryGetStringField(TEXT("matchId"),MatchId)||!IsProductionMatchId(MatchId))return false;
     auto Payload=MakeShared<FJsonObject>();Payload->SetNumberField(TEXT("schema"),1);Payload->SetStringField(TEXT("backend"),Backend);
     Payload->SetStringField(TEXT("route"),Route);Payload->SetStringField(TEXT("body"),Body);
     auto Headers=MakeShared<FJsonObject>();

@@ -275,7 +275,8 @@ private:
 // =========================================================================================================================
 
 // Sets default values
-APlayerCharacter::APlayerCharacter()
+APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
@@ -1318,26 +1319,28 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	float FallRollDirection = 0.0f;
 	ResolveFallDirection(CatchingMannequin->GetActorLocation(), FallPitchDirection, FallRollDirection);
 
-	if (RemainingDeathCount > 0)
+	const auto* Practice=World->GetAuthGameMode<AProjectProject01TutorialGameMode>();
+	const bool bInfinitePracticeLives=Practice && Practice->HasPracticeInfiniteLives();
+	if (RemainingDeathCount > 0 || bInfinitePracticeLives)
 	{
-		--RemainingDeathCount;
+		if (!bInfinitePracticeLives) --RemainingDeathCount;
 		NextDeathCountDamageAllowedWorldSeconds = World->GetTimeSeconds() +
 			DamageFeedbackIntroSeconds + DamageFeedbackFadeSeconds;
 		UE_LOG(LogTemp, Log, TEXT("Player %s was caught by mannequin %s. Remaining death count: %d."),
 			*GetName(), *CatchingMannequin->GetName(), RemainingDeathCount);
 
-		if (RemainingDeathCount == 0)
+		if (RemainingDeathCount == 0 && !bInfinitePracticeLives)
 		{
 			RemoveGuardingHelpers();
 		}
 
-		const float PainIntensity = StartingDeathCount > 0
+		const float PainIntensity = bInfinitePracticeLives ? .55f : StartingDeathCount > 0
 			? FMath::Clamp(0.55f + 0.45f *
 				(static_cast<float>(StartingDeathCount - RemainingDeathCount) / static_cast<float>(StartingDeathCount)),
 				0.55f, 1.0f)
 			: 1.0f;
 		MulticastPlayPainAndDeathWorldSFX(false, PainIntensity);
-		const float DamageSeverity = UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(
+		const float DamageSeverity = bInfinitePracticeLives ? .45f : UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(
 			RemainingDeathCount, StartingDeathCount);
 		if (IsLocallyControlled())
 		{
@@ -1351,7 +1354,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 			IsValid(MultiplayGameMode))
 		{
 			MultiplayGameMode->NotifyMannequinCaptureFeedback(false);
-			MultiplayGameMode->NotifySurvivorDeathCountLost(this);
+			if (!bInfinitePracticeLives) MultiplayGameMode->NotifySurvivorDeathCountLost(this);
 		}
 		ForceNetUpdate();
 		return true;

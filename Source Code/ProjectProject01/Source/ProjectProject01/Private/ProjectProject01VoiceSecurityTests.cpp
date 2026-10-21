@@ -43,6 +43,46 @@ bool FProjectVoiceAudibilityTest::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectVoiceGainSmoothingTest,"ProjectProject01.Multiplayer.SurvivorVoice.SmoothDistanceGain",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectVoiceGainSmoothingTest::RunTest(const FString&)
+{
+    ProjectVoiceAudibility::FGainRamp Ramp;
+    TestEqual(TEXT("A new remote voice starts silent, not at full gain"),Ramp.Advance(1,0,.15f),0.f);
+    TestTrue(TEXT("Approaching voice fades through an intermediate gain"),FMath::IsNearlyEqual(Ramp.Advance(1,.075f,.15f),.5f));
+    TestTrue(TEXT("The initial short ramp reaches the exact target"),FMath::IsNearlyEqual(Ramp.Advance(1,.075f,.15f),1.f));
+    TestEqual(TEXT("A new server distance cannot jump receive volume"),Ramp.Advance(.2f,0,.15f),1.f);
+    TestTrue(TEXT("Moving away also blends instead of stepping down"),FMath::IsNearlyEqual(Ramp.Advance(.2f,.075f,.15f),.6f));
+    TestTrue(TEXT("A direction reversal starts from the current audible gain"),FMath::IsNearlyEqual(Ramp.Advance(.9f,0,.15f),.6f));
+    TestTrue(TEXT("Reversing direction never overshoots its target"),FMath::IsNearlyEqual(Ramp.Advance(.9f,.15f,.15f),.9f));
+    ProjectVoiceAudibility::FGainRamp Slow,Fast;
+    for(int32 I=0;I<3;++I)Slow.Advance(.8f,1.f/30,.15f);
+    for(int32 I=0;I<12;++I)Fast.Advance(.8f,1.f/120,.15f);
+    TestTrue(TEXT("Ramp progress depends on elapsed time, not frame count"),FMath::IsNearlyEqual(Slow.Current,Fast.Current,.0001f));
+
+    auto* Instance=NewObject<UGameInstance>();auto* Voice=NewObject<UProjectProject01VoiceChatSubsystem>(Instance);
+    Voice->bConfiguredForSurvivor=true;Voice->MatchId=TEXT("match");Voice->ParticipantAccountIds.Add(TEXT("peer"),TEXT("account"));
+    TArray<FProjectVoiceAudibility> Peers;FProjectVoiceAudibility Peer;Peer.UserId=TEXT("account");Peer.Gain=1;Peers.Add(Peer);
+    Voice->UpdateAuthoritativeAudibility(TEXT("match"),true,Peers);
+    TestTrue(TEXT("The actual receive path smooths server distance gain"),FMath::IsNearlyEqual(Voice->AdvanceParticipantDistanceGain(TEXT("peer"),.075f),.5f));
+    Peers[0].Gain=.2f;Voice->UpdateAuthoritativeAudibility(TEXT("match"),true,Peers);
+    TestTrue(TEXT("A distance update retains the current ramp endpoint"),FMath::IsNearlyEqual(Voice->AdvanceParticipantDistanceGain(TEXT("peer"),0),.5f));
+    const float Intermediate=Voice->AdvanceParticipantDistanceGain(TEXT("peer"),.075f);
+    TestTrue(TEXT("Positive distance gains blend down gradually"),Intermediate>.2f && Intermediate<.5f);
+    Voice->ParticipantControls.Volumes.Add(TEXT("peer"),0);
+    TestEqual(TEXT("Personal volume zero is immediate and outside the distance ramp"),Voice->GetParticipantVolume(TEXT("peer"))*Intermediate,0.f);
+    Peers[0].Gain=0;Voice->UpdateAuthoritativeAudibility(TEXT("match"),true,Peers);
+    TestEqual(TEXT("Dead/out-of-range speaker silence is immediate"),Voice->AdvanceParticipantDistanceGain(TEXT("peer"),0),0.f);
+    Peers[0].Gain=1;Voice->UpdateAuthoritativeAudibility(TEXT("match"),true,Peers);Voice->AdvanceParticipantDistanceGain(TEXT("peer"),.15f);
+    Voice->LastAudibilityUpdateSeconds=FPlatformTime::Seconds()-2;
+    TestEqual(TEXT("Stale authority cannot leave an audible smoothing tail"),Voice->AdvanceParticipantDistanceGain(TEXT("peer"),0),0.f);
+    Voice->UpdateAuthoritativeAudibility(TEXT("match"),false,Peers);
+    TestEqual(TEXT("Listener death/role restriction remains a hard mute"),Voice->AdvanceParticipantDistanceGain(TEXT("peer"),.15f),0.f);
+    TestEqual(TEXT("Unknown EOS identity never becomes audible"),Voice->AdvanceParticipantDistanceGain(TEXT("unknown"),.15f),0.f);
+    Voice->SuspendForLevelTravel();TestTrue(TEXT("Travel clears every previous distance ramp"),Voice->SmoothedPeerDistanceGains.IsEmpty());
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectStaleFrontendResponseTest,"ProjectProject01.Frontend.StaleHttpResponseIsolation",
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectStaleFrontendResponseTest::RunTest(const FString&)

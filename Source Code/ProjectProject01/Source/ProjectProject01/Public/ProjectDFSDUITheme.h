@@ -41,6 +41,7 @@ namespace ProjectDFSDUI
 	PROJECTPROJECT01_API FLinearColor Muted();
 	PROJECTPROJECT01_API FLinearColor Accent();
 	PROJECTPROJECT01_API FLinearColor Danger();
+	PROJECTPROJECT01_API const FButtonStyle& TitleButtonStyle();
 	PROJECTPROJECT01_API const FButtonStyle& ButtonStyle(bool bSelected = false);
 	PROJECTPROJECT01_API const FEditableTextBoxStyle& InputStyle();
 	PROJECTPROJECT01_API const FComboButtonStyle& ComboButtonStyle();

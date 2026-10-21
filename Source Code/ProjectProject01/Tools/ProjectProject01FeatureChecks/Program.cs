@@ -10,6 +10,18 @@ internal static class FeatureChecks
     {
         try
         {
+            Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+            if(args.Length==1 && args[0]=="--encoding-fixture")
+            {
+                Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+                Console.WriteLine(LogReliabilityChecks.StandardText);Console.Error.WriteLine(LogReliabilityChecks.ErrorText);return 0;
+            }
+            if(args.Length==1 && args[0]=="--log-reliability-checks")
+            {
+                Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+                LogReliabilityChecks.RunAsync(Check).GetAwaiter().GetResult();
+                Console.WriteLine($"PASS: {checks} log reliability checks (no database/native EOS execution)");return 0;
+            }
             if(args.Length==1 && args[0]=="--packaging-checks")
             {
                 PackagingReadinessChecks.Run(Check);
@@ -60,6 +72,7 @@ internal static class FeatureChecks
             VoiceDirectoryChecks.Run(Check);
             NetworkBudgetChecks.RunAsync(Check).GetAwaiter().GetResult();
             VoiceSecurityChecks.Run(Check);
+            LogReliabilityChecks.RunAsync(Check).GetAwaiter().GetResult();
             CrashRetentionChecks.RunAsync(Check).GetAwaiter().GetResult();
             CrashPolicyHttpChecks.RunAsync(Check).GetAwaiter().GetResult();
             var single=new SurveyQuestionDefinition(id,"Choice","질문",["A","B","C"],true);

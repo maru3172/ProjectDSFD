@@ -12,7 +12,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Tutorial Editor")
 	static bool PrepareNavigation(UWorld* World);
 	static struct FRequestPlaySessionParams MakePracticeRequest();
-	static bool StartPractice(bool bMannequin);
+	static bool StartPractice(bool bMannequin,bool bFreePractice=false);
 	static void RegisterMenus();
 	static void ShutdownPractice();
 };

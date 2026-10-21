@@ -1093,6 +1093,7 @@ internal sealed partial class MainForm : Form
                 process.StartInfo.Environment[name] = value;
             }
         }
+        ProcessLogEncoding.Configure(process.StartInfo);
         process.OutputDataReceived += (_, e) => { if (e.Data != null) Append($"[{prefix}] {e.Data}"); };
         process.ErrorDataReceived += (_, e) => { if (e.Data != null) Append($"[{prefix}:ERR] {e.Data}"); };
         process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();

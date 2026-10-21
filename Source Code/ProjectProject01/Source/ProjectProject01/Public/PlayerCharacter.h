@@ -30,10 +30,12 @@ UCLASS()
 class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
 {
 	GENERATED_BODY()
+	friend class AProjectTutorialTargetCharacter;
+	friend class FProjectFreePracticeRuntimeTest;
 
 public:
 	// Sets default values for this character's properties
-	APlayerCharacter();
+	APlayerCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	// AI가 직접 추격을 시작할 내부 반경(cm)이다.
 	UFUNCTION(BlueprintPure, Category = "AI|Range")

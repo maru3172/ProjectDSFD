@@ -439,6 +439,15 @@ void UProjectProject01TransientNoticeWidget::BuildWidgetTree()
 	NoticeBackground->AddChild(NoticeText);
 }
 
+float UProjectProject01MannequinStatusWidget::GetContentBottom()
+{
+	if (!StatusText || !StatusText->GetParent()) return 92.f;
+	auto* Background=StatusText->GetParent();
+	Background->ForceLayoutPrepass();
+	const auto* ContentSlot=Cast<UCanvasPanelSlot>(Background->Slot);
+	const float Height=Background->GetDesiredSize().Y;
+	return Height>0 ? (ContentSlot ? ContentSlot->GetPosition().Y : 92.f)+Height : 240.f;
+}
 bool UProjectProject01MannequinStatusWidget::Initialize()
 {
 	if (!Super::Initialize())
@@ -1072,6 +1081,10 @@ bool UProjectProject01TitleWidget::Initialize()
 	SetIsFocusable(true);
 	BuildWidgetTree();
 	ProjectDFSDUI::ApplyTree(WidgetTree);
+	// Only the home menu keeps its original subtle surface; save-slot and other windows use readable panels.
+	for (UButton* Button : {SinglePlayerButton.Get(), ContinueSinglePlayerButton.Get(), MultiplayerButton.Get(),
+		SettingsButton.Get(), SurveyButton.Get(), QuitButton.Get()})
+		if (IsValid(Button)) Button->SetStyle(ProjectDFSDUI::TitleButtonStyle());
 	return true;
 }
 
@@ -5092,6 +5105,7 @@ bool UProjectProject01LobbyWidget::Initialize()
 	{
 		return false;
 	}
+	SetIsFocusable(true);
 	BuildWidgetTree();
 	ProjectDFSDUI::ApplyTree(WidgetTree);
 	ProjectDFSDUI::FramePage(WidgetTree,1120);
@@ -5258,7 +5272,9 @@ void UProjectProject01LobbyWidget::HandleTutorialClicked()
 }
 void UProjectProject01LobbyWidget::HandleSurvivorTutorialClicked() { StartTutorial(false); }
 void UProjectProject01LobbyWidget::HandleMannequinTutorialClicked() { StartTutorial(true); }
-void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin)
+void UProjectProject01LobbyWidget::HandleSurvivorPracticeClicked() { StartTutorial(false,true); }
+void UProjectProject01LobbyWidget::HandleMannequinPracticeClicked() { StartTutorial(true,true); }
+void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin,bool bFreePractice)
 {
 	auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
 	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || Lobby->IsRequestInFlight() || bTravelRequested || bGameStartFadeActive) return;
@@ -5268,9 +5284,11 @@ void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin)
 	bTravelRequested=true; SetIsEnabled(false);
 	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenToBlack(0.6f);
 	const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
-	GetWorld()->GetTimerManager().SetTimer(TutorialTravelTimer,[Weak,bMannequin,TutorialMap]()
+	GetWorld()->GetTimerManager().SetTimer(TutorialTravelTimer,[Weak,bMannequin,bFreePractice,TutorialMap]()
 	{
-		if (auto* Self=Weak.Get()) UGameplayStatics::OpenLevel(Self,TutorialMap,true,bMannequin ? TEXT("TutorialRole=Mannequin") : TEXT("TutorialRole=Survivor"));
+		FString Options=bMannequin ? TEXT("TutorialRole=Mannequin") : TEXT("TutorialRole=Survivor");
+		if (bFreePractice) Options+=TEXT("?FreePractice=1");
+		if (auto* Self=Weak.Get()) UGameplayStatics::OpenLevel(Self,TutorialMap,true,Options);
 	},0.65f,false);
 }
 void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
@@ -6524,6 +6542,10 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     SurvivorTutorial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleSurvivorTutorialClicked);
     auto* MannequinTutorial=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("마네킹 튜토리얼"));
     MannequinTutorial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMannequinTutorialClicked);
+    auto* SurvivorPractice=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("생존자 연습모드"));
+    SurvivorPractice->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleSurvivorPracticeClicked);
+    auto* MannequinPractice=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("마네킹 연습모드"));
+    MannequinPractice->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMannequinPracticeClicked);
     auto* TutorialBack=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("뒤로가기"));
     TutorialBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
 

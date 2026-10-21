@@ -3046,6 +3046,19 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 	}
 
 	// 직접 조작은 계속 유지하고, 빙의 해제 뒤 AI가 이어서 수행할 명령만 저장한다.
+	AssignMannequinCommand(Target,Command);
+	RequestingController->bManualMannequinCommandIssued = true;
+	RequestingController->ForceNetUpdate();
+	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
+		TEXT("MultiplayerMannequinCommand"),
+		FString::Printf(TEXT("Controller=%s; Slot=%d; Command=%s"),
+			*GetNameSafe(RequestingController), Target->GetControlSlot(), *UEnum::GetValueAsString(Command)), Target);
+	return true;
+}
+
+void AMultiplayTestGameMode::AssignMannequinCommand(AMannequinAICharacter* Target,EMultiplayMannequinCommand Command)
+{
+	if (!HasAuthority() || !IsValid(Target)) return;
 	Target->SetMultiplayCommand(Command);
 	MultiplayerPatrolTargets.Remove(Target);
 	MultiplayerPatrolNextTargets.Remove(Target);
@@ -3054,13 +3067,6 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 	MultiplayerObservationBaseYaw.Remove(Target);
 	MultiplayerObservedChaseTargets.Remove(Target);
 	MultiplayerSearchStates.Remove(Target);
-	RequestingController->bManualMannequinCommandIssued = true;
-	RequestingController->ForceNetUpdate();
-	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
-		TEXT("MultiplayerMannequinCommand"),
-		FString::Printf(TEXT("Controller=%s; Slot=%d; Command=%s"),
-			*GetNameSafe(RequestingController), Target->GetControlSlot(), *UEnum::GetValueAsString(Command)), Target);
-	return true;
 }
 
 bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerController* RequestingController)
@@ -3072,6 +3078,12 @@ bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerCon
 	{
 		return false;
 	}
+	return ResetFollowingMannequinCommands();
+}
+
+bool AMultiplayTestGameMode::ResetFollowingMannequinCommands()
+{
+	if (!HasAuthority()) return false;
 	bool bChangedAny = false;
 	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
 	{
@@ -3079,10 +3091,7 @@ bool AMultiplayTestGameMode::TryResetFollowingMannequins(AMultiplayTestPlayerCon
 		if (IsValid(Mannequin) &&
 			Mannequin->GetMultiplayCommand() == EMultiplayMannequinCommand::FollowMannequinPlayer)
 		{
-			Mannequin->SetMultiplayCommand(EMultiplayMannequinCommand::Patrol);
-			MultiplayerPatrolTargets.Remove(Mannequin);
-			MultiplayerObservedChaseTargets.Remove(Mannequin);
-			MultiplayerSearchStates.Remove(Mannequin);
+			AssignMannequinCommand(Mannequin,EMultiplayMannequinCommand::Patrol);
 			bChangedAny = true;
 		}
 	}
@@ -3093,10 +3102,16 @@ bool AMultiplayTestGameMode::ToggleMannequinCatchDamage(AMultiplayTestPlayerCont
 {
 	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
 		AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return bGlobalMannequinCatchDamageEnabled;
-	bGlobalMannequinCatchDamageEnabled = !bGlobalMannequinCatchDamageEnabled;
+	SetGlobalMannequinCatchDamage(!bGlobalMannequinCatchDamageEnabled);
+	return bGlobalMannequinCatchDamageEnabled;
+}
+
+void AMultiplayTestGameMode::SetGlobalMannequinCatchDamage(bool bEnabled)
+{
+	if (!HasAuthority()) return;
+	bGlobalMannequinCatchDamageEnabled = bEnabled;
 	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
 		if (IsValid(*It)) It->SetCatchDamageEnabled(bGlobalMannequinCatchDamageEnabled);
-	return bGlobalMannequinCatchDamageEnabled;
 }
 
 bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* RequestingController)

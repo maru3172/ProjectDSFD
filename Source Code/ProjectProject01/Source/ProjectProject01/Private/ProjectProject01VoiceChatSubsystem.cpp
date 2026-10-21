@@ -126,7 +126,7 @@ void UProjectProject01VoiceChatSubsystem::CancelVoiceRequests()
 
 void UProjectProject01VoiceChatSubsystem::StopSession(bool bPreservePreferences)
 {
-	AppliedTransmitState=-1;AppliedPeerGains.Reset();
+	AppliedTransmitState=-1;AppliedPeerGains.Reset();SmoothedPeerDistanceGains.Reset();
 	LastAudibilityUpdateSeconds=0;bAuthoritativeVoiceAllowed=false;AuthoritativePeerGains.Reset();
 	++SessionGeneration; // Invalidate before cancellation or provider callbacks can run.
 	bConfiguredForSurvivor = false;
@@ -262,11 +262,12 @@ void UProjectProject01VoiceChatSubsystem::Tick(float DeltaTime)
 	if (!bJoinedChannel || VoiceUser == nullptr || ChannelName.IsEmpty()) return;
 	RosterRefreshSeconds+=DeltaTime;
 	if(RosterRefreshSeconds>=15){RosterRefreshSeconds=0;RefreshParticipantNames();}
-	PositionUpdateAccumulatorSeconds += DeltaTime;
-	if (PositionUpdateAccumulatorSeconds < FMath::Max(0.02f, PositionUpdateIntervalSeconds)) return;
-	PositionUpdateAccumulatorSeconds = 0.0f;
-	// EOSVoiceChat UE5.8 does not implement Set3DPosition. Apply the server's distance gain instead.
-	for(const FString& Id:GetVoiceParticipants())ApplyParticipantReceiveSettings(Id);
+	// The server still sends distance decisions at 10Hz. Blend them every client
+	// frame instead of applying another 100ms stair-step in the EOS receive gain.
+	const TArray<FString> Participants=GetVoiceParticipants();
+	for(auto It=SmoothedPeerDistanceGains.CreateIterator();It;++It)
+		if(!Participants.Contains(It.Key())) { AppliedPeerGains.Remove(It.Key());It.RemoveCurrent(); }
+	for(const FString& Id:Participants)ApplyParticipantReceiveSettings(Id,DeltaTime);
 }
 
 void UProjectProject01VoiceChatSubsystem::ApplyRuntimeEosConfiguration()

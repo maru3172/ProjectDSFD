@@ -121,6 +121,8 @@ class PROJECTPROJECT01_API UProjectProject01MannequinStatusWidget final : public
 	GENERATED_BODY()
 	friend class FProjectMannequinCameraTest;
 
+public:
+	float GetContentBottom();
 protected:
 	virtual bool Initialize() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -1016,7 +1018,9 @@ private:
     UFUNCTION() void HandleTutorialClicked();
     UFUNCTION() void HandleSurvivorTutorialClicked();
     UFUNCTION() void HandleMannequinTutorialClicked();
-    void StartTutorial(bool bMannequin);
+    UFUNCTION() void HandleSurvivorPracticeClicked();
+    UFUNCTION() void HandleMannequinPracticeClicked();
+    void StartTutorial(bool bMannequin,bool bFreePractice=false);
     bool bShowingTutorial=false;
     FTimerHandle TutorialTravelTimer;
     UFUNCTION() void HandleRandomMatchClicked();

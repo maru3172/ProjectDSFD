@@ -125,6 +125,9 @@ public:
 	virtual void SetPlayerDefaults(APawn* PlayerPawn) override;
 	virtual void HandleSeamlessTravelPlayer(AController*& Controller) override;
 
+protected:
+	virtual class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
+
 private:
 	void UpdateVoiceAudibility();
 	float VoiceAudibilityAccumulator=0;
@@ -161,7 +164,9 @@ private:
 	bool IsActiveSurvivorTarget(const class APlayerCharacter* Survivor) const;
 	bool CanMannequinDetectSurvivor(const class AMannequinAICharacter* Mannequin,
 		const class APlayerCharacter* Survivor) const;
-	class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
+	void AssignMannequinCommand(class AMannequinAICharacter* Target, EMultiplayMannequinCommand Command);
+	bool ResetFollowingMannequinCommands();
+	void SetGlobalMannequinCatchDamage(bool bEnabled);
 	bool SelectNextPatrolTarget(class AMannequinAICharacter* Mannequin,
 		const FVector& SearchOrigin, FVector& OutTarget);
 	void MoveMannequinToPatrolTarget(class AMannequinAICharacter* Mannequin, class AAIController* AIController);

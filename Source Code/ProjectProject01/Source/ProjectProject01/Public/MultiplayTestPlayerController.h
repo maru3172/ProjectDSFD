@@ -120,6 +120,8 @@ public:
 	void SetViewedMannequin(class AMannequinAICharacter* Mannequin);
 	FRotator ResolveMannequinCameraRotation(class AMannequinAICharacter* Mannequin, float DeltaSeconds);
 	bool IsMannequinCameraAligning() const { return bManualCameraAligning; }
+	bool IsInitialGameplayPresentationReady() const { return !bInitialGameplayFadePending && !bInitialGameplayFadeScheduled; }
+	float GetMannequinStatusBottom() const;
 	bool IsManualMannequinCameraReady() const { return bCameraWasManual && !bManualCameraAligning; }
 	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
 	const FString& GetAuthenticatedDisplayName() const { return AuthenticatedDisplayName; }

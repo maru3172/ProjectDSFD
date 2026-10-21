@@ -739,10 +739,15 @@ bool FProjectReviewSynthStopTest::RunTest(const FString&)
     TestFalse(TEXT("F23 completed capture does not remain an active audio source"),Capture->IsPlaying());
     const FString Root=FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("ReviewRemediation/NativeOutbox"),FGuid::NewGuid().ToString(EGuidFormats::Digits));
     FString Path,Again;
-    TestTrue(TEXT("F26 native producer persists its durable envelope"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),TEXT("{\"matchId\":\"fixture\"}"),Path));
-    TestTrue(TEXT("F26 duplicate enqueue uses the same journal"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),TEXT("{\"matchId\":\"fixture\"}"),Again)&&Path==Again);
+    const FString Body=TEXT("{\"matchId\":\"9b4e0ce7-56bb-41ae-a02e-6b2e63e6f721\"}");
+    TestTrue(TEXT("F26 native producer persists its durable envelope"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),Body,Path));
+    TestTrue(TEXT("F26 duplicate enqueue uses the same journal"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),Body,Again)&&Path==Again);
     FString Text;FFileHelper::LoadFileToString(Text,*Path);TestFalse(TEXT("F26 journal has no bearer or server secret"),Text.Contains(TEXT("Secret"))||Text.Contains(TEXT("Bearer")));
     TestTrue(TEXT("F26 retry classification matches host recovery"),FProjectResultOutbox::IsTransient(503)&&FProjectResultOutbox::IsTransient(0)&&!FProjectResultOutbox::IsTransient(403));
+    FString Excluded;
+    TestFalse(TEXT("Local PIE journals cannot enter production recovery"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/complete"),TEXT("{\"matchId\":\"LocalPIE-UEDPIE_0_MultiplayTest\"}"),Excluded));
+    TestTrue(TEXT("Excluded PIE result never creates a journal path"),Excluded.IsEmpty());
+    TestFalse(TEXT("Malformed result JSON is not persisted"),FProjectResultOutbox::Persist(Root,TEXT("http://127.0.0.1:59999"),TEXT("/api/server/matches/results"),TEXT("broken"),Excluded));
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectNetworkIsolationTest,"ProjectProject01.Review.NetworkIsolation",

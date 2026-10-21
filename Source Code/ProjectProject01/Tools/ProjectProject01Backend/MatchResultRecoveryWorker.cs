@@ -66,6 +66,19 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
             if(item.GetProperty("schema").GetInt32()!=1)throw new InvalidDataException("Journal schema");
             string route=item.GetProperty("route").GetString()??"";
             if(route is not("/api/server/matches/results" or "/api/server/matches/complete"))throw new InvalidDataException("Journal route");
+            using var body=JsonDocument.Parse(item.GetProperty("body").GetString()??"");
+            string matchId=body.RootElement.GetProperty("matchId").GetString()??"";
+            if(!Guid.TryParse(matchId,out _))
+            {
+                // Old editor journals are evidence, not real matches. Keep their exact bytes without HTTP or deletion.
+                bool isLocalTest=matchId.StartsWith("LocalPIE-",StringComparison.OrdinalIgnoreCase);
+                string preserved=path+(isLocalTest?".local-test":".invalid");
+                if(File.Exists(preserved))preserved=path+"."+Guid.NewGuid().ToString("N")+(isLocalTest?".local-test":".invalid");
+                File.Move(path,preserved);
+                if(isLocalTest)logger.LogInformation("에디터 로컬 테스트 경기 기록은 전송하지 않고 보관: {Path}",preserved);
+                else logger.LogWarning("경기 ID 형식이 잘못된 복구 기록 보관: {Path}",preserved);
+                return;
+            }
             if(!Uri.TryCreate(item.GetProperty("backend").GetString(),UriKind.Absolute,out var target)||target.Scheme is not("http" or "https")||target.AbsolutePath!="/"||!string.IsNullOrEmpty(target.UserInfo))throw new InvalidDataException("Journal origin");
             // Never send this host's secret to a foreign backend, DNS name or redirect.
             if(!IPAddress.TryParse(target.Host,out var ip))return;

@@ -26,9 +26,9 @@ namespace ProjectDFSDUI
 	FLinearColor Muted(){return FLinearColor(.48f,.51f,.56f,1);}
 	FLinearColor Accent(){return FLinearColor(.45f,.12f,.08f,1);}
 	FLinearColor Danger(){return FLinearColor(1,.32f,.22f,1);}
-	const FButtonStyle& ButtonStyle(bool bSelected)
+	const FButtonStyle& TitleButtonStyle()
 	{
-		static const FButtonStyle Normal=[]
+		static const FButtonStyle Style=[]
 		{
 			auto S=FCoreStyle::Get().GetWidgetStyle<FButtonStyle>(TEXT("Button"));
 			// The title's original quiet translucent controls are the reference, not gray boxed buttons.
@@ -39,6 +39,18 @@ namespace ProjectDFSDUI
 			 .SetNormalForeground(Text()).SetHoveredForeground(FLinearColor(.98f,.94f,.88f))
 			 .SetPressedForeground(Text()).SetDisabledForeground(Muted())
 			 .SetNormalPadding(FMargin(14,8)).SetPressedPadding(FMargin(15,9));return S;
+		}();
+		return Style;
+	}
+	const FButtonStyle& ButtonStyle(bool bSelected)
+	{
+		static const FButtonStyle Normal=[]
+		{
+			auto S=TitleButtonStyle();
+			// Non-title windows need a visible resting surface, without lifting the whole horror backdrop.
+			S.SetNormal(FSlateRoundedBoxBrush(FLinearColor(.026f,.032f,.041f,.96f),2.f,FLinearColor(.08f,.095f,.12f,.7f),1.f))
+			 .SetDisabled(FSlateRoundedBoxBrush(FLinearColor(.012f,.015f,.020f,.85f),2.f,FLinearColor(.035f,.042f,.055f,.6f),1.f));
+			return S;
 		}();
 		static const FButtonStyle Selected=[]
 		{

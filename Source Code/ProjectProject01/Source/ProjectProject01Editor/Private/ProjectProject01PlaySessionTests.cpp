@@ -13,6 +13,7 @@
 #include "PlayInEditorDataTypes.h"
 #include "Settings/LevelEditorPlaySettings.h"
 #include "UObject/UnrealType.h"
+#include "Kismet/GameplayStatics.h"
 
 namespace ProjectPlayTests
 {
@@ -35,6 +36,8 @@ void FProjectTutorialEditorPracticeTest::GetTests(TArray<FString>& Names,TArray<
 {
 	Names.Add(TEXT("Survivor")); Commands.Add(TEXT("Survivor"));
 	Names.Add(TEXT("Mannequin")); Commands.Add(TEXT("Mannequin"));
+	Names.Add(TEXT("FreeSurvivor")); Commands.Add(TEXT("FreeSurvivor"));
+	Names.Add(TEXT("FreeMannequin")); Commands.Add(TEXT("FreeMannequin"));
 }
 bool FProjectTutorialEditorPracticeTest::RunTest(const FString& Role)
 {
@@ -44,42 +47,50 @@ bool FProjectTutorialEditorPracticeTest::RunTest(const FString& Role)
 	Defaults->GetPlayNumberOfClients(Clients); Defaults->GetPlayNetMode(NetMode); Defaults->GetRunUnderOneProcess(OneProcess);
 	const FString PreviousURL=GEditor->UserEditedPlayWorldURL;
 	const TWeakObjectPtr<UWorld> EditorWorld=GEditor->GetEditorWorldContext().World();
-	TestTrue(TEXT("Role-specific menu starts offline practice"),UProjectProject01TutorialEditorLibrary::StartPractice(Role==TEXT("Mannequin")));
+	const bool bFree=Role.StartsWith(TEXT("Free")),bMannequin=Role.EndsWith(TEXT("Mannequin"));
+	TestTrue(TEXT("Role-specific menu starts offline practice"),UProjectProject01TutorialEditorLibrary::StartPractice(bMannequin,bFree));
 	GEditor->StartQueuedPlaySessionRequest();
 	const double Deadline=FPlatformTime::Seconds()+45;
 	struct FReplayState { int32 Stage=0; FName Intro; TWeakObjectPtr<UWorld> Previous; };
 	const auto Replay=MakeShared<FReplayState>();
-	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,Role,Clients,NetMode,OneProcess,PreviousURL,EditorWorld,Deadline,Replay]()
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,bMannequin,bFree,Clients,NetMode,OneProcess,PreviousURL,EditorWorld,Deadline,Replay]()
 	{
 		for (const auto& Context:GEngine->GetWorldContexts())
 		{
 			auto* World=Context.World(); if (!World || World->WorldType!=EWorldType::PIE) continue;
 			auto* Mode=World->GetAuthGameMode<AProjectProject01TutorialGameMode>();
-			if (!Mode || !Mode->GetCurrentStep()) continue;
+			if (!Mode || (!bFree && !Mode->GetCurrentStep())) continue;
 			auto* PC=Cast<AMultiplayTestPlayerController>(World->GetFirstPlayerController());
-			if (!PC || (Role==TEXT("Mannequin") ? !PC->GetViewedMannequin() : !PC->GetPawn())) continue;
+			if (!PC || (bMannequin ? !PC->GetViewedMannequin() : !PC->GetPawn())) continue;
+			if (bFree && !UGameplayStatics::IsGamePaused(World)) continue;
 			if (Replay->Stage>0)
 			{
 				if (World==Replay->Previous.Get()) continue;
-				TestEqual(TEXT("Replays preserve the selected role"),Mode->IsMannequinTutorial(),Role==TEXT("Mannequin"));
+				TestEqual(TEXT("Replays preserve the selected role"),Mode->IsMannequinTutorial(),bMannequin);
 				TestTrue(TEXT("Replayed instructions still require explicit confirmation"),Mode->IsAwaitingRead());
 				if (Replay->Stage==1)
 				{
-					TestTrue(TEXT("Practical replay skips repeated controls and starts at escape/capture"),Mode->GetCurrentStep()->Condition==(Role==TEXT("Mannequin") ? EProjectTutorialCondition::Capture : EProjectTutorialCondition::Trigger));
+					TestTrue(TEXT("Practical replay skips repeated controls and starts at escape/capture"),Mode->GetCurrentStep()->Condition==(bMannequin ? EProjectTutorialCondition::Capture : EProjectTutorialCondition::Trigger));
 					Replay->Stage=2; Replay->Previous=World; Mode->RestartTutorial(false); return false;
 				}
 				TestTrue(TEXT("Full replay restores the initial role explanation"),Mode->GetCurrentStep()->Id==Replay->Intro);
 				ProjectPlayTests::EndSession(this); return true;
 			}
 			TestEqual(TEXT("Practice is standalone, never a dedicated/client session"),World->GetNetMode(),NM_Standalone);
-			TestEqual(TEXT("Chosen editor role reaches the actual tutorial GameMode"),Mode->IsMannequinTutorial(),Role==TEXT("Mannequin"));
-			TestTrue(TEXT("Central role instructions wait for acknowledgement"),Mode->IsAwaitingRead());
+			TestEqual(TEXT("Chosen editor role reaches the actual tutorial GameMode"),Mode->IsMannequinTutorial(),bMannequin);
+			if (!bFree) TestTrue(TEXT("Central role instructions wait for acknowledgement"),Mode->IsAwaitingRead());
 			int32 CurrentClients=0; EPlayNetMode CurrentMode; bool CurrentProcess=false;
 			const auto* Current=GetDefault<ULevelEditorPlaySettings>();
 			Current->GetPlayNumberOfClients(CurrentClients); Current->GetPlayNetMode(CurrentMode); Current->GetRunUnderOneProcess(CurrentProcess);
 			TestTrue(TEXT("Normal multiplayer PIE preferences are unchanged"),Clients==CurrentClients && NetMode==CurrentMode && OneProcess==CurrentProcess);
 			TestEqual(TEXT("One-shot role URL is restored"),GEditor->UserEditedPlayWorldURL,PreviousURL);
 			TestTrue(TEXT("The edited map remains open and is not replaced"),GEditor->GetEditorWorldContext().World()==EditorWorld.Get());
+			if (bFree)
+			{
+				TestTrue(TEXT("Free practice waits in its separate settings, not tutorial instructions"),Mode->IsFreePractice() && Mode->IsPracticeMenuOpen() && !Mode->GetCurrentStep());
+				Mode->ShowPracticeMenu(false);TestFalse(TEXT("Closing the practice panel resumes PIE"),UGameplayStatics::IsGamePaused(World));
+				ProjectPlayTests::EndSession(this);return true;
+			}
 			Replay->Intro=Mode->GetCurrentStep()->Id; Replay->Stage=1; Replay->Previous=World;
 			Mode->RestartTutorial(true); return false;
 		}

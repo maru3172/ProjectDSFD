@@ -16,6 +16,8 @@ using MySqlConnector;
 const int AccessTokenMinutes = 30;
 const int RefreshTokenDays = 30;
 
+// Match the helper's redirected UTF-8 reader; never inherit a legacy Windows code page.
+Console.OutputEncoding = new UTF8Encoding(false);
 var builder = WebApplication.CreateBuilder(args);
 var localConfigurationPath = Path.Combine(
     builder.Environment.ContentRootPath,

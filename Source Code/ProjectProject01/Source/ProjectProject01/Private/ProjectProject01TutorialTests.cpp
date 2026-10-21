@@ -17,9 +17,17 @@
 #include "Slate/WidgetRenderer.h"
 #include "RenderingThread.h"
 #include "Components/BoxComponent.h"
+#include "Components/Border.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/VerticalBox.h"
+#include "Components/SpinBox.h"
+#include "Components/Slider.h"
+#include "Components/CheckBox.h"
+#include "Kismet/GameplayStatics.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "NavigationSystem.h"
+#include "AIController.h"
 #include "UnrealClient.h"
 #include "Misc/PackageName.h"
 
@@ -85,6 +93,82 @@ bool FProjectTutorialTest::RunTest(const FString&)
 	TestTrue(TEXT("Mannequin exercise ends by capture of one practice survivor"),Mode->Plan->MannequinSteps.Last().Condition==EProjectTutorialCondition::Capture && Mode->Plan->MannequinSteps.Last().RequiredAmount==1);
 	TestEqual(TEXT("Practical replay button wording"),CastChecked<UTextBlock>(UI->RestartButton->GetContent())->GetText().ToString(),FString(TEXT("실전 연습")));
 	TestEqual(TEXT("Full tutorial replay has a separate button"),CastChecked<UTextBlock>(UI->FullRestartButton->GetContent())->GetText().ToString(),FString(TEXT("튜토리얼 처음부터 다시하기")));
+	// Role separation, authored line breaks and deliberate practice requirements.
+	TestEqual(TEXT("Survivor has five independent pages and no ping/voice exercise"),Mode->Plan->SurvivorSteps.Num(),5);
+	TestEqual(TEXT("Mannequin has its own seven pages"),Mode->Plan->MannequinSteps.Num(),7);
+	TestEqual(TEXT("Commanded handoff requires three repetitions"),Mode->Plan->MannequinSteps[5].RequiredAmount,3.f);
+	TestTrue(TEXT("Capture instructions explain the manual player's damage exception"),Mode->Plan->MannequinSteps.Last().Instructions.ToString().Contains(TEXT("(단, 마네킹 플레이어는 접촉 데스카운트를 비활성화 시켜도 언제든 소모시킬 수 있습니다.)")));
+	TestEqual(TEXT("Survivor must continuously observe for three seconds"),Mode->Plan->SurvivorSteps[3].RequiredAmount,3.f);
+	TestTrue(TEXT("Both movement exercises require sustained active practice"),Mode->Plan->SurvivorSteps[1].MinimumPracticeSeconds>=4 && Mode->Plan->SurvivorSteps[2].MinimumPracticeSeconds>=4);
+	Mode->bFinishing=false; Mode->bResultVisible=false; Mode->bClosingConfirmed=false;
+	Mode->StepIndex=2; Mode->EnterStep(); UI->NativeTick(FGeometry(),0);
+	TestEqual(TEXT("Survivor page has only the survivor heading"),UI->Heading->GetText().ToString(),FString(TEXT("생존자 튜토리얼")));
+	TestTrue(TEXT("Sprint explanation retains a blank line after its opening sentence"),UI->Body->GetText().ToString().Contains(TEXT("달릴 수 있습니다.\n\n달릴 때 스태미나가 소모되며")));
+	TestFalse(TEXT("Author's practice notes never become visible instructions"),UI->Body->GetText().ToString().Contains(TEXT("목표 갱신")));
+	Mode->ContinueTutorial(); Mode->Progress=Mode->GetCurrentStep()->RequiredAmount;
+	Mode->PracticeSeconds=1;
+	TestFalse(TEXT("Distance alone cannot skip a sustained movement exercise"),Mode->TryFinishPracticeStep());
+	Mode->PracticeSeconds=4;
+	TestTrue(TEXT("Distance and active time together complete movement"),Mode->TryFinishPracticeStep());
+	TestTrue(TEXT("Sprint leads to observation, never to mannequin controls"),Mode->GetCurrentStep()->Condition==EProjectTutorialCondition::ObserveMannequin);
+
+	Mode->bMannequin=true; Mode->Steps=Mode->Plan->MannequinSteps;
+	Mode->StepIndex=0; Mode->EnterStep(); UI->NativeTick(FGeometry(),0);
+	TestEqual(TEXT("Mannequin page has only the mannequin heading"),UI->Heading->GetText().ToString(),FString(TEXT("마네킹 튜토리얼")));
+	TestTrue(TEXT("Intro preserves authored internal line breaks"),UI->Body->GetText().ToString().Contains(TEXT("생존자가 바라보는 마네킹은 멈추게 되며\n이들이 바라보지 않는 시야에서")));
+	auto* First=World->SpawnActor<AMannequinAICharacter>();
+	auto* Second=World->SpawnActor<AMannequinAICharacter>();
+	PC->UnPossess(); PC->SetServerMatchState(EMultiplayTestMatchPhase::InProgress,EMultiplayTestSurvivorState::NotApplicable);
+	PC->SetViewedMannequin(First);
+	Mode->StepIndex=1; Mode->EnterStep(); Mode->ContinueTutorial();
+	Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
+	TestEqual(TEXT("Pressing the already selected number does not count"),Mode->Progress,0.f);
+	for (auto* Next:{Second,First}) { PC->SetViewedMannequin(Next); Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin); }
+	TestEqual(TEXT("Two real viewpoint changes are not yet three"),Mode->StepIndex,1);
+	PC->SetViewedMannequin(Second); Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
+	TestEqual(TEXT("Three viewpoint changes reach manual-control instructions"),Mode->StepIndex,2);
+	Mode->StepIndex=4; Mode->EnterStep();
+	PC->Possess(Second); Second->SetManualControlEnabled(true); PC->SetViewedMannequin(Second);
+	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
+	TestEqual(TEXT("Commands during the explanation do not count"),Mode->Progress,0.f);
+	Mode->ContinueTutorial();
+	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
+	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
+	TestEqual(TEXT("Rapid commands wait for the resulting state to be visible"),Mode->Progress,0.f);
+	UI->NativeTick(FGeometry(),.1f);
+	TestTrue(TEXT("Goal text is below the role HUD, not at its old overlapping position"),CastChecked<UCanvasPanelSlot>(UI->ObjectiveStack->GetParent()->Slot)->GetPosition().Y>PC->GetMannequinStatusBottom());
+	TestTrue(TEXT("The active goal stack is visible during practice"),UI->ObjectiveStack->GetVisibility()==ESlateVisibility::HitTestInvisible);
+	for (int32 Frame=0;Frame<11;++Frame) Mode->Tick(.1f);
+	TestEqual(TEXT("One observed command counts once"),Mode->Progress,1.f);
+	for (auto Action:{EProjectTutorialCondition::ResetFollow,EProjectTutorialCondition::ToggleContactDamage,EProjectTutorialCondition::DirectAttack}) Mode->RecordAction(PC,Action);
+	Mode->Tick(.1f);
+	TestEqual(TEXT("Q/B/attack are optional, not required command checks"),Mode->Progress,1.f);
+	Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
+	for (int32 Frame=0;Frame<11;++Frame) Mode->Tick(.1f);
+	TestEqual(TEXT("The same patrol command may be practiced again"),Mode->Progress,2.f);
+	Mode->RecordAction(PC,EProjectTutorialCondition::ChaseCommand);
+	for (int32 Frame=0;Frame<11;++Frame) Mode->Tick(.1f);
+	TestEqual(TEXT("Any three observed Z/X/C commands reach the handoff exercise"),Mode->StepIndex,5);
+	Mode->ContinueTutorial();
+	PC->UnPossess(); Second->SetManualControlEnabled(false); PC->SetViewedMannequin(First);
+	Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
+	TestFalse(TEXT("Switching without a preceding command cannot satisfy a handoff"),Mode->ReleasedMannequin.IsValid());
+	// Three commanded releases must return to AI and be observed.
+	Mode->Steps.Last().Condition=EProjectTutorialCondition::Continue; // No final NPC spawn in this isolated fixture.
+	for (int32 Cycle=0;Cycle<3;++Cycle)
+	{
+		PC->Possess(Second); Second->SetManualControlEnabled(true); PC->SetViewedMannequin(Second);
+		Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
+		Mode->RecordAction(PC,EProjectTutorialCondition::PatrolCommand);
+		PC->UnPossess(); Second->SetManualControlEnabled(false); Second->SpawnDefaultController(); PC->SetViewedMannequin(First);
+		Mode->RecordAction(PC,EProjectTutorialCondition::SelectMannequin);
+		TestTrue(TEXT("Commanded body is tracked after another number is selected"),Mode->ReleasedMannequin==Second);
+		TestNotNull(TEXT("The released mannequin has a real AI controller"),Cast<AAIController>(Second->GetController()));
+		for (int32 Frame=0;Frame<10;++Frame) Mode->Tick(.1f);
+		TestEqual(TEXT("One second of observation cannot finish a handoff"),Mode->StepIndex,5);
+		for (int32 Frame=0;Frame<12;++Frame) Mode->Tick(.1f);
+		TestEqual(TEXT("Each completed handoff counts once; three are required"),Mode->StepIndex,Cycle<2 ? 5 : 6);
+	}
 
 	auto* Objective=PC->FindComponentByClass<UProjectProject01ObjectiveComponent>();
 	if (!TestNotNull(TEXT("Multiplayer controller owns objective replication"),Objective)) return false;
@@ -195,6 +279,11 @@ bool FProjectTutorialRuntimeTest::RunTest(const FString&)
 	if (!TestNotNull(TEXT("Run this test with MultiplayerTutorial as a standalone game"),Mode)) return false;
 	TestTrue(TEXT("Selected role initializes a local practice session"),Mode->bInitialized && Mode->Learner && Mode->Widget);
 	if (!Mode->Learner || !Mode->Widget) return false;
+	if (Mode->IsMannequinTutorial())
+	{
+		TestEqual(TEXT("The saved map uses the three-command practice requirement"),Mode->Steps[4].RequiredAmount,3.f);
+		TestEqual(TEXT("The saved map also requires three commanded handoffs"),Mode->Steps[5].RequiredAmount,3.f);
+	}
 	if (auto* Nav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(Mode->GetWorld()))
 	{
 		FNavLocation Point;
@@ -218,8 +307,68 @@ bool FProjectTutorialRuntimeTest::RunTest(const FString&)
 		auto* Controlled=Cast<AMannequinAICharacter>(Mode->Learner->GetPawn()); APlayerCharacter* Victim=nullptr;
 		for (TActorIterator<APlayerCharacter> It(Mode->GetWorld()); It; ++It) { Victim=*It; break; }
 		if (!TestNotNull(TEXT("Exactly one practice survivor is spawned for the final exercise"),Victim) || !Controlled) return false;
-		Controlled->SetActorLocationAndRotation(Victim->GetActorLocation()+FVector(0,-110,0),FRotator(0,90,0),false,nullptr,ETeleportType::TeleportPhysics);
-		TestTrue(TEXT("The actual authoritative melee attack catches the practice survivor"),Mode->TryMannequinAttack(Mode->Learner));
+		Controlled->SetActorLocationAndRotation(Victim->GetActorLocation()+FVector(-450,0,0),FRotator::ZeroRotator,false,nullptr,ETeleportType::TeleportPhysics);
+		const TWeakObjectPtr<AProjectProject01TutorialGameMode> Exercise(Mode);
+		const TWeakObjectPtr<APlayerCharacter> TargetSurvivor(Victim);
+		const TWeakObjectPtr<AMannequinAICharacter> Body(Controlled);
+		const FVector Start=Victim->GetActorLocation();
+		const float StartTime=Mode->GetWorld()->GetTimeSeconds();
+		const double ExerciseDeadline=FPlatformTime::Seconds()+40;
+		const TSharedRef<float> MaxDistance=MakeShared<float>(0);
+		const TSharedRef<bool> SawWatching=MakeShared<bool>(false), SawLookingAway=MakeShared<bool>(false);
+		struct FMovementScenario { int32 Stage=0; float Since=0; FVector Origin,Previous; float Distance=0,LateTravel=0; bool bHUDShot=false; };
+		const auto MovementScenario=MakeShared<FMovementScenario>();MovementScenario->Since=StartTime;MovementScenario->Origin=Start;MovementScenario->Previous=Start;
+		const FString HUDShot=Directory/TEXT("TutorialHUD-Mannequin.png");
+		ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,Exercise,TargetSurvivor,Body,Start,StartTime,ExerciseDeadline,MaxDistance,SawWatching,SawLookingAway,MovementScenario,HUDShot]()
+		{
+			auto* Current=Exercise.Get(); auto* Survivor=TargetSurvivor.Get(); auto* Mannequin=Body.Get();
+			if (!Current || !Survivor || !Mannequin) { AddError(TEXT("Practice actors disappeared before target movement was checked")); return true; }
+			*MaxDistance=FMath::Max(*MaxDistance,FVector::Dist2D(Start,Survivor->GetActorLocation()));
+			const auto* Threat=Current->FindPracticeThreat(Current->PracticeBots[0]);
+			const FVector ToMannequin=((Threat ? Threat->GetActorLocation() : Mannequin->GetActorLocation())-Survivor->GetActorLocation()).GetSafeNormal2D();
+			const float Dot=FVector::DotProduct(Survivor->GetActorForwardVector(),ToMannequin);
+			*SawWatching|=Dot>.5f; *SawLookingAway|=Dot<0;
+			const float Now=Current->GetWorld()->GetTimeSeconds();
+			if (!MovementScenario->bHUDShot && Now-StartTime>1)
+			{ MovementScenario->bHUDShot=true; FScreenshotRequest::RequestScreenshot(HUDShot,true,false); }
+			MovementScenario->Distance=FMath::Max(MovementScenario->Distance,FVector::Dist2D(MovementScenario->Origin,Survivor->GetActorLocation()));
+			if (Now-MovementScenario->Since>2.5f) MovementScenario->LateTravel+=FVector::Dist2D(MovementScenario->Previous,Survivor->GetActorLocation());
+			MovementScenario->Previous=Survivor->GetActorLocation();
+			if (Now-MovementScenario->Since<5 && FPlatformTime::Seconds()<ExerciseDeadline) return false;
+			TestTrue(FString::Printf(TEXT("Practice survivor keeps moving in scenario %d (open/corner/live obstacle)"),MovementScenario->Stage),MovementScenario->Distance>100);
+			TestTrue(FString::Printf(TEXT("Practice survivor is not only moving at scenario %d startup"),MovementScenario->Stage),MovementScenario->LateTravel>100);
+			if (MovementScenario->Stage<2 && FPlatformTime::Seconds()<ExerciseDeadline)
+			{
+				++MovementScenario->Stage;
+				if (MovementScenario->Stage==1)
+				{
+					Survivor->SetActorLocation(FVector(1750,1120,Survivor->GetActorLocation().Z),false,nullptr,ETeleportType::TeleportPhysics);
+					Mannequin->SetActorLocation(FVector(1250,800,Survivor->GetActorLocation().Z),false,nullptr,ETeleportType::TeleportPhysics);
+					Current->PracticeBots[0].Path.Reset();Current->PracticeBots[0].RepathSeconds=0;
+				}
+				else
+				{
+					// A live blocking object absent from NavMesh must not pin the bot.
+					Survivor->SetActorLocation(FVector(600,0,Survivor->GetActorLocation().Z),false,nullptr,ETeleportType::TeleportPhysics);
+					Mannequin->SetActorLocation(FVector(100,0,Survivor->GetActorLocation().Z),false,nullptr,ETeleportType::TeleportPhysics);
+					auto* Blocker=Current->GetWorld()->SpawnActor<AActor>();
+					auto* Box=NewObject<UBoxComponent>(Blocker);Blocker->SetRootComponent(Box);Box->SetBoxExtent(FVector(80,80,100));
+					Box->SetCollisionProfileName(TEXT("BlockAll"));Box->SetCanEverAffectNavigation(false);Box->RegisterComponent();
+					Blocker->SetActorLocation(Survivor->GetActorLocation()+FVector(170,0,0));
+					Current->PracticeBots[0].Path={Survivor->GetActorLocation(),Survivor->GetActorLocation()+FVector(700,0,0)};
+					Current->PracticeBots[0].PathIndex=1;Current->PracticeBots[0].RepathSeconds=10;
+				}
+				Current->PracticeBots[0].LastLocation=Survivor->GetActorLocation();Current->PracticeBots[0].StuckSeconds=0;Current->PracticeBots[0].AvoidDirection=FVector::ZeroVector;
+				MovementScenario->Since=Now;MovementScenario->Origin=Survivor->GetActorLocation();MovementScenario->Previous=Survivor->GetActorLocation();MovementScenario->Distance=0;MovementScenario->LateTravel=0;return false;
+			}
+			TestTrue(TEXT("Practice survivor actually moves along walkable paths"),*MaxDistance>100);
+			TestTrue(TEXT("Practice survivor alternates watching the mannequin and looking away"),*SawWatching && *SawLookingAway);
+			TestTrue(TEXT("Practice movement never auto-finishes the capture exercise"),!Current->bFinishing);
+			const FVector Behind=Survivor->GetActorLocation()-Survivor->GetActorForwardVector()*110;
+			Mannequin->SetActorLocationAndRotation(Behind,(Survivor->GetActorLocation()-Behind).Rotation(),false,nullptr,ETeleportType::TeleportPhysics);
+			TestTrue(TEXT("The actual authoritative melee attack catches the practice survivor"),Current->TryMannequinAttack(Current->Learner));
+			return true;
+		}));
 	}
 	else
 	{
@@ -231,7 +380,7 @@ bool FProjectTutorialRuntimeTest::RunTest(const FString&)
 	const TWeakObjectPtr<UProjectProject01GameInstance> WeakInstance(Mode->GetGameInstance<UProjectProject01GameInstance>());
 	const TWeakObjectPtr<UWorld> PracticeWorld(Mode->GetWorld());
 	const FString ReturnShot=Directory/(Mode->IsMannequinTutorial() ? TEXT("Returned-Mannequin.png") : TEXT("Returned-Survivor.png"));
-	const double Deadline=FPlatformTime::Seconds()+12;
+	const double Deadline=FPlatformTime::Seconds()+60;
 	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,WeakMode,Deadline]()
 	{
 		auto* Current=WeakMode.Get();
@@ -265,6 +414,362 @@ bool FProjectTutorialRuntimeTest::RunTest(const FString&)
 		if (IFileManager::Get().FileSize(*ReturnShot)>0) return true;
 		if (FPlatformTime::Seconds()<Deadline+12) return false;
 		AddError(TEXT("Returned front-end screenshot was not captured")); return true;
+	}));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectPracticeDirectorTest,"ProjectProject01.Multiplayer.PracticeDirectorCommands",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectPracticeDirectorTest::RunTest(const FString&)
+{
+	const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+	auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+	ON_SCOPE_EXIT { if(World)World->DestroyWorld(false); };
+	if(!TestNotNull(TEXT("Isolated director world"),World))return false;
+	World->SetGameInstance(NewObject<UGameInstance>());FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.ProjectProject01TutorialGameMode"));
+	if(!TestTrue(TEXT("Local multiplayer-derived game mode"),World->SetGameMode(URL)))return false;
+	auto* Mode=World->GetAuthGameMode<AProjectProject01TutorialGameMode>();
+	Mode->bFreePractice=true;Mode->bPracticeDirector=true;Mode->bMannequin=false;Mode->PracticeRandom.Initialize(21941);
+	TArray<AMannequinAICharacter*> Bodies;
+	for(int32 I=0;I<3;++I)
+	{
+		auto* Body=World->SpawnActor<AMannequinAICharacter>(FVector(500+I*250,300,100),FRotator::ZeroRotator);
+		auto* AI=World->SpawnActor<AAIController>();AI->Possess(Body);Bodies.Add(Body);
+	}
+	auto* A=Bodies[0];auto* B=Bodies[1];auto* C=Bodies[2];
+	Mode->SelectPracticeDirectorBody(A);
+	TestTrue(TEXT("Number selection changes focus without starting manual control"),Mode->GetMannequinPlayerFocusPawn()==A && !A->IsManualControlEnabled());
+	TestFalse(TEXT("View-only state cannot issue commands"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer));
+	A->SetManualControlEnabled(true);
+	TestTrue(TEXT("C is accepted only on the controlled body"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer));
+	Mode->SelectPracticeDirectorBody(B);
+	TestTrue(TEXT("C persists when the simulated player leaves its body"),!A->IsManualControlEnabled() && A->GetMultiplayCommand()==EMultiplayMannequinCommand::FollowMannequinPlayer);
+	TestEqual(TEXT("The native follower leader changes with the player's selected body"),Mode->GetMannequinPlayerFocusPawn(),B);
+	B->SetManualControlEnabled(true);Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::ChaseInDetectionRange);
+	TestTrue(TEXT("Q actually resets existing followers"),Mode->ResetPracticeDirectorFollowers());
+	TestTrue(TEXT("Q restores patrol without overwriting unrelated chase commands"),A->GetMultiplayCommand()==EMultiplayMannequinCommand::Patrol && B->GetMultiplayCommand()==EMultiplayMannequinCommand::ChaseInDetectionRange);
+	TestFalse(TEXT("Choosing no further command cannot erase an already issued X"),Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::HoldPosition));
+	Mode->SelectPracticeDirectorBody(C);
+	TestEqual(TEXT("X persists after handoff"),B->GetMultiplayCommand(),EMultiplayMannequinCommand::ChaseInDetectionRange);
+	C->SetManualControlEnabled(true);Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::HoldPosition);Mode->SelectPracticeDirectorBody(A);
+	TestEqual(TEXT("No Z/X/C before handoff produces hold"),C->GetMultiplayCommand(),EMultiplayMannequinCommand::HoldPosition);
+	TestTrue(TEXT("B can turn global contact damage off"),Mode->SetPracticeDirectorContactDamage(false));
+	for(auto* Body:Bodies)TestFalse(TEXT("B applies to every mannequin"),Body->IsCatchDamageEnabled());
+	TestTrue(TEXT("Survivor status shows OFF without the removed direct-control explanation"),Mode->GetPracticeContactDamageText().ToString().Contains(TEXT("비활성화")) && !Mode->GetPracticeContactDamageText().ToString().Contains(TEXT("직접 조작")));
+	Mode->bPracticeDirectorToggleContact=false;
+	TestFalse(TEXT("A disabled permission blocks the AI's B action"),Mode->SetPracticeDirectorContactDamage(true));
+	TestFalse(TEXT("Blocking B does not silently change the current damage mode"),Mode->IsPracticeContactDamageEnabled());
+	Mode->bPracticeDirectorToggleContact=true;TestTrue(TEXT("B can enable global contact damage again"),Mode->SetPracticeDirectorContactDamage(true));
+	for(auto* Body:Bodies)TestTrue(TEXT("B enables every mannequin"),Body->IsCatchDamageEnabled());
+	Mode->Learner=World->SpawnActor<AMultiplayTestPlayerController>();auto* Target=World->SpawnActor<APlayerCharacter>();Mode->Learner->Possess(Target);
+	Mode->NextDirectorAttack=10000;Mode->NextDirectorMove=10000;
+	TSet<EMultiplayMannequinCommand> Commands;TSet<int32> Intervals;TSet<AMannequinAICharacter*> Selected;
+	bool SawB=false,SawQ=false,SawUncommanded=false;
+	for(int32 Sample=0;Sample<300;++Sample)
+	{
+		Mode->NextDirectorDecision=0;Mode->TickPracticeMannequinDirector(.01f);
+		Mode->NextDirectorDecision=10000;Mode->DirectorManualReadyAt=-1;Mode->NextDirectorAction=0;Mode->NextDirectorContactToggle=0;
+		int32 FollowersBefore=0;for(auto* Body:Bodies)FollowersBefore+=Body->GetMultiplayCommand()==EMultiplayMannequinCommand::FollowMannequinPlayer;
+		const bool ContactBefore=Mode->IsPracticeContactDamageEnabled();Mode->TickPracticeMannequinDirector(.01f);
+		int32 FollowersAfter=0;for(auto* Body:Bodies)FollowersAfter+=Body->GetMultiplayCommand()==EMultiplayMannequinCommand::FollowMannequinPlayer;
+		SawQ|=FollowersBefore>0 && FollowersAfter==0;SawB|=ContactBefore!=Mode->IsPracticeContactDamageEnabled();
+		if(auto* Body=Mode->PracticeDirectorBody.Get()){Selected.Add(Body);Commands.Add(Body->GetMultiplayCommand());SawUncommanded|=!Mode->bDirectorCommandIssued;}
+		Intervals.Add(FMath::RoundToInt(Mode->NextDirectorAction*100));
+	}
+	TestTrue(TEXT("Autonomous choices cover Z, X, C, Q, B and uncommanded release"),Commands.Contains(EMultiplayMannequinCommand::Patrol) && Commands.Contains(EMultiplayMannequinCommand::ChaseInDetectionRange) && Commands.Contains(EMultiplayMannequinCommand::FollowMannequinPlayer) && SawQ && SawB && SawUncommanded);
+	TestTrue(TEXT("Body selection and action intervals are not a fixed rotation"),Selected.Num()>1 && Intervals.Num()>10);
+	TSet<uint8> Beats;TSet<int32> BeatIntervals;
+	for(int32 Sample=0;Sample<100;++Sample)
+	{
+		Mode->NextDirectorPacing=0;Mode->UpdatePracticeDirectorPacing(0);Beats.Add(Mode->DirectorBeat);BeatIntervals.Add(FMath::RoundToInt(Mode->NextDirectorPacing*100));
+	}
+	TestTrue(TEXT("Sparring pacing offers pressure, probes, repositioning and pauses at variable intervals"),Beats.Num()==4 && BeatIntervals.Num()>20);
+	Mode->bPracticeDirectorToggleContact=false;
+	const bool FixedContact=Mode->IsPracticeContactDamageEnabled();
+	for(int32 Sample=0;Sample<30;++Sample){Mode->NextDirectorAction=0;Mode->NextDirectorContactToggle=0;Mode->TickPracticeMannequinDirector(.01f);}
+	TestEqual(TEXT("Autonomous ticks honour the contact-switch permission"),Mode->IsPracticeContactDamageEnabled(),FixedContact);
+	Mode->bFreePractice=false;TestFalse(TEXT("The director cannot change real tutorial/multiplayer rules"),Mode->SetPracticeDirectorContactDamage(!FixedContact));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectFreePracticeRuntimeTest,"ProjectProject01.FreePractice.Runtime",
+	EAutomationTestFlags::ClientContext|EAutomationTestFlags::EngineFilter)
+bool FProjectFreePracticeRuntimeTest::RunTest(const FString&)
+{
+	struct FState
+	{
+		int32 Stage=0;TWeakObjectPtr<UWorld> Previous;
+		float Started=0,MaxSpread=0,MinRegroup=100000,NextHit=0;
+		int32 Hits=0;
+		TWeakObjectPtr<AMannequinAICharacter> DirectorBody;FVector DirectorOrigin=FVector::ZeroVector;
+		TWeakObjectPtr<AMannequinAICharacter> Follower,NextLeader;FVector FollowOrigin=FVector::ZeroVector;
+		FVector StandingLocations[2];float StandingYaw[2]={0,0},StandingMaxTurn[2]={0,0};
+		bool Sprint[2]={false,false};bool Cover=false;
+	};
+	const auto State=MakeShared<FState>();const double Deadline=FPlatformTime::Seconds()+240;
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,State,Deadline]()
+	{
+		AProjectProject01TutorialGameMode* Mode=nullptr;UWorld* Front=nullptr;
+		for (const auto& Context:GEngine->GetWorldContexts())
+			if (auto* World=Context.World();World && World->IsGameWorld())
+			{ Front=World;if (auto* Candidate=World->GetAuthGameMode<AProjectProject01TutorialGameMode>()) Mode=Candidate; }
+		if (FPlatformTime::Seconds()>Deadline)
+		{ AddError(FString::Printf(TEXT("Free practice timed out at stage %d"),State->Stage));if (Mode) UGameplayStatics::SetGamePaused(Mode,false);return true; }
+		if (State->Stage==7)
+		{
+			if (!Mode && Front && Front!=State->Previous.Get() && Front->HasBegunPlay())
+			{ TestTrue(TEXT("Practice returns safely to the front end"),Front->GetMapName().Contains(TEXT("LoginLevel")) || Front->GetMapName().Contains(TEXT("LobbyLevel")));return true; }
+			return false;
+		}
+		if (!Mode || !Mode->bInitialized || !Mode->PracticeWidget || Mode->bPracticeAwaitingPresentation) return false;
+		auto* UI=Mode->PracticeWidget.Get();auto* World=Mode->GetWorld();
+		auto CountMannequins=[World]() { int32 Count=0;for (TActorIterator<AMannequinAICharacter> It(World);It;++It) if (IsValid(*It)) ++Count;return Count; };
+		auto Capture=[this,UI](const TCHAR* Name)
+		{
+			UI->NativeTick(FGeometry(),0);const auto Slate=UI->WidgetTree->RootWidget->TakeWidget();FWidgetRenderer Renderer(true);
+			auto* Target=Renderer.DrawWidget(Slate,FVector2D(1280,720));FlushRenderingCommands();FBufferArchive Data;
+			const FString Directory=FPaths::ProjectSavedDir()/TEXT("ReviewRemediation/FreePracticeUI");IFileManager::Get().MakeDirectory(*Directory,true);
+			TestTrue(TEXT("Practice controls render and save"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Data) && FFileHelper::SaveArrayToFile(Data,*(Directory/Name)));
+		};
+		if (State->Stage==0)
+		{
+			TestTrue(TEXT("Free practice is separate from tutorial progression"),Mode->IsFreePractice() && !Mode->Widget && !Mode->GetCurrentStep());
+			TestTrue(TEXT("Initial configuration is paused only after presentation readiness"),UGameplayStatics::IsGamePaused(Mode));
+			TestEqual(TEXT("Requested mannequin count is spawned exactly"),CountMannequins(),4);
+			if (!TestEqual(TEXT("Two independently controlled survivor bots"),Mode->PracticeBots.Num(),2)) return true;
+			TestTrue(TEXT("Bots have distinct identities and pawns"),Mode->PracticeBots[0].Controller!=Mode->PracticeBots[1].Controller && Mode->PracticeBots[0].Pawn!=Mode->PracticeBots[1].Pawn);
+			UI->NativeTick(FGeometry(),0);
+			TestTrue(TEXT("Player AI toggle belongs only to survivor practice"),UI->DirectorToggle->GetVisibility()==ESlateVisibility::Collapsed && !Mode->IsPracticeDirectorEnabled());
+			TestFalse(TEXT("Infinite lives defaults off"),Mode->HasPracticeInfiniteLives());
+			TestTrue(TEXT("Mannequin practice shows only the survivor-role switch"),UI->SurvivorSwitch->GetVisibility()==ESlateVisibility::Visible && UI->MannequinSwitch->GetVisibility()==ESlateVisibility::Collapsed);
+			TestTrue(TEXT("Both population controls explicitly allow mouse dragging"),UI->MannequinCount->GetEnableSlider() && UI->SurvivorCount->GetEnableSlider());
+			UI->MannequinPlus->OnClicked.Broadcast();TestEqual(TEXT("Mannequin plus button increments without typing"),UI->MannequinCount->GetValue(),5.f);
+			UI->MannequinMinus->OnClicked.Broadcast();TestEqual(TEXT("Mannequin minus button decrements without typing"),UI->MannequinCount->GetValue(),4.f);
+			UI->SurvivorMinus->OnClicked.Broadcast();TestEqual(TEXT("Survivor minus button decrements without typing"),UI->SurvivorCount->GetValue(),1.f);
+			UI->SurvivorPlus->OnClicked.Broadcast();TestEqual(TEXT("Survivor plus button increments without typing"),UI->SurvivorCount->GetValue(),2.f);
+			bool bHasGauge=false;UI->WidgetTree->ForEachWidget([&](UWidget* W){bHasGauge|=W->IsA<USlider>();});
+			TestFalse(TEXT("Separate population gauge bars have been removed"),bHasGauge);
+			UI->NativeTick(FGeometry(),0);
+			TestTrue(TEXT("Plus is disabled at the survivor count cap"),!UI->SurvivorPlus->GetIsEnabled());
+			Capture(TEXT("Mannequin.png"));
+			Mode->PracticeRandom.Initialize(9021);TSet<int32> Decisions;TSet<int32> Intervals;
+			for(int32 Sample=0;Sample<20;++Sample)
+			{
+				Mode->PracticeTacticalSeconds=Sample*10;Mode->NextTacticalDecision=0;Mode->UpdatePracticeTactics();
+				Decisions.Add(Mode->PracticeTacticalPhase);Intervals.Add(FMath::RoundToInt((Mode->NextTacticalDecision-Mode->PracticeTacticalSeconds)*10));
+			}
+			TestTrue(TEXT("Situational decisions and holding intervals are not a fixed three-phase clock"),Decisions.Num()>1 && Intervals.Num()>5);
+			Mode->PracticeTacticalSeconds=0;
+			// Exercise physical tactics explicitly; decision scheduling is checked separately.
+			Mode->PracticeRandom.Initialize(3871);Mode->NextTacticalDecision=10000;Mode->PracticeTacticalPhase=0;
+			for (TActorIterator<AMannequinAICharacter> It(World);It;++It) It->SetMultiplayCommand(EMultiplayMannequinCommand::HoldPosition);
+			UI->HandleToggle();TestFalse(TEXT("Collapse resumes the world"),UGameplayStatics::IsGamePaused(Mode));
+			UI->NativeTick(FGeometry(),0);TestTrue(TEXT("Collapsed panel hides its settings"),UI->SettingsPanel->GetVisibility()==ESlateVisibility::Collapsed);
+			State->Started=World->GetTimeSeconds();State->Stage=1;return false;
+		}
+		if (State->Stage==1)
+		{
+			for (int32 I=0;I<2;++I) { State->Sprint[I]|=Mode->PracticeBots[I].Pawn->IsSprintingForBreathing();State->Cover|=Mode->PracticeBots[I].bCovering; }
+			const float Distance=FVector::Dist2D(Mode->PracticeBots[0].Pawn->GetActorLocation(),Mode->PracticeBots[1].Pawn->GetActorLocation());
+			const float Elapsed=World->GetTimeSeconds()-State->Started;
+			const int32 Phase=Elapsed<8?0:Elapsed<16?1:2;
+			if(Mode->PracticeTacticalPhase!=Phase) { Mode->PracticeTacticalPhase=Phase;for(auto& Bot:Mode->PracticeBots)Bot.RepathSeconds=0; }
+			if (Phase==0) State->MaxSpread=FMath::Max(State->MaxSpread,Distance);
+			if (Phase==1) State->MinRegroup=FMath::Min(State->MinRegroup,Distance);
+			if (World->GetTimeSeconds()-State->Started<24) return false;
+			TestTrue(TEXT("Both survivor bots actually sprint while moving"),State->Sprint[0] && State->Sprint[1]);
+			TestTrue(TEXT("Bots physically regroup after spreading out"),State->MaxSpread-State->MinRegroup>100);
+			TestTrue(TEXT("A survivor actually performs covering watch"),State->Cover);
+			auto* Catcher=Mode->Learner->GetViewedMannequin();
+			TestEqual(TEXT("OFF uses the multiplayer extra-catch count"),Mode->PracticeBots[0].Pawn->GetRemainingDeathCount(),0);
+			Mode->PracticeBots[0].Pawn->HandleMannequinCatch(Catcher);
+			TestFalse(TEXT("Catching one of two survivors does not finish practice"),Mode->bPracticeRoundEnded);
+			Mode->PracticeBots[1].Pawn->HandleMannequinCatch(Catcher);
+			TestTrue(TEXT("Both captures enter the death sequence before practice settings"),Mode->PracticeBots[0].Pawn->IsGameOver() && Mode->PracticeBots[1].Pawn->IsGameOver());
+			State->Stage=2;return false;
+		}
+		if (State->Stage==2)
+		{
+			if (!Mode->IsPracticeMenuOpen()) return false;
+			TestTrue(TEXT("Catching both ends only the local practice round"),Mode->bPracticeRoundEnded);
+			TestTrue(TEXT("Settings are reachable after the end animation"),UGameplayStatics::IsGamePaused(Mode));
+			State->Previous=World;UI->ApplyButton->OnClicked.Broadcast();State->Stage=10;return false;
+		}
+		if (World==State->Previous.Get()) return false;
+		if (State->Stage==10)
+		{
+			TestTrue(TEXT("Applying after both deaths respawns both survivors alive"),Mode->PracticeBots.Num()==2 && !Mode->PracticeBots[0].Pawn->IsGameOver() && !Mode->PracticeBots[1].Pawn->IsGameOver());
+			TestFalse(TEXT("Restart clears the completed round state"),Mode->IsPracticeRoundEnded());
+			TestEqual(TEXT("Respawn also resets survivor death count to multiplayer rules"),Mode->PracticeBots[0].Pawn->GetRemainingDeathCount(),0);
+			UI->StationaryToggle->SetIsChecked(true);UI->StandingWatchToggle->SetIsChecked(true);
+			State->Previous=World;UI->ApplyButton->OnClicked.Broadcast();State->Stage=11;return false;
+		}
+		if (State->Stage==11 || State->Stage==13)
+		{
+			TestTrue(TEXT("Stationary option survives the restart URL"),Mode->ArePracticeSurvivorsStationary());
+			TestEqual(TEXT("Stationary watch option survives the restart URL"),Mode->DoStationarySurvivorsLookAround(),State->Stage==11);
+			for (TActorIterator<AMannequinAICharacter> It(World);It;++It) It->SetMultiplayCommand(EMultiplayMannequinCommand::HoldPosition);
+			for(int32 I=0;I<2;++I){ State->StandingLocations[I]=Mode->PracticeBots[I].Pawn->GetActorLocation();State->StandingYaw[I]=Mode->PracticeBots[I].Controller->GetControlRotation().Yaw;State->StandingMaxTurn[I]=0; }
+			Mode->ShowPracticeMenu(false);State->Started=World->GetTimeSeconds();++State->Stage;return false;
+		}
+		if (State->Stage==12 || State->Stage==14)
+		{
+			for(int32 I=0;I<2;++I) State->StandingMaxTurn[I]=FMath::Max(State->StandingMaxTurn[I],FMath::Abs(FMath::FindDeltaAngleDegrees(State->StandingYaw[I],Mode->PracticeBots[I].Controller->GetControlRotation().Yaw)));
+			if(World->GetTimeSeconds()-State->Started<4) return false;
+			for(int32 I=0;I<2;++I)
+			{
+				const auto& Bot=Mode->PracticeBots[I];
+				TestTrue(TEXT("Stationary survivors do not walk or run away"),FVector::Dist2D(State->StandingLocations[I],Bot.Pawn->GetActorLocation())<2 && !Bot.Pawn->IsPracticeSprinting());
+				const float Turn=State->StandingMaxTurn[I];
+				TestTrue(TEXT("The actual survivor view scans only when watch is enabled"),State->Stage==12?Turn>10:Turn<1);
+			}
+			Mode->ShowPracticeMenu(true);
+			if(State->Stage==12)
+			{
+				UI->StandingWatchToggle->SetIsChecked(false);State->Previous=World;UI->ApplyButton->OnClicked.Broadcast();State->Stage=13;return false;
+			}
+			UI->StationaryToggle->SetIsChecked(false);UI->StandingWatchToggle->SetIsChecked(true);
+			UI->InfiniteLivesToggle->SetIsChecked(true);UI->CornerToggle->SetIsChecked(true);UI->CornerCount->SetValue(1);
+			State->Previous=World;UI->HandleApply();State->Stage=15;return false;
+		}
+		if(State->Stage==15)
+		{
+			TestTrue(TEXT("Infinite lives and one-corner placement survive reload"),Mode->HasPracticeInfiniteLives() && Mode->bPracticeCorners && Mode->PracticeCornerCount==1);
+			TestEqual(TEXT("One valid corner is actually used"),Mode->PracticeCornersPlaced,1);
+			TestFalse(TEXT("The other survivor retains its authored spawn"),Mode->PracticeBots[1].bSpawnedAtCorner);
+			for(TActorIterator<AMannequinAICharacter> It(World);It;++It)It->SetMultiplayCommand(EMultiplayMannequinCommand::HoldPosition);
+			Mode->ShowPracticeMenu(false);State->Hits=0;State->NextHit=0;State->Stage=16;return false;
+		}
+		if(State->Stage==16)
+		{
+			if(World->GetTimeSeconds()<State->NextHit)return false;
+			for(auto& Bot:Mode->PracticeBots)
+			{
+				Bot.Pawn->HandleMannequinCatch(Mode->Learner->GetViewedMannequin());
+				TestTrue(TEXT("Each separated infinite-lives hit is accepted as nonfatal feedback"),!Bot.Pawn->IsGameOver() && Bot.Pawn->NextDeathCountDamageAllowedWorldSeconds>World->GetTimeSeconds());
+				TestEqual(TEXT("Infinite lives never consumes the remaining count"),Bot.Pawn->GetRemainingDeathCount(),0);
+				State->NextHit=FMath::Max(State->NextHit,static_cast<float>(Bot.Pawn->NextDeathCountDamageAllowedWorldSeconds+.1));
+			}
+			if(++State->Hits<3)return false;
+			Mode->ShowPracticeMenu(true);UI->MannequinCount->SetValue(3);UI->SurvivorCount->SetValue(2);UI->DirectorToggle->SetIsChecked(true);
+			State->Previous=World;UI->SurvivorSwitch->OnClicked.Broadcast();State->Stage=3;return false;
+		}
+		if (State->Stage==3)
+		{
+			TestFalse(TEXT("In-game role switch enters survivor practice"),Mode->IsMannequinTutorial());TestEqual(TEXT("Survivor practice honors selected mannequins"),CountMannequins(),3);
+			TestEqual(TEXT("No leftover survivor bots after role switch"),Mode->PracticeBots.Num(),0);TestNotNull(TEXT("Survivor role possesses its own player"),Cast<APlayerCharacter>(Mode->Learner->GetPawn()));
+			Capture(TEXT("Survivor.png"));
+			TestTrue(TEXT("Survivor practice displays and preserves its explicit player-AI toggle"),UI->DirectorToggle->GetVisibility()==ESlateVisibility::Visible && Mode->IsPracticeDirectorEnabled());
+			TestTrue(TEXT("AI contact-toggle permission is explicit and initially enabled"),UI->DirectorContactToggle->GetVisibility()==ESlateVisibility::Visible && UI->DirectorContactToggle->IsChecked() && Mode->CanPracticeDirectorToggleContact());
+			TestTrue(TEXT("Survivor contact status is visible even with practice settings collapsed"),UI->ContactPanel->GetVisibility()!=ESlateVisibility::Collapsed);
+			Mode->SetPracticeDirectorContactDamage(false);UI->NativeTick(FGeometry(),0);
+			TestTrue(TEXT("Contact OFF announcement omits the removed direct-control explanation"),UI->ContactStatus->GetText().ToString().Contains(TEXT("비활성화")) && !UI->ContactStatus->GetText().ToString().Contains(TEXT("직접 조작")));
+			Capture(TEXT("SurvivorContactOff.png"));
+			Mode->SetPracticeDirectorContactDamage(true);UI->NativeTick(FGeometry(),0);
+			TestTrue(TEXT("Contact ON announcement follows authoritative state"),UI->ContactStatus->GetText().ToString().Contains(TEXT("접촉 피해가 활성화되었습니다")));
+			auto* Player=CastChecked<APlayerCharacter>(Mode->Learner->GetPawn());
+			AMannequinAICharacter* Body=nullptr;
+			for(TActorIterator<AMannequinAICharacter> It(World);It;++It){It->SetCatchDamageEnabled(false);It->SetMultiplayCommand(EMultiplayMannequinCommand::HoldPosition);if(!Body)Body=*It;}
+			if(!TestNotNull(TEXT("Director body exists"),Body))return true;
+			Body->SetActorLocation(Player->GetActorLocation()-FVector(120,0,0));Body->SetActorRotation(FRotator::ZeroRotator);
+			Mode->Learner->SetControlRotation(FRotator::ZeroRotator);Body->SetFrozenBySurvivorVision(false);
+			Mode->PracticeDirectorBody=Body;Body->SetManualControlEnabled(true);Mode->NextDirectorDecision=10000;Mode->NextDirectorAction=10000;Mode->NextDirectorPacing=10000;Mode->DirectorBeat=0;
+			Mode->bPracticeMenuOpen=false;Mode->NextDirectorAttack=0;Mode->TickPracticeMannequinDirector(.1f);
+			TestTrue(TEXT("Simulated player can inflict an unseen in-range attack without killing an infinite-life learner"),!Player->IsGameOver() && Player->NextDeathCountDamageAllowedWorldSeconds>World->GetTimeSeconds());
+			TestEqual(TEXT("A successful attack gives the learner a brief opening, rather than immediate spam"),Mode->DirectorBeat,static_cast<uint8>(3));
+			Mode->DirectorBeat=0;Mode->NextDirectorPacing=10000;
+			Player->NextDeathCountDamageAllowedWorldSeconds=0;Body->SetFrozenBySurvivorVision(true);Mode->NextDirectorAttack=0;Mode->TickPracticeMannequinDirector(.1f);
+			TestEqual(TEXT("Observed body cannot attack"),Player->NextDeathCountDamageAllowedWorldSeconds,0.0);
+			Body->SetFrozenBySurvivorVision(false);Body->SetActorLocation(Player->GetActorLocation()-FVector(1000,0,0));Mode->NextDirectorAttack=0;Mode->TickPracticeMannequinDirector(.1f);
+			TestEqual(TEXT("Director respects the real attack range"),Player->NextDeathCountDamageAllowedWorldSeconds,0.0);
+			Body->SetActorLocation(Player->GetActorLocation()-FVector(160,0,0));Body->SetActorRotation(FRotator::ZeroRotator);
+			auto* Wall=World->SpawnActor<AActor>();auto* Block=NewObject<UBoxComponent>(Wall);Wall->SetRootComponent(Block);
+			Block->SetBoxExtent(FVector(5,180,200));Block->SetCollisionEnabled(ECollisionEnabled::QueryOnly);Block->SetCollisionResponseToAllChannels(ECR_Ignore);Block->SetCollisionResponseToChannel(ECC_Visibility,ECR_Block);Block->RegisterComponent();
+			Wall->SetActorLocation(Player->GetActorLocation()-FVector(80,0,0));Mode->NextDirectorMove=10000;Mode->NextDirectorAttack=0;Mode->TickPracticeMannequinDirector(.1f);
+			TestEqual(TEXT("Director cannot attack through a wall even inside range"),Player->NextDeathCountDamageAllowedWorldSeconds,0.0);Wall->Destroy();
+			Mode->bPracticeDirector=false;Mode->PracticeDirectorBody.Reset();Body->SetManualControlEnabled(false);Mode->NextDirectorDecision=0;Mode->TickPracticeMannequinDirector(.1f);
+			TestFalse(TEXT("OFF adds no simulated player control"),Mode->PracticeDirectorBody.IsValid());Mode->bPracticeDirector=true;
+			Mode->NextDirectorDecision=0;Mode->TickPracticeMannequinDirector(.1f);TestTrue(TEXT("ON selects a body for native-path movement"),Mode->PracticeDirectorBody.IsValid());
+			Body=Mode->PracticeDirectorBody.Get();if(!Body)return true;
+			TArray<AMannequinAICharacter*> Others;for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(*It!=Body)Others.Add(*It);
+			if(!TestEqual(TEXT("Follower exercise has two other bodies"),Others.Num(),2))return true;
+			auto* Follower=Others[0];auto* Leader=Body;State->NextLeader=Others[1];
+			Mode->SelectPracticeDirectorBody(Follower);Follower->SetManualControlEnabled(true);Mode->IssuePracticeDirectorCommand(EMultiplayMannequinCommand::FollowMannequinPlayer);
+			Mode->SelectPracticeDirectorBody(Leader);Leader->SetManualControlEnabled(true);
+			Follower->SetActorLocation(Player->GetActorLocation()+FVector(1400,-700,0));Leader->SetActorLocation(Player->GetActorLocation()+FVector(1000,-700,0));Leader->SetActorRotation(FRotator::ZeroRotator);
+			Mode->Learner->SetControlRotation(FRotator(0,180,0));Mode->Learner->PlayerCameraManager->UpdateCamera(.1f);
+			Mode->NextDirectorDecision=10000;Mode->NextDirectorAction=10000;Mode->NextDirectorMove=10000;Mode->NextDirectorAttack=10000;
+			State->Follower=Follower;State->FollowOrigin=Follower->GetActorLocation();State->Started=World->GetTimeSeconds();
+			Mode->ShowPracticeMenu(false);
+			TestTrue(TEXT("Survivor practice shows only the mannequin-role switch"),UI->SurvivorSwitch->GetVisibility()==ESlateVisibility::Collapsed && UI->MannequinSwitch->GetVisibility()==ESlateVisibility::Visible);
+			State->Stage=31;return false;
+		}
+		if(State->Stage==31)
+		{
+			if(World->GetTimeSeconds()-State->Started<3)return false;
+			if(!State->Follower.IsValid() || !State->NextLeader.IsValid()){AddError(TEXT("Follower exercise bodies disappeared"));return true;}
+			TestTrue(TEXT("C performs actual native follower movement"),FVector::Dist2D(State->FollowOrigin,State->Follower->GetActorLocation())>100 && State->Follower->GetMultiplayActivity()==EMultiplayMannequinActivity::Following);
+			auto* Player=CastChecked<APlayerCharacter>(Mode->Learner->GetPawn());auto* Leader=State->NextLeader.Get();
+			Leader->SetActorLocation(Player->GetActorLocation()+FVector(1500,-200,0));Mode->SelectPracticeDirectorBody(Leader);Leader->SetManualControlEnabled(true);
+			Mode->NextDirectorMove=10000;State->FollowOrigin=State->Follower->GetActorLocation();State->Started=World->GetTimeSeconds();State->Stage=32;return false;
+		}
+		if(State->Stage==32)
+		{
+			if(World->GetTimeSeconds()-State->Started<3)return false;
+			TestTrue(TEXT("Existing followers physically retarget the newly selected body"),Mode->GetMannequinPlayerFocusPawn()==State->NextLeader.Get() && State->Follower.IsValid() && FVector::Dist2D(State->FollowOrigin,State->Follower->GetActorLocation())>100 && State->Follower->GetMultiplayCommand()==EMultiplayMannequinCommand::FollowMannequinPlayer);
+			TestTrue(TEXT("Q cancels followers in the real practice world"),Mode->ResetPracticeDirectorFollowers());
+			TestEqual(TEXT("Q returns the follower to patrol"),State->Follower->GetMultiplayCommand(),EMultiplayMannequinCommand::Patrol);
+			auto* Body=Mode->PracticeDirectorBody.Get();auto* Player=CastChecked<APlayerCharacter>(Mode->Learner->GetPawn());
+			Body->SetActorLocation(Player->GetActorLocation()-FVector(600,0,0));Body->SetActorRotation(FRotator::ZeroRotator);Body->SetFrozenBySurvivorVision(false);
+			Mode->Learner->SetControlRotation(FRotator::ZeroRotator);Mode->Learner->PlayerCameraManager->UpdateCamera(.1f);Mode->NextDirectorMove=0;
+			State->DirectorBody=Body;State->DirectorOrigin=Body->GetActorLocation();State->Started=World->GetTimeSeconds();State->Stage=30;return false;
+		}
+		if(State->Stage==30)
+		{
+			if(World->GetTimeSeconds()-State->Started<6)return false;
+			TestTrue(TEXT("Simulated player actually moves its chosen body along navigation"),State->DirectorBody.IsValid() && FVector::Dist2D(State->DirectorOrigin,State->DirectorBody->GetActorLocation())>100);
+			TestTrue(TEXT("Free survivor escape resolves locally without tutorial steps"),Mode->SignalEvent(Mode->Learner,TEXT("Tutorial.Escape")));
+			State->Stage=8;return false;
+		}
+		if (State->Stage==8)
+		{
+			if (!Mode->IsPracticeMenuOpen()) return false;
+			TestTrue(TEXT("Escape returns to practice settings instead of a backend result"),Mode->IsPracticeRoundEnded() && UGameplayStatics::IsGamePaused(Mode));
+			UI->NativeTick(FGeometry(),0);
+			TestEqual(TEXT("Escape retains the existing restart button, without a continue duplicate"),UI->ApplyText->GetText().ToString(),FString(TEXT("인원 적용 / 다시 연습")));
+			UI->InfiniteLivesToggle->SetIsChecked(false);UI->DirectorToggle->SetIsChecked(true);UI->DirectorContactToggle->SetIsChecked(false);UI->MannequinCount->SetValue(1);State->Previous=World;UI->ApplyButton->OnClicked.Broadcast();State->Stage=4;return false;
+		}
+		if (State->Stage==4)
+		{
+			TestEqual(TEXT("Reducing counts removes old actors instead of accumulating them"),CountMannequins(),1);
+			TestFalse(TEXT("Disallowing AI contact switching survives reload"),Mode->CanPracticeDirectorToggleContact());
+			TestTrue(TEXT("Blocking B does not disable the player AI itself"),Mode->IsPracticeDirectorEnabled());
+			Mode->ShowPracticeMenu(false);
+			auto* Player=CastChecked<APlayerCharacter>(Mode->Learner->GetPawn());TestEqual(TEXT("Survivor learner also uses normal multiplayer lives with OFF"),Player->GetRemainingDeathCount(),0);
+			for (TActorIterator<AMannequinAICharacter> It(World);It;++It) { Player->HandleMannequinCatch(*It);break; }
+			TestTrue(TEXT("The survivor enters its real death sequence"),Player->IsGameOver());State->Stage=9;return false;
+		}
+		if (State->Stage==9)
+		{
+			if (!Mode->IsPracticeMenuOpen()) return false;
+			TestTrue(TEXT("Survivor death leaves practice controls accessible"),Mode->IsPracticeRoundEnded() && UGameplayStatics::IsGamePaused(Mode));
+			UI->MannequinCount->SetValue(2);UI->SurvivorCount->SetValue(2);State->Previous=World;UI->HandleMannequin();State->Stage=5;return false;
+		}
+		if (State->Stage==5)
+		{
+			TestTrue(TEXT("Switch back restores mannequin practice"),Mode->IsMannequinTutorial());TestEqual(TEXT("Mannequin practice also supports changing mannequin counts"),CountMannequins(),2);
+			TestTrue(TEXT("Other role preserves but hides the survivor-only contact-switch option"),!Mode->CanPracticeDirectorToggleContact() && UI->DirectorContactToggle->GetVisibility()==ESlateVisibility::Collapsed);
+			TestEqual(TEXT("Two fresh survivor bots after switching back"),Mode->PracticeBots.Num(),2);
+			UI->CornerToggle->SetIsChecked(true);UI->CornerCount->SetValue(2);State->Previous=World;UI->HandleApply();State->Stage=21;return false;
+		}
+		if(State->Stage==21)
+		{
+			TestEqual(TEXT("Both requested survivors can use separate valid corners"),Mode->PracticeCornersPlaced,2);
+			TestTrue(TEXT("Corner placements are separated"),FVector::Dist2D(Mode->PracticeBots[0].Pawn->GetActorLocation(),Mode->PracticeBots[1].Pawn->GetActorLocation())>400);
+			State->Previous=World;Mode->RestartFreePractice(true,999,-5);State->Stage=6;return false;
+		}
+		TestEqual(TEXT("Mannequin counts are clamped to supported slots"),CountMannequins(),10);TestEqual(TEXT("Survivor counts are clamped to one or two"),Mode->PracticeBots.Num(),1);
+		State->Previous=World;Mode->ReturnToMatching();State->Stage=7;return false;
 	}));
 	return true;
 }

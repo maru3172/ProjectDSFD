@@ -80,6 +80,7 @@ private:
 	friend class FProjectVoiceParticipantIsolationTest;
 	friend class FProjectVoiceLifecycleTest;
 	friend class FProjectVoiceAudibilityTest;
+	friend class FProjectVoiceGainSmoothingTest;
 	void StopSession(bool bPreservePreferences);
 	void CancelVoiceRequests();
 	void BeginConnectionAttempt();
@@ -109,10 +110,12 @@ private:
 	double LastAudibilityUpdateSeconds=0;
 	bool bAuthoritativeVoiceAllowed=false;
 	TMap<FString,float> AppliedPeerGains;
+	TMap<FString,ProjectVoiceAudibility::FGainRamp> SmoothedPeerDistanceGains;
 	int8 AppliedTransmitState=-1;
 	bool HasFreshAudibility() const;
 	float GetParticipantDistanceGain(const FString& Id) const;
-	void ApplyParticipantReceiveSettings(const FString& Id);
+	float AdvanceParticipantDistanceGain(const FString& Id,float DeltaSeconds);
+	void ApplyParticipantReceiveSettings(const FString& Id,float DeltaSeconds=0);
 	void HandleParticipantAdded(const FString& JoinedChannel, const FString& ParticipantId);
 	TSharedPtr<Audio::FAudioCapture> MicrophoneCapture;
 	TSharedRef<TAtomic<float>, ESPMode::ThreadSafe> MicrophoneLevel = MakeShared<TAtomic<float>, ESPMode::ThreadSafe>(0.0f);
@@ -157,6 +160,9 @@ private:
 	/** 위치 음성 갱신 간격. 기본 10Hz로 네트워크/플러그인 호출 비용을 제한한다. */
 	UPROPERTY(Config, meta=(ClampMin="0.02", Units="s"))
 	float PositionUpdateIntervalSeconds = 0.1f;
+	/** Time to blend between the server's distance updates. Does not delay safety mutes. */
+	UPROPERTY(Config, meta=(ClampMin="0.02",ClampMax="1.0",Units="s"))
+	float DistanceGainInterpolationSeconds = 0.15f;
 
 	TWeakObjectPtr<class APlayerController> OwnerController;
 	IVoiceChat* VoiceChat = nullptr;

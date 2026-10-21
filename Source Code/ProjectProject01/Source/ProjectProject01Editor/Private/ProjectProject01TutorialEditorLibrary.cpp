@@ -47,7 +47,7 @@ FRequestPlaySessionParams UProjectProject01TutorialEditorLibrary::MakePracticeRe
 	return Request;
 }
 
-bool UProjectProject01TutorialEditorLibrary::StartPractice(const bool bMannequin)
+bool UProjectProject01TutorialEditorLibrary::StartPractice(const bool bMannequin,const bool bFreePractice)
 {
 	using namespace ProjectTutorialEditor;
 	if (!CanStart() || !FPackageName::DoesPackageExist(Map)) return false;
@@ -56,6 +56,7 @@ bool UProjectProject01TutorialEditorLibrary::StartPractice(const bool bMannequin
 	// GlobalMapOverride loads an asset (not a URL). Keep role options in the PIE
 	// URL until local login completes, then immediately restore the editor value.
 	GEditor->UserEditedPlayWorldURL=FString(Map)+(bMannequin ? TEXT("?TutorialRole=Mannequin") : TEXT("?TutorialRole=Survivor"));
+	if (bFreePractice) GEditor->UserEditedPlayWorldURL+=TEXT("?FreePractice=1");
 	StartedHandle=FEditorDelegates::PostPIEStarted.AddLambda([](bool){ RestoreOverrides(); });
 	EndedHandle=FEditorDelegates::EndPIE.AddLambda([](bool){ RestoreOverrides(); });
 	const double Deadline=FPlatformTime::Seconds()+60;
@@ -80,6 +81,12 @@ void UProjectProject01TutorialEditorLibrary::RegisterMenus()
 			FText::FromString(bMannequin ? TEXT("마네킹 튜토리얼 테스트") : TEXT("생존자 튜토리얼 테스트")),
 			FText::FromString(TEXT("서버·로그인 없이 1인 연습을 실행합니다. 기존 멀티 PIE 설정과 편집 중인 맵은 유지합니다.")),FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([bMannequin](){ StartPractice(bMannequin); }),
+				FCanExecuteAction::CreateStatic(&ProjectTutorialEditor::CanStart)));
+	for (const bool bMannequin:{false,true})
+		Section.AddMenuEntry(bMannequin ? TEXT("ProjectFreePracticeMannequin") : TEXT("ProjectFreePracticeSurvivor"),
+			FText::FromString(bMannequin ? TEXT("마네킹 연습모드 테스트") : TEXT("생존자 연습모드 테스트")),
+			FText::FromString(TEXT("튜토리얼 설명 없이 인원 조절·역할 전환이 가능한 연습모드를 실행합니다.")),FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([bMannequin](){ StartPractice(bMannequin,true); }),
 				FCanExecuteAction::CreateStatic(&ProjectTutorialEditor::CanStart)));
 }
 

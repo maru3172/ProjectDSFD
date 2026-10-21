@@ -1765,6 +1765,12 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 	const double EscapeSeconds,
 	TFunction<void(bool)> Completion)
 {
+	// Local PIE results are still shown in-game, but must never enter the production recovery journal.
+	if (!FProjectResultOutbox::IsProductionMatchId(MatchId))
+	{
+		if (Completion) Completion(false);
+		return;
+	}
 	const UWorld* World = GetWorld();
 	if (!IsValid(World) || World->GetNetMode() == NM_Client || !IsBackendUrlAllowed())
 	{
@@ -1800,6 +1806,7 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 
 void UProjectProject01GameInstance::NotifyAuthoritativeMatchEnded(const FString& MatchId)
 {
+    if(!FProjectResultOutbox::IsProductionMatchId(MatchId))return;
     if(!GetWorld()||GetWorld()->GetNetMode()==NM_Client||!IsBackendUrlAllowed()||MatchId.IsEmpty())return;
     FString Secret=LoadGameServerSharedSecret();if(Secret.Len()<32)return;
     auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("matchId"),MatchId);FString Body;
@@ -1812,6 +1819,7 @@ void UProjectProject01GameInstance::NotifyAuthoritativePlayerForfeit(
 	const FString& UserId,
 	const FString& Role)
 {
+	if (!FProjectResultOutbox::IsProductionMatchId(MatchId)) return;
 	const UWorld* World = GetWorld();
 	if (!IsValid(World) || World->GetNetMode() == NM_Client || MatchId.IsEmpty() || UserId.IsEmpty() ||
 		!IsBackendUrlAllowed())

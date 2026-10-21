@@ -165,13 +165,10 @@ internal sealed partial class EosVoiceTokenService : IHostedService, IDisposable
             _eosThreadStarted?.TrySetResult(true);
             while (!cancellationToken.IsCancellationRequested)
             {
-                while (_eosCommands.TryDequeue(out var command))
-                {
-                    try { command(); }
-                    catch (Exception exception) { _logger.LogError(exception, "EOS voice command failed."); }
-                }
-                EosNative.EOS_Platform_Tick(_platform);
-                _eosCommandAvailable.WaitOne(10);
+                int wait = EosTickPump.RunIteration(_eosCommands,
+                    () => EosNative.EOS_Platform_Tick(_platform),
+                    exception => _logger.LogError(exception, "EOS voice command failed."), cancellationToken);
+                if (wait > 0) _eosCommandAvailable.WaitOne(wait);
             }
         }
         catch (Exception exception)
