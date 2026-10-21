@@ -100,3 +100,4 @@
 # Optional source art scratch files
 **/SourceArt/**/*.png
 **/SourceArt/**/*.tga
+*.blend1
