@@ -1,0 +1,42 @@
+기본 및 훼손2 사면도 생성 프롬프트
+생성 방식: 내장 이미지 생성 도구
+작성일: 2026-10-21
+사용자 요청: 이전 턴 세 번째 생성 이미지의 프롬프트를 기준으로 기본 및 훼손2 생성.
+기준 이미지: exec-b0f06e82-d0a4-4429-9cae-f41f67eaecd9.png
+기준 프롬프트의 6등신, 다리47%, 어깨21.5%, 팔 비율과 사면도/T포즈 구성을 유지하고, 참조 역할과 상태별 의상/머리 설명을 변경했다.
+수치는 생성 목표이며 결과 이미지가 정밀 수치를 충족한다는 계측 보증이 아니다.
+기존 파일은 보존했다.
+
+기본 생성 결과: 01_기본_6등신_3차프롬프트_사면도.png
+참조1: 위 기준 이미지 (신체/얼굴/사면도)
+참조2: 01_기본_조립_4면도.png (복장)
+프롬프트:
+Use case: stylized-concept.
+Generate a NEW, clean four-view character model sheet using reference image 1 as the common identity, body-proportion and four-view design anchor. Reference image 2 supplies ONLY the target clothing and hairstyle state; do not copy its different body proportions. RECOMPOSE the sheet and CONSTRUCT the body anew with these six-head game-character proportions. Do not trace the reference's short-arm anatomy or three-view layout.
+
+Exactly 6 anatomical head lengths from skull crown to soles. Head16.667% total height; shoulder joint span21.5%; base of neck to crotch32.5%; crotch to soles47%. Body from crown to crotch53%. Shoulder line near22% down; knee near77% down. Upper arm17%, forearm15%, hand11% of height EACH SIDE. Consequently the fingertip-to-fingertip wingspan is107.5% of height: T-pose is SLIGHTLY WIDER THAN THE CHARACTER IS TALL. Clearly extend the arms and hands enough to achieve that proportion, without stretching the shirt torso. Head should look six-head scale, not chibi.
+
+One horizontal row of FOUR orthographic views, in order front, back, left side, right side. Transparent 3:1 wide canvas. Characters occupy only about75% canvas height. Front and back silhouettes each wider than their own full height. Leave large visible empty gaps between adjacent fingertips/hair; at least one head width separation. Full bodies, same exact scale and joint elevations. Side figures occupy narrow columns and are NOT enlarged. Every view is the very SAME T-POSE rotated; in the side views the near arm points directly toward camera and is fully foreshortened at shoulder height, far arm points away. NEVER lower arms in the side views.
+
+Base / Damage0 outfit: charcoal gray newsboy cap, long low twin black braids and bangs; dark charcoal-brown V-neck buttoned cardigan over a plain white long-sleeved pointed-collar shirt, all shirt buttons closed, no shirt pocket, shirt tucked into the same burgundy plaid pleated skirt. The cardigan has five small white cat motifs on its FRONT ONLY: three on character-right front panel (viewer-left), two on character-left front panel (viewer-right), same as reference2. Plain cardigan back, ribbed cuffs and waistband. Opaque pale tights without damage, two matching black ribbed leg warmers raised below knees, black canvas lace-up sneakers with white toes and soles. Same calm anime face and same underlying body as reference1. The cap adds volume above the anatomical skull without shrinking or enlarging the head. Fully clothed technical reference, neutral stance. Preserve the skirt length and plaid design from reference1; cardigan covers its upper portion naturally.
+
+Crisp anime rendering on clean transparent background, no background objects, no shadows/glows, no outline debris, no grid, captions or numbers. Main priorities: correct SIX-head body, T-span107.5% of height, true T-pose in all four views, NO silhouette overlap.
+
+훼손2 생성 결과: 03_훼손2_6등신_3차프롬프트_사면도.png
+참조1: 위 기준 이미지 (신체/얼굴/사면도)
+참조2: 03_훼손2_조립_4면도.png (상태별 복장/헤어)
+프롬프트:
+Use case: stylized-concept.
+Generate a NEW, clean four-view character model sheet using reference image 1 as the common identity, body-proportion and four-view design anchor. Reference image 2 supplies ONLY the target clothing and hairstyle state; do not copy its different body proportions. RECOMPOSE the sheet and CONSTRUCT the body anew with these six-head game-character proportions. Do not trace the reference's short-arm anatomy or three-view layout.
+
+Exactly 6 anatomical head lengths from skull crown to soles. Head16.667% total height; shoulder joint span21.5%; base of neck to crotch32.5%; crotch to soles47%. Body from crown to crotch53%. Shoulder line near22% down; knee near77% down. Upper arm17%, forearm15%, hand11% of height EACH SIDE. Consequently the fingertip-to-fingertip wingspan is107.5% of height: T-pose is SLIGHTLY WIDER THAN THE CHARACTER IS TALL. Clearly extend the arms and hands enough to achieve that proportion, without stretching the shirt torso. Head should look six-head scale, not chibi.
+
+One horizontal row of FOUR orthographic views, in order front, back, left side, right side. Transparent 3:1 wide canvas. Characters occupy only about75% canvas height. Front and back silhouettes each wider than their own full height. Leave large visible empty gaps between adjacent fingertips/hair; at least one head width separation. Full bodies, same exact scale and joint elevations. Side figures occupy narrow columns and are NOT enlarged. Every view is the very SAME T-POSE rotated; in the side views the near arm points directly toward camera and is fully foreshortened at shoulder height, far arm points away. NEVER lower arms in the side views.
+
+Damage2 outfit: NO hat, NO cardigan. Same face, body, bangs, burgundy plaid pleated skirt and black/white sneakers as reference1. The long black twin braids are now UNBRAIDED, with loose back hair naturally divided into two softly separated left/right masses, slight spreading and strands, keeping the original twin-braid hairstyle's roots and overall length. ALL back-of-head hair remains behind the shoulders and is drawn down the BACK. Only two narrow SIDE locks from near the temples/ears fall onto the front chest. In the back view show the full loose back-hair mass down the back, not an empty back or excessive hair diverted over shoulders. In profiles keep the main mass behind the body. This is one consistent three-dimensional hairstyle rotated in all four views.
+White long-sleeved pocketless shirt, only the TOP collar button undone; all lower buttons closed, chest fully covered, no cleavage or exposed midriff. Front character-RIGHT portion of shirt is untucked (viewer-left in front); character-LEFT front remains tucked. The untucked area flows around the RIGHT side seam and gradually tapers into the back waistband with uneven natural folds. Do NOT divide the rear hem exactly in half or make a sharp central vertical boundary. Most of the back hem stays tucked with only a local natural loose section near the right side.
+Opaque pale tights with distinct physical leg damage: character LEFT knee/upper shin has a larger irregular tear and a descending vertical fabric run; character RIGHT lower thigh several centimeters above the knee has a separate smaller horizontal snag. These tears differ in size, shape and height. Do NOT place both tears on one leg. They are primarily anterior/anterolateral marks, not wraparound holes: a true side view shows only the visible part of the near leg's own tear, and the rear does not repeat the front tear map. Left-facing profile shows the character-left leg with its low large tear; right-facing profile shows character-right leg with its high small snag. Rear tights may remain intact where the front tears are occluded. Fabric tears only, no blood, skin injury, bruising or gore.
+Character LEFT black ribbed legwarmer is lowered and bunched around lower calf/ankle; character RIGHT legwarmer stays raised just below knee. Preserve anatomical sides during rotation (in front lowered legwarmer is viewer-right; in back it is viewer-left). Fully clothed, neutral technical T-pose, not suggestive.
+
+Crisp anime rendering on clean transparent background, no background objects, no shadows/glows, no outline debris, no grid, captions or numbers. Main priorities: correct SIX-head body, T-span107.5% of height, true T-pose in all four views, NO silhouette overlap.
+

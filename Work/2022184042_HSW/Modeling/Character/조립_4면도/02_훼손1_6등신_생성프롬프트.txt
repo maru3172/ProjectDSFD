@@ -1,0 +1,42 @@
+훼손1 사면도 생성 기준 및 프롬프트
+생성 방식: 내장 이미지 생성 도구, 참조 이미지 기반 편집
+납품 이미지: 02_훼손1_6등신_사면도.png
+작성일: 2026-10-21
+
+사용자가 지정한 모델링 목표 (이미지에서 정밀 계측하여 보증한 수치가 아님)
+- 정수리~발바닥 = 100%
+- 6등신: 머리 높이 16.667%
+- 어깨 너비 21.5%
+- 목 아래~사타구니 몸통 길이 29~33% 범위
+- 사타구니~발바닥 다리 길이 47%
+- 위팔 17%, 아래팔 15%, 손 11% (각 권장 범위 내 중간값)
+- T포즈 손끝~손끝 목표 폭 107.5%
+- 머리 높이의 기준은 해부학적 정수리이며 헤어 볼륨은 별도이다.
+- 복장으로 가려진 관절 및 사타구니 위치는 이 2D 이미지에서 정확히 확인하기 어렵다.
+- 결과는 비율 조정을 위한 시안이다. 최종 모델링은 위 수치를 기준으로 검수한다.
+- 네 방향은 좌측부터 정면, 후면, 왼쪽을 보는 측면, 오른쪽을 보는 측면이다.
+- 훼손1: 모자/가디건 없음, 땋은 머리, 여민 셔츠, 정상 스타킹, 양쪽 동일 높이의 레그워머.
+- 다른 상태와 기존 파일은 수정하지 않았다.
+
+1차 생성 프롬프트
+Use case: stylized-concept.
+Generate a NEW, clean four-view character model sheet using the reference ONLY for the girl's identity, black twin braided hairstyle and outfit. RECOMPOSE the sheet and CONSTRUCT the body anew with these six-head game-character proportions. Do not trace the reference's short-arm anatomy or three-view layout.
+
+Exactly 6 anatomical head lengths from skull crown to soles. Head16.667% total height; shoulder joint span21.5%; base of neck to crotch32.5%; crotch to soles47%. Body from crown to crotch53%. Shoulder line near22% down; knee near77% down. Upper arm17%, forearm15%, hand11% of height EACH SIDE. Consequently the fingertip-to-fingertip wingspan is107.5% of height: T-pose is SLIGHTLY WIDER THAN THE CHARACTER IS TALL. Clearly extend the arms and hands enough to achieve that proportion, without stretching the shirt torso. Head should look six-head scale, not chibi.
+
+One horizontal row of FOUR orthographic views, in order front, back, left side, right side. Transparent 3:1 wide canvas. Characters occupy only about75% canvas height. Front and back silhouettes each wider than their own full height. Leave large visible empty gaps between adjacent fingertips/hair; at least one head width separation. Full bodies, same exact scale and joint elevations. Side figures occupy narrow columns and are NOT enlarged. Every view is the very SAME T-POSE rotated; in the side views the near arm points directly toward camera and is fully foreshortened at shoulder height, far arm points away. NEVER lower arms in the side views.
+
+Damage1 outfit: plain white long-sleeved pointed-collar shirt, all buttons closed, no pocket, neatly tucked into burgundy plaid pleated skirt; opaque pale tights without damage; two matching black ribbed leg warmers raised below knee; black canvas lace-up sneakers with white toes and soles. No hat/cardigan. Original calm anime face, black bangs, long two braids, slim natural body. Fully clothed technical reference, neutral stance, no accessories.
+
+Crisp anime rendering on clean transparent background, no background objects, no shadows/glows, no outline debris, no grid, captions or numbers. Main priorities: correct SIX-head body, T-span107.5% of height, true T-pose in all four views, NO silhouette overlap.
+
+최종 편집 프롬프트
+Use case: identity-preserve.
+Edit target: the attached four-view model sheet of the same fully clothed character, Damage1.
+Make a final modeling reference with the SAME face, bangs, twin low black braids, clean pocketless white buttoned blouse tucked into burgundy plaid skirt, intact pale tights, matching black legwarmers and black/white sneakers. Preserve front/back/left-facing/right-facing order, same four true orthographic T-poses, no hat, no cardigan.
+
+Correct proportions and layout together: use a six-head-tall body (head height 1/6 of crown-to-sole height), leg length crotch-to-sole 47%, shoulder-joint span 21.5%. Upper arm length 17%, forearm 15%, hand 11% of crown-to-sole height. The current arms are too short. Lengthen arms from shoulder to fingertip so total fingertip-to-fingertip width is 107.5% of body height. In all four views keep equal head size, height and joint elevations. Side poses MUST remain the same T-pose seen end-on, arms fully foreshortened at shoulder height, never lowered.
+
+IMPORTANT COMPOSITION: shrink the ENTIRE four-figure group on the canvas, leaving LARGE EMPTY TOP AND BOTTOM MARGINS. Bodies should occupy only 70% of canvas height. Make the full canvas much roomier: at least TWO HEAD-WIDTHS OF EMPTY SPACE between front-view fingertips and back-view fingertips. Separate every figure completely. Four full bodies uncropped. There is abundant blank space around all four figures. Do not fill the height or push fingers toward one another to fill the frame. Each side-view body has same height and scale as front/back. Wide transparent canvas.
+Clean crisp contours, remove all stray white/magenta edge speckles. NO text, no labels, no grid, no floor, no cast shadow, no added objects. Only four fully clothed character rotations.
+
