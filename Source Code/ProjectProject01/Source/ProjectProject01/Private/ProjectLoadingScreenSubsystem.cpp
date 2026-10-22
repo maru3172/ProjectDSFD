@@ -27,7 +27,8 @@ namespace ProjectLoading
 {
 	using FStatePtr=TSharedPtr<FProjectLoadingScreenState,ESPMode::ThreadSafe>;
 	bool IsFrontEnd(const FString& Map)
-	{return Map.Contains(TEXT("LoginLevel")) || Map.Contains(TEXT("LobbyLevel")) || Map.StartsWith(TEXT("/Engine/")) || Map.IsEmpty();}
+	{return Map.Contains(TEXT("TitleLevel")) || Map.Contains(TEXT("LoginLevel")) || Map.Contains(TEXT("LobbyLevel")) ||
+		Map.Contains(TEXT("LeaderBoardTest")) || Map.StartsWith(TEXT("/Engine/")) || Map.IsEmpty();}
 
 	class SScreen final : public SCompoundWidget
 	{
@@ -160,7 +161,7 @@ void UProjectLoadingScreenSubsystem::AttachOverlay()
 void UProjectLoadingScreenSubsystem::PreLoadMap(const FWorldContext& Context,const FString& Map)
 {
 	if(Context.OwningGameInstance!=GetGameInstance() || Context.RunAsDedicated)return;
-	if(ProjectLoading::IsFrontEnd(Map)){if(Map.Contains(TEXT("LoginLevel")) || Map.Contains(TEXT("LobbyLevel")))CancelLoading();return;}
+	if(ProjectLoading::IsFrontEnd(Map)){CancelLoading();return;}
 	BeginLoading(GetWorld() && GetWorld()->GetNetMode()==NM_Client);State->Advance(30,TEXT("맵을 읽는 중"));
 	{FScopeLock Lock(&State->Mutex);State->Data.Map=Map;}
 #if !UE_SERVER
@@ -174,7 +175,9 @@ void UProjectLoadingScreenSubsystem::PreLoadMap(const FWorldContext& Context,con
 }
 void UProjectLoadingScreenSubsystem::PostLoadMap(UWorld* World)
 {
-	if(!World || World->GetGameInstance()!=GetGameInstance() || !IsLoading())return;
+	if(!World || World->GetGameInstance()!=GetGameInstance())return;
+	if(ProjectLoading::IsFrontEnd(World->GetOutermost()->GetName())){CancelLoading();return;}
+	if(!IsLoading())return;
 	State->Advance(70,TEXT("맵 로딩 완료 · 플레이 화면 준비 중"));AttachOverlay();
 }
 void UProjectLoadingScreenSubsystem::BeginMultiplayerGate(const FString& Epoch,const FString& OwnId,const FString& OwnName,int32 Expected,bool Released)

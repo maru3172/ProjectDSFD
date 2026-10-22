@@ -80,9 +80,11 @@ bool FProjectReviewRuntimeRegressionTest::RunTest(const FString&)
 {
 	auto* Settings=UProjectProject01GameUserSettings::Get();
 	const float OldShake=Settings->GetScreenShakeScale(),OldFlash=Settings->GetScreenFlashScale();
+	const bool OldShakeEnabled=Settings->IsCameraShakeEnabled();
 	const auto OldVFX=Settings->GetVFXIntensity();
 	UWorld* World=CreateReviewWorld();
-	ON_SCOPE_EXIT { Settings->SetScreenShakeScale(OldShake);Settings->SetScreenFlashScale(OldFlash);Settings->SetVFXIntensity(OldVFX);World->DestroyWorld(false); };
+	ON_SCOPE_EXIT { Settings->SetScreenShakeScale(OldShake);Settings->SetCameraShakeEnabled(OldShakeEnabled);Settings->SetScreenFlashScale(OldFlash);Settings->SetVFXIntensity(OldVFX);World->DestroyWorld(false); };
+	Settings->SetCameraShakeEnabled(true); // Test strength independently of the operator's persisted OFF toggle.
 	auto* Player=World->SpawnActor<APlayerCharacter>();
 	const FVector BaseLocation(0,0,160);const FRotator BaseRotation(0,10,0);
 	auto BeginFeedback=[&](bool Death)

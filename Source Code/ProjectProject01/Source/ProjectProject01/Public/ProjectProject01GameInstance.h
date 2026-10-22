@@ -10,6 +10,7 @@
 #include "Engine/NetworkDelegates.h"
 #include "GameFramework/GameUserSettings.h"
 #include "InputCoreTypes.h"
+#include "ProjectRequestCircuit.h"
 #include "ProjectProject01GameInstance.generated.h"
 
 class SBorder;
@@ -317,6 +318,8 @@ class PROJECTPROJECT01_API UProjectProject01GameInstance final : public UGameIns
 	GENERATED_BODY()
 
 public:
+	/** Auth/Lobby transport protection is per local game instance, never replicated or persisted. */
+	FProjectRequestCircuit BackendRequestCircuit;
 	/** Process-local: returning to title does not replay startup logos. No account/save state is changed. */
 	bool ConsumeStartupIntro() { if (bStartupIntroShown) return false; bStartupIntroShown = true; return true; }
 	/** Server-only transient history; never replicated and never written to account/save data. */

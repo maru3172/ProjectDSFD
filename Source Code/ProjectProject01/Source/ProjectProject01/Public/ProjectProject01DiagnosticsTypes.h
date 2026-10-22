@@ -47,6 +47,14 @@ struct FProjectProject01DiagnosticSample
 	float GpuMilliseconds = 0.0f;
 	uint64 UsedPhysicalBytes = 0;
 	uint64 UsedVirtualBytes = 0;
+	uint64 AvailablePhysicalBytes=0,TotalPhysicalBytes=0;
+	uint64 AllocatorUsedBytes=0,AllocatorCommittedBytes=0,AllocatorRetainedBytes=0;
+	bool bHasAllocatorStats=false,bHasTextureStats=false;
+	int32 ProcessHandleCount=-1,ProcessThreadCount=-1,TcpEndpointCount=-1,UdpEndpointCount=-1;
+	double ProcessCountersAgeSeconds=0,UObjectCreationsPerSecond=-1,SampleWallSeconds=0;
+	int32 HttpCompletedCount=0,HttpServerFailureCount=0,HttpClientErrorCount=0,HttpTimeoutCount=0,HttpRetryCount=0;
+	int32 BackendCircuitState=-1,BackendCircuitFailures=-1;
+	double BackendCircuitRetryAfterSeconds=-1,BackendCircuitRejected=-1;
 	double MemoryBytesPerSecondDelta = 0.0;
 	int32 UObjectCount = 0;
 	int32 ActorCount = 0;

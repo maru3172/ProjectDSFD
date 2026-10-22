@@ -115,9 +115,8 @@ bool FProjectDeadSpectatorTest::RunTest(const FString&)
 	TestTrue(FString::Printf(TEXT("Observer can look away from the living target (%s)"),*PC->PlayerCameraManager->GetCameraRotation().ToString()),PC->PlayerCameraManager->GetCameraRotation().Equals(FRotator(15,110,0),.1f));
 	TestTrue(TEXT("Observer position follows target, without a free-flying pawn"),PC->GetViewTarget()==Target && !PC->GetPawn());
 	FMinimalViewInfo Anchor;Target->CalcCamera(.016f,Anchor);
-	const FVector ExpectedOffset=-Target->GetActorForwardVector().GetSafeNormal2D()*90.f+FVector(0,0,40);
-	const FVector ExpectedLocation=Anchor.Location+ExpectedOffset;
-	TestTrue(TEXT("Spectator mount is behind the target body and above its first-person camera"),PC->PlayerCameraManager->GetCameraLocation().Equals(ExpectedLocation,.1f));
+	const FVector ExpectedLocation=Anchor.Location;
+	TestTrue(TEXT("Spectator has exactly the target's first-person camera position"),PC->PlayerCameraManager->GetCameraLocation().Equals(ExpectedLocation,.1f));
 	for(const float YawOffset:{0.f,90.f,180.f,270.f})
 	{
 		const FRotator Look(0,Target->GetActorRotation().Yaw+YawOffset,0);
@@ -125,14 +124,7 @@ bool FProjectDeadSpectatorTest::RunTest(const FString&)
 		TestTrue(TEXT("Turning the observer does not orbit the camera into the target's face"),PC->PlayerCameraManager->GetCameraLocation().Equals(ExpectedLocation,.1f));
 		TestTrue(TEXT("All four viewing directions remain independently controllable"),PC->PlayerCameraManager->GetCameraRotation().Equals(Look,.1f));
 	}
-	TestTrue(TEXT("Body remains visible; no actor-hidden or per-view hide list is applied"),!Target->IsHidden() && !PC->HiddenActors.Contains(Target));
-	auto* Wall=World->SpawnActor<AActor>();auto* Box=NewObject<UBoxComponent>(Wall);Wall->SetRootComponent(Box);
-	Box->SetBoxExtent(FVector(2,50,50));Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	Box->SetCollisionResponseToAllChannels(ECR_Ignore);Box->SetCollisionResponseToChannel(ECC_Camera,ECR_Block);
-	Wall->SetActorLocationAndRotation(Anchor.Location+ExpectedOffset.GetSafeNormal()*10.f,ExpectedOffset.Rotation());Box->RegisterComponent();
-	PC->PlayerCameraManager->UpdateCamera(.016f);
-	TestTrue(TEXT("A close rear wall shortens camera retreat instead of clipping through it"),FVector::Distance(Anchor.Location,PC->PlayerCameraManager->GetCameraLocation())<14.f);
-	Wall->Destroy();
+	TestTrue(TEXT("Body is hidden only in the observer's view, never globally"),!Target->IsHidden() && PC->HiddenActors.Contains(Target));
 	PC->SetControlRotation(FRotator(15,110,0));PC->PlayerCameraManager->UpdateCamera(.016f);
 	TestTrue(TEXT("Observer does not rotate target body"),Target->GetActorRotation().Equals(FRotator(0,30,0),.1f));
 	PC->RotationInput=FRotator::ZeroRotator;PC->HandleMannequinLook(FInputActionValue(FVector2D(2,1)));
@@ -148,6 +140,8 @@ bool FProjectDeadSpectatorTest::RunTest(const FString&)
 	PC->SurvivorState=EMultiplayTestSurvivorState::Eliminated;Voice->StopSpeaking();
 	TestTrue(TEXT("Death cancels held microphone but preserves channel"),!Voice->IsTransmitting() && !Voice->IsPushToTalkHeld() && Voice->IsVoiceReady());
 	Voice->LeaveMatch();TestTrue(TEXT("Leaving/kick disables speaking and hearing, clears identity"),!Voice->IsVoiceReady() && !Voice->IsConfiguredForSurvivor() && Voice->MatchId.IsEmpty());
+	PC->SurvivorSpectatorView.bEnabled=false;PC->PlayerCameraManager->UpdateCamera(.016f);
+	TestFalse(TEXT("Leaving spectator mode restores its per-view hide list"),PC->HiddenActors.Contains(Target));
 	World->DestroyWorld(false);return true;
 }
 #endif

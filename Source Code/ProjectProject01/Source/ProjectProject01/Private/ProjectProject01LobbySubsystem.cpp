@@ -3,6 +3,8 @@
 
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01VersionContract.h"
+#include "ProjectHttpDiagnostics.h"
+#include "ProjectRequestProtection.h"
 
 #include "Dom/JsonObject.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
@@ -491,6 +493,12 @@ void UProjectProject01LobbySubsystem::SendRequest(
 		return;
 	}
 #endif
+	FString CircuitError;
+	if(!ProjectRequestProtection::Acquire(GetGameInstance(),ApiBaseUrl,RequestTimeoutSeconds,ActiveCircuitTicket,CircuitError))
+	{
+		Complete(Operation,false,CircuitError);
+		return;
+	}
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(ApiBaseUrl + Endpoint);
 	Request->SetVerb(Verb);
@@ -509,6 +517,8 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	ActiveRequest = Request;
 	if (!Request->ProcessRequest())
 	{
+		ProjectRequestProtection::Complete(GetGameInstance(),ActiveCircuitTicket,Request,nullptr,false);
+		ProjectHttpDiagnostics::Complete(GetWorld(),TEXT("Lobby"),Request,nullptr,false,RetryIndex,1,false,RequestTimeoutSeconds);
 		ActiveRequest.Reset();
 		Complete(Operation, false, TEXT("로비 요청을 시작하지 못했습니다."));
 		if (UGameInstance* MutableGameInstance = GetGameInstance(); IsValid(MutableGameInstance))
@@ -537,6 +547,10 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	ActiveRequest.Reset();
 
 	const int32 StatusCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+	ProjectHttpDiagnostics::Complete(GetWorld(),TEXT("Lobby"),Request,Response,bConnectedSuccessfully,RetryIndex,1,
+		(StatusCode==401&&RetryIndex==0)||(ProjectProject01Lobby::IsReadOperation(Operation)&&RetryIndex<1&&
+		(!bConnectedSuccessfully||StatusCode==408||StatusCode==429||StatusCode>=500)),RequestTimeoutSeconds);
+	ProjectRequestProtection::Complete(GetGameInstance(),ActiveCircuitTicket,Request,Response,bConnectedSuccessfully);
 	if (StatusCode == 401 && RetryIndex == 0)
 	{
 		UGameInstance* GameInstance = GetGameInstance();

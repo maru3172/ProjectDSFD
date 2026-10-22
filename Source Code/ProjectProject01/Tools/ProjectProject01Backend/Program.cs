@@ -68,6 +68,8 @@ builder.Services.AddHostedService(services=>services.GetRequiredService<GameServ
 builder.Services.AddSingleton<EosVoiceTokenService>();
 builder.Services.AddSingleton<VoiceParticipantDirectory>();
 builder.Services.AddSingleton<VoiceAccountRateLimit>();
+builder.Services.AddSingleton(BackendDiagnostics.Shared);
+builder.Services.AddHostedService<BackendDiagnosticsWorker>();
 builder.Services.AddSingleton<CrashArtifactStore>();
 builder.Services.AddHostedService<CrashArtifactRetentionWorker>();
 builder.Services.AddHostedService(services => services.GetRequiredService<EosVoiceTokenService>());
@@ -181,6 +183,8 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+// Attach the fixed-cardinality metrics listener before startup creates any connection pools.
+app.UseBackendDiagnostics();
 var allowedInsecureVpnHost = builder.Configuration["Security:AllowedInsecureVpnHost"]?.Trim();
 app.Use(async (context, next) =>
 {
@@ -251,6 +255,7 @@ app.MapGet("/health", async (AuthDatabase database, EosVoiceTokenService eosVoic
 app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
     Results.Ok(contract.ToResponse()));
 app.MapProjectProject01ClientUpdates();
+app.MapBackendDiagnostics();
 app.MapCommunity();
 app.MapProjectProject01ServiceAdministration();
 app.MapProjectProject01Surveys();
@@ -1080,8 +1085,18 @@ internal sealed class AuthDatabase
             throw new InvalidOperationException("The MySQL connection string is not configured.");
         }
         var connection = new MySqlConnection(_databaseConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        return connection;
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            return connection;
+        }
+        catch(Exception exception)
+        {
+            BackendDiagnostics.Shared.Failure("DB",cancellationToken.IsCancellationRequested?"cancellation":
+                exception is TimeoutException||exception.InnerException is TimeoutException?"timeout":"connection-failure");
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 }
 

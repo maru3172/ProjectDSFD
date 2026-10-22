@@ -2152,6 +2152,8 @@ void AMultiplayTestGameMode::RefreshSurvivorSpectatorTargets()
 			!Controller->SurvivorSpectatorView.bEnabled || Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active) continue;
 		auto* Current=Controller->SurvivorSpectatorView.Target.Get();
 		const auto* Record=IsValid(Current) ? FindSurvivorRecord(Current) : nullptr;
+		// A dead spectator shares the observed survivor's fatal camera sequence before retargeting/results.
+		if(IsValid(Current) && Current->GetWorld()==GetWorld() && !Current->IsHidden() && Current->IsDeathPresentationPending())continue;
 		if (IsValid(Current) && Current->GetWorld()==GetWorld() && !Current->IsGameOver() && !Current->IsHidden() &&
 			Record && Record->SurvivorState==EMultiplayTestSurvivorState::Active && !Record->bForfeited && !Record->bDisconnected) continue;
 		auto* Target=FindLivingSurvivorSpectatorTarget(Controller,1);

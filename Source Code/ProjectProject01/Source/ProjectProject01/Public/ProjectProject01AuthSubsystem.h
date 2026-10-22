@@ -209,6 +209,7 @@ private:
 	FString ServiceShutdownAtUtc;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
+	uint64 ActiveCircuitTicket=0;
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ServiceStatusRequest;
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> SessionValidationRequest;
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> GuideProgressRequest;

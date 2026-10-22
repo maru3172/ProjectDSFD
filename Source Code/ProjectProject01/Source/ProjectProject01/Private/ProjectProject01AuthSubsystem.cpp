@@ -3,6 +3,8 @@
 
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01VersionContract.h"
+#include "ProjectHttpDiagnostics.h"
+#include "ProjectRequestProtection.h"
 
 #include "Dom/JsonObject.h"
 #include "Containers/Ticker.h"
@@ -386,6 +388,13 @@ void UProjectProject01AuthSubsystem::SendRequest(
 		CompleteOperation(Operation, false, TEXT("인증 API 주소가 설정되지 않았습니다."), FString());
 		return;
 	}
+	FString CircuitError;
+	if(!ProjectRequestProtection::Acquire(GetGameInstance(),ApiBaseUrl,RequestTimeoutSeconds,ActiveCircuitTicket,CircuitError))
+	{
+		if(Operation==EAuthOperation::Logout){ClearSession();CompleteOperation(Operation,true,TEXT("이 기기에서 로그아웃했습니다."),FString());}
+		else CompleteOperation(Operation,false,CircuitError,FString());
+		return;
+	}
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(ApiBaseUrl + Endpoint);
@@ -410,6 +419,8 @@ void UProjectProject01AuthSubsystem::SendRequest(
 
 	if (!Request->ProcessRequest())
 	{
+		ProjectRequestProtection::Complete(GetGameInstance(),ActiveCircuitTicket,Request,nullptr,false);
+		ProjectHttpDiagnostics::Complete(GetWorld(),TEXT("Auth"),Request,nullptr,false,RetryIndex,MaxRetryCount,false,RequestTimeoutSeconds);
 		ActiveRequest.Reset();
 		if (Operation == EAuthOperation::Logout)
 		{
@@ -437,6 +448,9 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 	ActiveRequest.Reset();
 
 	const int32 StatusCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+	ProjectHttpDiagnostics::Complete(GetWorld(),TEXT("Auth"),Request,Response,bConnectedSuccessfully,RetryIndex,MaxRetryCount,
+		(!bConnectedSuccessfully||ProjectProject01Auth::IsRetryableStatus(StatusCode))&&RetryIndex<MaxRetryCount,RequestTimeoutSeconds);
+	ProjectRequestProtection::Complete(GetGameInstance(),ActiveCircuitTicket,Request,Response,bConnectedSuccessfully);
 	if ((!bConnectedSuccessfully || ProjectProject01Auth::IsRetryableStatus(StatusCode)) && RetryIndex < MaxRetryCount)
 	{
 		UE_LOG(LogProjectProject01Auth, Warning,

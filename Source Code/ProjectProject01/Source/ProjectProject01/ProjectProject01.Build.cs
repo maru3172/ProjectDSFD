@@ -13,6 +13,7 @@ public class ProjectProject01 : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore", "EOSVoiceChat", "EOSShared", "EOSSDK", "AudioCaptureCore", "AudioCapture" });
 
 		PrivateDependencyModuleNames.Add("ImageWrapper");
+		if (Target.Platform == UnrealTargetPlatform.Win64) PublicSystemLibraries.Add("iphlpapi.lib");
 		if (Target.Type != TargetType.Server) PrivateDependencyModuleNames.Add("MoviePlayer");
 		// Community panels use the existing HTTP/Json/Slate dependencies above (also in packaged clients).
 

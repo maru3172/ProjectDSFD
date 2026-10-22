@@ -243,7 +243,7 @@ void AMultiplayTestPlayerController::ApplySurvivorSpectatorView()
 		EnsureMannequinLookBinding();
 		bAutoManageActiveCameraTarget=false;
 		auto* Target=SurvivorSpectatorView.Target.Get();
-		if (IsValid(Target) && Target->GetWorld()==GetWorld() && !Target->IsGameOver() && !Target->IsHidden())
+		if (IsValid(Target) && Target->GetWorld()==GetWorld() && (!Target->IsGameOver() || Target->IsDeathPresentationPending()) && !Target->IsHidden())
 		{
 			if (LocalSpectatorLookTarget.Get()!=Target)
 			{LocalSpectatorLookTarget=Target;SetControlRotation(Target->GetViewRotation());RotationInput=FRotator::ZeroRotator;}

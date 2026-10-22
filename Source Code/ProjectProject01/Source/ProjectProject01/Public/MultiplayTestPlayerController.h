@@ -109,6 +109,7 @@ UCLASS()
 class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerController
 {
 	GENERATED_BODY()
+	friend class FProjectSurvivorPresentationTest;
 
 public:
 	AMultiplayTestPlayerController();

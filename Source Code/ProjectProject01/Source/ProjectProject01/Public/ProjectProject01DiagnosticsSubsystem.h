@@ -34,6 +34,8 @@ class PROJECTPROJECT01_API UProjectProject01DiagnosticsSubsystem final : public 
 {
 	GENERATED_BODY()
 	friend class FProjectReviewAsyncStateTest;
+	friend class FProjectDiagnosticGCTest;
+	friend class FProjectDiagnosticCacheCountersTest;
 
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
@@ -52,6 +54,7 @@ public:
 	static void RecordWorldEvent(UWorld* World, EProjectProject01DiagnosticSeverity Severity, const FString& Code, const FString& Message, const AActor* Actor = nullptr);
 	static bool IsCaptureActiveForWorld(const UWorld* World);
 	static void AddWorkMetrics(UWorld* World, double AITickMilliseconds, int32 VisionChecks, int32 LineTraces);
+	static void AddHttpMetrics(UWorld* World,bool bServerFailure,bool bClientError,bool bTimeout,bool bRetry);
 
 private:
 	void CollectSample(float DeltaTime);
@@ -100,4 +103,11 @@ private:
 	uint64 PreGarbageCollectVirtualBytes = 0;
 	int32 PreGarbageCollectUObjectCount = 0;
 	bool bHasPreGarbageCollectSample = false;
+	double PreGarbageCollectStartedSeconds=0;
+	uint64 PreGCAllocatorUsed=0,PreGCAllocatorCommitted=0,PreGCAllocatorRetained=0;
+	bool bPreGCAllocatorAvailable=false;
+	bool bObjectCounterAcquired=false;
+	uint64 LastCreatedObjects=0;
+	double LastRateSampleSeconds=0;
+	int32 HttpCompleted=0,HttpServerFailures=0,HttpClientErrors=0,HttpTimeouts=0,HttpRetries=0;
 };

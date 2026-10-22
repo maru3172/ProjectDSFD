@@ -11,6 +11,11 @@ internal static class FeatureChecks
         try
         {
             Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+            if(args.Length==1&&args[0]=="--diagnostics-checks")
+            {
+                DiagnosticsChecks.RunAsync(Check).GetAwaiter().GetResult();
+                Console.WriteLine($"PASS: {checks} lightweight diagnostics checks (isolated HTTP fixture; no production database/EOS)");return 0;
+            }
             if(args.Length==1 && args[0]=="--encoding-fixture")
             {
                 Console.OutputEncoding=new System.Text.UTF8Encoding(false);
@@ -54,18 +59,18 @@ internal static class FeatureChecks
             }
             var compatibility=VersionCompatibilityOptions.FromConfiguration(
                 new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
-            Check(compatibility.NetworkProtocolVersion=="4","전원 로딩 준비 확인 통신 프로토콜 기본값 4");
+            Check(compatibility.NetworkProtocolVersion=="5","관전 연출 공유 통신 프로토콜 기본값 5");
             var versionHeaders=new Microsoft.AspNetCore.Http.HeaderDictionary
             {
                 [VersionCompatibilityOptions.ClientBuildHeader]=compatibility.ClientBuildVersion,
                 [VersionCompatibilityOptions.DedicatedServerBuildHeader]=compatibility.DedicatedServerBuildVersion,
                 [VersionCompatibilityOptions.ApiVersionHeader]=compatibility.ApiVersion,
                 [VersionCompatibilityOptions.GameDataVersionHeader]=compatibility.GameDataVersion,
-                [VersionCompatibilityOptions.NetworkProtocolHeader]="4"
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="5"
             };
-            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 4 클라이언트 허용");
-            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 4 데디 서버 허용");
-            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="3";
+            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 5 클라이언트 허용");
+            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 5 데디 서버 허용");
+            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="4";
             Check(compatibility.GetMismatches(versionHeaders,false).SequenceEqual(new[]{"NetworkProtocol"}),"구형 클라이언트 프로토콜 혼용 차단");
             Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");

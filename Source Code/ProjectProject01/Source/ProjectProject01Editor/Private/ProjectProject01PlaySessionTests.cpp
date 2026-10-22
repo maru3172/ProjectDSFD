@@ -4,7 +4,10 @@
 #include "ProjectProject01Tutorial.h"
 #include "ProjectProject01LevelTransitionTrigger.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
+#include "PlayerFeedbackWidgets.h"
+#include "UObject/UObjectIterator.h"
 #include "ProjectLoadingScreenSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Camera/CameraComponent.h"
@@ -33,6 +36,7 @@ namespace ProjectPlayTests
 		auto* Component=Capture->GetCaptureComponent2D();
 		auto* Texture=NewObject<UTextureRenderTarget2D>(Capture);Texture->InitAutoFormat(960,540);
 		Component->TextureTarget=Texture;Component->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR;
+		Component->HiddenActors=PC->HiddenActors;
 		Component->bCaptureEveryFrame=false;Component->bCaptureOnMovement=false;
 		Component->FOVAngle=PC->PlayerCameraManager->GetFOVAngle();
 		Capture->SetActorLocationAndRotation(PC->PlayerCameraManager->GetCameraLocation(),PC->PlayerCameraManager->GetCameraRotation());
@@ -150,12 +154,40 @@ bool FProjectThreeClientTravelTest::RunTest(const FString&)
 	Request.GameModeOverride=AMultiplayTestGameMode::StaticClass();
 	GEditor->RequestPlaySession(Request); GEditor->StartQueuedPlaySessionRequest();
 	const double Deadline=FPlatformTime::Seconds()+90;
-	struct FState { int32 Stage=0; double At=0; bool bCameraRendered=false; TWeakObjectPtr<UWorld> Source; TWeakObjectPtr<APlayerCharacter> Live; };
+	struct FState { int32 Stage=0; double At=0; bool bCameraRendered=false; TWeakObjectPtr<UWorld> Source; TWeakObjectPtr<APlayerCharacter> Live; TWeakObjectPtr<AMannequinAICharacter> Attacker; };
 	const auto State=MakeShared<FState>();
 	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,State,Deadline,Cleanup]()
 	{
 		if (FPlatformTime::Seconds()>Deadline)
 		{ AddError(FString::Printf(TEXT("Three-client travel timed out at stage %d"),State->Stage)); ProjectPlayTests::EndSession(this,Cleanup); return true; }
+		if(State->Stage>=3)
+		{
+			int32 Effects=0;bool ObserverSeen=false;
+			for(const auto& Context:GEngine->GetWorldContexts())
+			{
+				auto* World=Context.World();if(!World || World->WorldType!=EWorldType::PIE || World->GetNetMode()!=NM_Client)continue;
+				auto* PC=Cast<AMultiplayTestPlayerController>(World->GetFirstPlayerController());if(!PC)continue;
+				bool HasEffect=false;
+				if(State->Stage==3)
+				{for(TObjectIterator<UProjectProject01DamageFeedbackWidget> It;It;++It)if(It->GetOwningPlayer()==PC && It->IsInViewport())HasEffect=true;}
+				else
+				{for(TObjectIterator<UProjectProject01DeathFeedbackWidget> It;It;++It)if(It->GetOwningPlayer()==PC && It->IsInViewport())HasEffect=true;}
+				if(HasEffect)
+				{
+					++Effects;if(PC->IsFreeSpectatingTarget(PC->GetViewTarget()))
+					{ObserverSeen=true;TestTrue(TEXT("Observed target is retained through its fatal camera sequence"),PC->GetViewTarget()!=nullptr);}
+				}
+			}
+			if(Effects<2 || !ObserverSeen)return false;
+			if(State->Stage==3)
+			{
+				AddInfo(TEXT("Authoritative network damage VFX reached both the living owner and the existing dead observer."));
+				auto* Live=State->Live.Get();if(!Live || !State->Attacker.IsValid()){AddError(TEXT("Presentation fixture lost the authoritative target"));ProjectPlayTests::EndSession(this,Cleanup);return true;}
+				Live->SetRemainingDeathCountForGameMode(0);Live->HandleMannequinCatch(State->Attacker.Get());State->Stage=4;return false;
+			}
+			AddInfo(TEXT("Authoritative network death fade reached both owner and observer before match results."));
+			ProjectPlayTests::EndSession(this,Cleanup);return true;
+		}
 		if (State->Stage==0)
 		{
 			for (const auto& Context:GEngine->GetWorldContexts())
@@ -207,6 +239,8 @@ bool FProjectThreeClientTravelTest::RunTest(const FString&)
 				if (Target && !Target->IsGameOver() && !Target->IsHidden())
 				{
 					const FVector ObserverOffset=PC->PlayerCameraManager->GetCameraLocation()-Target->GetActorLocation();
+					FMinimalViewInfo TargetCamera;Target->CalcCamera(0,TargetCamera);
+					TestTrue(TEXT("Network spectator shares target first-person position, not a rear mount"),PC->PlayerCameraManager->GetCameraLocation().Equals(TargetCamera.Location,1.f));
 					for(const auto& OtherContext:GEngine->GetWorldContexts())
 					{
 						auto* OtherWorld=OtherContext.World();if(!OtherWorld || OtherWorld->WorldType!=EWorldType::PIE || OtherWorld->GetNetMode()!=NM_Client)continue;
@@ -240,7 +274,48 @@ bool FProjectThreeClientTravelTest::RunTest(const FString&)
 		TestEqual(TEXT("Dead survivor remains an observer after real network travel"),Observers,1);
 		TestEqual(TEXT("Mannequin travels without operating a trigger"),Mannequins,1);
 		AddInfo(TEXT("Three actual PIE clients passed initial and travel loading gates: survivor, dead free-look observer and mannequin."));
-		ProjectPlayTests::EndSession(this,Cleanup); return true;
+		for(const auto& Context:GEngine->GetWorldContexts())
+		{
+			auto* World=Context.World();if(!World || World->WorldType!=EWorldType::PIE || World->GetNetMode()==NM_Client || !World->GetMapName().Contains(TEXT("MultiplayTest1")))continue;
+			APlayerCharacter* Live=nullptr;AMannequinAICharacter* Attacker=nullptr;
+			for(TActorIterator<APlayerCharacter> It(World);It;++It)if(!It->IsGameOver())Live=*It;
+			for(TActorIterator<AMannequinAICharacter> It(World);It;++It){Attacker=*It;break;}
+			if(Live && Attacker)
+			{State->Live=Live;State->Attacker=Attacker;State->Stage=3;State->At=FPlatformTime::Seconds();Live->SetRemainingDeathCountForGameMode(1);Live->HandleMannequinCatch(Attacker);return false;}
+		}
+		AddError(TEXT("No authoritative survivor available for network presentation validation"));ProjectPlayTests::EndSession(this,Cleanup);return true;
+	}));
+	return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectSingleTitleReturnTest,"ProjectProject01.Editor.SinglePlayerTitleReturnLoading",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectSingleTitleReturnTest::RunTest(const FString&)
+{
+	if(!GEditor || GEditor->IsPlaySessionInProgress()){AddError(TEXT("Stop the current PIE session first"));return false;}
+	auto Request=UProjectProject01TutorialEditorLibrary::MakePracticeRequest();
+	Request.GlobalMapOverride=TEXT("/Game/MyProject/Level/LevelTest01");Request.GameModeOverride=nullptr;
+	GEditor->RequestPlaySession(Request);GEditor->StartQueuedPlaySessionRequest();
+	const double Deadline=FPlatformTime::Seconds()+60;auto Stage=MakeShared<int32>(0);
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,Deadline,Stage]()
+	{
+		if(FPlatformTime::Seconds()>Deadline){AddError(TEXT("Single-player title return stalled"));ProjectPlayTests::EndSession(this);return true;}
+		for(const auto& Context:GEngine->GetWorldContexts())
+		{
+			auto* World=Context.World();if(!World || World->WorldType!=EWorldType::PIE || !World->HasBegunPlay())continue;
+			auto* Loading=World->GetGameInstance()->GetSubsystem<UProjectLoadingScreenSubsystem>();
+			if(*Stage==0 && World->GetMapName().Contains(TEXT("LevelTest01")) && World->GetTimeSeconds()>1 && !Loading->IsLoading())
+			{
+				Loading->BeginLoading(false);*Stage=1;
+				UGameplayStatics::OpenLevel(World,FName(TEXT("/Game/MyProject/Level/TitleLevel")),true);return false;
+			}
+			if(*Stage==1 && World->GetMapName().Contains(TEXT("TitleLevel")) && World->GetTimeSeconds()>.5)
+			{
+				TestFalse(TEXT("Title return never waits for a gameplay-camera ready notification"),Loading->IsLoading());
+				TestNotNull(TEXT("Actual title controller is active after return"),Cast<AProjectProject01TitlePlayerController>(World->GetFirstPlayerController()));
+				ProjectPlayTests::EndSession(this);return true;
+			}
+		}
+		return false;
 	}));
 	return true;
 }

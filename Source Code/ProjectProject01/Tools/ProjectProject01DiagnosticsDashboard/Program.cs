@@ -18,7 +18,7 @@ internal static class Program
     {
         if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase)) return DashboardSelfTest.Run();
         ApplicationConfiguration.Initialize();
-        Application.Run(new DashboardForm());
+        Application.Run(new DashboardForm(args.Length==2&&args[0]=="--diagnostics-root"?args[1]:null));
         return 0;
     }
 }
@@ -59,6 +59,9 @@ internal static class DashboardSelfTest
             DiagnosticsNetworkOverheadMs: 0.02, DiagnosticsFrameTimingOverheadMs: 0.02, DiagnosticsMemoryOverheadMs: 0.03,
             DiagnosticsTextureRHIOverheadMs: 0.04, DiagnosticsBookkeepingOverheadMs: 0.03, DiagnosticsBufferedMemoryMiB: 0.5,
             HasDiagnosticsOverhead: true, HasDiagnosticsBreakdown: true, HasDiagnosticsBufferedMemory: true, Connections: 1);
+        CacheMemoryAnalysisTests.Run(sample);
+        ExtendedDiagnosticsTests.Run(sample);
+        LongTermDiagnosticsTests.Run(sample);
         DashboardForm.GenerateMergedArtifacts(directory, [report], [sample], [server, client]);
         if (!File.Exists(Path.Combine(directory, "CombinedReport.xml")) || !File.Exists(Path.Combine(directory, "MergedEvents.csv")) || !File.Exists(Path.Combine(directory, "MergedPerformance.csv"))) return 3;
         var combined = XDocument.Load(Path.Combine(directory, "CombinedReport.xml"));
@@ -67,6 +70,8 @@ internal static class DashboardSelfTest
         if (mismatchRisk?.Attribute("Category")?.Value != "Multiplayer" || string.IsNullOrWhiteSpace(mismatchRisk.Element("Reason")?.Value) || string.IsNullOrWhiteSpace(mismatchRisk.Element("Evidence")?.Value)) return 6;
         if (combined.Root?.Element("PerformanceSummary")?.Attribute("AverageFps")?.Value != "60.000" ||
             combined.Root?.Element("NetworkSummary")?.Attribute("MaxConnectionCount")?.Value != "1") return 7;
+        if(combined.Root?.Element("CacheMemoryAnalysis")?.Elements("Finding").Any()!=true)return 16;
+        if(combined.Root?.Element("RuntimeCounters")?.Elements("Metric").Any()!=true)return 17;
         if (combined.Root?.Element("DiagnosticsOverheadSummary")?.Attribute("MaxMilliseconds")?.Value != "0.250" ||
             combined.Root?.Element("DiagnosticsOverheadSummary")?.Attribute("MaxActorAIMilliseconds")?.Value != "0.100" ||
             combined.Root?.Element("DiagnosticsOverheadSummary")?.Attribute("MaxTextureRHIMilliseconds")?.Value != "0.040" ||
@@ -121,7 +126,18 @@ internal sealed record PerformanceSample(
     double DiagnosticsActorAIOverheadMs, double DiagnosticsNavigationOverheadMs, double DiagnosticsNetworkOverheadMs,
     double DiagnosticsFrameTimingOverheadMs, double DiagnosticsMemoryOverheadMs, double DiagnosticsTextureRHIOverheadMs,
     double DiagnosticsBookkeepingOverheadMs, double DiagnosticsBufferedMemoryMiB,
-    bool HasDiagnosticsOverhead, bool HasDiagnosticsBreakdown, bool HasDiagnosticsBufferedMemory, int Connections);
+    bool HasDiagnosticsOverhead, bool HasDiagnosticsBreakdown, bool HasDiagnosticsBufferedMemory, int Connections)
+{
+    public double? AllocatorUsedMiB { get; init; }
+    public double? AllocatorCommittedMiB { get; init; }
+    public double? AllocatorRetainedMiB { get; init; }
+    public double? AvailablePhysicalMiB { get; init; }
+    public double? TotalPhysicalMiB { get; init; }
+    public bool HasTextureCounters { get; init; }
+    public Dictionary<string,double> RuntimeCounters {get;init;}=[];
+    public double? TexturePoolUsePercent => HasTextureCounters&&double.IsFinite(TexturePoolMiB)&&double.IsFinite(StreamingTextureMemoryMiB)&&TexturePoolMiB>0&&StreamingTextureMemoryMiB>=0
+        ?StreamingTextureMemoryMiB/TexturePoolMiB*100:null;
+}
 
 internal sealed record RunMetrics(
     double AverageFps, double MaxFrameMs, double MaxGameMs, double MaxDrawMs, double MaxGpuMs,
@@ -164,6 +180,7 @@ internal sealed class RunSummary
     public required IReadOnlyDictionary<string, int> RiskByCategory { get; init; }
     public required IReadOnlyDictionary<string, int> RiskByCode { get; init; }
     public required TimeAlignmentSummary TimeAlignment { get; init; }
+    public IReadOnlyList<DiagnosticHistoryCapture> ExtendedCaptures { get; init; } = [];
 }
 
 internal sealed record ChartPoint(string Series, double X, double Y);
@@ -179,8 +196,28 @@ internal sealed class TrendChart : Control
     public void SetData(string newTitle, IEnumerable<ChartPoint> newPoints)
     {
         title = newTitle;
-        points = newPoints.Where(point => double.IsFinite(point.X) && double.IsFinite(point.Y)).ToList();
+        points = ReducePoints(newPoints);
         Invalidate();
+    }
+
+    // Preserve peaks/troughs for diagnosis, while bounding draw calls for long captures.
+    internal static List<ChartPoint> ReducePoints(IEnumerable<ChartPoint> source)
+    {
+        List<ChartPoint> result=[];
+        foreach(var group in source.Where(p=>double.IsFinite(p.X)&&double.IsFinite(p.Y)).GroupBy(p=>p.Series))
+        {
+            var sorted=group.OrderBy(p=>p.X).ToArray();
+            if(sorted.Length<=800){result.AddRange(sorted);continue;}
+            result.Add(sorted[0]);int bucketSize=(int)Math.Ceiling((sorted.Length-2)/399d);
+            for(int start=1;start<sorted.Length-1;start+=bucketSize)
+            {
+                var bucket=sorted.Skip(start).Take(Math.Min(bucketSize,sorted.Length-1-start));
+                var minimum=bucket.MinBy(p=>p.Y)!;var maximum=bucket.MaxBy(p=>p.Y)!;
+                result.AddRange(new[]{minimum,maximum}.Distinct().OrderBy(p=>p.X));
+            }
+            result.Add(sorted[^1]);
+        }
+        return result;
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -241,16 +278,21 @@ internal sealed class DashboardForm : Form
     private readonly DataGridView timelineGrid = CreateGrid();
     private readonly DataGridView riskBreakdownGrid = CreateGrid();
     private readonly DataGridView overheadBreakdownGrid = CreateGrid();
+    private readonly DataGridView cacheMemoryGrid = CreateGrid();
+    private readonly DataGridView runtimeMetricsGrid=CreateGrid();
     private readonly TextBox details = new() { Dock = DockStyle.Fill, ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Both, Font = new Font(FontFamily.GenericMonospace, 9f) };
     private readonly TrendChart runChart = new() { Dock = DockStyle.Fill };
     private readonly TrendChart historyChart = new() { Dock = DockStyle.Fill };
+    private readonly LongTermDiagnosticsPanel extendedHistory = new();
     private readonly List<DiagnosticReport> reports = [];
     private readonly List<RunSummary> runSummaries = [];
     private List<DiagnosticEvent> selectedTimelineEvents = [];
+    private List<PerformanceSample> selectedPerformance=[];
+    private string selectedPerformanceRunId="";
     private string timelineSortColumn = "UtcTime";
     private bool timelineSortAscending = true;
 
-    public DashboardForm()
+    public DashboardForm(string? initialRoot=null)
     {
         Text = "ProjectDFSD Diagnostics Dashboard";
         Width = 1380;
@@ -274,6 +316,8 @@ internal sealed class DashboardForm : Form
             "Diagnostics frame timing overhead ms", "Diagnostics memory overhead ms", "Diagnostics texture/RHI overhead ms", "Diagnostics bookkeeping overhead ms",
             "Diagnostics buffered memory MiB", "Line traces", "Path failures"]);
         metricSelector.SelectedIndex = 0;
+        metricSelector.Items.AddRange(RuntimeMetricAnalysis.Keys.Cast<object>().ToArray());
+        metricSelector.Items.AddRange(["Allocator used MiB","Allocator OS-held MiB","Allocator retained/slack MiB","Available system RAM MiB","Streaming texture pool %"]);
         historyMetricSelector.Items.AddRange([
             "Total risk candidates", "Risk: Performance", "Risk: Memory", "Risk: Network", "Risk: AI/Navigation", "Risk: Tuning/Data", "Risk: Multiplayer", "Risk: Engine/Logs", "Risk: Other",
             "Average FPS", "Max frame ms", "Max game thread ms", "Max draw thread ms", "Max GPU ms",
@@ -304,13 +348,35 @@ internal sealed class DashboardForm : Form
         tabs.TabPages.Add(timelinePage);
         tabs.TabPages.Add(new TabPage("Risk Breakdown") { Controls = { riskBreakdownGrid } });
         tabs.TabPages.Add(new TabPage("Diagnostics Overhead") { Controls = { overheadBreakdownGrid } });
+        var cachePage=new TabPage("캐시·메모리");cachePage.Controls.Add(cacheMemoryGrid);
+        cacheMemoryGrid.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill;
+        cacheMemoryGrid.AutoSizeRowsMode=DataGridViewAutoSizeRowsMode.AllCells;
+        cacheMemoryGrid.DefaultCellStyle.WrapMode=DataGridViewTriState.True;
+        cacheMemoryGrid.DataBindingComplete+=(_,_)=>
+        {
+            foreach(DataGridViewColumn column in cacheMemoryGrid.Columns)
+            {
+                column.HeaderText=column.Name switch {"Role"=>"역할","Category"=>"분석 항목","Status"=>"판정 범위","Code"=>"분석 코드","Evidence"=>"관측 근거","Interpretation"=>"해석·확인 방법",_=>column.Name};
+                column.FillWeight=column.Name is "Evidence" or "Interpretation"?240:80;
+            }
+        };
+        cachePage.Controls.Add(new Label { Dock=DockStyle.Top,Height=54,Text="관측·검토 후보이며 누수 확정이 아닙니다. 할당자 보유 차이에는 캐시·빈 풀·정렬·조각화가 포함됩니다.\nPIE가 같은 프로세스면 RAM 수치도 공유되므로 역할별 값을 합산하지 마세요. OS/드라이버 전체 캐시는 측정하지 않습니다." });
+        tabs.TabPages.Add(cachePage);
+        tabs.TabPages.Add(new TabPage("GC·프로세스·요청"){Controls={runtimeMetricsGrid}});
+        runtimeMetricsGrid.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill;
+        tabs.TabPages.Add(new TabPage("백엔드·풀 진단"){Controls={new BackendDiagnosticsPanel()}});
         var runChartPage = new TabPage("Run Trend");
         runChartPage.Controls.Add(runChart);
         runChartPage.Controls.Add(metricSelector);
         tabs.TabPages.Add(runChartPage);
         var historyPage = new TabPage("Long-term Comparison");
-        historyPage.Controls.Add(historyChart);
-        historyPage.Controls.Add(historyMetricSelector);
+        var historyTabs = new TabControl { Dock = DockStyle.Fill };
+        var existingHistory = new TabPage("기존 성능·위험 비교");
+        existingHistory.Controls.Add(historyChart);
+        existingHistory.Controls.Add(historyMetricSelector);
+        historyTabs.TabPages.Add(existingHistory);
+        historyTabs.TabPages.Add(new TabPage("추가 진단 전체 · 장기 추세") { Controls = { extendedHistory } });
+        historyPage.Controls.Add(historyTabs);
         tabs.TabPages.Add(historyPage);
         split.Panel2.Controls.Add(tabs);
         Controls.Add(split);
@@ -327,7 +393,7 @@ internal sealed class DashboardForm : Form
         eventSearchBox.TextChanged += (_, _) => ApplyTimelineFilters();
         timelineGrid.ColumnHeaderMouseClick += (_, args) => SortTimelineByColumn(args.ColumnIndex);
 
-        var defaultPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "Saved", "Diagnostics"));
+        var defaultPath = initialRoot is not null?Path.GetFullPath(initialRoot):Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "Saved", "Diagnostics"));
         if (Directory.Exists(defaultPath)) LoadReports(defaultPath);
     }
 
@@ -404,7 +470,9 @@ internal sealed class DashboardForm : Form
                 Metrics = BuildRunMetrics(samples),
                 RiskByCategory = riskBreakdown.GroupBy(row => row.Category, StringComparer.Ordinal).ToDictionary(category => category.Key, category => category.Sum(row => row.Count), StringComparer.Ordinal),
                 RiskByCode = riskBreakdown.ToDictionary(row => row.Code, row => row.Count, StringComparer.Ordinal),
-                TimeAlignment = AnalyzeServerClientTimeAlignment(events)
+                TimeAlignment = AnalyzeServerClientTimeAlignment(events),
+                ExtendedCaptures = LongTermDiagnostics.Game(group.Key,
+                    $"{group.Key} · {string.Join(", ", runReports.Select(r => r.Map).Distinct())} · P{(samples.Count > 0 ? samples.Max(s => s.Players) : 0)} · M{(samples.Count > 0 ? samples.Max(s => s.Mannequins) : 0)} · T{string.Join("/", runReports.Select(r => r.TuningFingerprint).Distinct())}", samples, events)
             });
         }
 
@@ -433,6 +501,7 @@ internal sealed class DashboardForm : Form
             (outcome == "All outcomes" || summary.Outcome.Contains(outcome, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(summary => summary.TestRunId, StringComparer.Ordinal).ToList();
         reportsGrid.DataSource = filtered;
+        extendedHistory.SetGameCaptures(filtered.SelectMany(s => s.ExtendedCaptures));
         UpdateHistoryChart();
         ShowSelectedRun();
     }
@@ -445,12 +514,15 @@ internal sealed class DashboardForm : Form
         if (summary is null) return;
         var selectedReports = reports.Where(report => report.TestRunId == summary.TestRunId).ToList();
         var samples = LoadPerformance(selectedReports);
+        selectedPerformance=samples;selectedPerformanceRunId=summary.TestRunId;
         var events = LoadEvents(selectedReports);
         var mismatches = FindMultiplayerMismatchCandidates(events);
         var mergedEvents = events.Concat(mismatches).OrderBy(item => item.UtcTime, StringComparer.Ordinal).ThenBy(item => item.Role).ToList();
         var riskBreakdown = BuildRiskBreakdown(mergedEvents);
         riskBreakdownGrid.DataSource = riskBreakdown;
         overheadBreakdownGrid.DataSource = BuildOverheadBreakdown(samples);
+        cacheMemoryGrid.DataSource=CacheMemoryAnalysis.Analyze(samples,events);
+        runtimeMetricsGrid.DataSource=RuntimeMetricAnalysis.Analyze(samples,events);
         var riskCategorySummary = riskBreakdown.Count == 0
             ? "None"
             : string.Join(", ", riskBreakdown.GroupBy(row => row.Category, StringComparer.Ordinal).OrderBy(group => group.Key).Select(group => $"{group.Key}={group.Sum(row => row.Count)}"));
@@ -836,13 +908,18 @@ internal sealed class DashboardForm : Form
     {
         var summary = SelectedRun();
         if (summary is null) return;
-        var samples = LoadPerformance(reports.Where(report => report.TestRunId == summary.TestRunId));
+        var samples = selectedPerformanceRunId==summary.TestRunId?selectedPerformance:LoadPerformance(reports.Where(report => report.TestRunId == summary.TestRunId));
         var metric = metricSelector.SelectedItem?.ToString() ?? "FPS";
         double Value(PerformanceSample sample) => metric switch
         {
             "Frame ms" => sample.FrameMs, "Game thread ms" => sample.GameMs, "Draw thread ms" => sample.DrawMs,
             "GPU ms" => sample.GpuMs, "Physical memory MiB" => sample.PhysicalMemoryMiB, "Virtual memory MiB" => sample.VirtualMemoryMiB,
             "Memory growth MiB/s" => sample.MemoryGrowthMiBPerSecond, "Memory growth MiB/min" => sample.MemoryGrowthMiBPerMinute,
+            "Allocator used MiB"=>sample.AllocatorUsedMiB??double.NaN,
+            "Allocator OS-held MiB"=>sample.AllocatorCommittedMiB??double.NaN,
+            "Allocator retained/slack MiB"=>sample.AllocatorRetainedMiB??double.NaN,
+            "Available system RAM MiB"=>sample.AvailablePhysicalMiB??double.NaN,
+            "Streaming texture pool %"=>sample.TexturePoolUsePercent??double.NaN,
             "UObject count" => sample.UObjectCount, "Actor count" => sample.ActorCount,
             "Streaming texture MiB" => sample.StreamingTextureMemoryMiB, "Non-streaming texture MiB" => sample.NonStreamingTextureMemoryMiB, "Texture pool MiB" => sample.TexturePoolMiB,
             "Inbound KiB/s" => sample.InKiB, "Outbound KiB/s" => sample.OutKiB, "AI tick ms" => sample.AiTickMs,
@@ -855,7 +932,8 @@ internal sealed class DashboardForm : Form
             "Diagnostics texture/RHI overhead ms" => sample.HasDiagnosticsBreakdown ? sample.DiagnosticsTextureRHIOverheadMs : double.NaN,
             "Diagnostics bookkeeping overhead ms" => sample.HasDiagnosticsBreakdown ? sample.DiagnosticsBookkeepingOverheadMs : double.NaN,
             "Diagnostics buffered memory MiB" => sample.HasDiagnosticsBufferedMemory ? sample.DiagnosticsBufferedMemoryMiB : double.NaN,
-            "Line traces" => sample.LineTraces, "Path failures" => sample.PathFailures, _ => sample.Fps
+            "Line traces" => sample.LineTraces, "Path failures" => sample.PathFailures,"FPS"=>sample.Fps,
+            _ => sample.RuntimeCounters.TryGetValue(metric,out double counter)?counter:double.NaN
         };
         runChart.SetData($"{summary.TestRunId} — {metric}", samples.Select(sample => new ChartPoint(sample.Role, sample.GameSeconds, Value(sample))));
     }
@@ -978,7 +1056,7 @@ internal sealed class DashboardForm : Form
             var file = Path.Combine(Path.GetDirectoryName(report.FilePath)!, "Performance.csv");
             foreach (var row in ReadCsv(file))
             {
-                result.Add(new PerformanceSample(
+                result.Add(CacheMemoryAnalysis.ReadOptionalCounters(new PerformanceSample(
                     Get(row, "UtcTime"), Get(row, "Role", report.Role), Get(row, "NetMode", report.NetMode), Number(row, "GameSeconds"), Number(row, "FramesPerSecond"), Number(row, "FrameMilliseconds"),
                     Number(row, "GameThreadMilliseconds"), Number(row, "DrawThreadMilliseconds"), Number(row, "GpuMilliseconds"),
                     Number(row, "UsedPhysicalBytes") / 1048576.0, Number(row, "UsedVirtualBytes") / 1048576.0,
@@ -992,7 +1070,7 @@ internal sealed class DashboardForm : Form
                     Number(row, "DiagnosticsMemoryOverheadMilliseconds"), Number(row, "DiagnosticsTextureRHIOverheadMilliseconds"),
                     Number(row, "DiagnosticsBookkeepingOverheadMilliseconds"), Number(row, "DiagnosticsBufferedMemoryBytes") / 1048576.0,
                     row.ContainsKey("DiagnosticsOverheadMilliseconds"), row.ContainsKey("DiagnosticsActorAIOverheadMilliseconds"),
-                    row.ContainsKey("DiagnosticsBufferedMemoryBytes"), Integer(row, "NetworkConnectionCount")));
+                    row.ContainsKey("DiagnosticsBufferedMemoryBytes"), Integer(row, "NetworkConnectionCount")),row));
             }
         }
         var withMinuteGrowth = new List<PerformanceSample>(result.Count);
@@ -1156,7 +1234,17 @@ internal sealed class DashboardForm : Form
 
             var performanceLines = new List<string> { "UtcTime,Role,NetMode,GameSeconds,FramesPerSecond,FrameMilliseconds,GameThreadMilliseconds,DrawThreadMilliseconds,GpuMilliseconds,UsedPhysicalMiB,UsedVirtualMiB,MemoryGrowthMiBPerSecond,MemoryGrowthMiBPerMinute,UObjectCount,ActorCount,StreamingTextureMemoryMiB,NonStreamingTextureMemoryMiB,TexturePoolMiB,InKiBPerSecond,OutKiBPerSecond,PlayerCount,MannequinCount,HelperCount,PathFailureCount,VisionCheckCount,LineTraceCount,AITickMilliseconds,DiagnosticsOverheadMilliseconds,DiagnosticsActorAIOverheadMilliseconds,DiagnosticsNavigationOverheadMilliseconds,DiagnosticsNetworkOverheadMilliseconds,DiagnosticsFrameTimingOverheadMilliseconds,DiagnosticsMemoryOverheadMilliseconds,DiagnosticsTextureRHIOverheadMilliseconds,DiagnosticsBookkeepingOverheadMilliseconds,DiagnosticsBufferedMemoryMiB,NetworkConnectionCount" };
             performanceLines.AddRange(samples.Select(item => string.Join(',', EscapeCsv(item.UtcTime), EscapeCsv(item.Role), EscapeCsv(item.NetMode), Format(item.GameSeconds), Format(item.Fps), Format(item.FrameMs), Format(item.GameMs), Format(item.DrawMs), Format(item.GpuMs), Format(item.PhysicalMemoryMiB), Format(item.VirtualMemoryMiB), Format(item.MemoryGrowthMiBPerSecond), Format(item.MemoryGrowthMiBPerMinute), item.UObjectCount, item.ActorCount, Format(item.StreamingTextureMemoryMiB), Format(item.NonStreamingTextureMemoryMiB), Format(item.TexturePoolMiB), Format(item.InKiB), Format(item.OutKiB), item.Players, item.Mannequins, item.Helpers, item.PathFailures, item.VisionChecks, item.LineTraces, Format(item.AiTickMs), Format(item.DiagnosticsOverheadMs), Format(item.DiagnosticsActorAIOverheadMs), Format(item.DiagnosticsNavigationOverheadMs), Format(item.DiagnosticsNetworkOverheadMs), Format(item.DiagnosticsFrameTimingOverheadMs), Format(item.DiagnosticsMemoryOverheadMs), Format(item.DiagnosticsTextureRHIOverheadMs), Format(item.DiagnosticsBookkeepingOverheadMs), Format(item.DiagnosticsBufferedMemoryMiB), item.Connections)));
-            File.WriteAllLines(Path.Combine(runDirectory, "MergedPerformance.csv"), performanceLines, new UTF8Encoding(true));
+            performanceLines[0]+=",AllocatorStatsAvailable,AllocatorUsedMiB,AllocatorOSHeldMiB,AllocatorRetainedMiB,AvailableSystemRAMMiB,TotalSystemRAMMiB,TextureStatsAvailable,StreamingTexturePoolPercent";
+            for(int i=0;i<samples.Count;++i)
+            {
+                var s=samples[i];string Value(double? n)=>n.HasValue?Format(n.Value):"";
+                performanceLines[i+1]+=string.Join(',',"",s.AllocatorUsedMiB.HasValue?"true":"false",Value(s.AllocatorUsedMiB),Value(s.AllocatorCommittedMiB),Value(s.AllocatorRetainedMiB),
+                    Value(s.AvailablePhysicalMiB),Value(s.TotalPhysicalMiB),s.HasTextureCounters?"true":"false",Value(s.TexturePoolUsePercent));
+            }
+            performanceLines[0]+=","+string.Join(',',RuntimeMetricAnalysis.Keys);
+            for(int index=0;index<samples.Count;++index)
+                performanceLines[index+1]+=","+string.Join(',',RuntimeMetricAnalysis.Keys.Select(k=>samples[index].RuntimeCounters.TryGetValue(k,out double value)?value.ToString("R",CultureInfo.InvariantCulture):""));
+            File.WriteAllLines(Path.Combine(runDirectory,"MergedPerformance.csv"),performanceLines,new UTF8Encoding(true));
 
             var verificationPath = Path.Combine(runDirectory, "Verification.xml");
             var verification = File.Exists(verificationPath) ? XDocument.Load(verificationPath).Root : null;
@@ -1237,7 +1325,12 @@ internal sealed class DashboardForm : Form
                 riskBreakdownElement,
                 performanceSummary,
                 memorySummary,
+                new XElement("CacheMemoryAnalysis",new XAttribute("Interpretation","Candidates only; allocator slack is not exclusively cache; no forced GC or purge"),
+                    CacheMemoryAnalysis.Analyze(samples,events).Select(f=>new XElement("Finding",new XAttribute("Role",f.Role),new XAttribute("Category",f.Category),
+                        new XAttribute("Status",f.Status),new XAttribute("Code",f.Code),new XElement("Evidence",f.Evidence),new XElement("Interpretation",f.Interpretation)))),
                 networkSummary,
+                new XElement("RuntimeCounters",RuntimeMetricAnalysis.Analyze(samples,events).Select(row=>new XElement("Metric",
+                    new XAttribute("Role",row.Role),new XAttribute("Name",row.Metric),new XAttribute("Value",row.Value),new XAttribute("Unit",row.Unit),row.Scope))),
                 diagnosticsOverheadSummary,
                 timeAlignmentSummary,
                 new XElement("BuildAndAutomation", new XAttribute("Available", verification is not null), verification?.Elements()),

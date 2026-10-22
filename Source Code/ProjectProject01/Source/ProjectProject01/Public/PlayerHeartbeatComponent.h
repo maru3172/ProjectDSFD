@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Components/SynthComponent.h"
+#include "ProjectSurvivorPresentation.h"
 #include "PlayerHeartbeatComponent.generated.h"
 
 class AMannequinAICharacter;
@@ -204,6 +205,7 @@ public:
 	/** Pain reaction owns the breathing channel until its entire recovery sequence ends. */
 	void SuspendTensionBreathingForPain(bool bFatal, float DurationSeconds);
 	void ResetTensionBreathing();
+	void ExportObserverPresentation(FProjectSurvivorPresentation& Out) const;
 
 	/** 서버가 검증한 DataTable의 심박 설정을 로컬 생존자에게 적용합니다. */
 	void ApplyHeartbeatTuning(const FPlayerTuningRow& Tuning);
@@ -222,6 +224,10 @@ protected:
 
 private:
 	// 월드에 존재하는 마네킹 목록을 주기적으로 갱신한다.
+	void ApplyObserverBreathing(const FProjectSurvivorPresentation& Presentation,APawn& Pawn);
+	float SharedBreathTension=-1,SharedBreathGain=1;
+	uint32 SharedReliefSerial=0,LastObservedReliefSerial=0;
+	double ObservedReliefUntil=-1;
 	void RefreshMannequinCache();
 	// 실제 시야 진입과 인지 대상 유지 여부를 갱신한다.
 	void UpdateDetectionStates(APawn& OwnerPawn);

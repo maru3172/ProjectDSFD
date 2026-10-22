@@ -472,4 +472,5 @@ private:
 	FString GameTicketRole;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
+	uint64 ActiveCircuitTicket=0;
 };

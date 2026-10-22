@@ -654,6 +654,14 @@ void UPlayerHeartbeatComponent::TickComponent(
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	auto* Player=Cast<APlayerCharacter>(OwnerPawn);
+	if(Player && Player->IsLocallyObserved())
+	{
+		const auto& P=Player->GetObserverPresentation();
+		PresentedBPM=P.BPM;PresentedVFXProximity=P.Proximity;PresentedVFXDensity=P.Density;PresentedHeartbeatGain=P.HeartbeatGain;
+		if(!Player->CanPlayTensionBreathing())PresentedBPM=PresentedVFXProximity=PresentedVFXDensity=0;
+		ApplyObserverBreathing(P,*OwnerPawn);UpdateHeartbeatVFX(DeltaTime,*OwnerPawn);UpdateBeatOutput(DeltaTime,*OwnerPawn);return;
+	}
 	if (!IsValid(OwnerPawn) || !OwnerPawn->IsLocallyControlled())
 	{
 		ReleaseBreathingSFX();
@@ -682,6 +690,29 @@ void UPlayerHeartbeatComponent::TickComponent(
 	UpdateBreathingOutput(DeltaTime, *OwnerPawn);
 	UpdateHeartbeatVFX(DeltaTime, *OwnerPawn);
 	UpdateBeatOutput(DeltaTime, *OwnerPawn);
+}
+
+void UPlayerHeartbeatComponent::ExportObserverPresentation(FProjectSurvivorPresentation& Out) const
+{
+	Out.BPM=FMath::Clamp(PresentedBPM,0.f,400.f);Out.Proximity=FMath::Clamp(PresentedVFXProximity,0.f,1.f);
+	Out.Density=FMath::Clamp(PresentedVFXDensity,0.f,1.f);Out.HeartbeatGain=FMath::Clamp(PresentedHeartbeatGain,0.f,1.f);
+	Out.BreathTension=SharedBreathTension;Out.BreathGain=SharedBreathGain;Out.ReliefSerial=SharedReliefSerial;
+	Out.ReliefRemaining=GetWorld()?FMath::Clamp(float(ReliefBreathEndWorldSeconds-GetWorld()->GetTimeSeconds()),0.f,1.f):0;
+}
+
+void UPlayerHeartbeatComponent::ApplyObserverBreathing(const FProjectSurvivorPresentation& P,APawn& Pawn)
+{
+	const auto* Player=Cast<APlayerCharacter>(&Pawn);const auto* World=GetWorld();
+	if(!Player || !World || !Player->CanPlayTensionBreathing() || !CanResumeTensionBreathing(World->GetTimeSeconds()))
+	{ReleaseBreathingSFX();LastObservedReliefSerial=P.ReliefSerial;return;}
+	const bool Relief=P.ReliefSerial!=LastObservedReliefSerial && P.ReliefRemaining>0;LastObservedReliefSerial=P.ReliefSerial;
+	if(P.BreathTension<0 && !Relief){if(World->GetTimeSeconds()>ObservedReliefUntil)ReleaseBreathingSFX();return;}
+	auto* Synth=BreathingSFXSynth.Get();
+	if(!Synth){Synth=NewObject<UTensionBreathingSynthComponent>(&Pawn);Synth->SetupAttachment(Pawn.GetRootComponent());Synth->RegisterComponent();BreathingSFXSynth=Synth;}
+	if(auto* Settings=UProjectProject01GameUserSettings::Get())Synth->SoundClass=Settings->GetSFXSoundClass();
+	Synth->SetVolumeMultiplier(P.BreathGain);
+	if(Relief){ObservedReliefUntil=World->GetTimeSeconds()+UTensionBreathingSynthComponent::ReliefDurationSeconds;Synth->PlayReliefBreath();}
+	else Synth->SetTension(P.BreathTension);
 }
 
 void UPlayerHeartbeatComponent::ResetHeartbeatState()
@@ -1084,7 +1115,8 @@ void UPlayerHeartbeatComponent::ReleaseHeartbeatVFX()
 bool UPlayerHeartbeatComponent::EnsureHeartbeatSFX(APawn& OwnerPawn)
 {
 	UWorld* World = GetWorld();
-	if (!IsValid(World) || World->GetNetMode() == NM_DedicatedServer || !OwnerPawn.IsLocallyControlled())
+	const auto* Player=Cast<APlayerCharacter>(&OwnerPawn);
+	if (!IsValid(World) || World->GetNetMode() == NM_DedicatedServer || (!OwnerPawn.IsLocallyControlled() && !(Player && Player->IsLocallyObserved())))
 	{
 		return false;
 	}
@@ -1332,6 +1364,7 @@ void UPlayerHeartbeatComponent::MarkReliefBreathStarted(const double WorldSecond
 
 void UPlayerHeartbeatComponent::UpdateBreathingOutput(const float DeltaTime, APawn& OwnerPawn)
 {
+	SharedBreathTension=-1;
 	const UWorld* World = GetWorld();
 	const auto* Player = Cast<APlayerCharacter>(&OwnerPawn);
 	if (!World || World->GetNetMode() == NM_DedicatedServer || !Player || !Player->CanPlayTensionBreathing())
@@ -1370,12 +1403,16 @@ void UPlayerHeartbeatComponent::UpdateBreathingOutput(const float DeltaTime, APa
 	}
 	if (auto* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
 		Synth->SoundClass = Settings->GetSFXSoundClass();
-	Synth->SetVolumeMultiplier(bCalming ? GetBreathingCalmAlpha(Now) : 1.0f);
+	SharedBreathGain=bCalming ? GetBreathingCalmAlpha(Now) : 1.0f;
+	Synth->SetVolumeMultiplier(SharedBreathGain);
 	if (bTensionActive || bCarryTension || bCalming)
-		Synth->SetTension(bCarryTension ? LastThreatBreathingTension : bCalming ?
-			LastThreatBreathingTension * GetBreathingCalmAlpha(Now) : CalculateBreathingTension());
+	{
+		SharedBreathTension=bCarryTension ? LastThreatBreathingTension : bCalming ? LastThreatBreathingTension * GetBreathingCalmAlpha(Now) : CalculateBreathingTension();
+		Synth->SetTension(SharedBreathTension);
+	}
 	else
 	{
+		++SharedReliefSerial;
 		Synth->PlayReliefBreath();
 		MarkReliefBreathStarted(Now);
 	}

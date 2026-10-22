@@ -7,6 +7,7 @@
 #include "InputActionValue.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01LocomotionFeedback.h"
+#include "ProjectSurvivorPresentation.h"
 #include "PlayerCharacter.generated.h"
 
 class UInputAction;
@@ -71,6 +72,12 @@ public:
 	/** Only the active local survivor hears their own ambient breathing, never title/results/spectating. */
 	bool CanPlayTensionBreathing() const;
 	bool IsSprintingForBreathing() const { return bIsSprinting && GetVelocity().SizeSquared2D() > 400.0f; }
+	/** Local player currently seeing this pawn, including a dead free-look observer. */
+	APlayerController* GetLocalPresentationController() const;
+	bool IsLocallyObserved() const;
+	bool IsDeathPresentationPending() const;
+	FRotator GetPresentationRotationOffset() const;
+	const FProjectSurvivorPresentation& GetObserverPresentation() const { return ObserverPresentation; }
 
 	/** 마네킹 서버가 물리 접촉 포획을 확정할 때만 호출합니다. */
 	bool HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin);
@@ -123,6 +130,18 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
+	friend class FProjectDeadSpectatorTest;
+	friend class FProjectSurvivorPresentationTest;
+	UFUNCTION(Server, Unreliable)
+	void ServerUpdateObserverPresentation(const FProjectSurvivorPresentation& Presentation);
+	UPROPERTY(Replicated) FProjectSurvivorPresentation ObserverPresentation;
+	UPROPERTY(Replicated) FProjectSurvivorFeedback ObserverFeedback;
+	void RecordObserverFeedback(float Pitch,float Roll,float Severity,bool Fatal);
+	void UpdateObserverPresentation(float DeltaTime);
+	double LastPresentationSent=-1;
+	double LastPresentationReceived=-1;
+	uint32 LastObservedFeedbackSerial=0;
+	bool bWasLocallyObserved=false;
 	/** 서버가 Player DataTable 값을 바꾼 뒤 소유 클라이언트의 로컬 심박 계산에도 같은 값을 적용합니다. */
 	UFUNCTION(Client, Reliable)
 	void ClientApplyPlayerTuning(const FPlayerTuningRow& Tuning);

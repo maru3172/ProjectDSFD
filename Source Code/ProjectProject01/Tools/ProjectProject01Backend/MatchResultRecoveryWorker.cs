@@ -30,8 +30,9 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
                     foreach(string file in Directory.EnumerateFiles(directory,"*.json",new EnumerationOptions{AttributesToSkip=FileAttributes.ReparsePoint,RecurseSubdirectories=false}).Take(128))
                     {
                         if(next.TryGetValue(file,out var when)&&DateTime.UtcNow<when)continue;
+                        if(next.ContainsKey(file))BackendDiagnostics.Shared.Failure("Result recovery","retry-pass",delay:30);
                         next[file]=DateTime.UtcNow.AddSeconds(30);
-                        await DrainFileAsync(file,addresses,security.GameServerSharedSecret,client,logger,ct);
+                        await DrainFileAsync(file,addresses,security.GameServerSharedSecret,client,logger,ct,BackendDiagnostics.Shared.ResultRecoveryCircuit);
                         if(!File.Exists(file))next.Remove(file);
                     }
                 }
@@ -49,7 +50,7 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
         return false;
     }
     internal static bool IsTransient(int status)=>status==0||status==408||status==429||status>=500;
-    internal static async Task DrainFileAsync(string path,IReadOnlyList<string> listenAddresses,string secret,HttpClient client,ILogger logger,CancellationToken ct)
+    internal static async Task DrainFileAsync(string path,IReadOnlyList<string> listenAddresses,string secret,HttpClient client,ILogger logger,CancellationToken ct,RequestCircuitBreaker? circuit=null)
     {
         if(secret.Length<32||HasReparseAncestor(path)||new FileInfo(path).Length>65536)return;
         FileStream lease;
@@ -90,12 +91,29 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
             var headers=item.GetProperty("headers");
             foreach(string key in keys)request.Headers.Add(key,headers.GetProperty(key).GetString());
             request.Content=new StringContent(item.GetProperty("body").GetString()??"",Encoding.UTF8,"application/json");
-            using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
+            long circuitTicket=0;
+            if(circuit is not null&&!circuit.TryAcquire(out circuitTicket))
+            {
+                BackendDiagnostics.Shared.Failure("Result recovery","circuit-open",delay:Math.Ceiling(circuit.Snapshot().RetryAfterSeconds));return;
+            }
+            HttpResponseMessage response;
+            try
+            {
+                response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
+                circuit?.Complete(circuitTicket,IsTransient((int)response.StatusCode));
+            }
+            catch(Exception ex)when(ex is HttpRequestException or OperationCanceledException)
+            {
+                circuit?.Complete(circuitTicket,true,ct.IsCancellationRequested);
+                BackendDiagnostics.Shared.Failure("Result recovery",ct.IsCancellationRequested?"cancellation":ex is OperationCanceledException?"timeout":"connection-failure");throw;
+            }
+            using var ownedResponse=response;
             if(response.IsSuccessStatusCode)File.Delete(path);
             else if(!IsTransient((int)response.StatusCode))
             {
                 File.Move(path,path+".rejected",true);logger.LogError("경기 결과 복구 거부 HTTP {Status}; 보류 파일 {Path}",(int)response.StatusCode,path+".rejected");
             }
+            else BackendDiagnostics.Shared.Failure("Result recovery","retry-scheduled",(int)response.StatusCode,delay:30);
         }
         catch(Exception ex) when(ex is JsonException or KeyNotFoundException or InvalidOperationException or InvalidDataException or FormatException)
         {File.Move(path,path+".corrupt",true);logger.LogError(ex,"손상된 경기 결과 저널 보존: {Path}",path+".corrupt");}

@@ -408,6 +408,8 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if(DamageFeedbackWidget)DamageFeedbackWidget->RemoveFromParent();
+	if(DeathFeedbackWidget)DeathFeedbackWidget->RemoveFromParent();
 	if (IsValid(FootstepSFXComponent)) FootstepSFXComponent->OnFootContact.RemoveAll(this);
 	LocomotionCameraFeedback.Reset();
 	if (UGameInstance* GameInstance = GetGameInstance())
@@ -437,6 +439,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	UpdateObserverPresentation(DeltaTime);
 	if (CanUseLocomotionCamera()) LocomotionCameraFeedback.Advance(DeltaTime);
 	else LocomotionCameraFeedback.Reset();
 	if (IsValid(FootstepSFXComponent))
@@ -472,7 +475,7 @@ bool APlayerCharacter::CanUseLocomotionCamera() const
 {
 	// Same local active-survivor lifecycle as breathing, plus camera/movement-specific guards.
 	const auto* Movement = GetCharacterMovement();
-	const auto* PC = Cast<APlayerController>(GetController());
+	const auto* PC = GetLocalPresentationController();
 	return CanPlayTensionBreathing() && !bUseTopViewInPIE && !bCameraHitFeedbackActive &&
 		IsValid(Camera) && Camera->IsActive() && IsValid(PC) && PC->GetViewTarget() == this &&
 		IsValid(Movement) && Movement->IsMovingOnGround();
@@ -491,8 +494,94 @@ void APlayerCharacter::CalcCamera(const float DeltaTime, FMinimalViewInfo& OutRe
 	const auto* Settings = UProjectProject01GameUserSettings::Get();
 	const float ShakeScale = IsValid(Settings) ? Settings->GetScreenShakeScale() : 1.0f;
 	// Final view only: no controller/actor/component rotation, input drift, yaw/roll or AI sight change.
-	OutResult.Location.Z += LocomotionCameraFeedback.GetOffset(ShakeScale);
-	OutResult.Rotation.Pitch += LocomotionCameraFeedback.GetPitchOffset(ShakeScale);
+	OutResult.Location.Z += IsLocallyObserved()?ObserverPresentation.StepOffset*ShakeScale:LocomotionCameraFeedback.GetOffset(ShakeScale);
+	OutResult.Rotation.Pitch += IsLocallyObserved()?ObserverPresentation.StepPitch*ShakeScale:LocomotionCameraFeedback.GetPitchOffset(ShakeScale);
+}
+
+APlayerController* APlayerCharacter::GetLocalPresentationController() const
+{
+	if(IsLocallyControlled())return Cast<APlayerController>(GetController());
+	if(!GetWorld() || GetNetMode()==NM_DedicatedServer)return nullptr;
+	for(auto It=GetWorld()->GetPlayerControllerIterator();It;++It)
+		if(auto* PC=Cast<AMultiplayTestPlayerController>(It->Get());PC && PC->IsLocalController() && PC->IsFreeSpectatingTarget(this))return PC;
+	return nullptr;
+}
+bool APlayerCharacter::IsLocallyObserved() const
+{return !IsLocallyControlled() && GetLocalPresentationController()!=nullptr;}
+
+bool APlayerCharacter::IsDeathPresentationPending() const
+{
+	if(!GetWorld() || !ObserverFeedback.Fatal || ObserverFeedback.Serial==0)return false;
+	const auto* GS=GetWorld()->GetGameState();
+	const double Now=GS?GS->GetServerWorldTimeSeconds():GetWorld()->GetTimeSeconds();
+	return Now-ObserverFeedback.Started<GetDeathSequenceHandoffDelaySeconds();
+}
+
+FRotator APlayerCharacter::GetPresentationRotationOffset() const
+{
+	const auto* Settings=UProjectProject01GameUserSettings::Get();
+	const float Scale=Settings?Settings->GetScreenShakeScale():1.f;
+	FRotator Offset=(bCameraHitFeedbackActive || bCameraDeathFeedbackActive) && Camera
+		?(Camera->GetRelativeRotation()-FeedbackCameraStartRotation).GetNormalized():FRotator::ZeroRotator;
+	if(CanUseLocomotionCamera())Offset.Pitch+=IsLocallyObserved()?ObserverPresentation.StepPitch*Scale:LocomotionCameraFeedback.GetPitchOffset(Scale);
+	return Offset;
+}
+
+void APlayerCharacter::RecordObserverFeedback(float Pitch,float Roll,float Severity,bool Fatal)
+{
+	if(!HasAuthority() || !GetWorld())return;
+	++ObserverFeedback.Serial;ObserverFeedback.Started=GetWorld()->GetTimeSeconds();
+	ObserverFeedback.Pitch=Pitch;ObserverFeedback.Roll=Roll;ObserverFeedback.Severity=Severity;ObserverFeedback.Fatal=Fatal;ForceNetUpdate();
+}
+
+void APlayerCharacter::ServerUpdateObserverPresentation_Implementation(const FProjectSurvivorPresentation& Presentation)
+{
+	if(!GetWorld() || !Presentation.IsValid())return;
+	const double Now=GetWorld()->GetTimeSeconds();
+	if(Now-LastPresentationReceived<.075)return;
+	LastPresentationReceived=Now;ObserverPresentation=Presentation;
+}
+
+void APlayerCharacter::UpdateObserverPresentation(float DeltaTime)
+{
+	if(IsLocallyControlled() && GetWorld() && !UsesSinglePlayerRules(GetWorld()))
+	{
+		const double Now=GetWorld()->GetTimeSeconds();
+		if(Now-LastPresentationSent>=.1)
+		{
+			LastPresentationSent=Now;FProjectSurvivorPresentation P;
+			P.StepOffset=CanUseLocomotionCamera()?LocomotionCameraFeedback.GetOffset():0;
+			P.StepPitch=CanUseLocomotionCamera()?LocomotionCameraFeedback.GetPitchOffset():0;
+			if(HeartbeatComponent)HeartbeatComponent->ExportObserverPresentation(P);
+			if(HasAuthority())ObserverPresentation=P;else ServerUpdateObserverPresentation(P);
+		}
+	}
+	const bool Observed=IsLocallyObserved();
+	if(Observed && ObserverFeedback.Serial!=LastObservedFeedbackSerial)
+	{
+		LastObservedFeedbackSerial=ObserverFeedback.Serial;
+		const auto* GS=GetWorld()->GetGameState();
+		const double Now=GS?GS->GetServerWorldTimeSeconds():GetWorld()->GetTimeSeconds();
+		const float Age=FMath::Max(0.f,float(Now-ObserverFeedback.Started));
+		const float Duration=ObserverFeedback.Fatal?GetDeathSequenceHandoffDelaySeconds():DamageFeedbackIntroSeconds+DamageFeedbackFadeSeconds;
+		if(ObserverFeedback.Serial>0 && Age<Duration)
+		{
+			if(ObserverFeedback.Fatal)PlayLocalDeathSequence(ObserverFeedback.Pitch,ObserverFeedback.Roll);
+			else PlayLocalDamageFeedback(ObserverFeedback.Pitch,ObserverFeedback.Roll,ObserverFeedback.Severity);
+			CameraFeedbackElapsedSeconds=Age;
+			if(DamageFeedbackWidget)DamageFeedbackWidget->Seek(Age);
+			if(DeathFeedbackWidget)DeathFeedbackWidget->Seek(Age);
+		}
+	}
+	if(bWasLocallyObserved && !Observed)
+	{
+		LastObservedFeedbackSerial=0;
+		RestoreFeedbackCamera();LocomotionCameraFeedback.Reset();
+		if(DamageFeedbackWidget)DamageFeedbackWidget->RemoveFromParent();
+		if(DeathFeedbackWidget)DeathFeedbackWidget->RemoveFromParent();
+		DamageFeedbackWidget=nullptr;DeathFeedbackWidget=nullptr;
+	}
+	bWasLocallyObserved=Observed;
 }
 
 // =========================================================================================================================
@@ -1344,6 +1433,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 		MulticastPlayPainAndDeathWorldSFX(false, PainIntensity);
 		const float DamageSeverity = bInfinitePracticeLives ? .45f : UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(
 			RemainingDeathCount, StartingDeathCount);
+		RecordObserverFeedback(FallPitchDirection,FallRollDirection,DamageSeverity,false);
 		if (IsLocallyControlled())
 		{
 			PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
@@ -1363,6 +1453,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	}
 
 	bGameOver = true;
+	RecordObserverFeedback(FallPitchDirection,FallRollDirection,1.f,true);
 	MulticastPlayPainAndDeathWorldSFX(true, 1.0f);
 	if (IsLocallyControlled())
 	{
@@ -1390,9 +1481,11 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 
 bool APlayerCharacter::CanPlayTensionBreathing() const
 {
-	if (!IsLocallyControlled() || bGameOver || bSinglePlayerResultPresented || bCameraDeathFeedbackActive || IsHidden()) return false;
+	if ((!IsLocallyControlled() && !IsLocallyObserved()) || bGameOver || bSinglePlayerResultPresented || bCameraDeathFeedbackActive || IsHidden()) return false;
 	const UWorld* World = GetWorld();
 	if (!World || World->GetNetMode() == NM_DedicatedServer) return false;
+	if(IsLocallyObserved())
+		return CastChecked<AMultiplayTestPlayerController>(GetLocalPresentationController())->GetMatchPhase()==EMultiplayTestMatchPhase::InProgress;
 	if (const auto* Multiplayer = Cast<AMultiplayTestPlayerController>(GetController()))
 		return !Multiplayer->IsLocalMannequinPlayer() && Multiplayer->GetMatchPhase() == EMultiplayTestMatchPhase::InProgress &&
 			Multiplayer->GetSurvivorState() == EMultiplayTestSurvivorState::Active;
@@ -1681,8 +1774,8 @@ void APlayerCharacter::MulticastPlayPainAndDeathWorldSFX_Implementation(
 void APlayerCharacter::PlayLocalDamageFeedback(
 	const float FallPitchDirection, const float FallRollDirection, const float DamageSeverity, const bool bAlsoShowVFX)
 {
-	APlayerController* PlayerController = Cast<APlayerController>(GetController());
-	if (!IsLocallyControlled() || !IsValid(PlayerController) || bCameraDeathFeedbackActive)
+	APlayerController* PlayerController = GetLocalPresentationController();
+	if (!IsValid(PlayerController) || bCameraDeathFeedbackActive)
 	{
 		return;
 	}
@@ -1711,8 +1804,8 @@ void APlayerCharacter::PlayLocalDamageFeedback(
 void APlayerCharacter::PlayLocalDeathSequence(
 	const float FallPitchDirection, const float FallRollDirection)
 {
-	APlayerController* PlayerController = Cast<APlayerController>(GetController());
-	if (!IsLocallyControlled() || !IsValid(PlayerController) || bCameraDeathFeedbackActive)
+	APlayerController* PlayerController = GetLocalPresentationController();
+	if (!IsValid(PlayerController) || bCameraDeathFeedbackActive)
 	{
 		return;
 	}
@@ -1932,6 +2025,8 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, DirectChaseSectorRadius);
 	DOREPLIFETIME(APlayerCharacter, RemainingDeathCount);
 	DOREPLIFETIME(APlayerCharacter, bGameOver);
+	DOREPLIFETIME_CONDITION(APlayerCharacter, ObserverPresentation, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(APlayerCharacter, ObserverFeedback, COND_SkipOwner);
 }
 
 void APlayerCharacter::DrawAIRangeDebug()

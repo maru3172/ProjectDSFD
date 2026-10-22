@@ -34,6 +34,7 @@ public:
 	static float CalculateDamageSeverity(int32 RemainingDeathCount, int32 StartingDeathCount);
 	void Configure(float InIntroSeconds, float InFadeSeconds, float InMaxOpacity, float InMaxThicknessPixels,
 		float DamageSeverity = 0.0f);
+	void Seek(float Seconds) { ElapsedSeconds=FMath::Max(0.f,Seconds); NativeTick(FGeometry(),0); }
 
 protected:
 	virtual bool Initialize() override;
@@ -68,6 +69,7 @@ class PROJECTPROJECT01_API UProjectProject01DeathFeedbackWidget final : public U
 
 public:
 	void Configure(float InCameraSeconds, float InBlackFadeSeconds);
+	void Seek(float Seconds) { ElapsedSeconds=FMath::Max(0.f,Seconds); NativeTick(FGeometry(),0); }
 
 protected:
 	virtual bool Initialize() override;

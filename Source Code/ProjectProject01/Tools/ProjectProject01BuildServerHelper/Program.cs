@@ -101,29 +101,41 @@ internal sealed partial class MainForm : Form
         AddField(fields, "최대 동시 경기 수", poolControls);
         root.Controls.Add(fields);
 
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Padding = new Padding(0, 8, 0, 8) };
-        AddButton(buttons, "환경 검사", async () => await ValidateAsync());
-        AddButton(buttons, "클라이언트 패키징", async () => await PackageAsync(false));
-        AddButton(buttons, "클라이언트 업데이트 게시", PublishClientUpdateAsync);
-        AddButton(buttons, "데디케이티드 서버 패키징", async () => await PackageAsync(true));
-        AddButton(buttons, "MySQL 초기화/시작", async () => await RunMySqlAsync("Initialize"));
-        AddButton(buttons, "MySQL 중지", async () => await RunMySqlAsync("Stop"));
-        AddButton(buttons, "DB 백업·복원", OpenDatabaseRecoveryAsync);
-        AddButton(buttons, "백엔드 시작", StartBackend);
-        AddButton(buttons, "백엔드 중지", async()=>{if(await ConfirmBackendStopAsync())await StopBackendAsync();});
-        AddButton(buttons, "EOS 보이스 자격 증명", OpenEosVoiceSetupAsync);
-        AddButton(buttons, "IP 직접 연결 방화벽 설정", ConfigureDirectIpFirewallAsync);
-        AddButton(buttons, "IP 직접 연결 검사", () => ValidateDirectIpConnectivityAsync(false));
-        AddButton(buttons, "서버 운영", OpenServerAdministrationAsync);
-        AddButton(buttons, "게임 서버 운영 시작", StartServer);
-        AddButton(buttons, "경기 종료 후 운영 중지", BeginGameServerDrainAsync);
-        AddButton(buttons, "종료 대기 취소", CancelGameServerDrainAsync);
-        AddButton(buttons, "게임 서버 운영 즉시 중지", StopAllGameServersAsync);
-        AddButton(buttons, "전체 흐름 스모크 테스트", RunSmokeTestAsync);
-        AddButton(buttons, "로그 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Logs"); return Task.CompletedTask; });
-        AddButton(buttons, "진단 결과 폴더", () => { OpenFolder(ProjectRoot(), "Saved\\Diagnostics"); return Task.CompletedTask; });
-        AddButton(buttons, "빌드 폴더", () => { OpenFolder(archiveRoot.Text, ""); return Task.CompletedTask; });
-        root.Controls.Add(buttons);
+        // Task tabs keep every existing action while separating deployment and immediate shutdown.
+        var actions=new TabControl {Dock=DockStyle.Top,Height=160,Name="HelperActionTabs"};
+        FlowLayoutPanel Category(string title,string hint)
+        {
+            var page=new TabPage(title);var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoScroll=true,WrapContents=true,Padding=new Padding(8)};
+            var caption=new Label {Text=hint,AutoSize=true,Margin=new Padding(3,3,3,10)};
+            panel.Controls.Add(caption);panel.SetFlowBreak(caption,true);page.Controls.Add(panel);actions.TabPages.Add(page);return panel;
+        }
+        var operation=Category("서버 실행·운영","일반 순서: MySQL → 백엔드 → 게임 서버 운영. 경기를 시작한 방에만 세션이 실행됩니다.");
+        AddButton(operation,"MySQL 초기화/시작",async()=>await RunMySqlAsync("Initialize"));
+        AddButton(operation,"백엔드 시작",StartBackend);AddButton(operation,"게임 서버 운영 시작",StartServer);
+        AddButton(operation,"서버 운영",OpenServerAdministrationAsync);
+        AddButton(operation,"진단 대시보드 열기",OpenDiagnosticsDashboardAsync);
+        var deployment=Category("빌드·배포","직접 실행한 작업만 빌드·패키징·게시합니다.");
+        AddButton(deployment,"클라이언트 패키징",async()=>await PackageAsync(false));
+        AddButton(deployment,"데디케이티드 서버 패키징",async()=>await PackageAsync(true));
+        AddButton(deployment,"클라이언트 업데이트 게시",PublishClientUpdateAsync);
+        AddButton(deployment,"빌드 폴더",()=>{OpenFolder(archiveRoot.Text,"");return Task.CompletedTask;});
+        var setup=Category("설정·연결","처음 설치하거나 접속 환경이 바뀌었을 때 확인합니다.");
+        AddButton(setup,"환경 검사",async()=>await ValidateAsync());
+        AddButton(setup,"EOS 보이스 자격 증명",OpenEosVoiceSetupAsync);
+        AddButton(setup,"IP 직접 연결 방화벽 설정",ConfigureDirectIpFirewallAsync);
+        AddButton(setup,"IP 직접 연결 검사",()=>ValidateDirectIpConnectivityAsync(false));
+        var diagnostics=Category("진단·도구","로그와 진단 결과 확인, 전체 흐름 검사입니다. 진단 수집은 대시보드에서 별도로 시작하세요.");
+        AddButton(diagnostics,"전체 흐름 스모크 테스트",RunSmokeTestAsync);
+        AddButton(diagnostics,"로그 폴더",()=>{OpenFolder(ProjectRoot(),"Saved\\Logs");return Task.CompletedTask;});
+        AddButton(diagnostics,"진단 결과 폴더",()=>{OpenFolder(ProjectRoot(),"Saved\\Diagnostics");return Task.CompletedTask;});
+        var shutdown=Category("중지·복구","경기 종료 후 중지를 우선 사용하세요. 즉시 중지는 진행 중 경기에도 영향을 줍니다.");
+        AddButton(shutdown,"경기 종료 후 운영 중지",BeginGameServerDrainAsync);
+        AddButton(shutdown,"종료 대기 취소",CancelGameServerDrainAsync);
+        AddButton(shutdown,"게임 서버 운영 즉시 중지",StopAllGameServersAsync);
+        AddButton(shutdown,"백엔드 중지",async()=>{if(await ConfirmBackendStopAsync())await StopBackendAsync();});
+        AddButton(shutdown,"MySQL 중지",async()=>await RunMySqlAsync("Stop"));
+        AddButton(shutdown,"DB 백업·복원",OpenDatabaseRecoveryAsync);
+        root.Controls.Add(actions);
         root.Controls.Add(output);
         root.Controls.Add(status);
         Controls.Add(root);
@@ -135,6 +147,42 @@ internal sealed partial class MainForm : Form
         dialog.CapacityChanged += ApplyRoomCapacity;
         dialog.ShowDialog(this);
         return Task.CompletedTask;
+    }
+
+    private async Task OpenDiagnosticsDashboardAsync()
+    {
+        string root=ProjectRoot();
+        string project=Path.Combine(root,"Tools","ProjectProject01DiagnosticsDashboard","ProjectProject01DiagnosticsDashboard.csproj");
+        if(!File.Exists(project))throw new FileNotFoundException("진단 대시보드 프로젝트를 찾지 못했습니다.",project);
+        string outputDirectory=Path.Combine(root,"Saved","DiagnosticsDashboardBuild");
+        string executable=Path.Combine(outputDirectory,"ProjectDFSDDiagnosticsDashboard.exe");
+        if(TryFocusDiagnosticsDashboard(executable)){Append("[정보] 이미 실행 중인 진단 대시보드를 표시합니다.");return;}
+        // Incremental tool build only, never game packaging or client publishing.
+        int result=await RunCapturedAsync("dotnet",$"build \"{project}\" -c Release -o \"{outputDirectory}\"",root);
+        if(result!=0)throw new InvalidOperationException("진단 대시보드 빌드 실패. 아래 로그를 확인하세요.");
+        if(!File.Exists(executable))throw new FileNotFoundException("빌드된 진단 대시보드를 찾지 못했습니다.",executable);
+        var launch=new ProcessStartInfo(executable){WorkingDirectory=outputDirectory,UseShellExecute=false,CreateNoWindow=true};
+        launch.ArgumentList.Add("--diagnostics-root");launch.ArgumentList.Add(Path.Combine(root,"Saved","Diagnostics"));
+        using var process=Process.Start(launch);
+        Append("[OK] 진단 대시보드를 열었습니다. 수집은 대시보드에서 별도로 시작하세요.");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool SetForegroundWindow(IntPtr window);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool ShowWindowAsync(IntPtr window,int command);
+    private static bool TryFocusDiagnosticsDashboard(string executable)
+    {
+        foreach(var running in Process.GetProcessesByName("ProjectDFSDDiagnosticsDashboard"))
+        using(running)
+        {
+            try
+            {
+                if(!string.Equals(running.MainModule?.FileName,executable,StringComparison.OrdinalIgnoreCase))continue;
+                if(running.MainWindowHandle!=IntPtr.Zero){ShowWindowAsync(running.MainWindowHandle,9);SetForegroundWindow(running.MainWindowHandle);}
+                return true; // Never rebuild over a running tool or terminate someone else's process.
+            }
+            catch(Exception ex)when(ex is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException){}
+        }
+        return false;
     }
 
     private static void AddField(TableLayoutPanel panel, string label, Control control)

@@ -2,6 +2,8 @@
 // Target: ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01DiagnosticsSubsystem.h"
+#include "ProjectDiagnosticMemory.h"
+#include "ProjectProcessDiagnostics.h"
 
 #include "Engine/Engine.h"
 #include "Engine/LocalPlayer.h"
@@ -38,8 +40,18 @@
 #include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "ProjectProject01GameInstance.h"
 
 DEFINE_LOG_CATEGORY(LogProjectProject01Diagnostics);
+
+void UProjectProject01DiagnosticsSubsystem::AddHttpMetrics(UWorld* World,bool bServerFailure,bool bClientError,bool bTimeout,bool bRetry)
+{
+	if(!IsValid(World)||!IsInGameThread())return;
+	auto* Collector=World->GetSubsystem<UProjectProject01DiagnosticsSubsystem>();
+	if(!IsValid(Collector)||!Collector->bCaptureActive)return;
+	++Collector->HttpCompleted;Collector->HttpServerFailures+=bServerFailure?1:0;
+	Collector->HttpClientErrors+=bClientError?1:0;Collector->HttpTimeouts+=bTimeout?1:0;Collector->HttpRetries+=bRetry?1:0;
+}
 
 FProjectProject01DiagnosticWorkScope::FProjectProject01DiagnosticWorkScope(UWorld* InWorld)
 	: World(UProjectProject01DiagnosticsSubsystem::IsCaptureActiveForWorld(InWorld) ? InWorld : nullptr),
@@ -252,6 +264,9 @@ void UProjectProject01DiagnosticsSubsystem::StartCapture(const FString& InTestRu
 	AITickMillisecondsSinceLastSample = 0.0;
 	DiagnosticsDynamicStringBytes = 0;
 	bCaptureActive = true;
+	ProjectProcessDiagnostics::AcquireObjectCounter();bObjectCounterAcquired=true;
+	LastCreatedObjects=ProjectProcessDiagnostics::CreatedObjects();LastRateSampleSeconds=FPlatformTime::Seconds();
+	HttpCompleted=HttpServerFailures=HttpClientErrors=HttpTimeouts=HttpRetries=0;
 	if (!ProjectProject01Diagnostics::bOutputDeviceRegistered && GLog != nullptr)
 	{
 		GLog->AddOutputDevice(&ProjectProject01Diagnostics::DiagnosticOutputDevice);
@@ -327,7 +342,7 @@ void UProjectProject01DiagnosticsSubsystem::StopCapture(const FString& Outcome)
 	RecordEvent(bCriteriaRecognized && bCriteriaPassed ? EProjectProject01DiagnosticSeverity::Normal : EProjectProject01DiagnosticSeverity::Inconclusive,
 		TEXT("FailureCriteriaEvaluation"), FString::Join(CriteriaDetails, TEXT("; ")));
     const bool bCompletedNormally=Outcome.StartsWith(TEXT("Manual capture completed"))||Outcome.Equals(TEXT("Completed"),ESearchCase::IgnoreCase);
-    if(!bCompletedNormally)
+    if(!bCompletedNormally||Samples.Num()>=7200||Events.Num()>=50000)
     {
         FinalOutcome=TEXT("Inconclusive");
         RecordEvent(EProjectProject01DiagnosticSeverity::Inconclusive,TEXT("CaptureInterrupted"),Outcome);
@@ -351,6 +366,7 @@ void UProjectProject01DiagnosticsSubsystem::StopCapture(const FString& Outcome)
 	RecordEvent(EProjectProject01DiagnosticSeverity::Normal, TEXT("CaptureStopped"), FinalOutcome);
 	WriteCaptureFiles(FinalOutcome);
 	bCaptureActive = false;
+	if(bObjectCounterAcquired){ProjectProcessDiagnostics::ReleaseObjectCounter();bObjectCounterAcquired=false;}
 	bHasPreGarbageCollectSample = false;
 }
 
@@ -361,10 +377,14 @@ void UProjectProject01DiagnosticsSubsystem::HandlePreGarbageCollect()
 		return;
 	}
 
+	PreGarbageCollectStartedSeconds=FPlatformTime::Seconds();
 	const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
 	PreGarbageCollectPhysicalBytes = MemoryStats.UsedPhysical;
 	PreGarbageCollectVirtualBytes = MemoryStats.UsedVirtual;
 	PreGarbageCollectUObjectCount = GUObjectArray.GetObjectArrayNumMinusAvailable();
+	const auto Allocator=ProjectDiagnosticMemory::Capture();
+	bPreGCAllocatorAvailable=Allocator.Available;PreGCAllocatorUsed=Allocator.Used;
+	PreGCAllocatorCommitted=Allocator.Committed;PreGCAllocatorRetained=Allocator.Retained;
 	bHasPreGarbageCollectSample = true;
 }
 
@@ -381,11 +401,13 @@ void UProjectProject01DiagnosticsSubsystem::HandleGarbageCollectComplete()
 	const int64 PhysicalDelta = static_cast<int64>(MemoryStats.UsedPhysical) - static_cast<int64>(PreGarbageCollectPhysicalBytes);
 	const int64 VirtualDelta = static_cast<int64>(MemoryStats.UsedVirtual) - static_cast<int64>(PreGarbageCollectVirtualBytes);
 	const int32 UObjectDelta = UObjectCount - PreGarbageCollectUObjectCount;
+	const auto Allocator=ProjectDiagnosticMemory::Capture();
 	RecordEvent(EProjectProject01DiagnosticSeverity::Normal, TEXT("GarbageCollectionMemoryDelta"), FString::Printf(
-		TEXT("PhysicalBeforeBytes=%llu;PhysicalAfterBytes=%llu;PhysicalDeltaBytes=%lld;VirtualBeforeBytes=%llu;VirtualAfterBytes=%llu;VirtualDeltaBytes=%lld;UObjectsBefore=%d;UObjectsAfter=%d;UObjectDelta=%d"),
+		TEXT("PhysicalBeforeBytes=%llu;PhysicalAfterBytes=%llu;PhysicalDeltaBytes=%lld;VirtualBeforeBytes=%llu;VirtualAfterBytes=%llu;VirtualDeltaBytes=%lld;UObjectsBefore=%d;UObjectsAfter=%d;UObjectDelta=%d;ElapsedMilliseconds=%.3f;AllocatorBeforeAvailable=%d;AllocatorAfterAvailable=%d;AllocatorUsedBeforeBytes=%llu;AllocatorUsedAfterBytes=%llu;AllocatorCommittedBeforeBytes=%llu;AllocatorCommittedAfterBytes=%llu;AllocatorRetainedBeforeBytes=%llu;AllocatorRetainedAfterBytes=%llu"),
 		PreGarbageCollectPhysicalBytes, MemoryStats.UsedPhysical, PhysicalDelta,
 		PreGarbageCollectVirtualBytes, MemoryStats.UsedVirtual, VirtualDelta,
-		PreGarbageCollectUObjectCount, UObjectCount, UObjectDelta));
+		PreGarbageCollectUObjectCount, UObjectCount, UObjectDelta,FMath::Max(0.0,(FPlatformTime::Seconds()-PreGarbageCollectStartedSeconds)*1000.0),
+		bPreGCAllocatorAvailable?1:0,Allocator.Available?1:0,PreGCAllocatorUsed,Allocator.Used,PreGCAllocatorCommitted,Allocator.Committed,PreGCAllocatorRetained,Allocator.Retained));
 	bHasPreGarbageCollectSample = false;
 }
 
@@ -393,6 +415,11 @@ void UProjectProject01DiagnosticsSubsystem::Tick(float DeltaTime)
 {
 	if (!bCaptureActive || !IsValid(GetWorld()))
 	{
+		return;
+	}
+	if(Samples.Num()>=7200||Events.Num()>=50000)
+	{
+		StopCapture(TEXT("Inconclusive: bounded diagnostic buffer limit reached; split long captures."));
 		return;
 	}
 
@@ -434,7 +461,7 @@ void UProjectProject01DiagnosticsSubsystem::RecordEvent(
 	const FString& Message,
 	const AActor* Actor)
 {
-	if (!bCaptureActive)
+	if (!bCaptureActive || Events.Num()>=50000)
 	{
 		return;
 	}
@@ -443,7 +470,7 @@ void UProjectProject01DiagnosticsSubsystem::RecordEvent(
 	Event.GameSeconds = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() - CaptureStartSeconds : 0.0;
 	Event.Severity = Severity;
 	Event.Code = Code;
-	Event.Message = Message;
+	Event.Message = Message.Left(2048);
 	Event.ActorName = IsValid(Actor) ? Actor->GetPathName() : TEXT("");
 	DiagnosticsDynamicStringBytes += Event.UtcTime.GetAllocatedSize() + Event.Code.GetAllocatedSize()
 		+ Event.Message.GetAllocatedSize() + Event.ActorName.GetAllocatedSize();
@@ -619,7 +646,29 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 	const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
 	Sample.UsedPhysicalBytes = MemoryStats.UsedPhysical;
 	Sample.UsedVirtualBytes = MemoryStats.UsedVirtual;
+	Sample.AvailablePhysicalBytes=MemoryStats.AvailablePhysical;Sample.TotalPhysicalBytes=MemoryStats.TotalPhysical;
+	const auto Allocator=ProjectDiagnosticMemory::Capture();
+	Sample.bHasAllocatorStats=Allocator.Available;Sample.AllocatorUsedBytes=Allocator.Used;
+	Sample.AllocatorCommittedBytes=Allocator.Committed;Sample.AllocatorRetainedBytes=Allocator.Retained;
+	const auto Process=ProjectProcessDiagnostics::Capture();
+	Sample.ProcessHandleCount=Process.Handles;Sample.ProcessThreadCount=Process.Threads;
+	Sample.TcpEndpointCount=Process.TcpEndpoints;Sample.UdpEndpointCount=Process.UdpEndpoints;
+	const double RateNow=FPlatformTime::Seconds();
+	Sample.ProcessCountersAgeSeconds=FMath::Max(0.0,RateNow-Process.SampledAtSeconds);
+	Sample.SampleWallSeconds=FMath::Max(0.001,RateNow-LastRateSampleSeconds);
+	const uint64 Created=ProjectProcessDiagnostics::CreatedObjects();
+	if(bObjectCounterAcquired)Sample.UObjectCreationsPerSecond=double(Created-LastCreatedObjects)/Sample.SampleWallSeconds;
+	LastCreatedObjects=Created;LastRateSampleSeconds=RateNow;
+	Sample.HttpCompletedCount=HttpCompleted;Sample.HttpServerFailureCount=HttpServerFailures;
+	Sample.HttpClientErrorCount=HttpClientErrors;Sample.HttpTimeoutCount=HttpTimeouts;Sample.HttpRetryCount=HttpRetries;
+	HttpCompleted=HttpServerFailures=HttpClientErrors=HttpTimeouts=HttpRetries=0;
 	Sample.UObjectCount = GUObjectArray.GetObjectArrayNumMinusAvailable();
+	if(const auto* Instance=Cast<UProjectProject01GameInstance>(World->GetGameInstance()))
+	{
+		const auto Circuit=Instance->BackendRequestCircuit.Snapshot(RateNow);
+		Sample.BackendCircuitState=int32(Circuit.State);Sample.BackendCircuitFailures=Circuit.Failures;
+		Sample.BackendCircuitRetryAfterSeconds=Circuit.RetryAfterSeconds;Sample.BackendCircuitRejected=double(Circuit.Rejected);
+	}
 	Sample.ActorCount = ActorCount;
 	const double MemoryOverheadMilliseconds = (FPlatformTime::Seconds() - MemoryStartSeconds) * 1000.0;
 	const double TextureRHIStartSeconds = FPlatformTime::Seconds();
@@ -630,6 +679,7 @@ void UProjectProject01DiagnosticsSubsystem::CollectSample(const float DeltaTime)
 		Sample.StreamingTextureMemoryBytes = TextureMemoryStats.StreamingMemorySize;
 		Sample.NonStreamingTextureMemoryBytes = TextureMemoryStats.NonStreamingMemorySize;
 		Sample.TexturePoolSizeBytes = static_cast<uint64>(FMath::Max<int64>(0, TextureMemoryStats.TexturePoolSize));
+		Sample.bHasTextureStats=GDynamicRHI->GetInterfaceType()!=ERHIInterfaceType::Null;
 	}
 	const double TextureRHIOverheadMilliseconds = (FPlatformTime::Seconds() - TextureRHIStartSeconds) * 1000.0;
 	if (const FProjectProject01DiagnosticSample* PreviousSample = Samples.Num() > 1 ? &Samples[Samples.Num() - 2] : nullptr)
@@ -932,10 +982,14 @@ void UProjectProject01DiagnosticsSubsystem::WriteCaptureFiles(const FString& Out
 	const FString Role = GetRoleInstanceLabel();
 	const FString NetMode = GetRoleLabel();
 	const int32 LocalPlayerNumber = GetLocalPlayerNumber();
-	FString PerformanceCsv = TEXT("UtcTime,Role,NetMode,LocalPlayerNumber,GameSeconds,FrameMilliseconds,FramesPerSecond,GameThreadMilliseconds,DrawThreadMilliseconds,GpuMilliseconds,UsedPhysicalBytes,UsedVirtualBytes,MemoryBytesPerSecondDelta,UObjectCount,ActorCount,StreamingTextureMemoryBytes,NonStreamingTextureMemoryBytes,TexturePoolSizeBytes,InBytesPerSecond,OutBytesPerSecond,PlayerCount,MannequinCount,HelperCount,PathRequestCount,PathFailureCount,PossessionEventCount,VisionCheckCount,LineTraceCount,AITickMilliseconds,DiagnosticsOverheadMilliseconds,DiagnosticsActorAIOverheadMilliseconds,DiagnosticsNavigationOverheadMilliseconds,DiagnosticsNetworkOverheadMilliseconds,DiagnosticsFrameTimingOverheadMilliseconds,DiagnosticsMemoryOverheadMilliseconds,DiagnosticsTextureRHIOverheadMilliseconds,DiagnosticsBookkeepingOverheadMilliseconds,DiagnosticsBufferedMemoryBytes,NetworkConnectionCount,HasNetDriver,HasNavigationData\n");
+	FString PerformanceCsv = TEXT("UtcTime,Role,NetMode,LocalPlayerNumber,GameSeconds,FrameMilliseconds,FramesPerSecond,GameThreadMilliseconds,DrawThreadMilliseconds,GpuMilliseconds,UsedPhysicalBytes,UsedVirtualBytes,MemoryBytesPerSecondDelta,UObjectCount,ActorCount,StreamingTextureMemoryBytes,NonStreamingTextureMemoryBytes,TexturePoolSizeBytes,InBytesPerSecond,OutBytesPerSecond,PlayerCount,MannequinCount,HelperCount,PathRequestCount,PathFailureCount,PossessionEventCount,VisionCheckCount,LineTraceCount,AITickMilliseconds,DiagnosticsOverheadMilliseconds,DiagnosticsActorAIOverheadMilliseconds,DiagnosticsNavigationOverheadMilliseconds,DiagnosticsNetworkOverheadMilliseconds,DiagnosticsFrameTimingOverheadMilliseconds,DiagnosticsMemoryOverheadMilliseconds,DiagnosticsTextureRHIOverheadMilliseconds,DiagnosticsBookkeepingOverheadMilliseconds,DiagnosticsBufferedMemoryBytes,NetworkConnectionCount,HasNetDriver,HasNavigationData,AllocatorStatsAvailable,AllocatorUsedBytes,AllocatorCommittedBytes,AllocatorRetainedBytes,AvailablePhysicalBytes,TotalPhysicalBytes,TextureStatsAvailable\n");
+	PerformanceCsv.RemoveAt(PerformanceCsv.Len()-1,1,EAllowShrinking::No);
+	PerformanceCsv+=TEXT(",ProcessHandleCount,ProcessThreadCount,TcpEndpointCount,UdpEndpointCount,ProcessCountersAgeSeconds,UObjectCreationsPerSecond,SampleWallSeconds,HttpCompletedCount,HttpServerFailureCount,HttpClientErrorCount,HttpTimeoutCount,HttpRetryCount\n");
+	PerformanceCsv.RemoveAt(PerformanceCsv.Len()-1,1,EAllowShrinking::No);
+	PerformanceCsv+=TEXT(",BackendCircuitState,BackendCircuitFailures,BackendCircuitRetryAfterSeconds,BackendCircuitRejected\n");
 	for (const FProjectProject01DiagnosticSample& Sample : Samples)
 	{
-		PerformanceCsv += FString::Printf(TEXT("%s,%s,%s,%d,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%llu,%llu,%.2f,%d,%d,%llu,%llu,%llu,%u,%u,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%d,%s,%s\n"),
+		PerformanceCsv += FString::Printf(TEXT("%s,%s,%s,%d,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%llu,%llu,%.2f,%d,%d,%llu,%llu,%llu,%u,%u,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%d,%s,%s"),
 			*Sample.UtcTime, *Role, *NetMode, LocalPlayerNumber, Sample.GameSeconds, Sample.FrameMilliseconds, Sample.FramesPerSecond, Sample.GameThreadMilliseconds, Sample.DrawThreadMilliseconds, Sample.GpuMilliseconds,
 			Sample.UsedPhysicalBytes, Sample.UsedVirtualBytes, Sample.MemoryBytesPerSecondDelta, Sample.UObjectCount, Sample.ActorCount,
 			Sample.StreamingTextureMemoryBytes, Sample.NonStreamingTextureMemoryBytes, Sample.TexturePoolSizeBytes,
@@ -945,6 +999,16 @@ void UProjectProject01DiagnosticsSubsystem::WriteCaptureFiles(const FString& Out
 			Sample.DiagnosticsFrameTimingOverheadMilliseconds, Sample.DiagnosticsMemoryOverheadMilliseconds, Sample.DiagnosticsTextureRHIOverheadMilliseconds,
 			Sample.DiagnosticsBookkeepingOverheadMilliseconds, Sample.DiagnosticsBufferedMemoryBytes, Sample.NetworkConnectionCount, Sample.bHasNetDriver ? TEXT("true") : TEXT("false"),
 			Sample.bHasNavigationData ? TEXT("true") : TEXT("false"));
+		PerformanceCsv+=FString::Printf(TEXT(",%s,%llu,%llu,%llu,%llu,%llu,%s\n"),Sample.bHasAllocatorStats?TEXT("true"):TEXT("false"),
+			Sample.AllocatorUsedBytes,Sample.AllocatorCommittedBytes,Sample.AllocatorRetainedBytes,Sample.AvailablePhysicalBytes,Sample.TotalPhysicalBytes,
+			Sample.bHasTextureStats?TEXT("true"):TEXT("false"));
+		PerformanceCsv.RemoveAt(PerformanceCsv.Len()-1,1,EAllowShrinking::No);
+		PerformanceCsv+=FString::Printf(TEXT(",%d,%d,%d,%d,%.3f,%.3f,%.6f,%d,%d,%d,%d,%d\n"),
+			Sample.ProcessHandleCount,Sample.ProcessThreadCount,Sample.TcpEndpointCount,Sample.UdpEndpointCount,
+			Sample.ProcessCountersAgeSeconds,Sample.UObjectCreationsPerSecond,Sample.SampleWallSeconds,
+			Sample.HttpCompletedCount,Sample.HttpServerFailureCount,Sample.HttpClientErrorCount,Sample.HttpTimeoutCount,Sample.HttpRetryCount);
+		PerformanceCsv.RemoveAt(PerformanceCsv.Len()-1,1,EAllowShrinking::No);
+		PerformanceCsv+=FString::Printf(TEXT(",%d,%d,%.3f,%.0f\n"),Sample.BackendCircuitState,Sample.BackendCircuitFailures,Sample.BackendCircuitRetryAfterSeconds,Sample.BackendCircuitRejected);
 	}
 
 	FString EventsCsv = TEXT("UtcTime,Role,NetMode,LocalPlayerNumber,GameSeconds,Severity,Code,Message,Actor\n");
