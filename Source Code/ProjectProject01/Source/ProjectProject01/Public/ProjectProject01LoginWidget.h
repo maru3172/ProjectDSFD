@@ -671,6 +671,8 @@ protected:
 
 private:
 	friend class FProjectMatchTimelineWidgetTest;
+	friend class FProjectResultBlackoutTest;
+	void InitializeResultPresentation();
 	UFUNCTION()
 	void HandleTimelineClicked();
 	UPROPERTY(Transient) TObjectPtr<class UButton> TimelineButton;

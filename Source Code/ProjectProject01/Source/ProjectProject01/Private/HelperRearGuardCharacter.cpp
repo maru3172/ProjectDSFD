@@ -14,6 +14,7 @@
 #include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
 
@@ -334,10 +335,10 @@ bool AHelperRearGuardCharacter::CanObserveActor(const AActor* TargetActor) const
 	QueryParams.AddIgnoredActor(this);
 	QueryParams.AddIgnoredActor(GuardedPlayer.Get());
 
-	TArray<AActor*> AllMannequins;
-	UGameplayStatics::GetAllActorsOfClass(World, AMannequinAICharacter::StaticClass(), AllMannequins);
-	for (AActor* OtherMannequin : AllMannequins)
+	// 마네킹마다 매 틱 호출되므로 임시 배열 없이 순회한다. 무시 대상은 이전과 같다.
+	for (TActorIterator<AMannequinAICharacter> It(World); It; ++It)
 	{
+		AMannequinAICharacter* OtherMannequin = *It;
 		if (IsValid(OtherMannequin) && OtherMannequin != TargetActor)
 		{
 			QueryParams.AddIgnoredActor(OtherMannequin);
@@ -408,10 +409,9 @@ bool AHelperRearGuardCharacter::CalculateGuardViewDirection(FVector& OutViewDire
 		return false;
 	}
 
-	TArray<AActor*> Mannequins;
-	UGameplayStatics::GetAllActorsOfClass(World, AMannequinAICharacter::StaticClass(), Mannequins);
-	for (AActor* CandidateActor : Mannequins)
+	for (TActorIterator<AMannequinAICharacter> It(World); It; ++It)
 	{
+		const AActor* CandidateActor = *It;
 		if (!IsValid(CandidateActor))
 		{
 			continue;
@@ -805,7 +805,9 @@ void AHelperRearGuardCharacter::UpdateLastPlayerMovementDirection()
 
 void AHelperRearGuardCharacter::DrawGuardDebug() const
 {
-	if (!bDrawGuardDebug || GuardSightRadius <= 0.0f)
+#if ENABLE_DRAW_DEBUG
+	// Shipping에는 디버그 선이 없으므로 부채꼴 계산도 하지 않는다. 데디케이티드 서버도 그리지 않는다.
+	if (!bDrawGuardDebug || GuardSightRadius <= 0.0f || GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
@@ -862,4 +864,5 @@ void AHelperRearGuardCharacter::DrawGuardDebug() const
 	{
 		DrawDebugLine(World, DrawOrigin, LockedRetreatTarget, FColor::Orange, false, 0.0f, 0, 3.0f);
 	}
+#endif
 }

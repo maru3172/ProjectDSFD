@@ -109,7 +109,11 @@ bool FProjectDFSDUIThemeRenderTest::RunTest(const FString&)
 	FProjectProject01SurveyQuestion Written;Written.Id=TEXT("written");Written.Type=TEXT("Text");Written.Prompt=TEXT("가장 기억에 남은 순간을 알려주세요.");
 	Definition.Questions={Choice,Written};Survey->ConfigureSurvey(Definition,nullptr);Render(Survey,TEXT("Survey"));Survey->ReleaseSlateResources(true);
 	auto* Guide=NewObject<UProjectProject01GameGuideWidget>();static_cast<UUserWidget*>(Guide)->Initialize();Guide->Configure(false,true,false);Render(Guide,TEXT("SurvivorGuide"));Guide->Configure(true,true,false);Render(Guide,TEXT("MannequinGuide"));Guide->ReleaseSlateResources(true);
-	auto* Result=NewObject<UProjectProject01MatchResultWidget>();static_cast<UUserWidget*>(Result)->Initialize();Result->ConfigureSinglePlayerResult(false);Render(Result,TEXT("DeathResult"));Result->ReleaseSlateResources(true);
+	auto* Result=NewObject<UProjectProject01MatchResultWidget>();static_cast<UUserWidget*>(Result)->Initialize();Result->ConfigureSinglePlayerResult(false);Render(Result,TEXT("DeathResult"));
+	FMultiplayTestMatchResult Multiplayer;Multiplayer.Role=TEXT("Survivor");Multiplayer.Outcome=TEXT("Eliminated");
+	Result->ConfigureResult(Multiplayer);Render(Result,TEXT("MultiplayerDeathResult"));
+	Multiplayer.Outcome=TEXT("Escaped");Multiplayer.bSuccess=true;Result->ConfigureResult(Multiplayer);Render(Result,TEXT("MultiplayerEscapeResult"));
+	Result->ReleaseSlateResources(true);
 	FlushRenderingCommands();return true;
 }
 #endif

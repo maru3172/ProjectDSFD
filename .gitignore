@@ -78,6 +78,10 @@
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/obj/
 /Source Code/ProjectProject01/Tools/ProjectProject01Backend/LocalMySql/
 
+# Build-only UE config layer (Config/Generated*.ini): may hold the EOS GameClient secret during packaging.
+/Source Code/ProjectProject01/Config/Generated*.ini
+/Source Code/ProjectProject01/Config/*/Generated*.ini
+
 # ProjectProject01 build/server helper (.NET generated output)
 /Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/bin/
 /Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/obj/

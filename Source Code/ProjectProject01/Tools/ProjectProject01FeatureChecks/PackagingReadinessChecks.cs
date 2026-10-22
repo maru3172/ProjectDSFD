@@ -41,7 +41,15 @@ internal static class PackagingReadinessChecks
         foreach(string name in new[]{"vc_redist.x64.exe","vc_redist.arm64.exe","GameInputRedist.msi"})
         { string path=Path.Combine(engine,"Extras","Redist","en-us",name);Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllText(path,"not executable; fixture only"); }
         check(MainForm.MissingPrerequisiteInstallers(engine).Length==0,"필수 설치 파일이 모두 있을 때 사전 검사 허용");
+        string engineIni=File.ReadAllText(Path.Combine("Config","DefaultEngine.ini"));
+        check(!MainForm.TrackedEngineConfigContainsClientSecret(engineIni),"Git 추적 DefaultEngine.ini에 EOS ClientSecret 평문 없음");
+        check(MainForm.TrackedEngineConfigContainsClientSecret("[EOSVoiceChat]\r\nClientSecret=abc\r\n"),"추적 설정의 ClientSecret 평문 감지 시 패키징 차단");
+        check(!MainForm.TrackedEngineConfigContainsClientSecret("GameClientSecretEnvironmentVariable=X\r\nClientSecret=\r\nNextKey=1\r\n"),"환경 변수 이름·빈 값은 비밀키로 오인하지 않음");
+        string generated=MainForm.BuildGeneratedEosClientConfig("[Core.Log]\r\nLogX=Log\r\n\r\n[EOSVoiceChat]\r\nClientSecret=old\r\n","new");
+        check(generated.Contains("[Core.Log]")&&generated.Contains("ClientSecret=new")&&!generated.Contains("ClientSecret=old"),"GeneratedEngine.ini는 기존 섹션 유지·EOS 비밀키만 교체");
+        check(MainForm.BuildGeneratedEosClientConfig(null,"s")=="[EOSVoiceChat]\r\nClientSecret=s\r\n","GeneratedEngine.ini 신규 생성 형식");
         string config=File.ReadAllText(Path.Combine("Config","DefaultGame.ini"));
+        check(config.Contains("+AllowedConfigFiles=ProjectDFSD/Config/GeneratedEngine.ini"),"빌드 전용 GeneratedEngine.ini 스테이징 허용");
         check(config.Contains("IncludePrerequisites=True"),"에디터 패키징 설정에도 필수 런타임 포함");
         check(File.Exists("ProjectDFSD.uproject")&&!File.Exists("ProjectProject01.uproject"),"프로젝트 파일 이름은 ProjectDFSD로 통일");
         check(File.Exists("Source/ProjectDFSD.Target.cs")&&File.Exists("Source/ProjectDFSDEditor.Target.cs")&&File.Exists("Source/ProjectDFSDServer.Target.cs"),"게임/에디터/데디 대상 이름 변경 연결");

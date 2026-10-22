@@ -358,6 +358,20 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // Mannequin 이 화면에 보이는지 여부를 저장한다.
     bool bInScreen = false;
 
+    // 이번 틱의 마네킹 목록과 무시 목록은 한 번만 만든다. 예전에는 검사점마다(최대 13회)
+    // 월드 전체 액터 수집과 무시 목록 구성을 반복했다. 판정 대상과 무시 대상은 동일하다.
+    TArray<AActor*> AllMannequins;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
+    FCollisionQueryParams BodyQueryParams;
+    BodyQueryParams.AddIgnoredActor(PlayerPawn);
+    for (AActor* OtherMannequin : AllMannequins)
+    {
+        if (OtherMannequin != Mannequin)
+        {
+            BodyQueryParams.AddIgnoredActor(OtherMannequin);
+        }
+    }
+
     // 화면 좌표가 없는 서버에서도 같은 방향 시야를 판정한다.
     for (const FVector& Point : Points)
     {
@@ -369,22 +383,9 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 
         // 카메라에서 Mannequin 의 지점까지 Line Trace를 했을 때, 어떤 물체에 먼저 부딪혔는지에 대한 정보를 저장한다.
         FHitResult HitResult;
-        FCollisionQueryParams QueryParams;
-        QueryParams.AddIgnoredActor(PlayerPawn);
-
-        TArray<AActor*> AllMannequins;
-        UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
-        for (AActor* OtherMannequin : AllMannequins)
-        {
-            if (OtherMannequin != Mannequin)
-            {
-                QueryParams.AddIgnoredActor(OtherMannequin);
-            }
-        }
-
         DiagnosticWork.AddLineTrace();
         const bool bHit = GetWorld()->LineTraceSingleByChannel(
-            HitResult, CameraLocation, Point, ECC_GameTraceChannel1, QueryParams);
+            HitResult, CameraLocation, Point, ECC_GameTraceChannel1, BodyQueryParams);
         if (bHit && HitResult.GetActor() == MannequinPawn)
         {
             bInScreen = true;
@@ -434,9 +435,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
         FCollisionQueryParams GuardQueryParams;
         GuardQueryParams.AddIgnoredActor(PlayerPawn);
         GuardQueryParams.AddIgnoredActor(Mannequin);
-        TArray<AActor*> GuardIgnoredMannequins;
-        UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), GuardIgnoredMannequins);
-        for (AActor* OtherMannequin : GuardIgnoredMannequins)
+        for (AActor* OtherMannequin : AllMannequins)
         {
             if (IsValid(OtherMannequin))
             {
@@ -571,10 +570,7 @@ void UBTService_MannequinAI::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
     // 현재 Mannequin 은 Line Trace에서 제외한다.
     QueryParams.AddIgnoredActor(MannequinPawn);
 
-    // 현재 월드에 존재하는 모든 Mannequin 을 가져온다.
-    TArray<AActor*> AllMannequins;
-    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
-
+    // 위에서 이번 틱에 수집한 모든 Mannequin 목록을 재사용한다.
     // 현재 Mannequin 이 아닌 다른 Mannequin 들을 Line Trace에서 제외한다.
     for (AActor* OtherMannequin : AllMannequins)
     {

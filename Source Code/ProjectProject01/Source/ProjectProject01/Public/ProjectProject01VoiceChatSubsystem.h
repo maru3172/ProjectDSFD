@@ -143,10 +143,6 @@ private:
 	UPROPERTY(Config)
 	bool bEnableSurvivorProximityVoice = true;
 
-	/** 개발 빌드 전용입니다. Shipping에서는 코드가 강제로 무시합니다. */
-	UPROPERTY(Config)
-	bool bAllowInsecureDevelopmentCredentials = true;
-
 	/** EOS 클라이언트 비밀키는 이 이름의 환경변수에서만 읽으며 ini/Git에 기록하지 않는다. */
 	UPROPERTY(Config)
 	FString GameClientSecretEnvironmentVariable = TEXT("PROJECTPROJECT01_EOS_GAME_CLIENT_SECRET");

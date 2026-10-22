@@ -2157,6 +2157,9 @@ void AMultiplayTestGameMode::RefreshSurvivorSpectatorTargets()
 		if (IsValid(Current) && Current->GetWorld()==GetWorld() && !Current->IsGameOver() && !Current->IsHidden() &&
 			Record && Record->SurvivorState==EMultiplayTestSurvivorState::Active && !Record->bForfeited && !Record->bDisconnected) continue;
 		auto* Target=FindLivingSurvivorSpectatorTarget(Controller,1);
+		// Last survivor: keep the fatal presentation/black overlay alive until results own
+		// the viewport. A null retarget here tears it down one replication frame too soon.
+		if (!IsValid(Target) && IsValid(Current) && Current->IsGameOver()) continue;
 		if (Current!=Target) Controller->EnterSurvivorSpectator(Target,false);
 	}
 }

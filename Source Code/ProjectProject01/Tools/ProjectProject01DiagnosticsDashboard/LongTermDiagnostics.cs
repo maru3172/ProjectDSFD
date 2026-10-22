@@ -43,6 +43,7 @@ internal static class LongTermDiagnostics
     internal static string Category(string key)
     {
         string raw = key[(key.IndexOf(" | ", StringComparison.Ordinal) + 3)..];
+        if (LegacyHistoryMetrics.Contains(raw)) return raw.StartsWith("Risk", StringComparison.Ordinal) || raw == "Total risk candidates" ? "위험 후보" : "성능·메모리·통신 종합";
         if (raw.StartsWith("GC", StringComparison.Ordinal)) return "GC·회수·기준선";
         if (raw.StartsWith("Cache.", StringComparison.Ordinal)) return "캐시";
         if (raw.Contains("Circuit", StringComparison.Ordinal) || raw.Contains("서킷", StringComparison.Ordinal)) return "서킷 브레이커";
@@ -58,6 +59,7 @@ internal static class LongTermDiagnostics
         return "진단 수집 비용·구간";
     }
     internal static IEnumerable<string> KnownKeys => AllocatorKeys.Concat(RuntimeMetricAnalysis.Keys).Concat(SummaryKeys).Select(GameKey)
+        .Concat(LegacyHistoryMetrics.Keys.Select(GameKey))
         .Concat(GcFields.Select(f => GameKey("GC event." + f)))
         .Concat(GcQuantities.Select(f => GameKey("GC net reduction." + f)))
         .Concat(GcQuantities.Select(f => GameKey("GC post-baseline growth." + f)))
@@ -65,7 +67,7 @@ internal static class LongTermDiagnostics
     internal static string Label(string key)
     {
         string raw = key[(key.IndexOf(" | ", StringComparison.Ordinal) + 3)..];
-        string label = key.StartsWith("Backend | ", StringComparison.Ordinal) ? MetricLabels.Label(raw) : raw switch
+        string label = LegacyHistoryMetrics.Contains(raw) ? DiagnosticUiText.Metric(raw) : key.StartsWith("Backend | ", StringComparison.Ordinal) ? MetricLabels.Label(raw) : raw switch
         {
             "Allocator used MiB" => "할당자 사용 메모리 (MiB)", "Allocator OS-held MiB" => "할당자 OS 확보 메모리 (MiB)",
             "Allocator retained/slack MiB" => "할당자 여유·보유 차이 (MiB)", "Available system RAM MiB" => "시스템 가용 RAM (MiB)", "Total system RAM MiB" => "시스템 전체 RAM (MiB)",
@@ -81,13 +83,26 @@ internal static class LongTermDiagnostics
         if (raw.StartsWith("GC event.", StringComparison.Ordinal)) label = "GC 전후 원본 · " + GcLabel(raw[9..]);
         if (raw.StartsWith("GC net reduction.", StringComparison.Ordinal)) label = "GC당 순감소 · " + GcLabel(raw[17..]);
         if (raw.StartsWith("GC post-baseline growth.", StringComparison.Ordinal)) label = "GC 후 기준선 변화 (3회·30초 이상) · " + GcLabel(raw[24..]);
-        if (raw.StartsWith("Errors.", StringComparison.Ordinal)) label = "오류 발생 횟수 · " + raw[7..^6];
-        if (raw.StartsWith("Error detail.", StringComparison.Ordinal)) label = "원인·HTTP별 오류 상세 · " + raw[13..];
-        return (key.StartsWith("Game | ", StringComparison.Ordinal) ? "게임 · " : "백엔드 · ") + label + " [" + raw + "]";
+        if (raw.StartsWith("Errors.", StringComparison.Ordinal)) label = "오류 발생 횟수 · " + FailureLabel(raw[7..^6]);
+        if (raw.StartsWith("Error detail.", StringComparison.Ordinal))
+        {
+            string[] parts=raw[13..].Split('.');
+            string origin=parts[0] switch { "HTTP server"=>"요청 서버", "HTTP client"=>"요청 클라이언트", "DB"=>"데이터베이스", "Result recovery"=>"경기 결과 복구", _=>"기타" };
+            string suffix=parts[^1] switch { "Count"=>"횟수", "Attempt"=>"시도 번호", "Maximum"=>"재시도 상한", "NextDelaySeconds"=>"다음 대기 (초)", _=>"관측값" };
+            label=$"오류 상세 · {origin} · {FailureLabel(parts.Length>1?parts[1]:"")} · {parts.FirstOrDefault(p=>p.StartsWith("HTTP",StringComparison.Ordinal))} · {suffix}";
+        }
+        return (key.StartsWith("Game | ", StringComparison.Ordinal) ? "게임 · " : "백엔드 · ") + label;
     }
+    internal static string FailureLabel(string kind)=>kind switch
+    {
+        "client-abort"=>"사용자 연결 취소", "unhandled-exception"=>"처리되지 않은 예외", "timeout-status"=>"시간 초과 응답", "http-status"=>"오류 응답",
+        "timeout"=>"시간 초과", "cancellation"=>"요청 취소", "connection-failure"=>"연결 실패", "retry"=>"재시도", "retry-pass"=>"복구 재시도 회차",
+        "retry-scheduled"=>"재시도 예약", "circuit-open"=>"서킷 차단", "timeout-or-cancellation"=>"시간 초과 또는 취소", "other-aggregated"=>"기타 오류 합계", _=>"기타 오류"
+    };
     private static string GcLabel(string raw) => raw.Replace("Physical", "프로세스 RAM ").Replace("Virtual", "가상 메모리 ")
         .Replace("UObjects", "UObject ").Replace("UObject", "UObject ").Replace("AllocatorUsed", "할당자 사용 ")
         .Replace("AllocatorCommitted", "할당자 OS 확보 ").Replace("AllocatorRetained", "할당자 보유 차이 ")
+        .Replace("Allocator", "할당자 ")
         .Replace("Before", "이전 ").Replace("After", "이후 ").Replace("Delta", "변화 ").Replace("Bytes", "(바이트)")
         .Replace("Count", "(개)").Replace("ElapsedMilliseconds", "경과 시간 (ms)").Replace("Available", "측정 지원 여부 (0/1)");
     internal static HistoryStatistic Aggregate(IEnumerable<(double? Value, double Weight)> source, string kind = "gauge", bool preferMaximum = false)

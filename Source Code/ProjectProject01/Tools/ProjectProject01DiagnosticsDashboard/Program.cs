@@ -62,6 +62,7 @@ internal static class DashboardSelfTest
         CacheMemoryAnalysisTests.Run(sample);
         ExtendedDiagnosticsTests.Run(sample);
         LongTermDiagnosticsTests.Run(sample);
+        AutomationVerificationTests.Run();
         DashboardForm.GenerateMergedArtifacts(directory, [report], [sample], [server, client]);
         if (!File.Exists(Path.Combine(directory, "CombinedReport.xml")) || !File.Exists(Path.Combine(directory, "MergedEvents.csv")) || !File.Exists(Path.Combine(directory, "MergedPerformance.csv"))) return 3;
         var combined = XDocument.Load(Path.Combine(directory, "CombinedReport.xml"));
@@ -188,7 +189,7 @@ internal sealed record ChartPoint(string Series, double X, double Y);
 internal sealed class TrendChart : Control
 {
     private List<ChartPoint> points = [];
-    private string title = "No data";
+    private string title = "자료 없음";
     private static readonly Color[] Palette = [Color.DodgerBlue, Color.OrangeRed, Color.ForestGreen, Color.MediumPurple, Color.Goldenrod, Color.DeepPink];
 
     public TrendChart() { DoubleBuffered = true; BackColor = Color.White; }
@@ -266,11 +267,10 @@ internal sealed class DashboardForm : Form
         base.OnFormClosing(e);if(!e.Cancel)windowLifetime.Cancel();
     }
     private readonly TextBox rootPath = new() { ReadOnly = true, Width = 330 };
-    private readonly TextBox searchBox = new() { Width = 180, PlaceholderText = "TestRunId / 맵 / 게임모드" };
+    private readonly TextBox searchBox = new() { Width = 180, PlaceholderText = "실행 식별자 / 맵 / 게임 모드" };
     private readonly ComboBox mapFilter = new() { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox outcomeFilter = new() { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox metricSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
-    private readonly ComboBox historyMetricSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
     private readonly ComboBox eventSearchField = new() { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox eventValueFilter = new() { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox eventSearchBox = new() { Width = 280, PlaceholderText = "이벤트 검색 (UtcTime 제외)" };
@@ -282,7 +282,6 @@ internal sealed class DashboardForm : Form
     private readonly DataGridView runtimeMetricsGrid=CreateGrid();
     private readonly TextBox details = new() { Dock = DockStyle.Fill, ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Both, Font = new Font(FontFamily.GenericMonospace, 9f) };
     private readonly TrendChart runChart = new() { Dock = DockStyle.Fill };
-    private readonly TrendChart historyChart = new() { Dock = DockStyle.Fill };
     private readonly LongTermDiagnosticsPanel extendedHistory = new();
     private readonly List<DiagnosticReport> reports = [];
     private readonly List<RunSummary> runSummaries = [];
@@ -294,18 +293,18 @@ internal sealed class DashboardForm : Form
 
     public DashboardForm(string? initialRoot=null)
     {
-        Text = "ProjectDFSD Diagnostics Dashboard";
+        Text = "백화점 화재사건 · 진단 대시보드";
         Width = 1380;
         Height = 860;
         StartPosition = FormStartPosition.CenterScreen;
 
-        var browse = new Button { Text = "Open Diagnostics", AutoSize = true };
+        var browse = new Button { Text = "진단 폴더 열기", AutoSize = true };
         browse.Click += (_, _) => SelectRootFolder();
-        var refresh = new Button { Text = "Refresh", AutoSize = true };
+        var refresh = new Button { Text = "새로고침", AutoSize = true };
         refresh.Click += (_, _) => LoadReports(rootPath.Text);
-        var insights = new Button { Text = "Open .utrace", AutoSize = true };
+        var insights = new Button { Text = "추적 파일 열기", AutoSize = true };
         insights.Click += (_, _) => OpenSelectedTrace();
-        var verify = new Button { Text = "Run Build + Automation", AutoSize = true };
+        var verify = new Button { Text = "빌드·자동 검사", AutoSize = true };
         verify.Click += async (_, _) => await VerifySelectedRunAsync(verify);
 
         mapFilter.Items.Add("All maps");
@@ -318,36 +317,31 @@ internal sealed class DashboardForm : Form
         metricSelector.SelectedIndex = 0;
         metricSelector.Items.AddRange(RuntimeMetricAnalysis.Keys.Cast<object>().ToArray());
         metricSelector.Items.AddRange(["Allocator used MiB","Allocator OS-held MiB","Allocator retained/slack MiB","Available system RAM MiB","Streaming texture pool %"]);
-        historyMetricSelector.Items.AddRange([
-            "Total risk candidates", "Risk: Performance", "Risk: Memory", "Risk: Network", "Risk: AI/Navigation", "Risk: Tuning/Data", "Risk: Multiplayer", "Risk: Engine/Logs", "Risk: Other",
-            "Average FPS", "Max frame ms", "Max game thread ms", "Max draw thread ms", "Max GPU ms",
-            "Max physical memory MiB", "Max virtual memory MiB", "Max memory growth MiB/min", "Max UObject count", "Max Actor count",
-            "Max streaming texture MiB", "Max non-streaming texture MiB", "Max texture pool MiB",
-            "Max inbound KiB/s", "Max outbound KiB/s", "Max AI tick ms", "Max line traces", "Max path failures", "Max connections",
-            "Average diagnostics overhead ms", "Max diagnostics overhead ms", "Max diagnostics Actor/AI overhead ms", "Max diagnostics navigation overhead ms",
-            "Max diagnostics network overhead ms", "Max diagnostics frame timing overhead ms", "Max diagnostics memory overhead ms",
-            "Max diagnostics texture/RHI overhead ms", "Max diagnostics bookkeeping overhead ms", "Max diagnostics buffered memory MiB", "Max server-client timestamp offset ms"]);
-        historyMetricSelector.SelectedIndex = 0;
         eventSearchField.Items.AddRange(["All searchable fields", "Role", "NetMode", "GameSeconds", "Severity", "Code", "Message", "Actor"]);
         eventSearchField.SelectedIndex = 0;
         eventValueFilter.Items.Add("All values");
         eventValueFilter.SelectedIndex = 0;
+        DiagnosticUiText.Localize(metricSelector, DiagnosticUiText.Metric);
+        DiagnosticUiText.Localize(mapFilter); DiagnosticUiText.Localize(outcomeFilter);
+        DiagnosticUiText.Localize(eventSearchField); DiagnosticUiText.Localize(eventValueFilter);
+        foreach(var grid in new[]{reportsGrid,timelineGrid,riskBreakdownGrid,overheadBreakdownGrid,cacheMemoryGrid,runtimeMetricsGrid}) DiagnosticUiText.Localize(grid);
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, WrapContents = false, Padding = new Padding(3) };
         toolbar.Controls.AddRange([browse, rootPath, refresh, searchBox, mapFilter, outcomeFilter, insights, verify]);
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 310 };
+        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel1 };
+        Shown += (_, _) => { if(split.Height>400) split.SplitterDistance=Math.Min(240,split.Height-300); };
         split.Panel1.Controls.Add(reportsGrid);
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(new TabPage("Summary") { Controls = { details } });
-        var timelinePage = new TabPage("Merged Timeline");
+        tabs.TabPages.Add(new TabPage("요약") { Controls = { details } });
+        var timelinePage = new TabPage("통합 시간순 기록");
         var timelineFilterBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 36, WrapContents = false, Padding = new Padding(3) };
-        timelineFilterBar.Controls.AddRange([new Label { Text = "Search field", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, eventSearchField,
-            new Label { Text = "Exact value", AutoSize = true, Padding = new Padding(8, 7, 0, 0) }, eventValueFilter, eventSearchBox]);
+        timelineFilterBar.Controls.AddRange([new Label { Text = "검색 항목", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, eventSearchField,
+            new Label { Text = "정확히 일치하는 값", AutoSize = true, Padding = new Padding(8, 7, 0, 0) }, eventValueFilter, eventSearchBox]);
         timelinePage.Controls.Add(timelineGrid);
         timelinePage.Controls.Add(timelineFilterBar);
         tabs.TabPages.Add(timelinePage);
-        tabs.TabPages.Add(new TabPage("Risk Breakdown") { Controls = { riskBreakdownGrid } });
-        tabs.TabPages.Add(new TabPage("Diagnostics Overhead") { Controls = { overheadBreakdownGrid } });
+        tabs.TabPages.Add(new TabPage("위험 후보 상세") { Controls = { riskBreakdownGrid } });
+        tabs.TabPages.Add(new TabPage("진단 수집 비용") { Controls = { overheadBreakdownGrid } });
         var cachePage=new TabPage("캐시·메모리");cachePage.Controls.Add(cacheMemoryGrid);
         cacheMemoryGrid.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill;
         cacheMemoryGrid.AutoSizeRowsMode=DataGridViewAutoSizeRowsMode.AllCells;
@@ -365,18 +359,12 @@ internal sealed class DashboardForm : Form
         tabs.TabPages.Add(new TabPage("GC·프로세스·요청"){Controls={runtimeMetricsGrid}});
         runtimeMetricsGrid.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill;
         tabs.TabPages.Add(new TabPage("백엔드·풀 진단"){Controls={new BackendDiagnosticsPanel()}});
-        var runChartPage = new TabPage("Run Trend");
+        var runChartPage = new TabPage("실행 내 추세");
         runChartPage.Controls.Add(runChart);
         runChartPage.Controls.Add(metricSelector);
         tabs.TabPages.Add(runChartPage);
-        var historyPage = new TabPage("Long-term Comparison");
-        var historyTabs = new TabControl { Dock = DockStyle.Fill };
-        var existingHistory = new TabPage("기존 성능·위험 비교");
-        existingHistory.Controls.Add(historyChart);
-        existingHistory.Controls.Add(historyMetricSelector);
-        historyTabs.TabPages.Add(existingHistory);
-        historyTabs.TabPages.Add(new TabPage("추가 진단 전체 · 장기 추세") { Controls = { extendedHistory } });
-        historyPage.Controls.Add(historyTabs);
+        var historyPage = new TabPage("진단 전체, 비교");
+        historyPage.Controls.Add(extendedHistory);
         tabs.TabPages.Add(historyPage);
         split.Panel2.Controls.Add(tabs);
         Controls.Add(split);
@@ -387,7 +375,6 @@ internal sealed class DashboardForm : Form
         mapFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
         outcomeFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
         metricSelector.SelectedIndexChanged += (_, _) => UpdateRunChart();
-        historyMetricSelector.SelectedIndexChanged += (_, _) => UpdateHistoryChart();
         eventSearchField.SelectedIndexChanged += (_, _) => { PopulateEventValueFilter(); ApplyTimelineFilters(); };
         eventValueFilter.SelectedIndexChanged += (_, _) => ApplyTimelineFilters();
         eventSearchBox.TextChanged += (_, _) => ApplyTimelineFilters();
@@ -418,7 +405,7 @@ internal sealed class DashboardForm : Form
         if (!Directory.Exists(path))
         {
             reportsGrid.DataSource = null;
-            details.Text = "Diagnostics directory was not found.";
+            details.Text = "진단 폴더를 찾을 수 없습니다.";
             return;
         }
 
@@ -440,7 +427,7 @@ internal sealed class DashboardForm : Form
             }
             catch (Exception exception)
             {
-                details.Text = $"Could not read {file}{Environment.NewLine}{exception.Message}";
+                details.Text = $"기록 읽기 실패: {file}{Environment.NewLine}{exception.Message}";
             }
         }
 
@@ -476,12 +463,6 @@ internal sealed class DashboardForm : Form
             });
         }
 
-        var selectedHistoryMetric = historyMetricSelector.SelectedItem?.ToString();
-        for (var index = historyMetricSelector.Items.Count - 1; index >= 0; --index)
-            if (historyMetricSelector.Items[index]?.ToString()?.StartsWith("Risk code: ", StringComparison.Ordinal) == true) historyMetricSelector.Items.RemoveAt(index);
-        foreach (var code in runSummaries.SelectMany(summary => summary.RiskByCode.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
-            historyMetricSelector.Items.Add($"Risk code: {code}");
-        if (selectedHistoryMetric is not null && historyMetricSelector.Items.Contains(selectedHistoryMetric)) historyMetricSelector.SelectedItem = selectedHistoryMetric;
 
         mapFilter.Items.Clear();
         mapFilter.Items.Add("All maps");
@@ -501,8 +482,7 @@ internal sealed class DashboardForm : Form
             (outcome == "All outcomes" || summary.Outcome.Contains(outcome, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(summary => summary.TestRunId, StringComparer.Ordinal).ToList();
         reportsGrid.DataSource = filtered;
-        extendedHistory.SetGameCaptures(filtered.SelectMany(s => s.ExtendedCaptures));
-        UpdateHistoryChart();
+        extendedHistory.SetGameCaptures(filtered.SelectMany(s => s.ExtendedCaptures.Append(LegacyHistoryMetrics.Capture(s))));
         ShowSelectedRun();
     }
 
@@ -527,24 +507,24 @@ internal sealed class DashboardForm : Form
             ? "None"
             : string.Join(", ", riskBreakdown.GroupBy(row => row.Category, StringComparer.Ordinal).OrderBy(group => group.Key).Select(group => $"{group.Key}={group.Sum(row => row.Count)}"));
         var roleSummary = string.Join(Environment.NewLine, samples.GroupBy(sample => sample.Role).Select(group =>
-            $"{group.Key}: FPS avg={group.Average(item => item.Fps):F1}, Game/Draw/GPU max={group.Max(item => item.GameMs):F2}/{group.Max(item => item.DrawMs):F2}/{group.Max(item => item.GpuMs):F2} ms, " +
-            $"Physical/Virtual max={group.Max(item => item.PhysicalMemoryMiB):F1}/{group.Max(item => item.VirtualMemoryMiB):F1} MiB, Growth max={group.Max(item => item.MemoryGrowthMiBPerMinute):F1} MiB/min, " +
-            $"UObjects/Actors max={group.Max(item => item.UObjectCount)}/{group.Max(item => item.ActorCount)}, Texture streaming/non-streaming/pool max={group.Max(item => item.StreamingTextureMemoryMiB):F1}/{group.Max(item => item.NonStreamingTextureMemoryMiB):F1}/{group.Max(item => item.TexturePoolMiB):F1} MiB, " +
-            $"Network in/out max={group.Max(item => item.InKiB):F1}/{group.Max(item => item.OutKiB):F1} KiB/s, Connections max={group.Max(item => item.Connections)}, " +
+            $"{group.Key}: 평균 초당 프레임={group.Average(item => item.Fps):F1}, 게임/렌더/그래픽 최대 시간={group.Max(item => item.GameMs):F2}/{group.Max(item => item.DrawMs):F2}/{group.Max(item => item.GpuMs):F2} 밀리초, " +
+            $"물리/가상 메모리 최대={group.Max(item => item.PhysicalMemoryMiB):F1}/{group.Max(item => item.VirtualMemoryMiB):F1} MiB, 최대 증가량={group.Max(item => item.MemoryGrowthMiBPerMinute):F1} MiB/분, " +
+            $"언리얼 객체/액터 최대={group.Max(item => item.UObjectCount)}/{group.Max(item => item.ActorCount)}, 스트리밍/비스트리밍/텍스처 풀 최대={group.Max(item => item.StreamingTextureMemoryMiB):F1}/{group.Max(item => item.NonStreamingTextureMemoryMiB):F1}/{group.Max(item => item.TexturePoolMiB):F1} MiB, " +
+            $"수신/송신 최대={group.Max(item => item.InKiB):F1}/{group.Max(item => item.OutKiB):F1} KiB/초, 최대 연결 수={group.Max(item => item.Connections)}, " +
             DiagnosticsOverheadText(group)));
         var comparisonSummary = BuildComparisonSummary(summary);
         var timeAlignmentSummary = summary.TimeAlignment.MatchedPairCount > 0
-            ? $"pairs={summary.TimeAlignment.MatchedPairCount}, median clock offset={summary.TimeAlignment.MedianClockOffsetMilliseconds:F2} ms, max absolute offset={summary.TimeAlignment.MaxAbsoluteClockOffsetMilliseconds:F2} ms"
-            : "Unavailable (matching server/client ActorStateChanged events were not found)";
-        details.Text = $"Run: {summary.TestRunId}{Environment.NewLine}Outcome: {summary.Outcome}{Environment.NewLine}Roles: {summary.Roles}{Environment.NewLine}" +
-            $"Map / GameMode: {summary.Map} / {summary.GameMode}{Environment.NewLine}Players / Mannequins: {summary.Players} / {summary.Mannequins}{Environment.NewLine}" +
-            $"Tuning fingerprint: {summary.Tuning}{Environment.NewLine}Risk candidates: {summary.RiskCount}, State mismatches: {mismatches.Count}{Environment.NewLine}" +
-            $"Risk by category: {riskCategorySummary}{Environment.NewLine}{Environment.NewLine}" +
-            $"Server/client timestamp alignment estimate: {timeAlignmentSummary}{Environment.NewLine}" +
-            $"This is an offline clock-offset estimate, not network latency.{Environment.NewLine}{Environment.NewLine}" +
-            $"Previous comparable run:{Environment.NewLine}{comparisonSummary}{Environment.NewLine}{Environment.NewLine}" +
-            $"Performance by role:{Environment.NewLine}{roleSummary}{Environment.NewLine}{Environment.NewLine}" +
-            $"Derived artifacts:{Environment.NewLine}{Path.Combine(summary.RunDirectory, "CombinedReport.xml")}{Environment.NewLine}{Path.Combine(summary.RunDirectory, "MergedEvents.csv")}{Environment.NewLine}{Path.Combine(summary.RunDirectory, "MergedPerformance.csv")}";
+            ? $"일치 쌍={summary.TimeAlignment.MatchedPairCount}, 시각 차이 중앙값={summary.TimeAlignment.MedianClockOffsetMilliseconds:F2} 밀리초, 최대 절댓값={summary.TimeAlignment.MaxAbsoluteClockOffsetMilliseconds:F2} 밀리초"
+            : "측정 불가 (서버·클라이언트의 일치하는 액터 상태 이벤트 없음)";
+        details.Text = $"실행: {summary.TestRunId}{Environment.NewLine}결과: {DiagnosticUiText.Common(summary.Outcome)}{Environment.NewLine}역할: {summary.Roles}{Environment.NewLine}" +
+            $"맵 / 게임 모드: {summary.Map} / {summary.GameMode}{Environment.NewLine}플레이어 / 마네킹: {summary.Players} / {summary.Mannequins}{Environment.NewLine}" +
+            $"튜닝 식별값: {summary.Tuning}{Environment.NewLine}위험 후보: {summary.RiskCount}, 상태 불일치: {mismatches.Count}{Environment.NewLine}" +
+            $"영역별 위험: {riskCategorySummary}{Environment.NewLine}{Environment.NewLine}" +
+            $"서버·클라이언트 시각 정렬 추정: {timeAlignmentSummary}{Environment.NewLine}" +
+            $"오프라인 시각 차이 추정값이며 네트워크 지연 시간이 아닙니다.{Environment.NewLine}{Environment.NewLine}" +
+            $"이전 동일 조건 실행과 비교:{Environment.NewLine}{comparisonSummary}{Environment.NewLine}{Environment.NewLine}" +
+            $"역할별 성능:{Environment.NewLine}{roleSummary}{Environment.NewLine}{Environment.NewLine}" +
+            $"생성된 비교 자료:{Environment.NewLine}{Path.Combine(summary.RunDirectory, "CombinedReport.xml")}{Environment.NewLine}{Path.Combine(summary.RunDirectory, "MergedEvents.csv")}{Environment.NewLine}{Path.Combine(summary.RunDirectory, "MergedPerformance.csv")}";
         selectedTimelineEvents = mergedEvents;
         PopulateEventValueFilter();
         ApplyTimelineFilters();
@@ -626,11 +606,7 @@ internal sealed class DashboardForm : Form
         };
     }
 
-    private void UpdateHistoryChart()
-    {
-        var visibleRuns = reportsGrid.DataSource as IEnumerable<RunSummary> ?? runSummaries;
-        var metric = historyMetricSelector.SelectedItem?.ToString() ?? "Total risk candidates";
-        double Value(RunSummary summary) => metric switch
+    internal static double HistoryValue(RunSummary summary, string metric) => metric switch
         {
             "Risk: Performance" => RiskCountFor(summary, "Performance"),
             "Risk: Memory" => RiskCountFor(summary, "Memory"),
@@ -673,9 +649,6 @@ internal sealed class DashboardForm : Form
             _ when metric.StartsWith("Risk code: ", StringComparison.Ordinal) => RiskCountForCode(summary, metric[11..]),
             _ => summary.RiskCount
         };
-        historyChart.SetData($"장기 추세 — {metric}", visibleRuns.OrderBy(summary => summary.TestRunId).Select((summary, index) =>
-            new ChartPoint($"{summary.Map} P{summary.Players} M{summary.Mannequins} T{summary.Tuning}", index, Value(summary))));
-    }
 
     private static RunMetrics BuildRunMetrics(IReadOnlyList<PerformanceSample> samples)
     {
@@ -718,8 +691,8 @@ internal sealed class DashboardForm : Form
     {
         var available = samples.Where(item => item.HasDiagnosticsOverhead).ToList();
         return available.Count == 0
-            ? "Diagnostics overhead=Unavailable (legacy capture)"
-            : $"Diagnostics overhead avg/max={available.Average(item => item.DiagnosticsOverheadMs):F3}/{available.Max(item => item.DiagnosticsOverheadMs):F3} ms";
+            ? "진단 수집 시간=측정 불가 (구형 기록)"
+            : $"진단 수집 시간 평균/최대={available.Average(item => item.DiagnosticsOverheadMs):F3}/{available.Max(item => item.DiagnosticsOverheadMs):F3} 밀리초";
     }
 
     private static List<OverheadBreakdownRow> BuildOverheadBreakdown(IEnumerable<PerformanceSample> samples)
@@ -784,7 +757,7 @@ internal sealed class DashboardForm : Form
     private static bool ContainsAny(string value, params string[] terms) =>
         terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
-    private static string RiskReason(string code) => code switch
+    internal static string RiskReason(string code) => code switch
     {
         "MissingNavData" => "AI를 처리해야 할 월드에서 NavMesh 데이터를 찾지 못함",
         "RepeatedPathFailures" => "최근 계측 구간에서 경로 요청 실패가 반복됨",
@@ -840,12 +813,12 @@ internal sealed class DashboardForm : Form
             .FirstOrDefault();
         if (previous is null) return "동일 맵·게임모드·플레이어 수·마네킹 수의 이전 실행이 없음";
 
-        var lines = new List<string> { $"Baseline={previous.TestRunId}, Tuning={previous.Tuning} → Current Tuning={current.Tuning}" };
-        AddComparison(lines, "종합 Risk Count", previous.RiskCount, current.RiskCount, higherIsBetter: false, exact: true);
+        var lines = new List<string> { $"기준 실행={previous.TestRunId}, 이전 튜닝={previous.Tuning} → 현재 튜닝={current.Tuning}" };
+        AddComparison(lines, "전체 위험 후보 수", previous.RiskCount, current.RiskCount, higherIsBetter: false, exact: true);
         foreach (var category in new[] { "Performance", "Memory", "Network", "AI/Navigation", "Tuning/Data", "Multiplayer", "Engine/Logs", "Other" })
-            AddComparison(lines, $"Risk/{category}", RiskCountFor(previous, category), RiskCountFor(current, category), higherIsBetter: false, exact: true);
+            AddComparison(lines, $"위험 후보/{DiagnosticUiText.Common(category)}", RiskCountFor(previous, category), RiskCountFor(current, category), higherIsBetter: false, exact: true);
         foreach (var code in previous.RiskByCode.Keys.Concat(current.RiskByCode.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
-            AddComparison(lines, $"Risk code/{code}", RiskCountForCode(previous, code), RiskCountForCode(current, code), higherIsBetter: false, exact: true);
+            AddComparison(lines, $"위험 후보/{RiskReason(code)}", RiskCountForCode(previous, code), RiskCountForCode(current, code), higherIsBetter: false, exact: true);
         if (current.Samples > 0 && previous.Samples > 0)
         {
             AddComparison(lines, "평균 FPS", previous.Metrics.AverageFps, current.Metrics.AverageFps, higherIsBetter: true);
@@ -889,6 +862,7 @@ internal sealed class DashboardForm : Form
 
     private static void AddComparison(List<string> lines, string label, double before, double after, bool higherIsBetter, bool exact = false)
     {
+        label=DiagnosticUiText.ComparisonLabel(label);
         var delta = after - before;
         var tolerance = exact ? 0.0 : Math.Max(Math.Abs(before) * 0.02, 0.01);
         if (Math.Abs(delta) <= tolerance) return;
@@ -899,6 +873,7 @@ internal sealed class DashboardForm : Form
 
     private static void AddNeutralComparison(List<string> lines, string label, double before, double after)
     {
+        label=DiagnosticUiText.ComparisonLabel(label);
         var delta = after - before;
         if (Math.Abs(delta) <= Math.Max(Math.Abs(before) * 0.02, 1.0)) return;
         lines.Add($"중립 변화: {label} {before:F0} → {after:F0} (Δ {delta:+0;-0;0})");
@@ -935,7 +910,7 @@ internal sealed class DashboardForm : Form
             "Line traces" => sample.LineTraces, "Path failures" => sample.PathFailures,"FPS"=>sample.Fps,
             _ => sample.RuntimeCounters.TryGetValue(metric,out double counter)?counter:double.NaN
         };
-        runChart.SetData($"{summary.TestRunId} — {metric}", samples.Select(sample => new ChartPoint(sample.Role, sample.GameSeconds, Value(sample))));
+        runChart.SetData($"{summary.TestRunId} — {DiagnosticUiText.Metric(metric)}", samples.Select(sample => new ChartPoint(sample.Role, sample.GameSeconds, Value(sample))));
     }
 
     private void OpenSelectedTrace()
@@ -950,7 +925,7 @@ internal sealed class DashboardForm : Form
         const string insights = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealInsights.exe";
         if (!File.Exists(insights))
         {
-            MessageBox.Show(this, "UnrealInsights.exe was not found under UE 5.8.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "언리얼 5.8 엔진 폴더에서 추적 분석 프로그램을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         Process.Start(new ProcessStartInfo { FileName = insights, Arguments = $"\"{trace}\"", UseShellExecute = true });
@@ -964,51 +939,56 @@ internal sealed class DashboardForm : Form
         var projectFile = projectRoot is null ? null : Path.Combine(projectRoot, "ProjectDFSD.uproject");
         if (projectFile is null || !File.Exists(projectFile))
         {
-            MessageBox.Show(this, "ProjectDFSD.uproject could not be found above the Diagnostics directory.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "진단 폴더의 상위 경로에서 게임 프로젝트 파일을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         button.Enabled = false;
+        VerificationAttempt? attempt=null;
+        string buildStatus="NotRun";
+        int? buildExitCode=null;
+        var roleOutcomesPass = reports.Where(report => report.TestRunId == summary.TestRunId).All(report => report.Outcome == "Pass");
+        void RecordFailure(AutomationVerdict verdict)
+        {
+            if(attempt is null)return;
+            try{AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,verdict,roleOutcomesPass);}
+            catch(Exception recordError)when(recordError is IOException or UnauthorizedAccessException)
+            {if(!IsDisposed&&!Disposing)MessageBox.Show(this,"검사 상태 파일도 저장하지 못했습니다. 실행 폴더 권한을 확인하세요.\n"+attempt.Directory+"\n"+recordError.Message,Text,MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+        }
         try
         {
-            var verificationDirectory = Path.Combine(summary.RunDirectory, "Verification");
-            Directory.CreateDirectory(verificationDirectory);
+            attempt=AutomationVerification.CreateAttempt(summary.RunDirectory);
+            AutomationVerification.Save(attempt,summary.TestRunId,"Running",null,new("Running","이번 실행의 빌드를 진행 중입니다."),roleOutcomesPass);
             const string buildTool = @"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat";
             const string editorCmd = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe";
-            var build = await RunProcessAsync(buildTool, ["ProjectDFSDEditor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReload"],windowLifetime.Token);
-            File.WriteAllText(Path.Combine(verificationDirectory, "Build.log"), build.Output, Encoding.UTF8);
-            ProcessResult automation = new(-1, "Automation was not started because the build failed.");
-            var automationReport = Path.Combine(verificationDirectory, "AutomationReport");
+            var build = await RunProcessAsync(buildTool, ["ProjectDFSDEditor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReloadFromIDE"],windowLifetime.Token);
+            buildExitCode=build.ExitCode; buildStatus=build.ExitCode==0?"Succeeded":"Failed";
+            File.WriteAllText(Path.Combine(attempt.Directory, "Build.log"), build.Output, Encoding.UTF8);
+            AutomationVerdict verdict=new("NotRun","빌드 실패로 자동 검사를 실행하지 않았습니다.");
             if (build.ExitCode == 0)
             {
-                automation = await RunProcessAsync(editorCmd, [projectFile, "-unattended", "-nop4", "-nosplash", "-nullrhi", "-TestExit=Automation Test Queue Empty", "-ExecCmds=Automation RunTests ProjectProject01.;Quit", $"-ReportOutputPath={automationReport}"],windowLifetime.Token);
+                AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,new("Running","실제 렌더링을 사용하여 전체 자동 검사를 실행 중입니다."),roleOutcomesPass);
+                var automation = await RunProcessAsync(editorCmd, AutomationVerification.Arguments(projectFile,attempt),windowLifetime.Token);
+                File.WriteAllText(Path.Combine(attempt.Directory, "Automation.log"), automation.Output, Encoding.UTF8);
+                verdict=AutomationVerification.Evaluate(attempt,automation.ExitCode);
             }
-            File.WriteAllText(Path.Combine(verificationDirectory, "Automation.log"), automation.Output, Encoding.UTF8);
-            var automationErrors = -1;
-            var automationSuccesses = 0;
-            var automationIndex = Path.Combine(automationReport, "index.json");
-            if (File.Exists(automationIndex))
-            {
-                using var automationJson = JsonDocument.Parse(File.ReadAllText(automationIndex));
-                automationErrors = automationJson.RootElement.TryGetProperty("failed", out var failed) ? failed.GetInt32() : -1;
-                automationSuccesses = automationJson.RootElement.TryGetProperty("succeeded", out var succeeded) ? succeeded.GetInt32() : 0;
-            }
-            var buildStatus = build.ExitCode == 0 ? "Succeeded" : "Failed";
-            var automationStatus = automation.ExitCode == 0 && automationErrors == 0 && automationSuccesses > 0 ? "Succeeded" : "Failed";
-            var roleOutcomesPass = reports.Where(report => report.TestRunId == summary.TestRunId).All(report => report.Outcome == "Pass");
-            var finalOutcome = buildStatus == "Succeeded" && automationStatus == "Succeeded" && roleOutcomesPass ? "Pass" : "ReviewRequired";
-            new XDocument(new XElement("Verification", new XAttribute("TestRunId", summary.TestRunId), new XAttribute("FinalOutcome", finalOutcome),
-                new XElement("Build", new XAttribute("Status", buildStatus), new XAttribute("ExitCode", build.ExitCode), new XAttribute("Log", "Verification/Build.log")),
-                new XElement("Automation", new XAttribute("Status", automationStatus), new XAttribute("ExitCode", automation.ExitCode), new XAttribute("SucceededCount", automationSuccesses), new XAttribute("FailedCount", automationErrors), new XAttribute("Log", "Verification/Automation.log"))))
-                .Save(Path.Combine(summary.RunDirectory, "Verification.xml"));
+            AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,verdict,roleOutcomesPass);
             LoadReports(rootPath.Text);
-            MessageBox.Show(this, $"Build={buildStatus}, Automation={automationStatus}, Final={finalOutcome}", Text, MessageBoxButtons.OK,
-                finalOutcome == "Pass" ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            MessageBox.Show(this, $"빌드={(buildStatus=="Succeeded"?"성공":"실패")}\n자동 검사：{verdict.Description}\n"+
+                (verdict.Passed&&!roleOutcomesPass?"자동 검사는 통과했지만 선택한 게임 진단에는 검토할 항목이 남아 있습니다.\n":"")+
+                $"이번 실행 기록：{attempt.Directory}",Text,MessageBoxButtons.OK,verdict.Passed?MessageBoxIcon.Information:MessageBoxIcon.Warning);
+        }
+        catch(OperationCanceledException)
+        {
+            var verdict=new AutomationVerdict(windowLifetime.IsCancellationRequested?"Cancelled":"TimedOut",windowLifetime.IsCancellationRequested?"창이 닫혀 이번 검사를 취소했습니다.":"30분 실행 제한에 도달해 이번 검사 프로세스를 종료했습니다.");
+            RecordFailure(verdict);
+            if(!IsDisposed&&!Disposing)MessageBox.Show(this,verdict.Description,Text,MessageBoxButtons.OK,MessageBoxIcon.Warning);
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            RecordFailure(new("ProcessFailed","검사 실행·결과 기록 오류: "+exception.GetType().Name));
+            if(!IsDisposed&&!Disposing)MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        finally { button.Enabled = true; }
+        finally { if(!button.IsDisposed)button.Enabled = true; }
     }
 
     internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments,CancellationToken cancellationToken=default)

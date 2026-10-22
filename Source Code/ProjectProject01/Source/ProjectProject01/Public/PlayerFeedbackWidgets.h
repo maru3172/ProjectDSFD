@@ -68,7 +68,8 @@ class PROJECTPROJECT01_API UProjectProject01DeathFeedbackWidget final : public U
 	GENERATED_BODY()
 
 public:
-	void Configure(float InCameraSeconds, float InBlackFadeSeconds);
+	void Configure(float InCameraSeconds, float InBlackFadeSeconds, bool bInHoldBlackUntilReleased = false);
+	bool IsHoldingBlack() const { return bHoldBlackUntilReleased && ElapsedSeconds >= CameraSeconds + BlackFadeSeconds; }
 	void Seek(float Seconds) { ElapsedSeconds=FMath::Max(0.f,Seconds); NativeTick(FGeometry(),0); }
 
 protected:
@@ -82,6 +83,7 @@ private:
 	TObjectPtr<class UBorder> BlackBackground;
 
 	float CameraSeconds = 1.06f;
+	bool bHoldBlackUntilReleased = false;
 	float BlackFadeSeconds = 0.65f;
 	float ElapsedSeconds = 0.0f;
 };

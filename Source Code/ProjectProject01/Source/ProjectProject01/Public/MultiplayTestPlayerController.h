@@ -174,6 +174,11 @@ private:
 	UFUNCTION() void OnRep_SurvivorSpectatorView();
 	void ApplySurvivorSpectatorView();
 	void TryFinishSpectatorFade();
+	void ReleaseLocalDeathBlackouts();
+	bool bLocalMatchResultRequested = false;
+	FMultiplayTestMatchResult PendingLocalMatchResult;
+	FTimerHandle LocalMatchResultHandoffTimer;
+	double LocalMatchResultHandoffDeadline = 0;
 	uint32 LastSpectatorFadeRequest = 0;
 	uint32 SpectatorRequestSerial = 0;
 	bool bSpectatorFadePending = false;

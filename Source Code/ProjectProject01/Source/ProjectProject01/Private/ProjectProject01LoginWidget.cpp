@@ -3403,6 +3403,7 @@ void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMat
 	Result = InResult;
 	bSinglePlayer = false;
 	bConfigured = true;
+	if (!IsInViewport()) InitializeResultPresentation();
 	if (!Result.bLeaderboardVerificationPending &&
 		Result.bSuccess && Result.bLeaderboardVerificationReady)
 	{
@@ -3433,6 +3434,7 @@ void UProjectProject01MatchResultWidget::ConfigureSinglePlayerResult(const bool 
 	Result.bSuccess = bEscaped;
 	bSinglePlayer = true;
 	bConfigured = true;
+	InitializeResultPresentation();
 	RefreshResultText();
 }
 
@@ -3476,26 +3478,30 @@ void UProjectProject01MatchResultWidget::NativeConstruct()
 			Auth->OnLogoutCompleted.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleLogoutResult);
 		}
 	}
-	FadeElapsedSeconds = 0.0f;
-	if (IsValid(FadeBackground))
-	{
-		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f,
-			bSinglePlayer && !Result.bSuccess ? 0.98f : 0.0f));
-	}
-	if (IsValid(ResultMenu))
-	{
-		const bool bShowSinglePlayerDeathImmediately = bSinglePlayer && !Result.bSuccess;
-		ResultMenu->SetRenderOpacity(bShowSinglePlayerDeathImmediately ? 1.0f : 0.0f);
-		ResultMenu->SetVisibility(bShowSinglePlayerDeathImmediately
-			? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
-		if (bShowSinglePlayerDeathImmediately)
-		{
-			FadeElapsedSeconds = FadeDurationSeconds;
-		}
-	}
+	InitializeResultPresentation();
 	SetBusy(false);
 	RefreshResultText();
 	SetKeyboardFocus();
+}
+
+void UProjectProject01MatchResultWidget::InitializeResultPresentation()
+{
+	// Multiplayer death/escape already handed over a black screen. A transparent
+	// result background followed by a second fade exposed the world for 1.5 seconds.
+	// Establish opaque black BEFORE AddToViewport; only the single escape retains
+	// its original fade from gameplay when it has not already blacked out.
+	const bool bImmediate = !bSinglePlayer || !Result.bSuccess;
+	FadeElapsedSeconds = bImmediate ? FadeDurationSeconds : 0.0f;
+	if (IsValid(FadeBackground))
+	{
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, bImmediate ? 1.0f : 0.0f));
+	}
+	if (IsValid(ResultMenu))
+	{
+		ResultMenu->SetRenderOpacity(bImmediate ? 1.0f : 0.0f);
+		ResultMenu->SetVisibility(bImmediate
+			? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+	}
 }
 
 void UProjectProject01MatchResultWidget::NativeDestruct()

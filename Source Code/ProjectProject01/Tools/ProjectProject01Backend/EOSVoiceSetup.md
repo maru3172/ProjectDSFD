@@ -15,7 +15,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\ConfigureProjectProje
 
 Developer Portal의 Clients 화면에서 두 Client Secret을 각각 입력합니다. Secret은 Git이나 ini에 저장되지 않고 현재 Windows 사용자 환경변수에만 저장됩니다. 설정 후 빌드·서버 도우미와 Unreal Editor를 다시 실행해야 합니다.
 
-클라이언트 패키징 때 도우미는 GameClient Secret을 설정에 잠시 주입해 패키지에 포함한 뒤 원본 `DefaultEngine.ini`를 즉시 복구합니다. 클라이언트 자격 증명은 배포 프로그램에서 완전히 숨길 수 없으므로 권한이 제한된 `ProjectProject01GameClient` 정책만 연결합니다. `ProjectProject01VoiceServer` Secret은 절대로 클라이언트에 포함하지 않습니다.
+클라이언트 패키징 때 도우미는 GameClient Secret을 Git에서 제외된 `Config/GeneratedEngine.ini`(UE의 빌드 생성 설정 레이어)에만 잠시 써서 패키지에 포함한 뒤 삭제합니다. Git이 추적하는 `DefaultEngine.ini`는 수정하지 않으며, 이 파일에 `ClientSecret=` 값이 남아 있으면 패키징을 차단합니다. 클라이언트 자격 증명은 배포 프로그램에서 완전히 숨길 수 없으므로 권한이 제한된 `ProjectProject01GameClient` 정책만 연결합니다. `ProjectProject01VoiceServer` Secret은 절대로 클라이언트에 포함하지 않습니다.
 
 상태만 확인할 때:
 

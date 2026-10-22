@@ -645,21 +645,31 @@ internal sealed partial class MainForm : Form
             return 2;
         }
 
+        // The tracked DefaultEngine.ini is never modified. UE 5.8 reads Config/Generated{TYPE}.ini as the
+        // "ProjectGenerated" layer reserved for build-generated files; it is git-ignored and staged into the
+        // package via [Staging] +AllowedConfigFiles in DefaultGame.ini. A crash or a commit made during
+        // packaging therefore cannot place the secret into version control.
         string engineConfig = Path.Combine(ProjectRoot(), "Config", "DefaultEngine.ini");
-        string originalConfig = await File.ReadAllTextAsync(engineConfig, lifetime.Token);
-        string temporaryConfig = originalConfig.TrimEnd() + Environment.NewLine + Environment.NewLine +
-            "[EOSVoiceChat]" + Environment.NewLine +
-            "ClientSecret=" + clientSecret + Environment.NewLine;
+        if (TrackedEngineConfigContainsClientSecret(await File.ReadAllTextAsync(engineConfig, lifetime.Token)))
+        {
+            Append("[차단] Git이 추적하는 DefaultEngine.ini에 ClientSecret 값이 남아 있습니다. 해당 줄을 지운 뒤 다시 패키징하세요.");
+            return 2;
+        }
+        string generatedConfig = Path.Combine(ProjectRoot(), "Config", "GeneratedEngine.ini");
+        string? previousGenerated = File.Exists(generatedConfig)
+            ? await File.ReadAllTextAsync(generatedConfig, lifetime.Token) : null;
         try
         {
-            await File.WriteAllTextAsync(engineConfig, temporaryConfig, new UTF8Encoding(false), lifetime.Token);
-            Append("[정보] 로컬 EOS GameClient 자격 증명을 패키징 설정에 임시 주입했습니다(로그·Git에는 표시하지 않음). ");
+            await File.WriteAllTextAsync(generatedConfig, BuildGeneratedEosClientConfig(previousGenerated, clientSecret),
+                new UTF8Encoding(false), lifetime.Token);
+            Append("[정보] 로컬 EOS GameClient 자격 증명을 Git 제외 파일(Config/GeneratedEngine.ini)에 임시 주입했습니다(로그·Git에는 표시하지 않음).");
             return await RunCapturedAsync(uat, args, ProjectRoot());
         }
         finally
         {
-            await File.WriteAllTextAsync(engineConfig, originalConfig, new UTF8Encoding(false), CancellationToken.None);
-            Append("[OK] 소스 설정에서 임시 EOS GameClient 비밀키를 제거했습니다.");
+            if (previousGenerated is null) File.Delete(generatedConfig);
+            else await File.WriteAllTextAsync(generatedConfig, previousGenerated, new UTF8Encoding(false), CancellationToken.None);
+            Append("[OK] 임시 EOS GameClient 비밀키 설정 파일을 정리했습니다.");
         }
     }
 

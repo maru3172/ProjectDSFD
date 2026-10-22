@@ -3,6 +3,7 @@
 #include "Misc/ScopeExit.h"
 #include "PlayerCharacter.h"
 #include "MultiplayTestPlayerController.h"
+#include "MultiplayTestGameMode.h"
 #include "ProjectSpectatorCameraManager.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
@@ -18,6 +19,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectSurvivorPresentationTest,"ProjectProjec
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectSurvivorPresentationTest::RunTest(const FString&)
 {
+	// This isolated logic fixture intentionally has no rendered game viewport.
+	AddExpectedMessagePlain(TEXT("No game viewport was found."),ELogVerbosity::Warning,EAutomationExpectedMessageFlags::Contains,3);
 	const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
 	auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
 	auto* GI=NewObject<UGameInstance>();World->SetGameInstance(GI);GI->Init();
@@ -49,6 +52,30 @@ bool FProjectSurvivorPresentationTest::RunTest(const FString&)
 	TestTrue(TEXT("Observed fatal event creates death fade and holds the target through the fall"),Target->DeathFeedbackWidget!=nullptr && Target->bCameraDeathFeedbackActive && Target->IsDeathPresentationPending());
 	Target->UpdateCameraFeedback(.3f);
 	TestTrue(TEXT("Observed death lowers the same first-person camera"),Target->Camera->GetRelativeLocation().Z<Target->FeedbackCameraStartLocation.Z);
+	Target->DeathFeedbackWidget->Seek(Target->GetDeathSequenceHandoffDelaySeconds()+1);
+	TestTrue(TEXT("Fatal observer overlay holds black after its animation instead of removing itself"),Target->DeathFeedbackWidget->IsHoldingBlack());
+	auto* Mode=World->SpawnActor<AMultiplayTestGameMode>();
+	FMultiplayTestServerPlayerRecord ObserverRecord;ObserverRecord.Role=TEXT("Survivor");ObserverRecord.SurvivorState=EMultiplayTestSurvivorState::Eliminated;
+	Mode->MatchPlayerRecords.Add(PC,ObserverRecord);
+	Target->SetActorHiddenInGame(true);
+	Mode->RefreshSurvivorSpectatorTargets();
+	TestTrue(TEXT("No living survivor does not clear the last fatal target before the result handoff"),PC->SurvivorSpectatorView.Target==Target);
+	FMultiplayTestMatchResult Result;Result.MatchId=TEXT("handoff");Result.Role=TEXT("Survivor");Result.Outcome=TEXT("Eliminated");
+	PC->ClientPresentMatchResult_Implementation(Result);
+	TestTrue(TEXT("An early result waits for remaining local death frames, with a bounded deadline"),PC->bLocalMatchResultRequested &&
+		PC->LocalMatchResultHandoffDeadline>World->GetTimeSeconds() && World->GetTimerManager().IsTimerActive(PC->LocalMatchResultHandoffTimer) && !PC->MatchResultWidget);
+	Result.bLeaderboardVerificationReady=true;
+	const double Deadline=PC->LocalMatchResultHandoffDeadline;
+	PC->ClientPresentMatchResult_Implementation(Result);
+	TestTrue(TEXT("Verification updates replace the pending result without restarting the death deadline"),PC->LocalMatchResultHandoffDeadline==Deadline && PC->PendingLocalMatchResult.bLeaderboardVerificationReady);
+	FMultiplaySurvivorSpectatorView LateView;LateView.bEnabled=true;LateView.bFadeTransition=true;LateView.RequestId=100;
+	PC->ClientEnterSurvivorSpectator_Implementation(LateView);
+	PC->bSpectatorFadePending=true;PC->SpectatorSwitchReadyAt=-1;PC->TryFinishSpectatorFade();
+	TestTrue(TEXT("Late observer RPCs and reveal timers cannot replace the fatal target or reveal results"),PC->SurvivorSpectatorView.Target==Target && PC->bSpectatorFadePending);
+	PC->bSpectatorFadePending=false;
+	World->GetTimerManager().ClearTimer(PC->LocalMatchResultHandoffTimer);
+	PC->ReleaseLocalDeathBlackouts();
+	TestFalse(TEXT("Explicit handoff releases held death overlays owned by this client"),Target->HasLocalDeathBlackout(PC));
 	PC->SurvivorSpectatorView.bEnabled=false;Target->UpdateObserverPresentation(0);PC->PlayerCameraManager->UpdateCamera(.016f);
 	TestTrue(TEXT("Retarget/exit removes old target damage/death overlays and camera offsets"),!Target->DamageFeedbackWidget && !Target->DeathFeedbackWidget && !Target->bCameraDeathFeedbackActive && !PC->HiddenActors.Contains(Target));
 	FProjectSurvivorPresentation Bad;Bad.BPM=401;TestFalse(TEXT("Out-of-range client cosmetic state is rejected"),Bad.IsValid());

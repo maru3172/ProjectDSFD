@@ -27,13 +27,21 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "Misc/App.h"
+#include "Misc/ScopeExit.h"
 
 namespace ProjectPlayTests
 {
 	bool SaveSpectatorView(APlayerController* PC,const FString& Name)
 	{
+		// A null-RHI run has no render target resource. Never dereference it even if
+		// this helper is invoked outside the automation feature filter.
+		if (!FApp::CanEverRender() || !IsValid(PC) || !IsValid(PC->GetWorld()) || !IsValid(PC->PlayerCameraManager)) return false;
 		auto* Capture=PC->GetWorld()->SpawnActor<ASceneCapture2D>();
+		if (!IsValid(Capture)) return false;
+		ON_SCOPE_EXIT { Capture->Destroy(); };
 		auto* Component=Capture->GetCaptureComponent2D();
+		if (!IsValid(Component)) return false;
 		auto* Texture=NewObject<UTextureRenderTarget2D>(Capture);Texture->InitAutoFormat(960,540);
 		Component->TextureTarget=Texture;Component->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR;
 		Component->HiddenActors=PC->HiddenActors;
@@ -41,12 +49,13 @@ namespace ProjectPlayTests
 		Component->FOVAngle=PC->PlayerCameraManager->GetFOVAngle();
 		Capture->SetActorLocationAndRotation(PC->PlayerCameraManager->GetCameraLocation(),PC->PlayerCameraManager->GetCameraRotation());
 		Component->CaptureScene();TArray<FColor> Pixels;
-		const bool bRead=Texture->GameThread_GetRenderTargetResource()->ReadPixels(Pixels);
+		auto* Resource=Texture->GameThread_GetRenderTargetResource();
+		const bool bRead=Resource && Resource->ReadPixels(Pixels) && Pixels.Num()==960*540;
 		TArray64<uint8> PNG;if(bRead)FImageUtils::PNGCompressImageArray(960,540,Pixels,PNG);
 		const FString Directory=FPaths::ProjectSavedDir()/TEXT("SpectatorCameraQA");
 		IFileManager::Get().MakeDirectory(*Directory,true);
 		const bool bSaved=bRead && FFileHelper::SaveArrayToFile(PNG,*(Directory/(Name+TEXT(".png"))));
-		Capture->Destroy();return bSaved;
+		return bSaved;
 	}
 	void EndSession(FAutomationTestBase* Test,TFunction<void()> Cleanup={})
 	{
@@ -132,7 +141,7 @@ bool FProjectTutorialEditorPracticeTest::RunTest(const FString& Role)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectThreeClientTravelTest,"ProjectProject01.Editor.ThreeClientTravel",
-	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
 bool FProjectThreeClientTravelTest::RunTest(const FString&)
 {
 	if (!GEditor || GEditor->IsPlaySessionInProgress()) { AddError(TEXT("Stop the current PIE session first")); return false; }

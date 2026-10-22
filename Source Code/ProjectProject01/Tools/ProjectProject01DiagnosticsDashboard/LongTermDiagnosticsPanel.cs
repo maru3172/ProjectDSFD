@@ -111,11 +111,12 @@ internal sealed class LongTermDiagnosticsPanel : UserControl
         if (metric.SelectedItem is not HistoryMetricChoice choice) return;
         string mode = aggregation.SelectedItem as string ?? "권장 집계";
         string source = choice.Key.StartsWith("Game | ", StringComparison.Ordinal) ? "Game" : "Backend";
-        var rows = Captures().Where(c => c.Source == source).Select((c, i) =>
+        bool legacy = LegacyHistoryMetrics.Contains(choice.Key[(choice.Key.IndexOf(" | ", StringComparison.Ordinal)+3)..]);
+        var rows = Captures().Where(c => c.Source == source && (source != "Game" || (c.Scope == "전체 경기") == legacy)).Select((c, i) =>
         {
             c.Metrics.TryGetValue(choice.Key, out var stat);
             double? number = stat?.Select(mode);
-            return new HistoryDisplayRow(i + 1, c.Start.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"), c.Scope, c.Samples,
+            return new HistoryDisplayRow(i + 1, c.Start.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"), DiagnosticUiText.Common(c.Scope), c.Samples,
                 stat?.ValidSamples ?? 0, number?.ToString("0.######", CultureInfo.InvariantCulture) ?? "측정 불가 / 해당 집계 미지원",
                 c.Context, c.Id, c.End.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"), number);
         }).ToList();

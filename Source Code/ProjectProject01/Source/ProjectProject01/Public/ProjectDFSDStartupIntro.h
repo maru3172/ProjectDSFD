@@ -26,6 +26,7 @@ class PROJECTPROJECT01_API UProjectDFSDStartupIntro final : public UUserWidget
 {
 	GENERATED_BODY()
 	friend class FProjectDFSDIntroRenderTest;
+	friend class FProjectDFSDTitlePIETest;
 
 public:
 	FSimpleDelegate OnFinished;

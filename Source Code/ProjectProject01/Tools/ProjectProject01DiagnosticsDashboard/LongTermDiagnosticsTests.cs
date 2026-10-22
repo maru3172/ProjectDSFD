@@ -105,8 +105,21 @@ internal static class LongTermDiagnosticsTests
             var integrated = Descendants(form).OfType<LongTermDiagnosticsPanel>().Single();
             integrated.SelectForTest(LongTermDiagnostics.GameKey("ProcessThreadCount"), "최대");
             Check(integrated.VisibleRowsForTest == 1, "actual report loader automatically populates extended history");
-            Check(Descendants(form).OfType<TabPage>().Any(t => t.Text == "Long-term Comparison") &&
-                Descendants(form).OfType<TabPage>().Any(t => t.Text == "추가 진단 전체 · 장기 추세"), "new panel wired inside actual long-term tab");
+            Check(Descendants(form).OfType<TabPage>().Count(t => t.Text == "진단 전체, 비교") == 1 &&
+                Descendants(form).OfType<TabPage>().All(t => t.Text is not ("Long-term Comparison" or "추가 진단 전체 · 장기 추세" or "기존 성능·위험 비교")), "one unified comparison tab without old nested dialogs");
+            Check(LegacyHistoryMetrics.Keys.All(k => integrated.MetricKeysForTest.Contains(LongTermDiagnostics.GameKey(k))), "all original performance/risk choices retained in unified selector");
+            integrated.SelectForTest(LongTermDiagnostics.GameKey("Average FPS"), "권장 집계");
+            Check(integrated.VisibleRowsForTest == 1, "legacy combined summary does not become duplicated per-role points");
+            Check(LegacyHistoryMetrics.Keys.All(k => !System.Text.RegularExpressions.Regex.IsMatch(DiagnosticUiText.Metric(k), @"\b(?:Average|Max|Risk|frame|thread|overhead|memory|count)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)), "all original metric display labels translated, keys unchanged");
+            Check(LongTermDiagnostics.KnownKeys.All(k => !LongTermDiagnostics.Label(k).Contains("[",StringComparison.Ordinal)), "comparison labels no longer append English raw keys");
+            Check(Descendants(form).OfType<TabPage>().All(t => !System.Text.RegularExpressions.Regex.IsMatch(t.Text, @"[A-Za-z]{3,}")), "all diagnostic tab labels localized");
+            var selector=Descendants(form).OfType<ComboBox>().First(c=>c.Items.Contains("Frame ms"));
+            Check(selector.GetItemText("Frame ms")=="프레임 시간 (밀리초)" && selector.Items.Contains("Frame ms"), "run-trend combo formats Korean without breaking stored metric keys");
+            host.Controls.Remove(panel); form.Width=1380; form.Height=900;form.Opacity=0;form.ShowInTaskbar=false;form.Location=new Point(-32000,-32000);
+            var page=Descendants(form).OfType<TabPage>().Single(t=>t.Text=="진단 전체, 비교");((TabControl)page.Parent!).SelectedTab=page;
+            form.Show();form.PerformLayout();Application.DoEvents();
+            using var preview=new Bitmap(form.Width,form.Height);form.DrawToBitmap(preview,new Rectangle(Point.Empty,form.Size));
+            string evidenceRoot=Path.GetFullPath("Saved/ReviewRemediation/LongTermDiagnostics-20261022");Directory.CreateDirectory(evidenceRoot);preview.Save(Path.Combine(evidenceRoot,"UnifiedComparison.png"));form.Hide();
         }
         host.Show(); host.PerformLayout(); Application.DoEvents();
         string output = Path.GetFullPath("Saved/ReviewRemediation/LongTermDiagnostics-20261022"); Directory.CreateDirectory(output);

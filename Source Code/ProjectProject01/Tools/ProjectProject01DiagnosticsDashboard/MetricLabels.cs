@@ -36,7 +36,7 @@ internal static class MetricLabels
     };
     internal static IEnumerable<string> Keys=>Labels.Keys;
     internal static string Label(string key)=>Labels.GetValueOrDefault(key,key);
-    internal static string Value(string key,double? value)=>key=="Circuit.ResultRecovery.State"?value switch{0=>"정상 (Closed)",1=>"요청 차단 (Open)",2=>"복구 시험 (HalfOpen)",_=>"측정 불가"}:value?.ToString("0.###",System.Globalization.CultureInfo.InvariantCulture)??"측정 불가 / 표본 없음";
+    internal static string Value(string key,double? value)=>key=="Circuit.ResultRecovery.State"?value switch{0=>"정상",1=>"요청 차단",2=>"복구 시험",_=>"측정 불가"}:value?.ToString("0.###",System.Globalization.CultureInfo.InvariantCulture)??"측정 불가 / 표본 없음";
     internal static string State(string key,string value)=>key switch
     {
         "CircuitBreaker"=>value.StartsWith("NotImplemented")?"서킷 브레이커: 사용 안 함 (이전 버전의 기록)":

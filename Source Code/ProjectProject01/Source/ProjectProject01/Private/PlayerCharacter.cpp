@@ -517,6 +517,24 @@ bool APlayerCharacter::IsDeathPresentationPending() const
 	return Now-ObserverFeedback.Started<GetDeathSequenceHandoffDelaySeconds();
 }
 
+bool APlayerCharacter::HasLocalDeathBlackout(const APlayerController* PresentationOwner) const
+{
+	return IsValid(DeathFeedbackWidget) && DeathFeedbackWidget->GetOwningPlayer()==PresentationOwner;
+}
+
+float APlayerCharacter::GetLocalDeathPresentationRemaining(const APlayerController* PresentationOwner) const
+{
+	return bCameraDeathFeedbackActive && HasLocalDeathBlackout(PresentationOwner)
+		? FMath::Max(0.f, GetDeathSequenceHandoffDelaySeconds()-CameraFeedbackElapsedSeconds) : 0.f;
+}
+
+void APlayerCharacter::ReleaseLocalDeathBlackout(const APlayerController* PresentationOwner)
+{
+	if (!HasLocalDeathBlackout(PresentationOwner)) return;
+	DeathFeedbackWidget->RemoveFromParent();
+	DeathFeedbackWidget=nullptr;
+}
+
 FRotator APlayerCharacter::GetPresentationRotationOffset() const
 {
 	const auto* Settings=UProjectProject01GameUserSettings::Get();
@@ -1249,7 +1267,7 @@ void APlayerCharacter::DrawStaminaDebug() const
 #endif
 }
 
-void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
+void APlayerCharacter::ApplyPlayerTuningValues(const FPlayerTuningRow& Tuning)
 {
 	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
 	PlayerSprintSpeed = FMath::Max(0.0f, Tuning.PlayerSprintSpeed);
@@ -1286,6 +1304,12 @@ void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
 	{
 		HeartbeatComponent->ApplyHeartbeatTuning(Tuning);
 	}
+}
+
+void APlayerCharacter::ApplyPlayerTuning(const FPlayerTuningRow& Tuning)
+{
+	// 서버와 소유 클라이언트가 같은 수치 적용 경로를 공유한다.
+	ApplyPlayerTuningValues(Tuning);
 
 	if (HasAuthority())
 	{
@@ -1325,43 +1349,7 @@ void APlayerCharacter::GetDiagnosticAppliedPlayerTuning(FPlayerTuningRow& OutTun
 
 void APlayerCharacter::ClientApplyPlayerTuning_Implementation(const FPlayerTuningRow& Tuning)
 {
-	PlayerWalkSpeed = FMath::Max(0.0f, Tuning.PlayerWalkSpeed);
-	PlayerSprintSpeed = FMath::Max(0.0f, Tuning.PlayerSprintSpeed);
-	MaxStamina = FMath::Max(0.0f, Tuning.MaxStamina);
-	StaminaDrainPerSecond = FMath::Max(0.0f, Tuning.StaminaDrainPerSecond);
-	StaminaRecoveryPerSecond = FMath::Max(0.0f, Tuning.StaminaRecoveryPerSecond);
-	DamageFeedbackIntroSeconds = FMath::Max(Tuning.DamageFeedbackIntroSeconds, 0.01f);
-	DamageFeedbackFadeSeconds = FMath::Max(Tuning.DamageFeedbackFadeSeconds, 0.01f);
-	DamageFeedbackMaxOpacity = FMath::Clamp(Tuning.DamageFeedbackMaxOpacity, 0.0f, 1.0f);
-	DamageFeedbackMaxThicknessPixels = FMath::Max(Tuning.DamageFeedbackMaxThicknessPixels, 1.0f);
-	PainGroanSFXVolume = FMath::Max(Tuning.PainGroanSFXVolume, 0.0f);
-	DamageCameraStumbleSeconds = FMath::Max(Tuning.DamageCameraStumbleSeconds, 0.01f);
-	DamageCameraRecoverySeconds = FMath::Max(Tuning.DamageCameraRecoverySeconds, 0.01f);
-	DamageCameraTiltDegrees = FMath::Clamp(Tuning.DamageCameraTiltDegrees, 0.0f, 20.0f);
-	DeathCameraStumbleSeconds = FMath::Max(Tuning.DeathCameraStumbleSeconds, 0.0f);
-	DeathCameraFallSeconds = FMath::Max(Tuning.DeathCameraFallSeconds, 0.01f);
-	DeathBlackFadeSeconds = FMath::Max(Tuning.DeathBlackFadeSeconds, 0.01f);
-	DeathMessageHoldSeconds = FMath::Max(Tuning.DeathMessageHoldSeconds, 0.0f);
-	DeathCameraDropCentimeters = FMath::Max(Tuning.DeathCameraDropCentimeters, 0.0f);
-	DeathCameraTiltDegrees = FMath::Clamp(Tuning.DeathCameraTiltDegrees, 0.0f, 90.0f);
-	BodyFallSFXVolume = FMath::Max(Tuning.BodyFallSFXVolume, 0.0f);
-	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
-	{
-		if (IsValid(PainGroanSFXComponent)) PainGroanSFXComponent->SoundClass = Settings->GetSFXSoundClass();
-		if (IsValid(BodyFallSFXComponent)) BodyFallSFXComponent->SoundClass = Settings->GetSFXSoundClass();
-	}
-	if (IsValid(PainGroanSFXComponent)) PainGroanSFXComponent->SetVolumeMultiplier(PainGroanSFXVolume);
-	if (IsValid(BodyFallSFXComponent)) BodyFallSFXComponent->SetVolumeMultiplier(BodyFallSFXVolume);
-	CurrentStamina = bStaminaInitialized ? FMath::Clamp(CurrentStamina, 0.0f, MaxStamina) : MaxStamina;
-	bStaminaInitialized = true;
-	ApplyPlayerWalkSpeed();
-
-	if (!ensureMsgf(IsValid(HeartbeatComponent), TEXT("Player %s has no HeartbeatComponent for client tuning."), *GetName()))
-	{
-		return;
-	}
-
-	HeartbeatComponent->ApplyHeartbeatTuning(Tuning);
+	ApplyPlayerTuningValues(Tuning);
 }
 
 void APlayerCharacter::ApplyPlayerWalkSpeed()
@@ -1840,7 +1828,7 @@ void APlayerCharacter::PlayLocalDeathSequence(
 	{
 		DeathFeedbackWidget->Configure(
 			DeathCameraStumbleSeconds + DeathCameraFallSeconds,
-			DeathBlackFadeSeconds);
+			DeathBlackFadeSeconds, IsLocallyObserved() || !UsesSinglePlayerRules(GetWorld()));
 		DeathFeedbackWidget->AddToViewport(900);
 	}
 
@@ -2031,7 +2019,9 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 void APlayerCharacter::DrawAIRangeDebug()
 {
-	if (!bShowAIRangeDebug)
+#if ENABLE_DRAW_DEBUG
+	// Shipping과 데디케이티드 서버에서는 선이 그려지지 않으므로 부채꼴 계산도 생략한다.
+	if (!bShowAIRangeDebug || GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
@@ -2156,6 +2146,7 @@ void APlayerCharacter::DrawAIRangeDebug()
 			HeartbeatComponent->GetBaseVisionHalfAngleDegrees(),
 			LineThickness * 0.65f);
 	}
+#endif
 }
 
 // =========================================================================================================================

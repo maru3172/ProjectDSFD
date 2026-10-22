@@ -58,6 +58,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectMannequinViewCommandTest;
 	friend class FProjectMannequinNavigationSafetyTest;
 	friend class FProjectSpectatorFadeTest;
+	friend class FProjectSurvivorPresentationTest;
 	friend class AProjectProject01TutorialGameMode;
 
 public:

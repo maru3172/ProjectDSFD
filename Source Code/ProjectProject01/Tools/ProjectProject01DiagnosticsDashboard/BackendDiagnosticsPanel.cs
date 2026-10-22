@@ -59,6 +59,8 @@ internal sealed class BackendDiagnosticsPanel:UserControl
     public BackendDiagnosticsPanel()
     {
         Dock=DockStyle.Fill;
+        DiagnosticUiText.Localize(metric, MetricLabels.Label);
+        values.DataBindingComplete+=(_,_)=>{if(values.Columns.Contains("지표"))values.Columns["지표"]!.Visible=false;};
         var start=new Button{Text="수집 시작",AutoSize=true};var stop=new Button{Text="수집 중지",AutoSize=true};
         var refresh=new Button{Text="새로고침",AutoSize=true};var open=new Button{Text="기록 열기",AutoSize=true};var export=new Button{Text="CSV 내보내기",AutoSize=true};
         var top=new FlowLayoutPanel{Dock=DockStyle.Top,Height=82,AutoScroll=true,WrapContents=true};
@@ -131,7 +133,7 @@ internal sealed class BackendDiagnosticsPanel:UserControl
         if(history.Count==0){status.Text="읽을 수 있는 표본이 없습니다.";return;}
         var last=history[^1];
         values.DataSource=last.Values.OrderBy(x=>x.Key).Select(x=>new{항목=MetricLabels.Label(x.Key),값=MetricLabels.Value(x.Key,x.Value),지표=x.Key}).ToList();
-        failures.DataSource=history.TakeLast(12).SelectMany(s=>s.Failures.Select(f=>new{시각=s.UtcTime.ToLocalTime().ToString("HH:mm:ss"),범위=f.Source,원인=f.Kind,HTTP=f.Status,횟수=f.Count,시도=f.Attempt,최대=f.Maximum,다음대기초=f.NextDelaySeconds})).TakeLast(200).ToList();
+        failures.DataSource=history.TakeLast(12).SelectMany(s=>s.Failures.Select(f=>new{시각=s.UtcTime.ToLocalTime().ToString("HH:mm:ss"),범위=DiagnosticUiText.Common(f.Source),원인=LongTermDiagnostics.FailureLabel(f.Kind),HTTP=f.Status,횟수=f.Count,시도=f.Attempt,최대=f.Maximum,다음대기초=f.NextDelaySeconds})).TakeLast(200).ToList();
         scope.Text=$"PID {last.ProcessId} · 표본 구간 {last.IntervalSeconds:F2}초 · 공유 프로세스끼리 합산 금지 · 오류는 최근 12구간/최대 200행\r\n"+string.Join("\r\n",last.States.Select(s=>MetricLabels.State(s.Key,s.Value)));
         string? selected=metric.SelectedItem as string;var keys=history.SelectMany(s=>s.Values.Keys).Distinct().Order().ToArray();
         if(!metric.Items.Cast<string>().SequenceEqual(keys)){metric.Items.Clear();metric.Items.AddRange(keys);if(keys.Length>0)metric.SelectedItem=selected is not null&&keys.Contains(selected)?selected:keys[0];}
@@ -141,7 +143,7 @@ internal sealed class BackendDiagnosticsPanel:UserControl
     {
         if(metric.SelectedItem is not string selected||history.Count==0)return;
         var origin=history[0].UtcTime;
-        chart.SetData(selected,history.Select(s=>new ChartPoint($"PID {s.ProcessId} / {s.CaptureId[..Math.Min(8,s.CaptureId.Length)]}",(s.UtcTime-origin).TotalSeconds,s.Values.GetValueOrDefault(selected)??double.NaN)));
+        chart.SetData(MetricLabels.Label(selected),history.Select(s=>new ChartPoint($"프로세스 {s.ProcessId} / {s.CaptureId[..Math.Min(8,s.CaptureId.Length)]}",(s.UtcTime-origin).TotalSeconds,s.Values.GetValueOrDefault(selected)??double.NaN)));
     }
     private void Export()
     {

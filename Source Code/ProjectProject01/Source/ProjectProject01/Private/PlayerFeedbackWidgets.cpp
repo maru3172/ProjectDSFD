@@ -220,8 +220,9 @@ void UProjectProject01DeathFeedbackWidget::BuildWidgetTree()
 }
 
 void UProjectProject01DeathFeedbackWidget::Configure(
-	const float InCameraSeconds, const float InBlackFadeSeconds)
+	const float InCameraSeconds, const float InBlackFadeSeconds, const bool bInHoldBlackUntilReleased)
 {
+	bHoldBlackUntilReleased = bInHoldBlackUntilReleased;
 	CameraSeconds = FMath::Max(InCameraSeconds, 0.0f);
 	BlackFadeSeconds = FMath::Max(InBlackFadeSeconds, 0.01f);
 	ElapsedSeconds = 0.0f;
@@ -234,7 +235,7 @@ void UProjectProject01DeathFeedbackWidget::NativeTick(const FGeometry& MyGeometr
 	ElapsedSeconds += FMath::Max(InDeltaTime, 0.0f);
 	const float FadeAlpha = FMath::Clamp((ElapsedSeconds - CameraSeconds) / BlackFadeSeconds, 0.0f, 1.0f);
 	if (IsValid(BlackBackground)) BlackBackground->SetRenderOpacity(FadeAlpha);
-	if (ElapsedSeconds >= CameraSeconds + BlackFadeSeconds)
+	if (!bHoldBlackUntilReleased && ElapsedSeconds >= CameraSeconds + BlackFadeSeconds)
 	{
 		RemoveFromParent();
 	}

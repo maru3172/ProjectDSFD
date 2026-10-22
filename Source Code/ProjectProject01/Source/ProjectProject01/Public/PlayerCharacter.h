@@ -124,6 +124,10 @@ public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 	virtual void CalcCamera(float DeltaTime, struct FMinimalViewInfo& OutResult) override;
+	/** Local overlay handoff only; never changes gameplay death/respawn state. */
+	void ReleaseLocalDeathBlackout(const APlayerController* PresentationOwner);
+	bool HasLocalDeathBlackout(const APlayerController* PresentationOwner) const;
+	float GetLocalDeathPresentationRemaining(const APlayerController* PresentationOwner) const;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -145,6 +149,8 @@ private:
 	/** 서버가 Player DataTable 값을 바꾼 뒤 소유 클라이언트의 로컬 심박 계산에도 같은 값을 적용합니다. */
 	UFUNCTION(Client, Reliable)
 	void ClientApplyPlayerTuning(const FPlayerTuningRow& Tuning);
+	/** 서버 ApplyPlayerTuning과 클라이언트 RPC가 공유하는 수치·컴포넌트 적용 본문입니다. 복제/RPC는 하지 않습니다. */
+	void ApplyPlayerTuningValues(const FPlayerTuningRow& Tuning);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayDamageFeedback(float FallPitchDirection, float FallRollDirection, float DamageSeverity);

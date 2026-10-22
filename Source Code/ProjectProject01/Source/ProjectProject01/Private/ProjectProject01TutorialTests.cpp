@@ -1,6 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "Misc/ScopeExit.h"
+#include "Misc/App.h"
 #include "ProjectProject01Tutorial.h"
 #include "ProjectProject01GameInstance.h"
 #include "PlayerCharacter.h"
@@ -238,6 +239,9 @@ bool FProjectTutorialTest::RunTest(const FString&)
 			Mode->StepIndex=Page;Mode->EnterStep();UI->NativeTick(FGeometry(),0);
 			TestEqual(TEXT("All explanation paragraphs use a consistent readable width"),UI->Body->GetWrapTextAt(),620.f);
 			TestFalse(TEXT("No native tutorial page displays the removed sentence"),UI->Body->GetText().ToString().Contains(TEXT("직접 조작하지 않아도")));
+			// Under -nullrhi the render target has no RHI resource and FWidgetRenderer reads null.
+			// Keep every text/flow assertion above; skip only the screenshot capture.
+			if (!FApp::CanEverRender()) continue;
 			const auto Slate=UI->WidgetTree->RootWidget->TakeWidget();
 			auto* Target=Renderer.DrawWidget(Slate,Size);Renderer.DrawWidget(Target,Slate,Size,.016f);FlushRenderingCommands();FBufferArchive Image;
 			TestTrue(TEXT("Tutorial page rendered"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));
