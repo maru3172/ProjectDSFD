@@ -8,6 +8,34 @@
 #include "ProjectProject01GameInstance.h"
 #include "ProjectDFSDStartupIntro.h"
 #include "ProjectDFSDTitleScene.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/LocalPlayer.h"
+
+namespace ProjectProject01Frontend
+{
+	// Login, lobby and leaderboard levels are empty maps covered by a full-screen widget, so rendering
+	// the 3D scene behind them (TSR, Lumen, post-processing) only costs GPU and render-thread time.
+	UGameViewportClient* SuppressWorldRendering(const APlayerController& PlayerController)
+	{
+		const ULocalPlayer* LocalPlayer = PlayerController.GetLocalPlayer();
+		UGameViewportClient* ViewportClient = LocalPlayer ? LocalPlayer->ViewportClient.Get() : nullptr;
+		if (!IsValid(ViewportClient) || ViewportClient->bDisableWorldRendering)
+		{
+			return nullptr;
+		}
+		ViewportClient->bDisableWorldRendering = true;
+		return ViewportClient;
+	}
+
+	void RestoreWorldRendering(TWeakObjectPtr<UGameViewportClient>& ViewportClient)
+	{
+		if (UGameViewportClient* Client = ViewportClient.Get())
+		{
+			Client->bDisableWorldRendering = false;
+		}
+		ViewportClient.Reset();
+	}
+}
 
 void AProjectProject01TitlePlayerController::BeginPlay()
 {
@@ -77,6 +105,8 @@ void AProjectProject01LoginPlayerController::BeginPlay()
 		return;
 	}
 
+	MenuViewportClient = ProjectProject01Frontend::SuppressWorldRendering(*this);
+
 	bShowMouseCursor = true;
 	FInputModeUIOnly InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -87,6 +117,12 @@ void AProjectProject01LoginPlayerController::BeginPlay()
 	{
 		LoginWidget->AddToViewport(100);
 	}
+}
+
+void AProjectProject01LoginPlayerController::EndPlay(const EEndPlayReason::Type Reason)
+{
+	ProjectProject01Frontend::RestoreWorldRendering(MenuViewportClient);
+	Super::EndPlay(Reason);
 }
 
 AProjectProject01LoginGameMode::AProjectProject01LoginGameMode()
@@ -103,6 +139,8 @@ void AProjectProject01LobbyPlayerController::BeginPlay()
 		return;
 	}
 
+	MenuViewportClient = ProjectProject01Frontend::SuppressWorldRendering(*this);
+
 	bShowMouseCursor = true;
 	FInputModeUIOnly InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -113,6 +151,12 @@ void AProjectProject01LobbyPlayerController::BeginPlay()
 	{
 		LobbyWidget->AddToViewport(100);
 	}
+}
+
+void AProjectProject01LobbyPlayerController::EndPlay(const EEndPlayReason::Type Reason)
+{
+	ProjectProject01Frontend::RestoreWorldRendering(MenuViewportClient);
+	Super::EndPlay(Reason);
 }
 
 AProjectProject01LobbyGameMode::AProjectProject01LobbyGameMode()
@@ -129,6 +173,8 @@ void AProjectProject01LeaderboardPlayerController::BeginPlay()
 		return;
 	}
 
+	MenuViewportClient = ProjectProject01Frontend::SuppressWorldRendering(*this);
+
 	bShowMouseCursor = true;
 	FInputModeUIOnly InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -140,6 +186,12 @@ void AProjectProject01LeaderboardPlayerController::BeginPlay()
 	{
 		LeaderboardWidget->AddToViewport(100);
 	}
+}
+
+void AProjectProject01LeaderboardPlayerController::EndPlay(const EEndPlayReason::Type Reason)
+{
+	ProjectProject01Frontend::RestoreWorldRendering(MenuViewportClient);
+	Super::EndPlay(Reason);
 }
 
 AProjectProject01LeaderboardGameMode::AProjectProject01LeaderboardGameMode()

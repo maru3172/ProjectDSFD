@@ -108,6 +108,9 @@ namespace ProjectProject01Diagnostics
 	};
 	FDiagnosticOutputDevice DiagnosticOutputDevice;
 	bool bOutputDeviceRegistered = false;
+	// Captures currently using the log device (one per PIE world). The device copies every Warning/Error under a
+	// lock, so it is attached only while at least one capture runs. Game thread only.
+	int32 OutputDeviceUsers = 0;
 
 	FString GetMismatchedPropertyNames(UScriptStruct* Struct, const void* Expected, const void* Actual)
 	{
@@ -267,6 +270,7 @@ void UProjectProject01DiagnosticsSubsystem::StartCapture(const FString& InTestRu
 	ProjectProcessDiagnostics::AcquireObjectCounter();bObjectCounterAcquired=true;
 	LastCreatedObjects=ProjectProcessDiagnostics::CreatedObjects();LastRateSampleSeconds=FPlatformTime::Seconds();
 	HttpCompleted=HttpServerFailures=HttpClientErrors=HttpTimeouts=HttpRetries=0;
+	++ProjectProject01Diagnostics::OutputDeviceUsers;
 	if (!ProjectProject01Diagnostics::bOutputDeviceRegistered && GLog != nullptr)
 	{
 		GLog->AddOutputDevice(&ProjectProject01Diagnostics::DiagnosticOutputDevice);
@@ -367,6 +371,12 @@ void UProjectProject01DiagnosticsSubsystem::StopCapture(const FString& Outcome)
 	WriteCaptureFiles(FinalOutcome);
 	bCaptureActive = false;
 	if(bObjectCounterAcquired){ProjectProcessDiagnostics::ReleaseObjectCounter();bObjectCounterAcquired=false;}
+	if (ProjectProject01Diagnostics::OutputDeviceUsers > 0 && --ProjectProject01Diagnostics::OutputDeviceUsers == 0
+		&& ProjectProject01Diagnostics::bOutputDeviceRegistered && GLog != nullptr)
+	{
+		GLog->RemoveOutputDevice(&ProjectProject01Diagnostics::DiagnosticOutputDevice);
+		ProjectProject01Diagnostics::bOutputDeviceRegistered = false;
+	}
 	bHasPreGarbageCollectSample = false;
 }
 

@@ -8,6 +8,10 @@
 #include "Interfaces/IHttpResponse.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
+#include "MultiplayTestPlayerController.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerController.h"
 
 void UProjectProject01SocialSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -44,8 +48,24 @@ bool UProjectProject01SocialSubsystem::Tick(float Delta)
         SessionIdentity=Auth->GetAccessTokenForAuthenticatedRequest();Snapshot.Reset();UntilPoll=0;
     }
     UntilPoll-=Delta;
-    if(UntilPoll<=0){UntilPoll=3;Act(TEXT("Presence"));Refresh();if(bLobbyVisible&&!ConversationAccount.IsEmpty()&&!ConversationRequest.IsValid())Detail(2,TEXT("/api/social/conversations/")+FGenericPlatformHttp::UrlEncode(ConversationAccount));}
+    if(UntilPoll<=0)
+    {
+        if(IsInMatchWorld())
+        {
+            // Social UI exists only in the lobby, so list/conversation reads pause during a match.
+            // Presence still refreshes inside the backend's 20 s freshness window so friends do not see Offline.
+            UntilPoll=InMatchPresenceIntervalSeconds;Act(TEXT("Presence"));
+        }
+        else{UntilPoll=3;Act(TEXT("Presence"));Refresh();if(bLobbyVisible&&!ConversationAccount.IsEmpty()&&!ConversationRequest.IsValid())Detail(2,TEXT("/api/social/conversations/")+FGenericPlatformHttp::UrlEncode(ConversationAccount));}
+    }
     return true;
+}
+bool UProjectProject01SocialSubsystem::IsInMatchWorld() const
+{
+    const UGameInstance* Instance=GetGameInstance();
+    const UWorld* World=Instance?Instance->GetWorld():nullptr;
+    const APlayerController* Controller=World?World->GetFirstPlayerController():nullptr;
+    return IsValid(Controller)&&Controller->IsA<AMultiplayTestPlayerController>();
 }
 void UProjectProject01SocialSubsystem::SetLobbyVisible(bool bVisible)
 {

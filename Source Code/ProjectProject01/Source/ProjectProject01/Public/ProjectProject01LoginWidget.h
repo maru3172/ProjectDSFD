@@ -112,6 +112,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UTextBlock> TeammateVoiceText;
 	float RefreshSeconds=0;
+	// Last applied values: the HUD refreshes at 10 Hz but only re-sets text/colours when they change (no relayout).
+	FString LastVoiceStatusKey;
+	FString LastTeammateVoiceText;
 };
 
 /** 마네킹 플레이어에게만 각 번호의 실시간 행동 상태를 표시합니다. */
@@ -135,6 +138,9 @@ private:
 	TObjectPtr<class UTextBlock> StatusText;
 
 	float RefreshAccumulatorSeconds = 0.0f;
+	// Last applied status source string: the 5 Hz refresh re-sets the text only when it changes.
+	FString LastStatusSource;
+	void SetStatusSource(const FString& Source);
 };
 
 /** 멀티플레이 경기 중에도 서버 공지와 종료 예고를 보여주는 가벼운 상단 배너입니다. */

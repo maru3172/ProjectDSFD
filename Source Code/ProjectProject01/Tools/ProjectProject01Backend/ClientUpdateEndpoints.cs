@@ -73,25 +73,73 @@ internal static class ClientUpdateEndpoints
             if((File.Exists(item)||Directory.Exists(item))&&(File.GetAttributes(item)&FileAttributes.ReparsePoint)!=0)return false;
         return true;
     }
+    // Parsed manifest cache. Every block range request used to re-read and re-parse the whole
+    // manifest and scan up to 20,000 entries. The cache is keyed by full path, write time and
+    // length, so a republished/replaced manifest is parsed again. Parse failures are not cached.
+    private sealed record ParsedManifest(string FullPath, DateTime WriteUtc, long Length,
+        bool HasReleaseId, bool ReleaseIdIsString, string? ReleaseId, bool FilesValid, HashSet<string> Files);
+    private static ParsedManifest? parsedManifestCache;
+
     internal static bool IsPublishedFile(string root,string relative,string release)
     {
         try
         {
             string manifest=Path.Combine(root,ManifestFileName);
-            if(!IsSafePublishedPath(root,manifest)||new FileInfo(manifest).Length>4*1024*1024)return false;
-            using var json=JsonDocument.Parse(File.ReadAllText(manifest));
-            var document=json.RootElement;
-            if(!document.TryGetProperty("releaseId",out var id)&&!document.TryGetProperty("ReleaseId",out id))return false;
-            if(!string.IsNullOrEmpty(release)&&id.GetString()!=release)return false;
-            if(!document.TryGetProperty("files",out var files)&&!document.TryGetProperty("Files",out files))return false;
-            if(files.GetArrayLength()>20000)return false;
-            string normalized=relative.Replace('\\','/');
-            foreach(var file in files.EnumerateArray())
-                if((file.TryGetProperty("path",out var path)||file.TryGetProperty("Path",out path))&&string.Equals(path.GetString()?.Replace('\\','/'),normalized,StringComparison.OrdinalIgnoreCase))return true;
-            return false;
+            if(!IsSafePublishedPath(root,manifest))return false;
+            var info=new FileInfo(manifest);
+            if(info.Length>4*1024*1024)return false;
+            ParsedManifest parsed=GetParsedManifest(info);
+            if(!parsed.HasReleaseId)return false;
+            // Same outcome as the previous JsonElement.GetString() throwing for a non-string id.
+            if(!string.IsNullOrEmpty(release)&&(!parsed.ReleaseIdIsString||parsed.ReleaseId!=release))return false;
+            if(!parsed.FilesValid)return false;
+            return parsed.Files.Contains(relative.Replace('\\','/'));
         }
         catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException){return false;}
     }
+
+    private static ParsedManifest GetParsedManifest(FileInfo info)
+    {
+        var cached=Volatile.Read(ref parsedManifestCache);
+        DateTime writeUtc=info.LastWriteTimeUtc;long length=info.Length;
+        if(cached is not null&&cached.Length==length&&cached.WriteUtc==writeUtc&&
+            string.Equals(cached.FullPath,info.FullName,StringComparison.OrdinalIgnoreCase))
+            return cached;
+        using var json=JsonDocument.Parse(File.ReadAllText(info.FullName));
+        var document=json.RootElement;
+        bool hasRelease=document.TryGetProperty("releaseId",out var id)||document.TryGetProperty("ReleaseId",out id);
+        bool releaseIsString=hasRelease&&id.ValueKind is JsonValueKind.String or JsonValueKind.Null;
+        string? releaseId=releaseIsString?id.GetString():null;
+        var set=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool valid=(document.TryGetProperty("files",out var files)||document.TryGetProperty("Files",out files))&&
+            files.ValueKind==JsonValueKind.Array&&files.GetArrayLength()<=20000;
+        if(valid)
+        {
+            foreach(var file in files.EnumerateArray())
+            {
+                // The previous linear scan threw at the first malformed entry, so only entries
+                // before it could ever match. Keep exactly that behavior.
+                if(file.ValueKind!=JsonValueKind.Object)break;
+                if(!file.TryGetProperty("path",out var path)&&!file.TryGetProperty("Path",out path))continue;
+                if(path.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))break;
+                string? value=path.GetString();
+                if(value is not null)set.Add(value.Replace('\\','/'));
+            }
+        }
+        // Write time/length are captured before parsing; a concurrent replacement is detected on the next request.
+        var parsed=new ParsedManifest(info.FullName,writeUtc,length,hasRelease,releaseIsString,releaseId,valid,set);
+        Volatile.Write(ref parsedManifestCache,parsed);
+        return parsed;
+    }
+
+    // A packaged client publishes its manifest below Builds/Client/<Platform>, so the previous
+    // lookup walked the whole packaged tree (thousands of files) on every manifest and file/block
+    // request. Reuse a found root for a short time while its manifest still exists at the same
+    // safe path. Publishing deletes old manifests first, which invalidates the cache immediately;
+    // otherwise a newer manifest elsewhere is picked up within RootCacheLifetimeMilliseconds.
+    private sealed record ResolvedPublishedRoot(string SearchRoot, string Root, long ExpiresAtMilliseconds);
+    private static ResolvedPublishedRoot? resolvedRootCache;
+    private const long RootCacheLifetimeMilliseconds = 10_000;
 
     private static string? ResolvePublishedRoot(string contentRootPath, IConfiguration configuration)
     {
@@ -102,6 +150,26 @@ internal static class ClientUpdateEndpoints
                 : Path.GetFullPath(Path.Combine(contentRootPath, configuredRoot)))
             : Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "Builds", "Client"));
 
+        long now = Environment.TickCount64;
+        var cached = Volatile.Read(ref resolvedRootCache);
+        if (cached is not null && now < cached.ExpiresAtMilliseconds &&
+            string.Equals(cached.SearchRoot, searchRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            string cachedManifest = Path.Combine(cached.Root, ManifestFileName);
+            if (File.Exists(cachedManifest) && IsSafePublishedPath(searchRoot, cachedManifest))
+            {
+                return cached.Root;
+            }
+        }
+
+        string? root = ResolvePublishedRootUncached(searchRoot);
+        Volatile.Write(ref resolvedRootCache,
+            root is null ? null : new ResolvedPublishedRoot(searchRoot, root, now + RootCacheLifetimeMilliseconds));
+        return root;
+    }
+
+    private static string? ResolvePublishedRootUncached(string searchRoot)
+    {
         if (!Directory.Exists(searchRoot))
         {
             return null;

@@ -119,6 +119,12 @@ private:
 	FString GetPrimarySlotName(int32 SlotIndex) const;
 	class UProjectProject01SinglePlayerSaveGame* LoadBestSlot(int32 SlotIndex, FString& OutError) const;
 	FDateTime ReadLastPlayed(int32 SlotIndex, const class UProjectProject01SinglePlayerSaveGame* Save) const;
+	// Menu code asks for slot info many times per refresh; each uncached answer re-reads and re-validates every
+	// generation file. Entries are keyed by the size + write time of all of the slot's files, so any change on disk
+	// (from this subsystem, tests or another tool) is seen on the next query. Desktop generic save system only.
+	bool BuildSlotFileFingerprint(int32 SlotIndex, FString& OutFingerprint) const;
+	struct FSlotInfoCacheEntry { FString Fingerprint; FProjectProject01SaveSlotInfo Info; };
+	mutable TMap<int32, FSlotInfoCacheEntry> SlotInfoCache;
 	bool RecordLastPlayed(int32 SlotIndex, const class UProjectProject01SinglePlayerSaveGame* Save);
 #if WITH_DEV_AUTOMATION_TESTS
 	// A UUID-only test namespace, never assigned by game/UI code or editor settings.

@@ -63,6 +63,7 @@ internal static class DashboardSelfTest
         ExtendedDiagnosticsTests.Run(sample);
         LongTermDiagnosticsTests.Run(sample);
         AutomationVerificationTests.Run();
+        EngineCsvProfileTests.Run();
         DashboardForm.GenerateMergedArtifacts(directory, [report], [sample], [server, client]);
         if (!File.Exists(Path.Combine(directory, "CombinedReport.xml")) || !File.Exists(Path.Combine(directory, "MergedEvents.csv")) || !File.Exists(Path.Combine(directory, "MergedPerformance.csv"))) return 3;
         var combined = XDocument.Load(Path.Combine(directory, "CombinedReport.xml"));
@@ -182,6 +183,8 @@ internal sealed class RunSummary
     public required IReadOnlyDictionary<string, int> RiskByCode { get; init; }
     public required TimeAlignmentSummary TimeAlignment { get; init; }
     public IReadOnlyList<DiagnosticHistoryCapture> ExtendedCaptures { get; init; } = [];
+    public DateTimeOffset? FirstSampleUtc { get; init; }
+    public DateTimeOffset? LastSampleUtc { get; init; }
 }
 
 internal sealed record ChartPoint(string Series, double X, double Y);
@@ -283,6 +286,7 @@ internal sealed class DashboardForm : Form
     private readonly TextBox details = new() { Dock = DockStyle.Fill, ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Both, Font = new Font(FontFamily.GenericMonospace, 9f) };
     private readonly TrendChart runChart = new() { Dock = DockStyle.Fill };
     private readonly LongTermDiagnosticsPanel extendedHistory = new();
+    private readonly EngineCsvProfilePanel engineCsvProfile = new();
     private readonly List<DiagnosticReport> reports = [];
     private readonly List<RunSummary> runSummaries = [];
     private List<DiagnosticEvent> selectedTimelineEvents = [];
@@ -366,6 +370,7 @@ internal sealed class DashboardForm : Form
         var historyPage = new TabPage("진단 전체, 비교");
         historyPage.Controls.Add(extendedHistory);
         tabs.TabPages.Add(historyPage);
+        tabs.TabPages.Add(new TabPage("엔진 프로파일러 기록") { Controls = { engineCsvProfile } });
         split.Panel2.Controls.Add(tabs);
         Controls.Add(split);
         Controls.Add(toolbar);
@@ -381,6 +386,7 @@ internal sealed class DashboardForm : Form
         timelineGrid.ColumnHeaderMouseClick += (_, args) => SortTimelineByColumn(args.ColumnIndex);
 
         var defaultPath = initialRoot is not null?Path.GetFullPath(initialRoot):Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "Saved", "Diagnostics"));
+        engineCsvProfile.SetContext(defaultPath, []);
         if (Directory.Exists(defaultPath)) LoadReports(defaultPath);
     }
 
@@ -406,6 +412,7 @@ internal sealed class DashboardForm : Form
         {
             reportsGrid.DataSource = null;
             details.Text = "진단 폴더를 찾을 수 없습니다.";
+            engineCsvProfile.SetContext(path, []);
             return;
         }
 
@@ -458,6 +465,8 @@ internal sealed class DashboardForm : Form
                 RiskByCategory = riskBreakdown.GroupBy(row => row.Category, StringComparer.Ordinal).ToDictionary(category => category.Key, category => category.Sum(row => row.Count), StringComparer.Ordinal),
                 RiskByCode = riskBreakdown.ToDictionary(row => row.Code, row => row.Count, StringComparer.Ordinal),
                 TimeAlignment = AnalyzeServerClientTimeAlignment(events),
+                FirstSampleUtc = SampleTimes(samples).Select(time => (DateTimeOffset?)time).Min(),
+                LastSampleUtc = SampleTimes(samples).Select(time => (DateTimeOffset?)time).Max(),
                 ExtendedCaptures = LongTermDiagnostics.Game(group.Key,
                     $"{group.Key} · {string.Join(", ", runReports.Select(r => r.Map).Distinct())} · P{(samples.Count > 0 ? samples.Max(s => s.Players) : 0)} · M{(samples.Count > 0 ? samples.Max(s => s.Mannequins) : 0)} · T{string.Join("/", runReports.Select(r => r.TuningFingerprint).Distinct())}", samples, events)
             });
@@ -469,7 +478,14 @@ internal sealed class DashboardForm : Form
         foreach (var map in runSummaries.Select(summary => summary.Map).Distinct().Order()) mapFilter.Items.Add(map);
         mapFilter.SelectedIndex = 0;
         ApplyFilters();
+        engineCsvProfile.SetContext(path, runSummaries.Where(r => r.FirstSampleUtc is not null && r.LastSampleUtc is not null)
+            .Select(r => (r.TestRunId, r.FirstSampleUtc!.Value, r.LastSampleUtc!.Value)));
     }
+
+    // Wall-clock window of a run's performance samples; used only to link engine CSV captures recorded at the same time.
+    private static IEnumerable<DateTimeOffset> SampleTimes(IEnumerable<PerformanceSample> samples) =>
+        samples.Select(sample => DateTimeOffset.TryParse(sample.UtcTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time) ? time : (DateTimeOffset?)null)
+            .Where(time => time is not null).Select(time => time!.Value);
 
     private void ApplyFilters()
     {

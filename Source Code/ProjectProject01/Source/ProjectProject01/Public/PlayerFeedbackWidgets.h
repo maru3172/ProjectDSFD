@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Camera/CameraModifier.h"
+#include "Rendering/RenderingCommon.h"
 #include "PlayerFeedbackWidgets.generated.h"
 
 /** 마네킹 플레이어의 포획 성공 순간에만 최종 카메라에 짧은 좌우 진동을 더합니다. */
@@ -59,6 +60,17 @@ private:
 	float ElapsedSeconds = 0.0f;
 	float CurrentThicknessPixels = 0.0f;
 	float CurrentOpacity = 0.0f;
+
+	// Paint-time geometry that depends only on the widget size (angles, ray directions, screen-edge distances,
+	// triangle indices). Rebuilt when the size changes; vertices are recomputed every painted frame.
+	void RebuildPaintGeometry(const FVector2D& Size) const;
+	mutable FVector2D CachedPaintSize = FVector2D::ZeroVector;
+	mutable TArray<FVector2f> CachedDirections;
+	mutable TArray<float> CachedAngles;
+	mutable TArray<float> CachedOuterDistances;
+	mutable TArray<float> CachedOrganicEdges;
+	mutable TArray<SlateIndex> CachedIndices;
+	mutable TArray<FSlateVertex> ScratchVertices;
 };
 
 /** 사망 카메라가 바닥에 쓰러진 뒤 암전과 사망 문구를 표시합니다. */

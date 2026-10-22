@@ -45,10 +45,15 @@ class PROJECTPROJECT01_API AProjectProject01LoginPlayerController final : public
 
 protected:
 	virtual void BeginPlay() override;
+	// Restores world rendering that BeginPlay turned off for this UI-only level.
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01LoginWidget> LoginWidget;
+
+	// Viewport whose world rendering this controller turned off; empty when it changed nothing.
+	TWeakObjectPtr<class UGameViewportClient> MenuViewportClient;
 };
 
 UCLASS()
@@ -67,10 +72,15 @@ class PROJECTPROJECT01_API AProjectProject01LobbyPlayerController final : public
 
 protected:
 	virtual void BeginPlay() override;
+	// Restores world rendering that BeginPlay turned off for this UI-only level.
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01LobbyWidget> LobbyWidget;
+
+	// Viewport whose world rendering this controller turned off; empty when it changed nothing.
+	TWeakObjectPtr<class UGameViewportClient> MenuViewportClient;
 };
 
 UCLASS()
@@ -89,10 +99,15 @@ class PROJECTPROJECT01_API AProjectProject01LeaderboardPlayerController final : 
 
 protected:
 	virtual void BeginPlay() override;
+	// Restores world rendering that BeginPlay turned off for this UI-only level.
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01LeaderboardWidget> LeaderboardWidget;
+
+	// Viewport whose world rendering this controller turned off; empty when it changed nothing.
+	TWeakObjectPtr<class UGameViewportClient> MenuViewportClient;
 };
 
 UCLASS()

@@ -149,25 +149,16 @@ int32 UProjectProject01DamageFeedbackWidget::NativePaint(
 	const FVector2f Center(Size.X * 0.5f, Size.Y * 0.5f);
 	const float RadiusX = FMath::Max(Center.X - CurrentThicknessPixels * 1.12f, Center.X * 0.24f);
 	const float RadiusY = FMath::Max(Center.Y - CurrentThicknessPixels * 1.12f, Center.Y * 0.30f);
-	constexpr int32 Segments = 160;
 	constexpr float RingFractions[] = {0.0f, 0.10f, 0.26f, 0.48f, 0.72f, 1.0f};
-	constexpr int32 RingCount = UE_ARRAY_COUNT(RingFractions);
-	TArray<float> Angles;
-	for (int32 Index = 0; Index < Segments; ++Index) Angles.Add(2.0f * UE_PI * Index / Segments);
-	// Include exact corner rays so no tiny uncovered triangles remain at screen corners.
-	const float CornerAngle = FMath::Atan2(Center.Y, Center.X);
-	Angles.Append({CornerAngle, UE_PI - CornerAngle, UE_PI + CornerAngle, 2.0f * UE_PI - CornerAngle, 2.0f * UE_PI});
-	Angles.Sort();
-	TArray<FSlateVertex> Vertices;
-	TArray<SlateIndex> Indices;
-	Vertices.Reserve(Angles.Num() * RingCount);
-	Indices.Reserve((Angles.Num() - 1) * (RingCount - 1) * 6);
-	for (const float Angle : Angles)
+	if (CachedPaintSize != Size || CachedAngles.IsEmpty()) RebuildPaintGeometry(Size);
+	TArray<FSlateVertex>& Vertices = ScratchVertices;
+	Vertices.Reset(CachedAngles.Num() * UE_ARRAY_COUNT(RingFractions));
+	for (int32 AngleIndex = 0; AngleIndex < CachedAngles.Num(); ++AngleIndex)
 	{
-		const FVector2f Direction(FMath::Cos(Angle), FMath::Sin(Angle));
-		const float OuterDistance = FMath::Min(Center.X / FMath::Max(FMath::Abs(Direction.X), 0.00001f),
-			Center.Y / FMath::Max(FMath::Abs(Direction.Y), 0.00001f));
-		const float OrganicEdge = 1.0f + 0.012f * FMath::Sin(Angle * 5.0f) + 0.006f * FMath::Sin(Angle * 9.0f);
+		const float Angle = CachedAngles[AngleIndex];
+		const FVector2f Direction = CachedDirections[AngleIndex];
+		const float OuterDistance = CachedOuterDistances[AngleIndex];
+		const float OrganicEdge = CachedOrganicEdges[AngleIndex];
 		const float InnerDistance = FMath::Min(OuterDistance, OrganicEdge / FMath::Sqrt(
 			FMath::Square(Direction.X / RadiusX) + FMath::Square(Direction.Y / RadiusY)));
 		for (const float Fraction : RingFractions)
@@ -181,17 +172,43 @@ int32 UProjectProject01DamageFeedbackWidget::NativePaint(
 				AllottedGeometry.GetAccumulatedRenderTransform(), Position, FVector2f(0.5f, 0.5f), Color.ToFColorSRGB()));
 		}
 	}
-	for (int32 Segment = 0; Segment + 1 < Angles.Num(); ++Segment)
+	const FSlateBrush* WhiteBrush = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
+	const auto Resource = FSlateApplication::Get().GetRenderer()->GetResourceHandle(*WhiteBrush);
+	FSlateDrawElement::MakeCustomVerts(OutDrawElements, BaseLayer + 1, Resource, Vertices, CachedIndices, nullptr, 0, 0);
+	return BaseLayer + 1;
+}
+
+void UProjectProject01DamageFeedbackWidget::RebuildPaintGeometry(const FVector2D& Size) const
+{
+	const FVector2f Center(Size.X * 0.5f, Size.Y * 0.5f);
+	constexpr int32 Segments = 160;
+	constexpr int32 RingCount = 6; // matches RingFractions in NativePaint
+	CachedAngles.Reset(Segments + 5);
+	for (int32 Index = 0; Index < Segments; ++Index) CachedAngles.Add(2.0f * UE_PI * Index / Segments);
+	// Include exact corner rays so no tiny uncovered triangles remain at screen corners.
+	const float CornerAngle = FMath::Atan2(Center.Y, Center.X);
+	CachedAngles.Append({CornerAngle, UE_PI - CornerAngle, UE_PI + CornerAngle, 2.0f * UE_PI - CornerAngle, 2.0f * UE_PI});
+	CachedAngles.Sort();
+	CachedDirections.Reset(CachedAngles.Num());
+	CachedOuterDistances.Reset(CachedAngles.Num());
+	CachedOrganicEdges.Reset(CachedAngles.Num());
+	for (const float Angle : CachedAngles)
+	{
+		const FVector2f Direction(FMath::Cos(Angle), FMath::Sin(Angle));
+		CachedDirections.Add(Direction);
+		CachedOuterDistances.Add(FMath::Min(Center.X / FMath::Max(FMath::Abs(Direction.X), 0.00001f),
+			Center.Y / FMath::Max(FMath::Abs(Direction.Y), 0.00001f)));
+		CachedOrganicEdges.Add(1.0f + 0.012f * FMath::Sin(Angle * 5.0f) + 0.006f * FMath::Sin(Angle * 9.0f));
+	}
+	CachedIndices.Reset((CachedAngles.Num() - 1) * (RingCount - 1) * 6);
+	for (int32 Segment = 0; Segment + 1 < CachedAngles.Num(); ++Segment)
 		for (int32 Ring = 0; Ring + 1 < RingCount; ++Ring)
 		{
 			const SlateIndex A = Segment * RingCount + Ring;
 			const SlateIndex B = A + RingCount;
-			Indices.Append({A, B, static_cast<SlateIndex>(A + 1), B, static_cast<SlateIndex>(B + 1), static_cast<SlateIndex>(A + 1)});
+			CachedIndices.Append({A, B, static_cast<SlateIndex>(A + 1), B, static_cast<SlateIndex>(B + 1), static_cast<SlateIndex>(A + 1)});
 		}
-	const FSlateBrush* WhiteBrush = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
-	const auto Resource = FSlateApplication::Get().GetRenderer()->GetResourceHandle(*WhiteBrush);
-	FSlateDrawElement::MakeCustomVerts(OutDrawElements, BaseLayer + 1, Resource, Vertices, Indices, nullptr, 0, 0);
-	return BaseLayer + 1;
+	CachedPaintSize = Size;
 }
 
 bool UProjectProject01DeathFeedbackWidget::Initialize()

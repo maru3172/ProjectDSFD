@@ -29,6 +29,9 @@ public:
     void MarkConversationRead(const FString& Id) { PendingReadId=Id; }
     bool IsAuthenticated() const;
     bool IsLobbyVisible() const { return bLobbyVisible; }
+    /** True while the local player is in a match world (MultiplayTest player controller). */
+    bool IsInMatchWorld() const;
+    static constexpr float InMatchPresenceIntervalSeconds=15.0f;
     const FString& GetPresence() const { return Presence; }
     TSharedPtr<class FJsonObject> Snapshot;
     TSharedPtr<class FJsonObject> SearchResults, Profile, Conversation;

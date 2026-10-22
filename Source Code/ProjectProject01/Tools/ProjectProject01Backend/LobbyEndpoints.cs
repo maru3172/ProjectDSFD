@@ -1897,6 +1897,13 @@ internal static partial class LobbyEndpoints
     {
         if (transaction is null)
         {
+            // Polling paths (GET /api/rooms, /api/rooms/current): most calls find nothing stale. Check the exact
+            // predicates of CleanupStaleRoomsCoreAsync with one read-only query first, so the common case takes no
+            // row locks and runs no writes. Anything that is stale at this moment is still cleaned in this request.
+            if (!await HasStaleRoomStateAsync(connection, ct))
+            {
+                return;
+            }
             await using var ownedTransaction = await connection.BeginTransactionAsync(ct);
             await CleanupStaleRoomsCoreAsync(connection, ownedTransaction, ct);
             await ownedTransaction.CommitAsync(ct);
@@ -1904,6 +1911,30 @@ internal static partial class LobbyEndpoints
         }
 
         await CleanupStaleRoomsCoreAsync(connection, transaction, ct);
+    }
+
+    // Must stay in sync with the WHERE clauses of CleanupStaleRoomsCoreAsync below.
+    internal static readonly string StaleRoomStateExistsSql =
+        $"""
+        SELECT
+          EXISTS(SELECT 1 FROM game_rooms WHERE status = 'Starting' AND started_at_utc < UTC_TIMESTAMP(6) - INTERVAL 30 SECOND)
+          OR EXISTS(SELECT 1 FROM game_rooms WHERE status = 'Preparing' AND started_at_utc < UTC_TIMESTAMP(6) - INTERVAL 90 SECOND)
+          OR EXISTS(SELECT 1 FROM game_rooms WHERE status = 'Queued' AND started_at_utc < UTC_TIMESTAMP(6) - INTERVAL 120 SECOND)
+          OR EXISTS(SELECT 1 FROM room_members m INNER JOIN game_rooms r ON r.id = m.room_id
+                    WHERE r.status = 'Waiting' AND m.assigned_role IS NOT NULL)
+          OR EXISTS(SELECT 1 FROM room_members m INNER JOIN game_rooms r ON r.id = m.room_id
+                    WHERE r.status = 'Waiting' AND m.user_id <> r.host_user_id
+                      AND m.last_seen_at_utc < UTC_TIMESTAMP(6) - INTERVAL {StaleMemberSeconds} SECOND)
+          OR EXISTS(SELECT 1 FROM game_rooms r
+                    LEFT JOIN room_members host_member ON host_member.room_id = r.id AND host_member.user_id = r.host_user_id
+                    WHERE r.status = 'Waiting'
+                      AND (host_member.user_id IS NULL OR host_member.last_seen_at_utc < UTC_TIMESTAMP(6) - INTERVAL {StaleMemberSeconds} SECOND));
+        """;
+
+    private static async Task<bool> HasStaleRoomStateAsync(MySqlConnection connection, CancellationToken ct)
+    {
+        await using var command = new MySqlCommand(StaleRoomStateExistsSql, connection) { CommandTimeout = 5 };
+        return Convert.ToInt64(await command.ExecuteScalarAsync(ct)) != 0;
     }
 
     private static async Task CleanupStaleRoomsCoreAsync(

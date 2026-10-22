@@ -57,6 +57,19 @@ Opening or refreshing a run produces these derived artifacts without modifying g
 
 프로세스 중단·보고서 누락·검사 실패·미완료·취소·시간 초과를 구분한다. 이번 보고서의 생성 시각·검사별 완료 상태·집계가 일치해야 성공이다. 종료 코드 0만으로 성공 처리하지 않으며, 보고서가 없을 때 과거의 성공 횟수나 가짜 0개를 표시하지 않는다. 경고 포함 성공 횟수는 따로 보존한다. 종합 `Pass`는 원래 역할 보고서/실패 조건, 빌드, 이번 자동 검사 모두 통과해야 한다. 기존 캡처의 위험 후보는 새 검사가 통과해도 지워지지 않는다. 새 진단 캡처를 만들지 않아도 자동 검사는 실행할 수 있다.
 
+## Engine CSV Profiler captures
+
+The **엔진 프로파일러 기록** tab reads Unreal Engine CSV Profiler output (`CsvProfile Start` / `CsvProfile Stop`, written to `Saved/Profiling/CSV/*.csv`). This is a different artifact from the project's lightweight diagnostics capture and from `.utrace` files; open `.utrace` with Unreal Insights and use this tab for the CSV.
+
+- Capture: the editor menu **Tools → Start Lightweight Diagnostics Capture** now also starts the engine CSV Profiler into `Saved/Diagnostics/<RunId>/EngineCsvProfile.csv` and, only if it was off, enables `r.GPUCsvStatsEnabled` for GPU pass timers; **Stop and Save Diagnostics Capture** ends that CSV and restores the cvar. If another CSV capture is already running, the menu neither starts nor stops it (same ownership rule as the `.utrace`). Stop before ending PIE. Manual `CsvProfile Start/Stop` captures in `Saved/Profiling/CSV` are listed too.
+- Cost: nothing runs until the tab is opened. Opening lists at most the 200 newest captures: `<RunId>/EngineCsvProfile.csv` in run folders (one level, newest 500 folders checked) plus `*.csv` in the CSV folder (default `Saved/Profiling/CSV`). A run-folder capture links to its own run directly. A file is read only when selected, once, on a background task, and only fixed-size per-column statistics plus five key frame-time series (`FrameTime`, `GameThreadTime`, `RenderThreadTime`, `RHIThreadTime`, `GPUTime`) are kept. The last 4 results are cached by path, size and write time. Limits: 1 GiB per file, 500,000 frames (truncation is reported), 8,192 columns, 2,000 events. Files are opened read-only and never modified.
+- Format: the first header row may be shorter than the final header row written at the end of the file; columns added mid-capture are named from the final header. Events use `;` separators and an optional `##<seconds>` suffix. A missing metadata row is reported as an unfinished capture.
+- Privacy: the `commandline` and `loginid` metadata entries are dropped and never displayed.
+- Bottleneck estimate: thread work is the sum of that thread's `Exclusive/...` timers minus `EventWait` timers; GPU is `GPUTime`. When frame time is far larger than any measured work, the summary warns about a background-window frame limit, vsync, or a fixed frame rate. Per-pass GPU rows require the cvar below.
+- GPU passes: with `r.GPUCsvStatsEnabled 1` (or `-csvGpuStats`) the engine writes `GPU/<pass>` columns (`GPU2/...` on multi-GPU) holding graphics-queue exclusive busy+wait milliseconds. The summary lists the 10 largest passes with their share of `GPUTime`; shares need not total 100% because async compute, idle gaps and unlabelled work are outside the pass timers. `GPUMem/*` and other `GPU...` counters are not treated as passes. Without the cvar the summary says so instead of showing zeros. The dashboard reuses the same single file pass, so this adds no extra reading.
+- Linking: a capture is linked to diagnostics runs whose performance-sample wall-clock window overlaps the capture's `starttimestamp`–`endtimestamp` (±5 s). Start the project's lightweight capture during the same PIE session to get both views and the run's `.utrace`.
+- Interpretation: editor PIE captures include editor UI, every PIE viewport, and the server in one process. Use them to compare like with like, not as packaged-build numbers.
+
 ## Runtime collection contract
 
 - The Unreal Editor menu is **Tools → ProjectProject01 Diagnostics**.

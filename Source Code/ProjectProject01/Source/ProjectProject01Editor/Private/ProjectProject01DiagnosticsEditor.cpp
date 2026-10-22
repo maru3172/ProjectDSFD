@@ -7,10 +7,12 @@
 #include "Engine/World.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/DateTime.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "ProfilingDebugging/CsvProfiler.h"
 #include "ProfilingDebugging/TraceAuxiliary.h"
 #include "ToolMenus.h"
 #include "Widgets/Notifications/SNotificationList.h"
@@ -20,7 +22,60 @@
 namespace ProjectProject01DiagnosticsEditor
 {
 	bool bTraceStartedByDiagnostics = false;
+	bool bCsvStartedByDiagnostics = false;
+	bool bGpuCsvStatsEnabledByDiagnostics = false;
 	FString ActiveTestRunId;
+
+	// Engine CSV Profiler runs alongside the capture and writes Saved/Diagnostics/<RunId>/EngineCsvProfile.csv.
+	// Like the trace, it is started/stopped only when no other CSV capture owns the profiler, and per-pass GPU
+	// timers (r.GPUCsvStatsEnabled) are enabled only for this capture and restored afterwards.
+	void StartEngineCsvCapture(const FString& Directory)
+	{
+#if CSV_PROFILER
+		FCsvProfiler* CsvProfiler = FCsvProfiler::Get();
+		if (CsvProfiler == nullptr || FCsvProfiler::IsCapturing() || CsvProfiler->IsWritingFile() || CsvProfiler->IsEndCapturePending())
+		{
+			UE_LOG(LogProjectProject01Diagnostics, Warning, TEXT("Diagnostics did not start the engine CSV profiler because another CSV capture is active or still writing."));
+			return;
+		}
+		if (IConsoleVariable* GpuCsvStats = IConsoleManager::Get().FindConsoleVariable(TEXT("r.GPUCsvStatsEnabled")))
+		{
+			if (GpuCsvStats->GetInt() == 0)
+			{
+				GpuCsvStats->Set(1, ECVF_SetByCode);
+				bGpuCsvStatsEnabledByDiagnostics = GpuCsvStats->GetInt() != 0;
+			}
+		}
+		CsvProfiler->BeginCapture(-1, Directory, TEXT("EngineCsvProfile"));
+		bCsvStartedByDiagnostics = true;
+		UE_LOG(LogProjectProject01Diagnostics, Display, TEXT("Engine CSV profiler capture requested: %s/EngineCsvProfile.csv (GPU pass timers %s)."),
+			*Directory, bGpuCsvStatsEnabledByDiagnostics ? TEXT("enabled for this capture") : TEXT("left unchanged"));
+#else
+		UE_LOG(LogProjectProject01Diagnostics, Warning, TEXT("Engine CSV profiler is not compiled into this build."));
+#endif
+	}
+
+	void StopEngineCsvCapture()
+	{
+#if CSV_PROFILER
+		if (bCsvStartedByDiagnostics)
+		{
+			if (FCsvProfiler* CsvProfiler = FCsvProfiler::Get(); CsvProfiler != nullptr && FCsvProfiler::IsCapturing())
+			{
+				CsvProfiler->EndCapture();
+			}
+			bCsvStartedByDiagnostics = false;
+		}
+		if (bGpuCsvStatsEnabledByDiagnostics)
+		{
+			if (IConsoleVariable* GpuCsvStats = IConsoleManager::Get().FindConsoleVariable(TEXT("r.GPUCsvStatsEnabled")))
+			{
+				GpuCsvStats->Set(0, ECVF_SetByCode);
+			}
+			bGpuCsvStatsEnabledByDiagnostics = false;
+		}
+#endif
+	}
 
 	void ShowNotification(const FString& Message, const bool bSuccess)
 	{
@@ -105,6 +160,8 @@ namespace ProjectProject01DiagnosticsEditor
 			UE_LOG(LogProjectProject01Diagnostics, Warning, TEXT("Diagnostics did not start a .utrace because tracing is unavailable or already active."));
 		}
 
+		StartEngineCsvCapture(TraceDirectory);
+
 		ActiveTestRunId = RunId;
 		ShowNotification(FString::Printf(TEXT("진단 기록 시작: %s"), *RunId), true);
 	}
@@ -121,6 +178,7 @@ namespace ProjectProject01DiagnosticsEditor
 		{
 			Subsystem.StopCapture(TEXT("Manual capture completed; pass/fail requires the configured test criteria."));
 		});
+		StopEngineCsvCapture();
 		if (bTraceStartedByDiagnostics)
 		{
 			FTraceAuxiliary::Stop();
@@ -150,10 +208,10 @@ void RegisterProjectProject01DiagnosticsMenus()
 	FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("ProjectProject01Diagnostics"));
 	Section.Label = LOCTEXT("DiagnosticsSection", "ProjectProject01 Diagnostics");
 	Section.AddMenuEntry(TEXT("ProjectProject01StartDiagnostics"), LOCTEXT("StartDiagnostics", "Start Lightweight Diagnostics Capture"),
-		LOCTEXT("StartDiagnosticsTip", "Start rate-limited PIE diagnostics and a default Unreal Insights trace when no other trace is active."), FSlateIcon(),
+		LOCTEXT("StartDiagnosticsTip", "Start rate-limited PIE diagnostics, a default Unreal Insights trace when no other trace is active, and an engine CSV profile (with GPU pass timers) when no other CSV capture is active."), FSlateIcon(),
 		FUIAction(FExecuteAction::CreateStatic(&ProjectProject01DiagnosticsEditor::StartCapture)));
 	Section.AddMenuEntry(TEXT("ProjectProject01StopDiagnostics"), LOCTEXT("StopDiagnostics", "Stop and Save Diagnostics Capture"),
-		LOCTEXT("StopDiagnosticsTip", "Flush XML and CSV reports. It stops only a trace started by this utility."), FSlateIcon(),
+		LOCTEXT("StopDiagnosticsTip", "Flush XML and CSV reports. It stops only a trace or engine CSV capture started by this utility."), FSlateIcon(),
 		FUIAction(FExecuteAction::CreateStatic(&ProjectProject01DiagnosticsEditor::StopCapture)));
 	Section.AddMenuEntry(TEXT("ProjectProject01OpenDiagnostics"), LOCTEXT("OpenDiagnostics", "Open Diagnostics Folder"),
 		LOCTEXT("OpenDiagnosticsTip", "Open Saved/Diagnostics in Explorer."), FSlateIcon(),

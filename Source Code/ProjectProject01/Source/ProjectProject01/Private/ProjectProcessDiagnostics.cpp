@@ -1,5 +1,7 @@
 #include "ProjectProcessDiagnostics.h"
 #include "UObject/UObjectArray.h"
+#include "Misc/ScopeLock.h"
+#include "Tasks/Task.h"
 #include <atomic>
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -48,24 +50,58 @@ namespace ProjectProcessDiagnostics
         }
 #endif
     }
+    namespace
+    {
+        // Reads OS-wide tables (system thread snapshot, TCP/UDP owner tables). This took ~88 ms in an editor PIE
+        // capture, so after the first snapshot it runs on a background task and the game thread only reads the cache.
+        FSnapshot ReadOsCounters()
+        {
+            FSnapshot Result;
+#if PLATFORM_WINDOWS
+            DWORD Handles=0;if(GetProcessHandleCount(GetCurrentProcess(),&Handles))Result.Handles=int32(Handles);
+            HANDLE Snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+            if(Snapshot!=INVALID_HANDLE_VALUE)
+            {
+                THREADENTRY32 Entry{};Entry.dwSize=sizeof(Entry);
+                if(Thread32First(Snapshot,&Entry)){Result.Threads=0;do{if(Entry.th32OwnerProcessID==GetCurrentProcessId())++Result.Threads;}while(Thread32Next(Snapshot,&Entry));}
+                CloseHandle(Snapshot);
+            }
+            const int32 Tcp4=CountEndpoints(true,AF_INET),Tcp6=CountEndpoints(true,AF_INET6),Udp4=CountEndpoints(false,AF_INET),Udp6=CountEndpoints(false,AF_INET6);
+            if(Tcp4>=0&&Tcp6>=0)Result.TcpEndpoints=Tcp4+Tcp6;
+            if(Udp4>=0&&Udp6>=0)Result.UdpEndpoints=Udp4+Udp6;
+#endif
+            Result.SampledAtSeconds=FPlatformTime::Seconds();
+            return Result;
+        }
+        FCriticalSection CacheLock;
+        FSnapshot Cached;
+        bool bHasCached=false;              // game thread only
+        double LastRequestSeconds=-1e9;     // game thread only
+        std::atomic<bool> bRefreshInFlight{false};
+    }
     FSnapshot Capture()
     {
         check(IsInGameThread());
-        static FSnapshot Cached;static double Last=-1e9;const double Now=FPlatformTime::Seconds();
-        if(Now-Last<5)return Cached;Last=Now;Cached=FSnapshot{};Cached.SampledAtSeconds=Now;
-#if PLATFORM_WINDOWS
-        DWORD Handles=0;if(GetProcessHandleCount(GetCurrentProcess(),&Handles))Cached.Handles=int32(Handles);
-        HANDLE Snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
-        if(Snapshot!=INVALID_HANDLE_VALUE)
+        const double Now=FPlatformTime::Seconds();
+        if(!bHasCached)
         {
-            THREADENTRY32 Entry{};Entry.dwSize=sizeof(Entry);
-            if(Thread32First(Snapshot,&Entry)){Cached.Threads=0;do{if(Entry.th32OwnerProcessID==GetCurrentProcessId())++Cached.Threads;}while(Thread32Next(Snapshot,&Entry));}
-            CloseHandle(Snapshot);
+            // First snapshot of the session is synchronous so the first sample reports real values, not "unavailable".
+            const FSnapshot First=ReadOsCounters();
+            {FScopeLock Lock(&CacheLock);Cached=First;}
+            bHasCached=true;LastRequestSeconds=Now;
+            return First;
         }
-        const int32 Tcp4=CountEndpoints(true,AF_INET),Tcp6=CountEndpoints(true,AF_INET6),Udp4=CountEndpoints(false,AF_INET),Udp6=CountEndpoints(false,AF_INET6);
-        if(Tcp4>=0&&Tcp6>=0)Cached.TcpEndpoints=Tcp4+Tcp6;
-        if(Udp4>=0&&Udp6>=0)Cached.UdpEndpoints=Udp4+Udp6;
-#endif
+        if(Now-LastRequestSeconds>=5&&!bRefreshInFlight.exchange(true))
+        {
+            LastRequestSeconds=Now;
+            UE::Tasks::Launch(UE_SOURCE_LOCATION,[]
+            {
+                const FSnapshot Fresh=ReadOsCounters();
+                {FScopeLock Lock(&CacheLock);Cached=Fresh;}
+                bRefreshInFlight.store(false);
+            },UE::Tasks::ETaskPriority::BackgroundLow);
+        }
+        FScopeLock Lock(&CacheLock);
         return Cached;
     }
     void AcquireObjectCounter(){check(IsInGameThread());if(Counter.Users++==0)GUObjectArray.AddUObjectCreateListener(&Counter);}

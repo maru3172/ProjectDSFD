@@ -1,5 +1,8 @@
 #include "ProjectProject01SaveSubsystem.h"
 
+#include "HAL/FileManager.h"
+#include "Misc/Paths.h"
+
 #include "PlayerCharacter.h"
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
@@ -278,9 +281,29 @@ int32 UProjectProject01SaveSubsystem::GetMostRecentlyPlayedSaveSlot() const
 
 bool UProjectProject01SaveSubsystem::HasRecoverableSaveInSlot(const int32 SlotIndex) const
 {
-	if (!IsValidSlotIndex(SlotIndex)) return false;
-	FString Ignored;
-	return IsValid(LoadBestSlot(SlotIndex, Ignored));
+	// Same answer as IsValid(LoadBestSlot(...)): GetSaveSlotInfo sets bHasSave exactly when that load succeeds.
+	return IsValidSlotIndex(SlotIndex) && GetSaveSlotInfo(SlotIndex).bHasSave;
+}
+
+bool UProjectProject01SaveSubsystem::BuildSlotFileFingerprint(const int32 SlotIndex, FString& OutFingerprint) const
+{
+#if PLATFORM_DESKTOP
+	// FGenericSaveGameSystem path: <ProjectSaved>/SaveGames/<Slot>.sav (Engine/Public/SaveGameSystem.h).
+	OutFingerprint.Reset();
+	IFileManager& FileManager = IFileManager::Get();
+	for (const FString& Slot : ProjectCheckpointStore::AllSlots(GetPrimarySlotName(SlotIndex)))
+	{
+		const FString Path = FPaths::ProjectSavedDir() / TEXT("SaveGames") / (Slot + TEXT(".sav"));
+		const int64 Size = FileManager.FileSize(*Path);
+		const int64 Ticks = Size >= 0 ? FileManager.GetTimeStamp(*Path).GetTicks() : 0;
+		// A slot the save system reports but this path does not show means another save backend: do not cache.
+		if (Size < 0 && UGameplayStatics::DoesSaveGameExist(Slot, UserIndex)) return false;
+		OutFingerprint += FString::Printf(TEXT("%s=%lld:%lld;"), *Slot, Size, Ticks);
+	}
+	return true;
+#else
+	return false;
+#endif
 }
 
 FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(const int32 SlotIndex, const bool bIncludePreview) const
@@ -288,9 +311,22 @@ FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(co
 	FProjectProject01SaveSlotInfo Info;
 	Info.SlotIndex = SlotIndex;
 	if (!IsValidSlotIndex(SlotIndex)) return Info;
+	FString Fingerprint;
+	const bool bCacheable = !bIncludePreview && BuildSlotFileFingerprint(SlotIndex, Fingerprint);
+	if (bCacheable)
+	{
+		if (const FSlotInfoCacheEntry* Cached = SlotInfoCache.Find(SlotIndex); Cached && Cached->Fingerprint == Fingerprint)
+		{
+			return Cached->Info;
+		}
+	}
 	FString Ignored;
 	UProjectProject01SinglePlayerSaveGame* Save = LoadBestSlot(SlotIndex, Ignored);
-	if (!IsValid(Save)) return Info;
+	if (!IsValid(Save))
+	{
+		if (bCacheable) SlotInfoCache.Add(SlotIndex, {Fingerprint, Info});
+		return Info;
+	}
 	Info.bHasSave = true;
 	Info.CheckpointId = Save->CheckpointId;
 	Info.SavedMapPackageName = Save->SavedMapPackageName;
@@ -298,6 +334,7 @@ FProjectProject01SaveSlotInfo UProjectProject01SaveSubsystem::GetSaveSlotInfo(co
 	Info.SavedAtUtc = Save->SavedAtUtc;
 	Info.LastPlayedAtUtc = ReadLastPlayed(SlotIndex, Save);
 	if (bIncludePreview) Info.PreviewTexture = ProjectCheckpointPreview::Decode(Save->PreviewPng, Save->PreviewCrc);
+	if (bCacheable) SlotInfoCache.Add(SlotIndex, {Fingerprint, Info});
 	return Info;
 }
 

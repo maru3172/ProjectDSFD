@@ -16,6 +16,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/Material.h"
+#include "MaterialDomain.h"
 #include "Misc/ConfigCacheIni.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01DiagnosticsSubsystem.h"
@@ -819,11 +820,14 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 
 		FHeartbeatMannequinState& State = MannequinStates.FindOrAdd(WeakMannequin);
 		const float Distance = FVector::Dist(OwnerPawn.GetActorLocation(), Mannequin->GetActorLocation());
-		const bool bHasClearSight = HasClearLineOfSight(OwnerPawn, *Mannequin, ViewLocation);
 		const bool bInsideBaseCone = Distance <= SafeBaseRange && IsInsideVisionCone(
 			*Mannequin, ViewLocation, ViewForward, BaseVisionHalfAngleDegrees);
 		const bool bInsideEncounterCone = Distance <= SafeEncounterRange && IsInsideVisionCone(
 			*Mannequin, ViewLocation, ViewForward, EncounterVisionHalfAngleDegrees);
+		// 가시선 결과는 (1) 어느 한 시야각 안에 있을 때의 가시 판정, (2) 미무장 상태의 미확인 타이머에서만 쓰인다.
+		// 이미 무장(armed)됐고 두 시야각 밖이면 결과와 무관하게 상태가 같으므로 트레이스를 생략한다.
+		const bool bNeedsLineOfSight = bInsideBaseCone || bInsideEncounterCone || !State.bEncounterArmed;
+		const bool bHasClearSight = bNeedsLineOfSight && HasClearLineOfSight(OwnerPawn, *Mannequin, ViewLocation);
 		const bool bBaseVisibleNow = bInsideBaseCone && bHasClearSight;
 		const bool bEncounterVisibleNow = bInsideEncounterCone && bHasClearSight;
 
@@ -877,7 +881,7 @@ void UPlayerHeartbeatComponent::UpdateDetectionStates(APawn& OwnerPawn)
 				*GetNameSafe(Mannequin),
 				State.bActiveForHeartbeat ? TEXT("true") : TEXT("false"),
 				bEncounterVisibleNow ? TEXT("true") : TEXT("false"),
-				bHasClearSight ? TEXT("true") : TEXT("false"));
+				bNeedsLineOfSight ? (bHasClearSight ? TEXT("true") : TEXT("false")) : TEXT("skipped"));
 		}
 	}
 

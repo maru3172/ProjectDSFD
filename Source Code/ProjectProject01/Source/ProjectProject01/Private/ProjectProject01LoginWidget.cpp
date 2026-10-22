@@ -513,7 +513,7 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	// This tactical information belongs only to the local mannequin player.
 	if (!IsValid(Controller) || !Controller->IsLocalMannequinPlayer())
 	{
-		StatusText->SetText(FText::GetEmpty());
+		SetStatusSource(FString());
 		if (UPanelWidget* Background = StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::Collapsed);
 		return;
 	}
@@ -544,7 +544,7 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	if (IsValid(Mannequin) && Mannequin->GetWorld()!=GetWorld()) Mannequin = nullptr;
 	if (!IsValid(Mannequin))
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(TEXT("현재 빙의한 마네킹: 정보 동기화 중")));
+		SetStatusSource(TEXT("현재 빙의한 마네킹: 정보 동기화 중"));
 		if (UPanelWidget* Background = StatusText->GetParent()) Background->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		return;
 	}
@@ -574,12 +574,20 @@ void UProjectProject01MannequinStatusWidget::RefreshMannequinStates()
 	const FString CatchDamageState = bCatchDamageEnabled ? TEXT("활성") : TEXT("비활성");
 	const FString Identity = Mannequin->GetControlSlot()>=0
 		? FString::Printf(TEXT("%d번"),Mannequin->GetControlSlot()) : TEXT("번호 수신 중");
-	StatusText->SetText(FProjectProject01Localization::Text(FString::Printf(
+	SetStatusSource(FString::Printf(
 		TEXT("현재 빙의한 마네킹: %s\n")
 		TEXT("현재 상태: %s\n")
 		TEXT("명령 상태: %s\n")
 		TEXT("전체 AI 데스카운트 소모: %s\n\n%s"),
-		*Identity, *Activity, Command, *CatchDamageState, *Alerts)));
+		*Identity, *Activity, Command, *CatchDamageState, *Alerts));
+}
+
+void UProjectProject01MannequinStatusWidget::SetStatusSource(const FString& Source)
+{
+	// FText::FromString makes a new text every call, which forces a relayout even for identical words.
+	if (Source.Equals(LastStatusSource, ESearchCase::CaseSensitive) && !(Source.IsEmpty() && !StatusText->GetText().IsEmpty())) return;
+	LastStatusSource = Source;
+	StatusText->SetText(Source.IsEmpty() ? FText::GetEmpty() : FProjectProject01Localization::Text(Source));
 }
 
 bool UProjectProject01VoiceStatusWidget::Initialize()
@@ -662,7 +670,8 @@ void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 			{
 				Lines.Add(FString::Printf(TEXT("%s: %s"),*Peer.DisplayName,*Peer.GetStatusLabel()));
 			}
-		TeammateVoiceText->SetText(FText::FromString(FString::Join(Lines,TEXT("\n"))));
+		const FString TeammateText=FString::Join(Lines,TEXT("\n"));
+		if(!TeammateText.Equals(LastTeammateVoiceText,ESearchCase::CaseSensitive)){LastTeammateVoiceText=TeammateText;TeammateVoiceText->SetText(FText::FromString(TeammateText));}
 		TeammateVoiceText->SetVisibility(Lines.IsEmpty()?ESlateVisibility::Collapsed:ESlateVisibility::HitTestInvisible);
 	}
 	const bool bRequestedActive = bConfigured &&
@@ -671,6 +680,9 @@ void UProjectProject01VoiceStatusWidget::RefreshVoiceStatus()
 	const FString Status = bReady
 		? (bRequestedActive?TEXT("보이스: 활성"):TEXT("보이스: 비활성"))
 		: FString(TEXT("보이스: 비활성\n"))+(bConfigured?Voice->GetConnectionStatusText():FString());
+	const FString Key=Status+(bRequestedActive?TEXT("|A"):TEXT("|-"))+(bReady?TEXT("R"):TEXT("-"));
+	if(Key.Equals(LastVoiceStatusKey,ESearchCase::CaseSensitive))return; // text, colour and brush all derive from these
+	LastVoiceStatusKey=Key;
 	VoiceStatusText->SetText(FProjectProject01Localization::Text(Status));
 	VoiceStatusText->SetColorAndOpacity(FSlateColor(
 		bRequestedActive && bReady ? FLinearColor(0.30f, 0.95f, 0.45f, 1.0f)
