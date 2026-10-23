@@ -212,6 +212,7 @@ private:
 	FMultiplayTestMatchResult PendingLocalMatchResult;
 	FTimerHandle LocalMatchResultHandoffTimer;
 	double LocalMatchResultHandoffDeadline = 0;
+	bool bResultBlackoutStarted = false; // Result handoff blacked the screen out itself (once per match end).
 	uint32 LastSpectatorFadeRequest = 0;
 	uint32 SpectatorRequestSerial = 0;
 	bool bSpectatorFadePending = false;

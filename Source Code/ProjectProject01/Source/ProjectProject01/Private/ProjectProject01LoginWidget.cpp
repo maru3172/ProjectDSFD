@@ -3514,12 +3514,14 @@ void UProjectProject01MatchResultWidget::InitializeResultPresentation()
 	// result background followed by a second fade exposed the world for 1.5 seconds.
 	// Establish opaque black BEFORE AddToViewport; only the single escape retains
 	// its original fade from gameplay when it has not already blacked out.
-	const bool bObserver=!bSinglePlayer&&Result.Role==TEXT("Observer");
-    const bool bImmediate = !bObserver&&(!bSinglePlayer || !Result.bSuccess);
+	// Multiplayer (players and observers): blackout -> release -> results. The world stays covered by an
+	// opaque background while the result menu fades in from black. Single player keeps its own handoff.
+	const bool bRevealFromBlack=!bSinglePlayer;
+    const bool bImmediate = bSinglePlayer && !Result.bSuccess;
 	FadeElapsedSeconds = bImmediate ? FadeDurationSeconds : 0.0f;
 	if (IsValid(FadeBackground))
 	{
-		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, bImmediate||bObserver ? 1.0f : 0.0f));
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, bImmediate||bRevealFromBlack ? 1.0f : 0.0f));
 	}
 	if (IsValid(ResultMenu))
 	{
@@ -3587,11 +3589,11 @@ void UProjectProject01MatchResultWidget::NativeTick(
 		: 1.0f;
 	if (IsValid(FadeBackground))
 	{
-		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, Result.Role==TEXT("Observer")?1.f:0.98f * FadeAlpha));
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, !bSinglePlayer?1.f:0.98f * FadeAlpha));
 	}
 	if (IsValid(ResultMenu))
 	{
-		const float MenuAlpha = Result.Role==TEXT("Observer")?FadeAlpha:FMath::Clamp((FadeAlpha - 0.72f) / 0.28f, 0.0f, 1.0f);
+		const float MenuAlpha = !bSinglePlayer?FadeAlpha:FMath::Clamp((FadeAlpha - 0.72f) / 0.28f, 0.0f, 1.0f);
 		ResultMenu->SetRenderOpacity(MenuAlpha);
 		if (FadeAlpha >= 1.0f)
 		{
@@ -3985,7 +3987,15 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 		RegisterButton->SetIsEnabled(bCanRegister && !bBusy);
 	}
 	if (IsValid(LeaderboardButton)) LeaderboardButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
-	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(ReturnToRoomButton))
+	{
+		ReturnToRoomButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		// Bot matches go back to the bot match start screen; only open matching returns to its room.
+		const UProjectProject01LobbySubsystem* RoomLobby = GetGameInstance()
+			? GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+		const bool bBotRoom = RoomLobby && RoomLobby->HasCurrentRoom() && RoomLobby->GetCurrentRoom().bBotMatch;
+		ProjectProject01LoginUI::SetButtonText(ReturnToRoomButton, bBotRoom ? TEXT("봇전으로 돌아가기") : TEXT("방으로 돌아가기"));
+	}
 	if (IsValid(LogoutButton)) LogoutButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (IsValid(LoadLastCheckpointButton))
 	{
@@ -5334,8 +5344,41 @@ void UProjectProject01LobbyWidget::HandleBotMatchCreateClicked()
 {
     if(!BotMatchRole||!BotMatchDifficulty)return;
     if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))
+    {
+        bAutoStartBotMatch=true;
         Lobby->CreateBotMatch(BotMatchRole->GetSelectedIndex()==1?TEXT("Mannequin"):TEXT("Survivor"),BotMatchDifficulty->GetSelectedIndex()+1);
+    }
     RefreshLobbyState();
+}
+namespace
+{
+    FText BotDifficultyHelp(const FString& Item)
+    {
+        for(int32 Level=1;Level<=5;++Level)
+            if(Item==UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Level)))return FText::FromString(UTF8_TO_TCHAR(ProjectBots::Difficulty::Description(Level)));
+        return FText::GetEmpty();
+    }
+    // Larger than the engine's default tooltip text: a themed panel with an 18pt label.
+    UWidget* BotDifficultyTooltip(UObject* Outer,const FString& Item)
+    {
+        const FText Help=BotDifficultyHelp(Item);
+        if(Help.IsEmpty())return nullptr;
+        auto* Frame=NewObject<UBorder>(Outer);Frame->SetBrushColor(ProjectDFSDUI::Panel());Frame->SetPadding(FMargin(12,8));
+        auto* Text=NewObject<UTextBlock>(Outer);Text->SetText(Help);Text->SetColorAndOpacity(ProjectDFSDUI::Text());
+        auto Font=Text->GetFont();Font.Size=18;Text->SetFont(Font);
+        Frame->AddChild(Text);return Frame;
+    }
+}
+UWidget* UProjectProject01LobbyWidget::GenerateBotDifficultyItem(FString Item)
+{
+    auto* Text=NewObject<UTextBlock>(this);
+    Text->SetText(FText::FromString(Item));Text->SetColorAndOpacity(ProjectDFSDUI::Text());
+    Text->SetToolTip(BotDifficultyTooltip(this,Item)); // Shown while hovered, gone when the mouse leaves.
+    return Text;
+}
+void UProjectProject01LobbyWidget::HandleBotDifficultyChanged(FString Item,ESelectInfo::Type)
+{
+    if(BotMatchDifficulty)BotMatchDifficulty->SetToolTip(BotDifficultyTooltip(this,Item));
 }
 void UProjectProject01LobbyWidget::HandleTutorialClicked()
 {
@@ -5752,6 +5795,26 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	const FString& Message)
 {
 	if (bLobbyLogoutInProgress && Operation != EProjectProject01LobbyOperation::LeaveRoom) return;
+	// One-click bot match: the room is solo (host + bots), so start it right away instead of showing a setup step.
+	if (Operation == EProjectProject01LobbyOperation::CreateBotMatch && bAutoStartBotMatch)
+	{
+		UProjectProject01LobbySubsystem* Lobby = GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+		if (bSuccess && Lobby && Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bBotMatch && Lobby->GetCurrentRoom().bIsHost)
+		{
+			if (Lobby->GetCurrentRoom().bGameServerOnline)
+			{
+				Lobby->StartRoom(); // Flag stays set until the start answer arrives, so the bot panel stays up.
+				RefreshLobbyState();
+				return;
+			}
+			SetStatus(TEXT("봇전 게임 서버를 준비하지 못했습니다. 서버가 열리면 방에서 게임 시작을 누르세요."), true);
+		}
+		bAutoStartBotMatch = false;
+	}
+	if (Operation == EProjectProject01LobbyOperation::StartRoom && bAutoStartBotMatch)
+	{
+		bAutoStartBotMatch = false; // From here the room state itself (starting / preparing) keeps the bot panel.
+	}
 	if (!bSuccess &&
 		(Operation == EProjectProject01LobbyOperation::StartRoom ||
 			Operation == EProjectProject01LobbyOperation::RequestGameTicket) &&
@@ -6079,7 +6142,19 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     RefreshMatchmakingView();
     const bool RandomStart=bInRoom&&Lobby->GetCurrentRoom().bRandomMatch;
 	const bool bCodeJoinOpen=CodeJoinPanel&&CodeJoinPanel->GetVisibility()!=ESlateVisibility::Collapsed;
-	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
+	// Bot match starts like random matching: stay on the bot panel under the countdown, no room screen.
+	// Only a bot room that failed to start falls back to the room view (leave / start manually).
+	const auto& ShownRoom=Lobby->GetCurrentRoom();
+	const bool BotStarting=bInRoom&&ShownRoom.bBotMatch&&(ShownRoom.bStarting||ShownRoom.bServerPreparing||(ShownRoom.bStarted&&!ShownRoom.bReturnedToRoom)||bAutoStartBotMatch);
+	// A bot room exists only for its one match: back from that match (or after a failed auto start) the
+	// player returns to the bot match start screen, not a room. Only open matching returns to its room.
+	const bool BotRoomIdle=bInRoom&&ShownRoom.bBotMatch&&!BotStarting;
+	if(BotRoomIdle&&!Lobby->IsRequestInFlight()&&!bTravelRequested&&!bGameStartFadeActive)
+	{
+		bShowingBotMatch=true;
+		Lobby->LeaveRoom();
+	}
+	ShowLobbyView(BotStarting||BotRoomIdle?7:bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
     if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&!bTravelRequested&&!bGameStartFadeActive);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
@@ -6427,8 +6502,12 @@ void UProjectProject01LobbyWidget::UpdateStartCountdownText()
 {
     if(!StartCountdownText)return;
     const auto* L=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
-    const bool Random=L&&L->HasCurrentRoom()&&L->GetCurrentRoom().bRandomMatch;
-    const FString Role=Random?(L->GetCurrentRoom().AssignedRole==TEXT("Mannequin")?TEXT("마네킹"):TEXT("생존자")):FString();
+    const bool Bot=L&&L->HasCurrentRoom()&&L->GetCurrentRoom().bBotMatch;
+    const bool Random=(L&&L->HasCurrentRoom()&&L->GetCurrentRoom().bRandomMatch)||Bot;
+    // A bot match role is fixed by the player's own pick before the server assigns it.
+    const bool Mannequin=Bot&&L->GetCurrentRoom().AssignedRole.IsEmpty()?BotMatchRole&&BotMatchRole->GetSelectedIndex()==1
+        :L&&L->HasCurrentRoom()&&L->GetCurrentRoom().AssignedRole==TEXT("Mannequin");
+    const FString Role=Random?(Mannequin?TEXT("마네킹"):TEXT("생존자")):FString();
     StartCountdownText->SetText(FText::FromString(Random?FString::Printf(TEXT("게임이 시작됩니다\n역할: %s\n%d..."),*Role,GameStartCountdownNumber)
         :FString::Printf(TEXT("게임을 시작합니다\n%d..."),GameStartCountdownNumber)));
 }
@@ -6756,9 +6835,13 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     BotMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();BotMatchRole->AddOption(TEXT("생존자"));BotMatchRole->AddOption(TEXT("마네킹"));BotMatchRole->SetSelectedIndex(0);BotSetup->AddChildToVerticalBox(BotMatchRole);
     ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇 난이도"),20);
     BotMatchDifficulty=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();
+    // Hover help: each option in the open list explains its level; the closed box explains the current pick.
+    BotMatchDifficulty->OnGenerateWidgetEvent.BindUFunction(this,GET_FUNCTION_NAME_CHECKED(ThisClass,GenerateBotDifficultyItem));
+    BotMatchDifficulty->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleBotDifficultyChanged);
     for(int32 Level=1;Level<=5;++Level)BotMatchDifficulty->AddOption(UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Level)));
     BotMatchDifficulty->SetSelectedIndex(1);BotSetup->AddChildToVerticalBox(BotMatchDifficulty);
-    BotMatchCreateButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("봇전 구성"));BotMatchCreateButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchCreateClicked);
+    HandleBotDifficultyChanged(BotMatchDifficulty->GetSelectedOption(),ESelectInfo::Direct);
+    BotMatchCreateButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("게임 시작"));BotMatchCreateButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchCreateClicked);
     auto* BotBack=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("뒤로가기"));BotBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
     auto* BotLogout=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("로그아웃 / 로그인 화면으로"));BotLogout->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
 
@@ -6906,7 +6989,10 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 	if (IsValid(SubmitRecordButton)) SubmitRecordButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked);
 	if (IsValid(ReturnToLobbyButton)) ReturnToLobbyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked);
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleReturnToRoomClicked);
+	if (IsValid(PvPCategoryButton)) PvPCategoryButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandlePvPCategoryClicked);
+	if (IsValid(BotCategoryButton)) BotCategoryButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LeaderboardWidget::HandleBotCategoryClicked);
 
+	SetSelectedCategory(SelectedCategory, false);
 	SetSelectedRole(SelectedRole, false);
 
 	UGameInstance* GameInstance = GetGameInstance();
@@ -6940,7 +7026,7 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 		if (IsValid(SubmitRecordButton)) SubmitRecordButton->SetIsEnabled(false);
 		SetStatus(TEXT("조회 전용입니다. 등록할 서버 검증 경기 기록이 없습니다."), false);
 	}
-	Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope());
+	Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope(), SelectedCategory);
 }
 
 void UProjectProject01LeaderboardWidget::NativeDestruct()
@@ -6962,7 +7048,7 @@ void UProjectProject01LeaderboardWidget::HandleRefreshClicked()
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 		{
-			Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope());
+			Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope(), SelectedCategory);
 		}
 	}
 }
@@ -6985,6 +7071,39 @@ void UProjectProject01LeaderboardWidget::HandleIndividualScopeClicked()
 void UProjectProject01LeaderboardWidget::HandleTeamScopeClicked()
 {
 	SetSelectedScope(EProjectProject01LeaderboardScope::Team, true);
+}
+
+void UProjectProject01LeaderboardWidget::HandlePvPCategoryClicked()
+{
+	SetSelectedCategory(EProjectProject01LeaderboardCategory::PvP, true);
+}
+
+void UProjectProject01LeaderboardWidget::HandleBotCategoryClicked()
+{
+	SetSelectedCategory(EProjectProject01LeaderboardCategory::Bot, true);
+}
+
+void UProjectProject01LeaderboardWidget::SetSelectedCategory(
+	const EProjectProject01LeaderboardCategory NewCategory,
+	const bool bRefreshLeaderboard)
+{
+	// PvP and bot match records are ranked on separate boards.
+	SelectedCategory = NewCategory;
+	const bool bPvP = SelectedCategory == EProjectProject01LeaderboardCategory::PvP;
+	if (IsValid(PvPCategoryButton))
+	{
+		ProjectProject01LoginUI::SetButtonText(PvPCategoryButton, bPvP ? TEXT("● PvP") : TEXT("PvP"));
+		ProjectDFSDUI::Apply(PvPCategoryButton, bPvP);
+	}
+	if (IsValid(BotCategoryButton))
+	{
+		ProjectProject01LoginUI::SetButtonText(BotCategoryButton, bPvP ? TEXT("봇전") : TEXT("● 봇전"));
+		ProjectDFSDUI::Apply(BotCategoryButton, !bPvP);
+	}
+	if (bRefreshLeaderboard)
+	{
+		HandleRefreshClicked();
+	}
 }
 
 void UProjectProject01LeaderboardWidget::HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
@@ -7094,7 +7213,7 @@ void UProjectProject01LeaderboardWidget::HandleLeaderboardRequestResult(
 		{
 			if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
 			{
-				Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope());
+				Lobby->RefreshLeaderboard(GetSelectedRole(), GetSelectedSort(), GetSelectedScope(), SelectedCategory);
 			}
 		}
 	}
@@ -7270,6 +7389,16 @@ void UProjectProject01LeaderboardWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root,
 		TEXT("서버가 검증한 성공 경기만 등록됩니다. 개인 점수와 생존자 팀 평균 점수에는 경기 당시 방 이름이 함께 표시됩니다."), 14.0f);
 	LeaderboardStatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("리더보드를 불러오는 중..."), 14.0f);
+
+	// PvP (people only) and bot matches (any bot in the match) keep separate leaderboards.
+	UHorizontalBox* CategoryBar = WidgetTree->ConstructWidget<UHorizontalBox>();
+	if (UVerticalBoxSlot* CategoryBarSlot = Root->AddChildToVerticalBox(CategoryBar))
+	{
+		CategoryBarSlot->SetPadding(FMargin(6.0f, 4.0f));
+		CategoryBarSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	PvPCategoryButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, CategoryBar, TEXT("PvP"));
+	BotCategoryButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, CategoryBar, TEXT("봇전"));
 
 	UHorizontalBox* RoleTabBar = WidgetTree->ConstructWidget<UHorizontalBox>();
 	if (UVerticalBoxSlot* RoleTabBarSlot = Root->AddChildToVerticalBox(RoleTabBar))

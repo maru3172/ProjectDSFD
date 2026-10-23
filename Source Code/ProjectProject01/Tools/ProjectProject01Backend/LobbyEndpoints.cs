@@ -92,7 +92,7 @@ internal static partial class LobbyEndpoints
                     ORDER BY r.created_at_utc ASC
                     LIMIT 100;
                     """, connection) { CommandTimeout = 5 };
-                command.Parameters.AddWithValue("@observers",app.Configuration.GetValue<bool>("Bots:EnableOpenObservers"));
+                command.Parameters.AddWithValue("@observers",LocalEditorTesting.ObserversEnabled(request));
                 await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {
@@ -301,7 +301,7 @@ internal static partial class LobbyEndpoints
                     countMembers.Parameters.AddWithValue("@roomId", resolvedRoomId!);
                     if (Convert.ToInt32(await countMembers.ExecuteScalarAsync(ct)) >= MaximumPlayers)
                     {
-                        if(!app.Configuration.GetValue<bool>("Bots:EnableOpenObservers"))return Results.Conflict(new LobbyFailure("방 인원이 가득 찼습니다."));
+                        if(!LocalEditorTesting.ObserversEnabled(request))return Results.Conflict(new LobbyFailure("방 인원이 가득 찼습니다."));
                         var observers=await CommunityEndpoints.Rows(connection,transaction,"SELECT user_id FROM room_members WHERE room_id=@r AND is_observer=TRUE",ct,("r",resolvedRoomId));
                         if(observers.Count>=2)return Results.Conflict(new LobbyFailure("플레이 3명·관전 2명 정원이 모두 찼습니다."));
                         joinAsObserver=true;
@@ -1331,18 +1331,31 @@ internal static partial class LobbyEndpoints
             {
                 return Results.BadRequest(new LobbyFailure("생존자 팀 점수는 생존자 리더보드에서만 조회할 수 있습니다."));
             }
+            // PvP (people only) and bot matches (any bot in the match: bot match, open match with bots,
+            // random match filled with bots) are ranked separately. Default stays PvP for older clients.
+            var category = request.Query["category"].ToString().Trim().ToLowerInvariant() switch
+            {
+                "" or "pvp" => "pvp",
+                "bot" => "bot",
+                _ => null
+            };
+            if (category is null)
+            {
+                return Results.BadRequest(new LobbyFailure("리더보드 구분은 pvp 또는 bot이어야 합니다."));
+            }
             try
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
                 var entries = normalizedScope == "team"
-                    ? await LoadSurvivorTeamLeaderboardAsync(connection, normalizedSort, ct)
-                    : await LoadLeaderboardAsync(connection, normalizedRole, normalizedSort, ct);
+                    ? await LoadSurvivorTeamLeaderboardAsync(connection, normalizedSort, category == "bot", ct)
+                    : await LoadLeaderboardAsync(connection, normalizedRole, normalizedSort, category == "bot", ct);
                 return Results.Ok(new
                 {
                     message = "리더보드 상위 50개 기록을 불러왔습니다.",
                     role = normalizedRole,
                     scope = normalizedScope,
                     sort = normalizedSort,
+                    category,
                     entries
                 });
             }
@@ -1655,8 +1668,21 @@ internal static partial class LobbyEndpoints
         await command.ExecuteNonQueryAsync(ct);
     }
 
+    // PvP = people on BOTH sides: a human mannequin and at least one human survivor (a bot may fill the
+    // remaining survivor seat). Everything else with bots is a bot match: two human survivors against a bot
+    // mannequin, a human mannequin against bot survivors, one human with two bots. A match without any bot
+    // roster was people only (also covers records made before the match ledger kept roles).
+    private static string PvPMatchCondition(string matchColumn) =>
+        $"""
+        (NOT EXISTS (SELECT 1 FROM bot_match_rosters b WHERE b.match_id = {matchColumn})
+         OR (EXISTS (SELECT 1 FROM authoritative_match_players p WHERE p.match_id = {matchColumn} AND p.role = 'Mannequin')
+             AND EXISTS (SELECT 1 FROM authoritative_match_players p WHERE p.match_id = {matchColumn} AND p.role = 'Survivor')))
+        """;
+    private static string BotMatchFilter(string matchColumn, bool botMatches) =>
+        botMatches ? $"NOT {PvPMatchCondition(matchColumn)}" : PvPMatchCondition(matchColumn);
+
     private static async Task<IReadOnlyList<LeaderboardEntry>> LoadLeaderboardAsync(
-        MySqlConnection connection, string role, string sort, CancellationToken ct)
+        MySqlConnection connection, string role, string sort, bool botMatches, CancellationToken ct)
     {
         var orderBy = role switch
         {
@@ -1696,7 +1722,7 @@ internal static partial class LobbyEndpoints
                        COUNT(*) OVER () AS total_count
                 FROM leaderboard_records lr
                 INNER JOIN users u ON u.id = lr.user_id
-                WHERE lr.role = @role
+                WHERE lr.role = @role AND {BotMatchFilter("lr.match_id", botMatches)}
             ), scored AS
             (
                 SELECT *, {averageExpression} AS average_rank
@@ -1744,7 +1770,7 @@ internal static partial class LobbyEndpoints
     }
 
     private static async Task<IReadOnlyList<LeaderboardEntry>> LoadSurvivorTeamLeaderboardAsync(
-        MySqlConnection connection, string sort, CancellationToken ct)
+        MySqlConnection connection, string sort, bool botMatches, CancellationToken ct)
     {
         var orderBy = sort switch
         {
@@ -1761,6 +1787,7 @@ internal static partial class LobbyEndpoints
                        RANK() OVER (ORDER BY tr.average_escape_seconds ASC, tr.average_rescue_count DESC, tr.id ASC) AS escape_rank,
                        COUNT(*) OVER () AS total_count
                 FROM leaderboard_survivor_team_records tr
+                WHERE {BotMatchFilter("tr.match_id", botMatches)}
             ), scored AS
             (
                 SELECT *, (rescue_rank + escape_rank) / 2.0 AS average_rank

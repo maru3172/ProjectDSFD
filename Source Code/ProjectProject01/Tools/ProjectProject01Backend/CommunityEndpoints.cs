@@ -156,7 +156,7 @@ internal static partial class CommunityEndpoints
         var user=await LobbyEndpoints.AuthenticateAsync(req,db,ct);
         if(user is null)return Results.Unauthorized();
         await using var c=await db.OpenConnectionAsync(ct);
-        bool allowObservers=req.HttpContext.RequestServices.GetRequiredService<IConfiguration>().GetValue<bool>("Bots:EnableOpenObservers");
+        bool allowObservers=LocalEditorTesting.ObserversEnabled(req);
         if(input.Operation is "AcceptInvite" or "DeclineInvite")return await RespondToRoomInvite(c,user.Id,user.DisplayName,input,allowObservers,ct);
         if(input.Operation=="Presence")
         {

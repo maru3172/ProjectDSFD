@@ -66,6 +66,7 @@ internal sealed class GameServerDemandManager(AuthDatabase database,ProjectSecur
     internal bool Enabled {get{lock(gate)return configuration.Enabled;}}
     internal bool AcceptingNewMatches {get{lock(gate)return configuration.Enabled&&!draining;}}
     internal bool Configured {get{lock(gate)return !string.IsNullOrEmpty(configuration.Executable);}}
+    internal bool EditorLocalTestActive {get{lock(gate)return configuration.Enabled&&configuration.EditorLocalTest;}}
     internal string? ResultOutboxDirectory {get{lock(gate)return string.IsNullOrWhiteSpace(configuration.ProjectRoot)?null:Path.Combine(configuration.ProjectRoot,"Saved","MatchResultOutbox");}}
     internal object Snapshot(){lock(gate)return new {enabled=configuration.Enabled,editorLocalTest=configuration.EditorLocalTest,draining,drainCompleted,acceptingNewMatches=configuration.Enabled&&!draining,maximumConcurrent=configuration.MaximumConcurrent,activeSessions=entries.Count,firstPort=configuration.FirstPort,
         sessions=entries.Values.Select(e=>new {roomId=e.Room,port=e.Port,phase=e.ObservedMatch?"Playing":"Preparing"}).ToArray()};}

@@ -12,7 +12,10 @@
 AProjectPracticeEnvironment::AProjectPracticeEnvironment()
 {
     PrimaryActorTick.bCanEverTick=false;
-    SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("PracticeLayout")));
+    // Static root: static obstacle blocks may only attach to a static parent.
+    auto* Layout=CreateDefaultSubobject<USceneComponent>(TEXT("PracticeLayout"));
+    Layout->SetMobility(EComponentMobility::Static);
+    SetRootComponent(Layout);
     static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
     BlockMesh=Cube.Object;
 }
@@ -58,9 +61,10 @@ int32 AProjectPracticeEnvironment::Build(const FTransform& Anchor)
                 if(LocalBox.IsInsideOrOn(TestTransform.InverseTransformPosition(It->GetActorLocation()))){Reserved=true;break;}
         if(Reserved||World->OverlapBlockingTestByChannel(Center,Rotation,ECC_Pawn,FCollisionShape::MakeBox(Piece.Size*.5-FVector(1)),Query))continue;
         auto* Block=NewObject<UStaticMeshComponent>(this);
+        Block->SetMobility(EComponentMobility::Static);
         AddInstanceComponent(Block);Block->SetupAttachment(RootComponent);
         Block->SetStaticMesh(BlockMesh);Block->SetCollisionProfileName(TEXT("BlockAll"));
-        Block->SetCanEverAffectNavigation(true);Block->SetMobility(EComponentMobility::Static);
+        Block->SetCanEverAffectNavigation(true);
         Block->SetWorldLocationAndRotation(Center,Rotation);Block->SetWorldScale3D(Piece.Size/100.f);
         Block->RegisterComponent();Blocks.Add(Block);
     }

@@ -45,6 +45,7 @@ struct FMultiplayTestMatchCarryover
     TArray<FProjectMatchBotSpec> Bots;
     TMap<FString,FMultiplayTestServerPlayerRecord> Players,Disconnected;
     double ElapsedSeconds=0,PreparedRealSeconds=0,PreparedWorldSeconds=0;
+    TSharedPtr<struct FProjectBotLearning> BotLearning; // Bot habits/relief for the next floor (ProjectMatchBots.h).
 };
 
 /**
@@ -239,6 +240,8 @@ private:
 	void TryStartAuthoritativeMatch();
 	void SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase NewPhase);
 	void CheckForMatchCompletion();
+	/** Bot match with human survivors, all of whom are eliminated (ends the match; blocks level travel). */
+	bool AreAllHumanSurvivorsEliminatedInBotMatch() const;
 	virtual void FinishAuthoritativeMatch(const FString& Reason);
 	void SubmitAuthoritativeResults();
 	void HandleResultSubmissionComplete(

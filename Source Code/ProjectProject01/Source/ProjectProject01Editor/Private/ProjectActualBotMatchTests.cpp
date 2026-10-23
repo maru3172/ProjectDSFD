@@ -16,6 +16,8 @@
 #include "GameFramework/SpectatorPawn.h"
 #include "Engine/LocalPlayer.h"
 #include "Camera/PlayerCameraManager.h"
+#include "GameFramework/GameStateBase.h"
+#include "Components/SkeletalMeshComponent.h"
 
 IMPLEMENT_COMPLEX_AUTOMATION_TEST(FProjectActualBotMatchEditorTest,"ProjectProject01.Editor.ActualBotMatch",
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -158,6 +160,37 @@ bool FProjectActualBotMatchEditorTest::RunTest(const FString& Parameter)
             else TestNotNull(TEXT("Mannequin director selects an actual numbered body"),PC->GetViewedMannequin());
         }
         TestEqual(TEXT("No synthetic login users"),HumanCount,1);TestEqual(TEXT("Exactly one mannequin"),Mannequins,1);TestEqual(TEXT("Exactly two survivors"),Survivors,2);
+        {
+            // A bot body created the way a client receives it (no server-side mesh copy) must still be visible.
+            const auto* Defaults=World->GetGameState()?World->GetGameState()->GameModeClass->GetDefaultObject<AGameModeBase>():nullptr;
+            const auto* Template=Defaults&&Defaults->DefaultPawnClass?Cast<ACharacter>(Defaults->DefaultPawnClass->GetDefaultObject()):nullptr;
+            FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+            auto* Fresh=World->SpawnActor<AProjectMatchBotCharacter>(AProjectMatchBotCharacter::StaticClass(),FVector(0,0,5000),FRotator::ZeroRotator,Params);
+            TestTrue(TEXT("Bot body wears the default survivor look on its own"),Template&&Fresh&&Fresh->GetMesh()->GetSkeletalMeshAsset()==Template->GetMesh()->GetSkeletalMeshAsset());
+            if(Fresh)Fresh->Destroy();
+        }
+        if(!Mannequin)
+        {
+            // Survivor bot match: the player's elimination ends the match, and no bot may start a level travel meanwhile.
+            // The only human taking the exit moves everyone on; the bot survivors still in play come along.
+            for(auto& Pair:Mode->MatchPlayerRecords)if(!Pair.Value.bServerBot)Pair.Value.SurvivorState=EMultiplayTestSurvivorState::TransitionWaiting;
+            TestTrue(TEXT("When the only human takes the exit, everyone travels"),Mode->CanCommitLevelTransition());
+            APlayerCharacter* BotSurvivor=nullptr;
+            for(auto& Pair:Mode->MatchPlayerRecords)
+            {
+                if(!Pair.Value.bServerBot)Pair.Value.SurvivorState=EMultiplayTestSurvivorState::Eliminated;
+                else if(Pair.Value.Role==TEXT("Survivor"))BotSurvivor=Pair.Value.SurvivorPawn.Get();
+            }
+            TestTrue(TEXT("The eliminated player leaves no human survivor in the bot match"),Mode->AreAllHumanSurvivorsEliminatedInBotMatch());
+            TestFalse(TEXT("A bot reaching the exit cannot travel without the player"),BotSurvivor&&Mode->MarkSurvivorWaitingForLevelTransition(BotSurvivor));
+            Mode->CheckForMatchCompletion();
+            TestFalse(TEXT("The bot match ends right away"),Mode->IsAuthoritativeMatchInProgress());
+        }
+        else
+        {
+            TestFalse(TEXT("A human mannequin keeps the normal match rules"),Mode->AreAllHumanSurvivorsEliminatedInBotMatch());
+            TestFalse(TEXT("A human mannequin never triggers the bot survivors' level travel"),Mode->CanCommitLevelTransition());
+        }
         TestTrue(TEXT("Live adapter creates policy brains"),!Adapter->Brains.IsEmpty());
         for(const auto& Pair:Adapter->Brains)
         {

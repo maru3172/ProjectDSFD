@@ -650,6 +650,11 @@ bool FProjectReviewAsyncStateTest::RunTest(const FString&)
     auto Empty=MakeShared<FReviewResponse,ESPMode::ThreadSafe>(TEXT("{\"entries\":[]}"));
     Lobby->HandleRequestComplete(Current,Empty,true,EProjectProject01LobbyOperation::RefreshLeaderboard,TEXT("GET"),Latest,TEXT(""),0);
     TestTrue(TEXT("F20 queued refresh completes without another loop"),!Lobby->bLeaderboardRefreshQueued&&Requested.Num()==1);
+    TestTrue(TEXT("Leaderboard defaults to the PvP board"),Latest.Contains(TEXT("category=pvp")));
+    Lobby->ActiveRequest=Current;
+    Lobby->RefreshLeaderboard(EProjectProject01LeaderboardRole::Survivor,EProjectProject01LeaderboardSort::Overall,EProjectProject01LeaderboardScope::Individual,EProjectProject01LeaderboardCategory::Bot);
+    TestTrue(TEXT("Bot match board is requested separately"),Lobby->DesiredLeaderboardEndpoint.Contains(TEXT("category=bot")));
+    Lobby->ActiveRequest=nullptr;Lobby->bLeaderboardRefreshQueued=false;Lobby->DesiredLeaderboardEndpoint.Reset();
 
     UUserWidget* LobbyBase=NewObject<UProjectProject01LobbyWidget>(World);LobbyBase->Initialize();auto* UI=CastChecked<UProjectProject01LobbyWidget>(LobbyBase);UI->SetPlayerContext(FLocalPlayerContext(Local,World));
     Lobby->CurrentRoom.RoomId=TEXT("room");Lobby->CurrentRoom.MatchId=TEXT("match");Lobby->CurrentRoom.bStarted=true;

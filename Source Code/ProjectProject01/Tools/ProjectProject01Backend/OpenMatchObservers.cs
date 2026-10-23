@@ -13,7 +13,9 @@ internal static partial class LobbyEndpoints
         app.MapPost("/api/rooms/current/participants",async(ObserverRoomAction body,HttpRequest req,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await AuthenticateAsync(req,db,ct);if(user is null)return Results.Unauthorized();
-            if(!app.Configuration.GetValue<bool>("Bots:EnableOpenObservers"))return Results.Json(new LobbyFailure("오픈매칭 관전을 준비 중입니다."),statusCode:503);
+            if(!LocalEditorTesting.ObserversEnabled(req))return Results.Json(new LobbyFailure("오픈매칭 관전을 준비 중입니다."),statusCode:503);
+            if(await LocalEditorTesting.EnsureEditorServerAsync(req,available(),ct) is { } editorError)
+                return Results.Json(new LobbyFailure(editorError),statusCode:503);
             if(body.Action is not ("observe" or "play" or "kick"))return Results.BadRequest();
             ulong target=user.Id;if(body.UserId is not null&&!ulong.TryParse(body.UserId,out target))return Results.BadRequest();
             try

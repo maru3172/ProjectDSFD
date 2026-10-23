@@ -1028,10 +1028,14 @@ private:
     UFUNCTION() void HandleOpenMatchClicked();
     UFUNCTION() void HandleBotMatchClicked();
     UFUNCTION() void HandleBotMatchCreateClicked();
+    /** Difficulty hover help: per-option tooltip in the list, and the selected level on the closed box. */
+    UFUNCTION() class UWidget* GenerateBotDifficultyItem(FString Item);
+    UFUNCTION() void HandleBotDifficultyChanged(FString Item, ESelectInfo::Type SelectionType);
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchRole;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
     UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCreateButton;
     bool bShowingBotMatch=false;
+    bool bAutoStartBotMatch=false; // One-click bot match: start the room as soon as it is created.
     UFUNCTION() void HandleAddRoomBot();
     UFUNCTION() void HandleRemoveRoomBot();
     UFUNCTION() void HandleChangeRoomBotDifficulty();
@@ -1327,6 +1331,12 @@ private:
 	void HandleTeamScopeClicked();
 
 	UFUNCTION()
+	void HandlePvPCategoryClicked();
+
+	UFUNCTION()
+	void HandleBotCategoryClicked();
+
+	UFUNCTION()
 	void HandleSortSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 
 	UFUNCTION()
@@ -1352,10 +1362,17 @@ private:
 	void RefreshSortOptions();
 	void SetSelectedRole(EProjectProject01LeaderboardRole NewRole, bool bRefreshLeaderboard);
 	void SetSelectedScope(EProjectProject01LeaderboardScope NewScope, bool bRefreshLeaderboard);
+	void SetSelectedCategory(EProjectProject01LeaderboardCategory NewCategory, bool bRefreshLeaderboard);
 	void SetStatus(const FString& Message, bool bIsError);
 	EProjectProject01LeaderboardRole GetSelectedRole() const;
 	EProjectProject01LeaderboardSort GetSelectedSort() const;
 	EProjectProject01LeaderboardScope GetSelectedScope() const;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> PvPCategoryButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> BotCategoryButton;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> MannequinTabButton;
@@ -1395,6 +1412,7 @@ private:
 
 	EProjectProject01LeaderboardRole SelectedRole = EProjectProject01LeaderboardRole::Mannequin;
 	EProjectProject01LeaderboardScope SelectedScope = EProjectProject01LeaderboardScope::Individual;
+	EProjectProject01LeaderboardCategory SelectedCategory = EProjectProject01LeaderboardCategory::PvP;
 	bool bUpdatingSortOptions = false;
 	bool bOpenedFromMatchResult = false;
 	bool bReturnToLobbyAfterLeave = false;

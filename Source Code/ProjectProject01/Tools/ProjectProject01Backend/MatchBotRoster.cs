@@ -44,8 +44,11 @@ internal static partial class LobbyEndpoints
             var user=await AuthenticateAsync(request,db,ct);
             if(user is null)return Results.Unauthorized();
             // Fail closed until dedicated-server execution and admission are wired and verified.
-            if(!app.Configuration.GetValue<bool>("Bots:EnableDedicatedMatches"))
+            // A local editor client (loopback) may use the editor dedicated server instead.
+            if(!LocalEditorTesting.BotsEnabled(request))
                 return Results.Json(new LobbyFailure("봇전 게임 서버 연결을 준비 중입니다."),statusCode:503);
+            if(await LocalEditorTesting.EnsureEditorServerAsync(request,available(),ct) is { } editorError)
+                return Results.Json(new LobbyFailure(editorError),statusCode:503);
             if(body.Role is not ("Mannequin" or "Survivor") || body.Difficulty is <1 or >5)
                 return Results.BadRequest(new LobbyFailure("생존자/마네킹과 1~5단계 난이도를 선택하세요."));
             try
@@ -76,7 +79,9 @@ internal static partial class LobbyEndpoints
         app.MapPost("/api/rooms/current/bots",async(EditRoomBotRequest body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await AuthenticateAsync(request,db,ct);if(user is null)return Results.Unauthorized();
-            if(!app.Configuration.GetValue<bool>("Bots:EnableDedicatedMatches"))return Results.Json(new LobbyFailure("봇 경기 기능을 준비 중입니다."),statusCode:503);
+            if(!LocalEditorTesting.BotsEnabled(request))return Results.Json(new LobbyFailure("봇 경기 기능을 준비 중입니다."),statusCode:503);
+            if(await LocalEditorTesting.EnsureEditorServerAsync(request,available(),ct) is { } editorError)
+                return Results.Json(new LobbyFailure(editorError),statusCode:503);
             if(body.Action is not ("add" or "remove" or "difficulty") || body.Difficulty is <1 or >5 ||
                 (body.Action!="add"&&!Guid.TryParse(body.BotId,out _)))return Results.BadRequest(new LobbyFailure("봇과 1~5단계 난이도를 확인하세요."));
             try
@@ -115,7 +120,11 @@ internal static partial class LobbyEndpoints
     internal static async Task<List<MatchBot>> LoadRoomBotsAsync(MySqlConnection c,MySqlTransaction? tx,string room,CancellationToken ct)
     {
         var rows=await CommunityEndpoints.Rows(c,tx,"SELECT bot_id,difficulty,assigned_role FROM room_bots WHERE room_id=@r ORDER BY bot_id",ct,("r",room));
-        return rows.Select((r,i)=>new MatchBot(Convert.ToString(r["bot_id"])!,"봇 "+(i+1),Convert.ToInt32(r["difficulty"]),
+        if(rows.Count==0)return [];
+        // Players already know bots are present before the match; names just should not read as a program.
+        var people=await CommunityEndpoints.Rows(c,tx,"SELECT u.display_name FROM room_members m INNER JOIN users u ON u.id=m.user_id WHERE m.room_id=@r",ct,("r",room));
+        var names=BotNames.ForRoster(rows.Select(r=>Convert.ToString(r["bot_id"])!),people.Select(p=>Convert.ToString(p["display_name"])!));
+        return rows.Select((r,i)=>new MatchBot(Convert.ToString(r["bot_id"])!,names[i],Convert.ToInt32(r["difficulty"]),
             r["assigned_role"] is DBNull?"":Convert.ToString(r["assigned_role"])!)).ToList();
     }
     internal static async Task<bool> IsBotRoomAsync(MySqlConnection c,MySqlTransaction? tx,string room,CancellationToken ct)=>

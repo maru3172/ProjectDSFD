@@ -99,7 +99,7 @@ internal static partial class LobbyEndpoints
         // Internal staging rooms are single-user only. Never recruit from open rooms or grouped parties.
         var selected=await CommunityEndpoints.Rows(c,tx,"SELECT q.search_id,q.room_id,TIMESTAMPDIFF(SECOND,MIN(q.created_at_utc),UTC_TIMESTAMP(6)) age FROM random_match_searches q JOIN random_match_search_members m ON m.search_id=q.search_id WHERE q.state='Waiting' GROUP BY q.search_id,q.room_id HAVING COUNT(m.user_id)=1 ORDER BY MIN(q.created_at_utc),q.search_id LIMIT 3",ct);
         if(selected.Count==0)return;
-        if(selected.Count<3 && (Convert.ToInt32(selected[0]["age"])<300 || !req.HttpContext.RequestServices.GetRequiredService<IConfiguration>().GetValue<bool>("Bots:EnableDedicatedMatches")))return;
+        if(selected.Count<3 && (Convert.ToInt32(selected[0]["age"])<300 || !LocalEditorTesting.BotsEnabled(req)))return;
         string room=Convert.ToString(selected[0]["room_id"])!;
         int? port=demand?.Configured==true?7777:await GameServerSlots.ReserveAsync(c,tx,room,ct);if(port is null)return;
         List<ulong> ids=[];

@@ -1103,6 +1103,19 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 	}
 	GetWorldTimerManager().ClearTimer(LocalMatchResultHandoffTimer);
 
+	// Blackout -> release -> results: if the screen is not fully black yet (e.g. a spectator fade was
+	// still running when the match ended), black it out first, then hand over to the result screen.
+	if (auto* FadeOwner=GetGameInstance<UProjectProject01GameInstance>(); FadeOwner && !bResultBlackoutStarted && !FadeOwner->IsEntireScreenBlack())
+	{
+		bResultBlackoutStarted=true;
+		SetIgnoreMoveInput(true);
+		SetIgnoreLookInput(true);
+		FadeOwner->FadeEntireScreenToBlack(0.6f);
+		GetWorldTimerManager().SetTimer(LocalMatchResultHandoffTimer,FTimerDelegate::CreateWeakLambda(this,[this]()
+			{ClientPresentMatchResult_Implementation(PendingLocalMatchResult);}),0.65f,false);
+		return;
+	}
+
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
 	if ((bSpectatorFadePending || bLocalLevelTransitionFadeHeld) && PlayerCameraManager)

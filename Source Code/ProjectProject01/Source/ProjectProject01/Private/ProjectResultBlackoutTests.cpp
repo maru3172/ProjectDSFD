@@ -18,17 +18,19 @@ bool FProjectResultBlackoutTest::RunTest(const FString&)
         Result.Outcome=Outcome;Result.bSuccess=Outcome!=TEXT("Eliminated");
         Widget->ConfigureResult(Result);
         TestEqual(TEXT("Before viewport handoff, multiplayer background is already fully opaque"),Widget->FadeBackground->GetBrushColor().A,1.f);
-        TestEqual(TEXT("Result menu is ready immediately, not after a second fade"),Widget->ResultMenu->GetRenderOpacity(),1.f);
-        TestTrue(TEXT("No secondary multiplayer fade remains"),Widget->FadeElapsedSeconds>=Widget->FadeDurationSeconds);
+        TestEqual(TEXT("Blackout first: the result menu starts hidden"),Widget->ResultMenu->GetRenderOpacity(),0.f);
         // NativeConstruct calls this same initializer. Construction must not reset
         // the opaque background to transparent after the old death layer is released.
         Widget->InitializeResultPresentation();
+        float Previous=-1.f;
         for(float Delta:{0.f,.016f,.5f,2.f})
         {
             Widget->NativeTick(FGeometry(),Delta);
             TestEqual(TEXT("Every result frame keeps the game world covered"),Widget->FadeBackground->GetBrushColor().A,1.f);
-            TestEqual(TEXT("Every result frame keeps the menu visible"),Widget->ResultMenu->GetRenderOpacity(),1.f);
+            TestTrue(TEXT("The blackout releases into the results gradually"),Widget->ResultMenu->GetRenderOpacity()>=Previous);
+            Previous=Widget->ResultMenu->GetRenderOpacity();
         }
+        TestEqual(TEXT("Results end fully visible"),Widget->ResultMenu->GetRenderOpacity(),1.f);
         Result.bLeaderboardVerificationReady=true;Widget->ConfigureResult(Result);
         TestEqual(TEXT("A verification refresh cannot replay blackout"),Widget->FadeBackground->GetBrushColor().A,1.f);
     }

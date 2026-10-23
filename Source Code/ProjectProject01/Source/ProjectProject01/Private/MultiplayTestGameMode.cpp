@@ -359,7 +359,11 @@ void AMultiplayTestGameMode::BeginPlay()
     for(TActorIterator<AMultiplayTestPlayerController> It(GetWorld());It;++It)
         if(IsMannequinController(*It)&&!It->GetViewedMannequin())AssignRandomInitialMannequinView(*It);
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();Instance&&Instance->ServerMatchCarryover&&!Instance->ServerMatchCarryover->Bots.IsEmpty())
-    {FString Error;MatchBots->AcceptRoster(Instance->ServerMatchCarryover->BotRoomId,Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Bots,Error);}
+    {
+        FString Error;MatchBots->AcceptRoster(Instance->ServerMatchCarryover->BotRoomId,Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Bots,Error);
+        // Learned opponent habits and relief continue on the new floor (personality/style come from the bot id).
+        if(Instance->ServerMatchCarryover->BotLearning)MatchBots->ImportLearning(*Instance->ServerMatchCarryover->BotLearning);
+    }
 	if (GetNetMode() == NM_DedicatedServer)
 		GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this,[this]()
 		{
@@ -2497,6 +2501,12 @@ bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharac
 	{
 		return false;
 	}
+	// The player's survivor is already out of a bot match: the match ends after the death sequence,
+	// so a bot reaching the exit meanwhile must not start a level travel without the player.
+	if (AreAllHumanSurvivorsEliminatedInBotMatch())
+	{
+		return false;
+	}
 
 	FTransitionPawnSnapshot Snapshot;
 	Snapshot.bHidden = Survivor->IsHidden();
@@ -2559,6 +2569,24 @@ bool AMultiplayTestGameMode::CanUseEmergencyElevator() const
 
 bool AMultiplayTestGameMode::CanCommitLevelTransition() const
 {
+	// Bot match with a single human player who is a survivor: when that player takes the exit, everyone
+	// travels; the bot survivors still in play come along (they respawn alive on the next floor).
+	if (MatchBots && MatchBots->HasRoster())
+	{
+		int32 Humans = 0;
+		bool bHumanSurvivorWaiting = false;
+		for (const auto& Pair : MatchPlayerRecords)
+		{
+			if (Pair.Value.bServerBot) continue;
+			++Humans;
+			bHumanSurvivorWaiting |= Pair.Value.Role == TEXT("Survivor") &&
+				Pair.Value.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting;
+		}
+		if (Humans == 1 && bHumanSurvivorWaiting)
+		{
+			return true;
+		}
+	}
 	TArray<EMultiplayTestSurvivorState> SurvivorStates;
 	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair :
 		MatchPlayerRecords)
@@ -2607,7 +2635,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
     {
         auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
-        if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();}
+        if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();Carry->BotLearning=MatchBots->ExportLearning();}
         Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
         Carry->Disconnected=DisconnectedMatchRecords;
         for(const auto& Pair:MatchPlayerRecords)if(Pair.Key.IsValid())Carry->Players.Add(Pair.Value.UserId,Pair.Value);
@@ -2676,6 +2704,27 @@ void AMultiplayTestGameMode::CancelLevelTransitionTravel()
 	RecordTimeline(EProjectMatchEvent::LevelTravel, {}, TEXT("이동 실패: 현재 맵 복구"));
 }
 
+bool AMultiplayTestGameMode::AreAllHumanSurvivorsEliminatedInBotMatch() const
+{
+	// All-bot matches (observers only) and a human mannequin have no human survivor: normal rules apply.
+	if (!MatchBots || !MatchBots->HasRoster())
+	{
+		return false;
+	}
+	int32 HumanSurvivors = 0, HumansStillPlaying = 0, HumansEliminated = 0;
+	auto Count = [&](const FMultiplayTestServerPlayerRecord& Record)
+	{
+		if (Record.Role != TEXT("Survivor") || Record.bServerBot) return;
+		++HumanSurvivors;
+		HumansStillPlaying += Record.SurvivorState == EMultiplayTestSurvivorState::Active ||
+			Record.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting;
+		HumansEliminated += Record.SurvivorState == EMultiplayTestSurvivorState::Eliminated;
+	};
+	for (const auto& Pair : MatchPlayerRecords) Count(Pair.Value);
+	for (const auto& Pair : DisconnectedMatchRecords) Count(Pair.Value);
+	return HumanSurvivors > 0 && HumansStillPlaying == 0 && HumansEliminated > 0;
+}
+
 void AMultiplayTestGameMode::CheckForMatchCompletion()
 {
 	TArray<EMultiplayTestSurvivorState> SurvivorStates;
@@ -2702,6 +2751,14 @@ void AMultiplayTestGameMode::CheckForMatchCompletion()
 		TEXT("Match completion check: Survivors=%d Resolved=%d Eliminated=%d Escaped=%d."),
 		Summary.SurvivorCount, Summary.ResolvedCount, Summary.EliminatedCount,
 		Summary.ResolvedCount - Summary.EliminatedCount);
+
+	// Bot match played as a survivor: once every human survivor is eliminated, end right away instead of
+	// letting the bots carry on (and travel) without the player.
+	if (!Summary.IsComplete() && AreAllHumanSurvivorsEliminatedInBotMatch())
+	{
+		FinishAuthoritativeMatch(TEXT("HumanSurvivorsEliminated"));
+		return;
+	}
 	if (Summary.IsComplete())
 	{
 		if (Summary.DidMannequinWin())

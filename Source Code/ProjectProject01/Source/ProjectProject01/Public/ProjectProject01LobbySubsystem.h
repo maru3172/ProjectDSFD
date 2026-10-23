@@ -43,6 +43,14 @@ enum class EProjectProject01LeaderboardScope : uint8
 	Team
 };
 
+/** PvP: people only. Bot: any match with a bot (bot match, open match with bots, random match filled with bots). */
+UENUM(BlueprintType)
+enum class EProjectProject01LeaderboardCategory : uint8
+{
+	PvP,
+	Bot
+};
+
 UENUM(BlueprintType)
 enum class EProjectProject01LeaderboardSort : uint8
 {
@@ -361,7 +369,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
 	void RefreshLeaderboard(EProjectProject01LeaderboardRole Role, EProjectProject01LeaderboardSort Sort,
-		EProjectProject01LeaderboardScope Scope);
+		EProjectProject01LeaderboardScope Scope,
+		EProjectProject01LeaderboardCategory Category = EProjectProject01LeaderboardCategory::PvP);
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Leaderboard")
 	void SubmitLeaderboardRecord(

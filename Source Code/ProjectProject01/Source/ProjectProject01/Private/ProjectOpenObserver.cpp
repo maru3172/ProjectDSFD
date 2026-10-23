@@ -76,11 +76,23 @@ void AProjectOpenObserverController::ClientEnterObservation_Implementation()
         if(auto* Project=Cast<UProjectProject01GameInstance>(GI))Project->HoldEntireScreenBlack();
     }
     ClientConfigureSurvivorCommunication_Implementation(FString(),FString(),TEXT("Disabled"));
+    ShowObserverWidget();
+    bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());SetIgnoreLookInput(true);
+    bAutoManageActiveCameraTarget=false;if(GetPawn())SetViewTarget(GetPawn());
+}
+void AProjectOpenObserverController::ShowObserverWidget()
+{
+    // Seamless travel can deliver the admission RPC before the new controller owns a viewport player.
+    if(!IsLocalController()||!GetLocalPlayer()){bObserverWidgetPending=true;return;}
+    bObserverWidgetPending=false;
     if(ObserverWidget)ObserverWidget->RemoveFromParent();
     ObserverWidget=CreateWidget<UProjectOpenObserverWidget>(this,UProjectOpenObserverWidget::StaticClass());
     if(ObserverWidget)ObserverWidget->AddToViewport(1000);
-    bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());SetIgnoreLookInput(true);
-    bAutoManageActiveCameraTarget=false;if(GetPawn())SetViewTarget(GetPawn());
+}
+void AProjectOpenObserverController::ReceivedPlayer()
+{
+    Super::ReceivedPlayer();
+    if(bObserverWidgetPending&&!bResultDelivered)ShowObserverWidget();
 }
 void AProjectOpenObserverController::SetupInputComponent()
 {

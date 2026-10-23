@@ -357,7 +357,8 @@ void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
 void UProjectProject01LobbySubsystem::RefreshLeaderboard(
 	const EProjectProject01LeaderboardRole Role,
 	EProjectProject01LeaderboardSort Sort,
-	EProjectProject01LeaderboardScope Scope)
+	EProjectProject01LeaderboardScope Scope,
+	const EProjectProject01LeaderboardCategory Category)
 {
 	const bool bMannequinSort = Sort == EProjectProject01LeaderboardSort::Overall ||
 		Sort == EProjectProject01LeaderboardSort::Captures ||
@@ -378,9 +379,10 @@ void UProjectProject01LobbySubsystem::RefreshLeaderboard(
 	LeaderboardRole = Role;
 	LeaderboardSort = Sort;
 	LeaderboardScope = Scope;
-	const FString Endpoint = FString::Printf(TEXT("/api/leaderboards/%s?sort=%s&scope=%s"),
+	const FString Endpoint = FString::Printf(TEXT("/api/leaderboards/%s?sort=%s&scope=%s&category=%s"),
 		ProjectProject01Lobby::RoleToString(Role), ProjectProject01Lobby::SortToString(Sort),
-		ProjectProject01Lobby::ScopeToString(Scope));
+		ProjectProject01Lobby::ScopeToString(Scope),
+		Category == EProjectProject01LeaderboardCategory::Bot ? TEXT("bot") : TEXT("pvp"));
     DesiredLeaderboardEndpoint=Endpoint;
     LeaderboardEntries.Reset();OnLeaderboardChanged.Broadcast();
     if(IsRequestInFlight()){bLeaderboardRefreshQueued=true;return;}
@@ -534,6 +536,11 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Auth->GetAccessTokenForAuthenticatedRequest());
 	FProjectProject01VersionContract::ApplyToRequest(Request);
+#if WITH_EDITOR
+	// Editor builds only: a loopback backend may then run bot/observer matches on an editor dedicated
+	// server. Packaged clients never send this and still need a real dedicated server.
+	Request->SetHeader(TEXT("X-ProjectProject01-Client"), TEXT("Editor"));
+#endif
 	Request->SetTimeout(RequestTimeoutSeconds);
 	if (!JsonBody.IsEmpty())
 	{
@@ -664,7 +671,13 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 			return;
 		}
 		Complete(Operation, false, Message);
-		if (StatusCode == 401 || StatusCode == 408 || StatusCode >= 500)
+		// Bot/observer endpoints answer 503 with a message while the feature or its game server is not
+		// ready. That is a feature state, not a dead backend: show it instead of logging the player out.
+		const bool bFeatureUnavailable = StatusCode == 503 && bJsonValid &&
+			(Operation == EProjectProject01LobbyOperation::CreateBotMatch ||
+			 Operation == EProjectProject01LobbyOperation::EditRoomBot ||
+			 Operation == EProjectProject01LobbyOperation::EditRoomParticipant);
+		if (!bFeatureUnavailable && (StatusCode == 401 || StatusCode == 408 || StatusCode >= 500))
 		{
 			if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
 			{
