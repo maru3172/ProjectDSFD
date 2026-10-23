@@ -36,6 +36,8 @@ void AFireShutterActor::BeginPlay()
 	TargetOpenAlpha = 0.0f;
 	
 	// 시작할 때는 닫힌 위치를 정확하게 적용한다.
+	// ItemMesh 컴포넌트 위치를 ClosedLocation 위치로 변경한다.
+	// 위치는 SceneRoot 컴포넌트를 기준으로 계산된다.
 	ItemMesh->SetRelativeLocation(ClosedLocation);
 	
 	// 매 프레임 호출되던 Tick 을 중지
@@ -67,9 +69,11 @@ void AFireShutterActor::Tick(float DeltaTime)
 		AlphaSpeed
 		);
 	
+	// Clamp: 값을 범위 안으로 제한한다.
 	// 계산 오차가 발생해도 이동 범위를 벗어나지 않게 제한한다.
 	CurrentOpenAlpha = FMath::Clamp(CurrentOpenAlpha, 0.0f, 1.0f);
 	
+	// Lerp: 두 값 사이의 중간값이나 위치를 계산한다.
 	// Alpha 가 0 이면 ClosedLocation
 	// Alpha 가 1 이면 OpenLocation
 	const FVector NewLocation = FMath::Lerp(ClosedLocation, OpenLocation, CurrentOpenAlpha);
