@@ -65,20 +65,33 @@ void AProjectOpenObserverController::Admit()
 }
 void AProjectOpenObserverController::ClientEnterObservation_Implementation()
 {
+    SurvivorSpectatorView={};bRevealed=false;bResultDelivered=false;LocalTarget.Reset();
+    bObservationEntered=true;
+    ApplyObservationPresentation();
+    ShowObserverWidget();
+}
+void AProjectOpenObserverController::ApplyObservationPresentation()
+{
+    // Observers never get a pawn reveal or a loading-gate release: switch those player paths off.
     bInitialGameplayFadePending=false;bInitialGameplayFadeScheduled=false;
     ResetIgnoreMoveInput();ResetIgnoreLookInput();
     GetWorldTimerManager().ClearTimer(InitialGameplayReadinessTimer);
     bLoadingGateRequired=false;bLoadingGateReleased=true;bClientArrivalViewPending=false;bLocalLevelTransitionFadeHeld=false;
-    SurvivorSpectatorView={};bRevealed=false;bResultDelivered=false;LocalTarget.Reset();
     if(auto* GI=GetGameInstance())
     {
         if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>()){Loading->NotifyViewReady();Loading->CancelLoading();}
-        if(auto* Project=Cast<UProjectProject01GameInstance>(GI))Project->HoldEntireScreenBlack();
+        if(auto* Project=Cast<UProjectProject01GameInstance>(GI))
+        {
+            // Stay black until the match is running; if it already revealed, keep the view open.
+            if(bRevealed){if(PlayerCameraManager)PlayerCameraManager->StopCameraFade();Project->ClearEntireScreenFade();}
+            else Project->HoldEntireScreenBlack();
+        }
     }
     ClientConfigureSurvivorCommunication_Implementation(FString(),FString(),TEXT("Disabled"));
-    ShowObserverWidget();
     bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());SetIgnoreLookInput(true);
-    bAutoManageActiveCameraTarget=false;if(GetPawn())SetViewTarget(GetPawn());
+    bAutoManageActiveCameraTarget=false;
+    if(AActor* Followed=LocalTarget.Get()){SetIgnoreMoveInput(true);SetViewTarget(Followed);}
+    else if(GetPawn())SetViewTarget(GetPawn());
 }
 void AProjectOpenObserverController::ShowObserverWidget()
 {
@@ -89,9 +102,17 @@ void AProjectOpenObserverController::ShowObserverWidget()
     ObserverWidget=CreateWidget<UProjectOpenObserverWidget>(this,UProjectOpenObserverWidget::StaticClass());
     if(ObserverWidget)ObserverWidget->AddToViewport(1000);
 }
+void AProjectOpenObserverController::BeginPlay()
+{
+    Super::BeginPlay();
+    if(bObservationEntered&&!bResultDelivered)ApplyObservationPresentation(); // Same guard as ReceivedPlayer.
+}
 void AProjectOpenObserverController::ReceivedPlayer()
 {
     Super::ReceivedPlayer();
+    // The base class sets up a player's presentation here (black hold, loading gate, pawn-reveal timer).
+    // When admission arrived first, that would leave an observer on a black screen for the whole match.
+    if(bObservationEntered&&!bResultDelivered)ApplyObservationPresentation();
     if(bObserverWidgetPending&&!bResultDelivered)ShowObserverWidget();
 }
 void AProjectOpenObserverController::SetupInputComponent()

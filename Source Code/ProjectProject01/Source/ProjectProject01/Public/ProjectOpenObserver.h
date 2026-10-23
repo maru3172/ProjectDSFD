@@ -27,6 +27,9 @@ public:
     virtual void SetupInputComponent() override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     virtual void ReceivedPlayer() override;
+protected:
+    virtual void BeginPlay() override;
+public:
     void Select(const FString& PlayerId,bool Locked);
     AActor* GetObservedActor()const{return LocalTarget.Get();}
     UFUNCTION(Server,Reliable) void ServerSelect(const FString& PlayerId,bool Locked);
@@ -38,6 +41,8 @@ public:
     UFUNCTION(Client,Reliable) void ClientFinishObservation(const FMultiplayTestMatchResult& Result);
 private:
     void ShowObserverWidget();
+    void ApplyObservationPresentation();
+    bool bObservationEntered=false;
     UPROPERTY(Transient) TObjectPtr<class UProjectOpenObserverWidget> ObserverWidget;
     bool bObserverWidgetPending=false;
     TWeakObjectPtr<AActor> LocalTarget,ServerTarget;
