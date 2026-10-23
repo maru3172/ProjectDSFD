@@ -47,7 +47,8 @@ void AMultiplayTestGameMode::InitializeLoadingGate(AMultiplayTestPlayerControlle
 	const auto* Record=MatchPlayerRecords.Find(Controller);if(!Record)return;
 	const FString Id=Record->UserId.IsEmpty()?Controller->GetName():Record->UserId;
 	LoadingGate.Join(Id);
-	Controller->ClientBeginLoadingGate(LoadingGate.Epoch,Id,Record->DisplayName,LoadingGate.Expected,LoadingGate.Released);
+	if(Controller->IsServerControlledBot())LoadingGate.Report(Id,LoadingGate.Epoch,100);
+	else Controller->ClientBeginLoadingGate(LoadingGate.Epoch,Id,Record->DisplayName,LoadingGate.Expected,LoadingGate.Released);
 	LoadingBroadcastSeconds=1;
 }
 void AMultiplayTestGameMode::ReceiveLoadingStage(AMultiplayTestPlayerController* Controller,const FString& Epoch,uint8 Progress)
@@ -81,7 +82,7 @@ bool AMultiplayTestGameMode::TickLoadingGate(float Delta)
 	if(LoadingBroadcastSeconds>=.5f)
 	{
 		LoadingBroadcastSeconds=0;
-		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get())PC->ClientUpdateLoadingParticipants(LoadingGate.Epoch,Rows);
+		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get();PC&&!PC->IsServerControlledBot())PC->ClientUpdateLoadingParticipants(LoadingGate.Epoch,Rows);
 	}
 	if(LoadingGate.AllReady() && AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment)
 	{
@@ -91,14 +92,14 @@ bool AMultiplayTestGameMode::TickLoadingGate(float Delta)
 			if(auto* Move=Character->GetCharacterMovement())Move->SetMovementMode(EMovementMode(Pair.Value.Key),Pair.Value.Value);
 		LoadingMovementModes.Reset();SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);BeginMatchTimeline();
 		UE_LOG(LogProjectProject01Multiplayer,Log,TEXT("All %d participants ready; loading barrier released."),LoadingGate.Expected);
-		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get())
+		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get();PC&&!PC->IsServerControlledBot())
 		{PC->ClientUpdateLoadingParticipants(LoadingGate.Epoch,Rows);PC->ClientReleaseLoadingGate(LoadingGate.Epoch);}
 		return false;
 	}
 	if(LoadingGate.Expired(FPlatformTime::Seconds()))
 	{
 		LoadingGate.Released=true;SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending);
-		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get())PC->ClientFailLoadingGate(TEXT("참가자 로딩 준비가 120초 안에 완료되지 않았습니다. 다시 로그인해 주세요."));
+		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get();PC&&!PC->IsServerControlledBot())PC->ClientFailLoadingGate(TEXT("참가자 로딩 준비가 120초 안에 완료되지 않았습니다. 다시 로그인해 주세요."));
 		// A failed load is not a played match and must not award a victory/result.
 		if(IsRunningDedicatedServer())GetWorldTimerManager().SetTimerForNextTick([](){FPlatformMisc::RequestExit(false);});
 		return false;

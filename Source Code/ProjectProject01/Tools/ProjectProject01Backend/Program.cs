@@ -823,6 +823,7 @@ internal sealed class AuthDatabase
         await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
         await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
+        await LobbyEndpoints.EnsureMatchBotSchemaAsync(connection, cancellationToken);
     }
 
     private static async Task EnsureSurveyReviewSchemaAsync(MySqlConnection connection, CancellationToken ct)

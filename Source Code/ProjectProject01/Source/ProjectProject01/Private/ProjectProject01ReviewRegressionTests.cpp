@@ -773,6 +773,8 @@ bool FProjectNetworkIsolationTest::RunTest(const FString&)
     FProjectProject01ValidatedJoinClaim Out;
     TestFalse(TEXT("C06 another PIE game cannot consume an account claim"),B->ConsumeValidatedJoinClaim(TEXT("same-token"),Out));
     TestTrue(TEXT("C06 owner consumes the claim once"),A->ConsumeValidatedJoinClaim(TEXT("same-token"),Out)&&Out.UserId==TEXT("A")&&!A->ConsumeValidatedJoinClaim(TEXT("same-token"),Out));
+    TestTrue(TEXT("Authenticated observer can prepare the same encrypted handshake, without a survivor identity"),A->ConfigurePendingGameConnection(FString::ChrN(64,TCHAR('t')),TEXT("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),FGuid::NewGuid().ToString(),FGuid::NewGuid().ToString(),TEXT("Observer")));
+    A->ClearPendingGameConnection();
     return true;
 }
 #endif

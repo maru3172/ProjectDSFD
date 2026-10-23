@@ -17,6 +17,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
+#include "ProjectAdaptiveBotPolicy.h"
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -3513,11 +3514,12 @@ void UProjectProject01MatchResultWidget::InitializeResultPresentation()
 	// result background followed by a second fade exposed the world for 1.5 seconds.
 	// Establish opaque black BEFORE AddToViewport; only the single escape retains
 	// its original fade from gameplay when it has not already blacked out.
-	const bool bImmediate = !bSinglePlayer || !Result.bSuccess;
+	const bool bObserver=!bSinglePlayer&&Result.Role==TEXT("Observer");
+    const bool bImmediate = !bObserver&&(!bSinglePlayer || !Result.bSuccess);
 	FadeElapsedSeconds = bImmediate ? FadeDurationSeconds : 0.0f;
 	if (IsValid(FadeBackground))
 	{
-		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, bImmediate ? 1.0f : 0.0f));
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, bImmediate||bObserver ? 1.0f : 0.0f));
 	}
 	if (IsValid(ResultMenu))
 	{
@@ -3585,11 +3587,11 @@ void UProjectProject01MatchResultWidget::NativeTick(
 		: 1.0f;
 	if (IsValid(FadeBackground))
 	{
-		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.98f * FadeAlpha));
+		FadeBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, Result.Role==TEXT("Observer")?1.f:0.98f * FadeAlpha));
 	}
 	if (IsValid(ResultMenu))
 	{
-		const float MenuAlpha = FMath::Clamp((FadeAlpha - 0.72f) / 0.28f, 0.0f, 1.0f);
+		const float MenuAlpha = Result.Role==TEXT("Observer")?FadeAlpha:FMath::Clamp((FadeAlpha - 0.72f) / 0.28f, 0.0f, 1.0f);
 		ResultMenu->SetRenderOpacity(MenuAlpha);
 		if (FadeAlpha >= 1.0f)
 		{
@@ -3667,7 +3669,7 @@ void UProjectProject01MatchResultWidget::HandleReturnToTitleClicked()
 	{
 		return;
 	}
-	if (!bSinglePlayer)
+    if (!bSinglePlayer)
 	{
 		BeginAuthenticatedExit(true);
 		return;
@@ -3889,6 +3891,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	{
 		Details = Result.bSuccess ? TEXT("탈출하였습니다") : TEXT("죽었습니다");
 	}
+    else if(Result.Role==TEXT("Observer"))Details=TEXT("경기가 종료되었습니다.");
 	else if (Result.Outcome == TEXT("Forfeited"))
 	{
 		Details = TEXT("기권했습니다");
@@ -3916,20 +3919,33 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 
 	if (!bSinglePlayer)
 	{
-		Details += FString::Printf(TEXT("\n역할: %s\n전체 경기 시간: %.2f초"),
-			*Result.Role, Result.MatchDurationSeconds);
+        if(Result.Role==TEXT("Observer"))
+        {
+            Details+=FString::Printf(TEXT("\n전체 경기 시간: %.2f초"),Result.MatchDurationSeconds);
+            for(const auto& Player:Result.ObservedPlayers)
+            {
+                const bool Mannequin=Player.Role==TEXT("Mannequin");
+                const FString Outcome=Player.Outcome==TEXT("Forfeited")?TEXT("기권"):Player.bSuccess?TEXT("성공"):TEXT("실패");
+                Details+=FString::Printf(TEXT("\n\n[%s] %s — %s"),Mannequin?TEXT("마네킹"):TEXT("생존자"),*Player.Name,*Outcome);
+                Details+=Mannequin?FString::Printf(TEXT("\n포획 %d회 · 첫 포획 %.2f초 · 전원 포획 %.2f초"),Player.CaptureCount,Player.FirstCaptureSeconds,Player.AllCapturedSeconds):
+                    FString::Printf(TEXT("\n구출 %d회 · 탈출 시간 %s"),Player.RescueCount,Player.bSuccess?*FString::Printf(TEXT("%.2f초"),Player.EscapeSeconds):TEXT("—"));
+            }
+        }
+        else Details += FString::Printf(TEXT("\n역할: %s\n전체 경기 시간: %.2f초"),*Result.Role, Result.MatchDurationSeconds);
 		if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
 		{
 			Details += FString::Printf(TEXT("\n붙잡은 횟수: %d\n첫 포획 시간: %.2f초\n전원 제거 시간: %.2f초"),
 				Result.CaptureCount, Result.FirstCaptureSeconds, Result.AllCapturedSeconds);
 		}
-		else
+		else if(Result.Role!=TEXT("Observer"))
 		{
 			Details += FString::Printf(TEXT("\n구출 횟수: %d\n탈출 시간: %.2f초"),
 				Result.RescueCount, Result.EscapeSeconds);
 		}
 	}
 	ResultText->SetText(FProjectProject01Localization::Text(Details));
+    auto DisplayFont=ResultText->GetFont();DisplayFont.Size=Result.Role==TEXT("Observer")?22:36;ResultText->SetFont(DisplayFont);
+    ResultText->SetAutoWrapText(Result.Role==TEXT("Observer"));ResultText->SetWrapTextAt(900);
 	const bool bHasTimeline = !bSinglePlayer && !Result.Timeline.IsEmpty();
 	if (!bHasTimeline) bShowingTimeline = false;
 	if (IsValid(TimelineButton))
@@ -3983,7 +3999,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	}
 	if (IsValid(StatusText))
 	{
-		const FString Status = bSinglePlayer
+		const FString Status = Result.Role==TEXT("Observer")?FString(TEXT("관전 결과는 전적·레이팅에 반영되지 않습니다.")):bSinglePlayer
 			? FString()
 			: Result.bLeaderboardVerificationPending
 			? TEXT("경기 결과를 표시했습니다. 서버 기록을 확인하는 중입니다.")
@@ -5303,14 +5319,61 @@ void UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked()
 }
 void UProjectProject01LobbyWidget::HandleOpenMatchClicked()
 {
+    bShowingBotMatch=false;
     HandleCloseCodeJoinClicked();
     bShowingOpenMatching=true;bShowingMatchmaking=false;bShowingCreateRoom=false;ShowLobbyView(0);
 }
+void UProjectProject01LobbyWidget::HandleBotMatchClicked()
+{
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    if(!Lobby||Lobby->HasCurrentRoom()||Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||bTravelRequested||bGameStartFadeActive)return;
+    HandleCloseCodeJoinClicked();bShowingBotMatch=true;bShowingTutorial=false;bShowingOpenMatching=false;bShowingMatchmaking=false;bShowingCreateRoom=false;
+    ShowLobbyView(7);RefreshCurrentRoomView();
+}
+void UProjectProject01LobbyWidget::HandleBotMatchCreateClicked()
+{
+    if(!BotMatchRole||!BotMatchDifficulty)return;
+    if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))
+        Lobby->CreateBotMatch(BotMatchRole->GetSelectedIndex()==1?TEXT("Mannequin"):TEXT("Survivor"),BotMatchDifficulty->GetSelectedIndex()+1);
+    RefreshLobbyState();
+}
 void UProjectProject01LobbyWidget::HandleTutorialClicked()
 {
+    bShowingBotMatch=false;
 	auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
 	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || bTravelRequested || bGameStartFadeActive) return;
 	bShowingTutorial=true; ShowLobbyView(6);
+}
+void UProjectProject01LobbyWidget::HandleAddRoomBot()
+{
+    if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);Lobby&&RoomBotDifficulty)
+        Lobby->EditRoomBot(TEXT("add"),FString(),RoomBotDifficulty->GetSelectedIndex()+1);
+    RefreshCurrentRoomView();
+}
+void UProjectProject01LobbyWidget::HandleSwitchObserver()
+{
+    if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->EditRoomParticipant(L->GetCurrentRoom().bIsObserver?TEXT("play"):TEXT("observe"));
+    RefreshCurrentRoomView();
+}
+void UProjectProject01LobbyWidget::HandleMoveToObserver()
+{if(!SelectedHostTransferUserId.IsEmpty())if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->EditRoomParticipant(TEXT("observe"),SelectedHostTransferUserId);RefreshCurrentRoomView();}
+void UProjectProject01LobbyWidget::HandleMoveToPlayer()
+{if(!SelectedHostTransferUserId.IsEmpty())if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->EditRoomParticipant(TEXT("play"),SelectedHostTransferUserId);RefreshCurrentRoomView();}
+void UProjectProject01LobbyWidget::HandleKickParticipant()
+{if(!SelectedHostTransferUserId.IsEmpty())if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->EditRoomParticipant(TEXT("kick"),SelectedHostTransferUserId);RefreshCurrentRoomView();}
+void UProjectProject01LobbyWidget::HandleRemoveRoomBot()
+{
+    const int32 Index=RoomBotSelection?RoomBotSelection->GetSelectedIndex():INDEX_NONE;
+    if(RoomBotIds.IsValidIndex(Index))if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))
+        Lobby->EditRoomBot(TEXT("remove"),RoomBotIds[Index],2);
+    RefreshCurrentRoomView();
+}
+void UProjectProject01LobbyWidget::HandleChangeRoomBotDifficulty()
+{
+    const int32 Index=RoomBotSelection?RoomBotSelection->GetSelectedIndex():INDEX_NONE;
+    if(RoomBotIds.IsValidIndex(Index)&&RoomBotDifficulty)if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))
+        Lobby->EditRoomBot(TEXT("difficulty"),RoomBotIds[Index],RoomBotDifficulty->GetSelectedIndex()+1);
+    RefreshCurrentRoomView();
 }
 void UProjectProject01LobbyWidget::HandleSurvivorTutorialClicked() { StartTutorial(false); }
 void UProjectProject01LobbyWidget::HandleMannequinTutorialClicked() { StartTutorial(true); }
@@ -5337,11 +5400,13 @@ void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin,bool bFreePract
 }
 void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
 {
+    bShowingBotMatch=false;
     HandleCloseCodeJoinClicked();
     bShowingMatchmaking=true;bShowingOpenMatching=false;bShowingCreateRoom=false;bPartyCreationRequested=false;ShowLobbyView(3);RefreshMatchmakingView();RefreshLobbyState();
 }
 void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
 {
+    bShowingBotMatch=false;
     bShowingTutorial=false;
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
     if(!Lobby)return;
@@ -5970,8 +6035,8 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
 {
 	if(!IsValid(MemberProfilePanel))return;
 	TArray<FString> Keys;
-	for(const auto& M:Members)Keys.Add(FString::Printf(TEXT("%s:%d:%s:%d%d%d:%d:%s"),*M.UserId,M.DisplayName.Len(),*M.DisplayName,
-		M.bIsHost,M.bIsReady,M.bReturnedToRoom,bRevealRoles,*M.AssignedRole));
+	for(const auto& M:Members)Keys.Add(FString::Printf(TEXT("%s:%d:%s:%d%d%d%d:%d:%s"),*M.UserId,M.DisplayName.Len(),*M.DisplayName,
+		M.bIsHost,M.bIsReady,M.bReturnedToRoom,M.bIsObserver,bRevealRoles,*M.AssignedRole));
 	// Keep live buttons stable across the room's periodic refresh (including mouse-down/up).
 	if(Keys==MemberProfileRowKeys)return;
 	MemberProfileRowKeys=MoveTemp(Keys);MemberProfilePanel->ClearChildren();MemberProfileBindings.Reset();
@@ -5981,14 +6046,15 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
 		const FString Role=bRevealRoles&&!M.AssignedRole.IsEmpty()?TEXT(" [")+M.AssignedRole+TEXT("]"):FString();
 		Label->SetText(FText::FromString(M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+
-			(M.bIsHost?TEXT("시작 대기"):M.bIsReady?TEXT("준비"):TEXT("대기"))+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
+			(M.bIsObserver?TEXT("관전"):M.bIsHost?TEXT("시작 대기"):M.bIsReady?TEXT("준비"):TEXT("대기"))+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
 		FSlateFontInfo Font=Label->GetFont();Font.Size=20;Label->SetFont(Font);Label->SetAutoWrapText(true);Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		auto* LabelSlot=Row->AddChildToHorizontalBox(Label);LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));LabelSlot->SetVerticalAlignment(VAlign_Center);
 		auto* Binding=NewObject<UProjectProject01RoomProfileBinding>(this);Binding->Owner=this;Binding->UserId=M.UserId;
 		MemberProfileBindings.Add(Binding);
 		auto* Background=WidgetTree->ConstructWidget<UBorder>();Background->SetBrushColor(FLinearColor(.06f,.09f,.13f,1));Background->SetPadding(FMargin(12,8));Background->AddChild(Row);
 		Background->SetToolTipText(FProjectProject01Localization::Text(TEXT("우클릭하여 프로필·친구·귓속말·차단·신고")));
-		Background->OnMouseButtonDownEvent.BindDynamic(Binding,&UProjectProject01RoomProfileBinding::HandleMouseButtonDown);
+		if(!M.bIsBot)Background->OnMouseButtonDownEvent.BindDynamic(Binding,&UProjectProject01RoomProfileBinding::HandleMouseButtonDown);
+		else Background->SetToolTipText(FProjectProject01Localization::Text(TEXT("게임 서버가 조종하는 봇입니다.")));
 		MemberProfilePanel->AddChildToVerticalBox(Background)->SetPadding(FMargin(6,3));
 	}
 }
@@ -6013,12 +6079,13 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     RefreshMatchmakingView();
     const bool RandomStart=bInRoom&&Lobby->GetCurrentRoom().bRandomMatch;
 	const bool bCodeJoinOpen=CodeJoinPanel&&CodeJoinPanel->GetVisibility()!=ESlateVisibility::Collapsed;
-	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingTutorial?6:bShowingOpenMatching?0:4);
+	ShowLobbyView(bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
+    if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&!bTravelRequested&&!bGameStartFadeActive);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
     if(OpenCodeJoinButton)OpenCodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
     if(CodeJoinButton)CodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
-	if (IsValid(ReadyButton)) ReadyButton->SetVisibility(bInRoom && !Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(ReadyButton)) ReadyButton->SetVisibility(bInRoom && !Lobby->GetCurrentRoom().bIsHost && !Lobby->GetCurrentRoom().bIsObserver ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(StartRoomButton)) StartRoomButton->SetVisibility(bInRoom && !RandomStart && Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(LeaveRoomButton)) LeaveRoomButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(CopyJoinCodeButton)) CopyJoinCodeButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -6038,14 +6105,49 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	}
 
 	const FProjectProject01RoomState& Room = Lobby->GetCurrentRoom();
+    int32 Observers=0;for(const auto& Member:Room.Members)Observers+=Member.bIsObserver?1:0;
+    const int32 Playing=Room.Members.Num()-Observers+Room.Bots.Num();
+    const bool OpenWaiting=!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted;
+    if(SwitchObserverButton)
+    {
+        SwitchObserverButton->SetVisibility(OpenWaiting?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        SwitchObserverButton->SetIsEnabled(!Lobby->IsRequestInFlight()&&(Room.bIsObserver?Playing<3:Observers<2));
+        if(auto* Caption=Cast<UTextBlock>(SwitchObserverButton->GetChildAt(0)))Caption->SetText(FText::FromString(Room.bIsObserver?TEXT("플레이 참가로 전환"):TEXT("관전으로 전환")));
+    }
+    if(ParticipantManagement){ParticipantManagement->SetVisibility(OpenWaiting&&Room.bIsHost?ESlateVisibility::Visible:ESlateVisibility::Collapsed);ParticipantManagement->SetIsEnabled(!Lobby->IsRequestInFlight()&&!SelectedHostTransferUserId.IsEmpty());}
 	if (IsValid(CurrentRoomText))
 	{
 		CurrentRoomText->SetText(FText::FromString(FString::Printf(
-			TEXT("방: %s\n참가 코드: %s\n인원: %d/3\n경기 세션: %s"),
-			*Room.Name, *Room.JoinCode, Room.Members.Num(),
+			TEXT("방: %s\n참가 코드: %s\n플레이: %d/3 · 관전: %d/2\n경기 세션: %s"),
+			*Room.Name, *Room.JoinCode, Playing,Observers,
 			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"))));
 	}
-	PopulateRoomMemberProfiles(Room.Members,bGameStartFadeActive||bGameStartFadeComplete);
+    auto DisplayMembers=Room.Members;
+    for(const auto& Bot:Room.Bots)
+    {
+        FProjectProject01RoomMember Row;Row.UserId=TEXT("Bot:")+Bot.BotId;Row.bIsBot=true;Row.bIsReady=true;
+        Row.DisplayName=FString::Printf(TEXT("%s · %s"),*Bot.DisplayName,UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Bot.Difficulty)));
+        Row.AssignedRole=Bot.AssignedRole;DisplayMembers.Add(MoveTemp(Row));
+    }
+	PopulateRoomMemberProfiles(DisplayMembers,bGameStartFadeActive||bGameStartFadeComplete);
+    if(RoomBotPanel)
+    {
+        const bool Editable=Room.bIsHost&&!Room.bBotMatch&&!Room.bRandomParty&&!Room.bRandomMatch&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted;
+        RoomBotPanel->SetVisibility(Editable?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        RoomBotPanel->SetIsEnabled(Editable&&!Lobby->IsRequestInFlight());
+        TArray<FString> Ids,Labels;
+        for(const auto& Bot:Room.Bots){Ids.Add(Bot.BotId);Labels.Add(FString::Printf(TEXT("%s — %s"),*Bot.DisplayName,UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Bot.Difficulty))));}
+        if(Ids!=RoomBotIds||Labels!=RoomBotLabels)
+        {
+            const int32 OldIndex=RoomBotSelection->GetSelectedIndex();const FString Old=RoomBotIds.IsValidIndex(OldIndex)?RoomBotIds[OldIndex]:FString();
+            RoomBotIds=MoveTemp(Ids);RoomBotLabels=MoveTemp(Labels);RoomBotSelection->ClearOptions();
+            for(const auto& Label:RoomBotLabels)RoomBotSelection->AddOption(Label);
+            int32 Index=RoomBotIds.IndexOfByKey(Old);if(Index==INDEX_NONE&&!RoomBotIds.IsEmpty())Index=0;
+            RoomBotSelection->SetSelectedIndex(Index);
+        }
+        AddRoomBotButton->SetIsEnabled(Playing<3);
+        RemoveRoomBotButton->SetIsEnabled(!Room.Bots.IsEmpty());ChangeRoomBotButton->SetIsEnabled(!Room.Bots.IsEmpty());
+    }
     TArray<TPair<FString,FString>> HostEntries;
     if(Room.bIsHost)for(const auto& Member:Room.Members)if(!Member.bIsHost&&!Member.UserId.IsEmpty())HostEntries.Emplace(Member.UserId,Member.DisplayName+TEXT(" (")+Member.UserId+TEXT(")"));
     if(!HostEntries.ContainsByPredicate([this](const auto& E){return E.Key==SelectedHostTransferUserId;}))SelectedHostTransferUserId.Reset();
@@ -6299,7 +6401,7 @@ void UProjectProject01LobbyWidget::BeginGameStartFade(const FProjectProject01Roo
 	GameStartFadeElapsedSeconds = 0.0f;
 	if(RoomState.bStarted)bStartConfirmationRequested = true;
 	const FString RoleText = RoomState.AssignedRole.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
-		? TEXT("마네킹") : TEXT("생존자");
+		? TEXT("마네킹") : RoomState.AssignedRole==TEXT("Observer")?TEXT("관전자"):TEXT("생존자");
 	if (IsValid(StartCountdownPanel))
 	{
 		StartCountdownPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -6550,13 +6652,28 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	CurrentRoomText = ProjectProject01LoginUI::AddLabel(WidgetTree, RoomPanel, TEXT("참가 중인 방 없음"), 16.0f);
 	CopyJoinCodeButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("참가 코드 복사"));
 	MemberProfilePanel=WidgetTree->ConstructWidget<UVerticalBox>();RoomPanel->AddChildToVerticalBox(MemberProfilePanel);
+    RoomBotPanel=WidgetTree->ConstructWidget<UVerticalBox>();RoomPanel->AddChildToVerticalBox(RoomBotPanel);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,RoomBotPanel,TEXT("봇 관리 (방장 전용)"),18);
+    RoomBotDifficulty=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();
+    for(int32 L=1;L<=5;++L)RoomBotDifficulty->AddOption(UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(L)));
+    RoomBotDifficulty->SetSelectedIndex(1);RoomBotPanel->AddChildToVerticalBox(RoomBotDifficulty)->SetPadding(FMargin(6));
+    AddRoomBotButton=ProjectProject01LoginUI::AddButton(WidgetTree,RoomBotPanel,TEXT("선택한 난이도의 봇 추가"));AddRoomBotButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleAddRoomBot);
+    RoomBotSelection=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();RoomBotPanel->AddChildToVerticalBox(RoomBotSelection)->SetPadding(FMargin(6));
+    ChangeRoomBotButton=ProjectProject01LoginUI::AddButton(WidgetTree,RoomBotPanel,TEXT("선택한 봇 난이도 변경"));ChangeRoomBotButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleChangeRoomBotDifficulty);
+    RemoveRoomBotButton=ProjectProject01LoginUI::AddButton(WidgetTree,RoomBotPanel,TEXT("선택한 봇 삭제"));RemoveRoomBotButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRemoveRoomBot);
+    RoomBotPanel->SetVisibility(ESlateVisibility::Collapsed);
 	ReadyButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("준비"));
 	StartRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("게임 시작"));
 	LeaveRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("방 나가기"));
+    SwitchObserverButton=ProjectProject01LoginUI::AddButton(WidgetTree,RoomPanel,TEXT("관전으로 전환"));SwitchObserverButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleSwitchObserver);
     HostTransferList=WidgetTree->ConstructWidget<UVerticalBox>();auto* HostScroll=WidgetTree->ConstructWidget<UScrollBox>();HostScroll->AddChild(HostTransferList);
     HostTransferFrame=WidgetTree->ConstructWidget<USizeBox>();HostTransferFrame->SetHeightOverride(140);HostTransferFrame->AddChild(HostScroll);
     RoomPanel->AddChildToVerticalBox(HostTransferFrame)->SetPadding(FMargin(6));
 	TransferHostButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("선택한 플레이어에게 방장 넘기기"));
+    ParticipantManagement=WidgetTree->ConstructWidget<UVerticalBox>();RoomPanel->AddChildToVerticalBox(ParticipantManagement);
+    auto* Observe=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원을 관전자로 변경"));Observe->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMoveToObserver);
+    auto* Play=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원을 플레이 참가자로 변경"));Play->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMoveToPlayer);
+    auto* Kick=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원 강퇴"));Kick->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleKickParticipant);
 	DeleteRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, RoomPanel, TEXT("방 삭제 (모두 로비로)"));
 	ReadyButton->SetVisibility(ESlateVisibility::Collapsed);
 	StartRoomButton->SetVisibility(ESlateVisibility::Collapsed);
@@ -6592,6 +6709,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("매칭 방식 선택"),26);
     auto* Random=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("랜덤 매칭"));Random->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRandomMatchClicked);
     auto* Open=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("오픈 매칭"));Open->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenMatchClicked);
+    auto* BotMode=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("봇전"));BotMode->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchClicked);
     auto* Tutorial=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("튜토리얼"));Tutorial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleTutorialClicked);
 	OpenLeaderboardTestButton = ProjectProject01LoginUI::AddButton(WidgetTree, Modes, TEXT("리더보드 열기"));
     ModesLogoutButton=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("로그아웃 / 로그인 화면으로"));
@@ -6630,6 +6748,19 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     MannequinPractice->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMannequinPracticeClicked);
     auto* TutorialBack=ProjectProject01LoginUI::AddButton(WidgetTree,TutorialRoles,TEXT("뒤로가기"));
     TutorialBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
+
+    auto* BotSetup=MakeScrollablePanel(); // 7: authenticated dedicated-server match, not local practice.
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇전"),26);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("기존 멀티플레이 맵에서 봇과 실제 경기를 진행합니다.\n경기를 시작하려면 게임 서버가 준비되어 있어야 합니다."),20);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("플레이할 역할"),20);
+    BotMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();BotMatchRole->AddOption(TEXT("생존자"));BotMatchRole->AddOption(TEXT("마네킹"));BotMatchRole->SetSelectedIndex(0);BotSetup->AddChildToVerticalBox(BotMatchRole);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇 난이도"),20);
+    BotMatchDifficulty=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();
+    for(int32 Level=1;Level<=5;++Level)BotMatchDifficulty->AddOption(UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Level)));
+    BotMatchDifficulty->SetSelectedIndex(1);BotSetup->AddChildToVerticalBox(BotMatchDifficulty);
+    BotMatchCreateButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("봇전 구성"));BotMatchCreateButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchCreateClicked);
+    auto* BotBack=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("뒤로가기"));BotBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
+    auto* BotLogout=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("로그아웃 / 로그인 화면으로"));BotLogout->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
 
     // Compact only the matching panels; social overlays and other game menus retain their layout.
     for(UVerticalBox* Panel : {BrowserPanel,Matching,Modes,CodeJoinPanel.Get()})

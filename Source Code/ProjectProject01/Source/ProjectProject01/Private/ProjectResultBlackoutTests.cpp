@@ -32,6 +32,12 @@ bool FProjectResultBlackoutTest::RunTest(const FString&)
         Result.bLeaderboardVerificationReady=true;Widget->ConfigureResult(Result);
         TestEqual(TEXT("A verification refresh cannot replay blackout"),Widget->FadeBackground->GetBrushColor().A,1.f);
     }
+    FMultiplayTestMatchResult Observed;Observed.Role=TEXT("Observer");Widget->ConfigureResult(Observed);
+    TestEqual(TEXT("Observer result starts with the world already covered"),Widget->FadeBackground->GetBrushColor().A,1.f);
+    TestEqual(TEXT("Observer result contents start hidden for a gradual reveal"),Widget->ResultMenu->GetRenderOpacity(),0.f);
+    for(float Delta:{.016f,.5f,2.f})
+    {Widget->NativeTick(FGeometry(),Delta);TestEqual(TEXT("Observer content fade never exposes the world"),Widget->FadeBackground->GetBrushColor().A,1.f);}
+    TestEqual(TEXT("Observer final results become fully visible"),Widget->ResultMenu->GetRenderOpacity(),1.f);
     Widget->ConfigureSinglePlayerResult(false);
     TestEqual(TEXT("Single-player death also hands off against opaque black"),Widget->FadeBackground->GetBrushColor().A,1.f);
     Widget->ConfigureSinglePlayerResult(true);

@@ -30,7 +30,8 @@ internal static class EditorSessionSmokeChecks
             foreach(string name in new[]{"admin","lobby","game-server","game-ticket"})
                 options.AddFixedWindowLimiter(name,limit=>{limit.PermitLimit=10000;limit.Window=TimeSpan.FromMinutes(1);});
         });
-        var manager=new GameServerDemandManager(database,ProjectSecurityOptions.FromConfiguration(config),new GameServerProcessFactory(),
+        var editorFactory=new IsolatedEditorGameProcessFactory(root);
+        var manager=new GameServerDemandManager(database,ProjectSecurityOptions.FromConfiguration(config),editorFactory,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<GameServerDemandManager>.Instance,TimeProvider.System);
         builder.Services.AddSingleton(manager);
         await using var app=builder.Build();app.Urls.Add("http://127.0.0.1:0");app.UseRateLimiter();
@@ -100,6 +101,7 @@ internal static class EditorSessionSmokeChecks
                 await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new {enabled=false}));await manager.TickAsync(default);
                 foreach(var client in group)await Read(client.PostAsJsonAsync("/api/rooms/current/leave",new{}));
             }
+            await EditorBotNetworkChecks.RunAsync(database,app,admin,manager,editorFactory,root,editor);
         }
         finally
         {

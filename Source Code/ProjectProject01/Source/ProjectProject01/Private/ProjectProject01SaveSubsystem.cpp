@@ -35,6 +35,7 @@
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "TimerManager.h"
+#include "Async/Async.h"
 #include "PlatformFeatures.h"
 #include "SaveGameSystem.h"
 
@@ -83,6 +84,7 @@ void UProjectProject01SaveSubsystem::Deinitialize()
 		PostLoadMapHandle.Reset();
 	}
 	PendingLoad = nullptr;
+	PendingWriteSave = nullptr;
 	Super::Deinitialize();
 }
 
@@ -160,19 +162,55 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	Save->SavedAtUtc = SaveTimeUtc;
 	Save->LastPlayedAtUtc = SaveTimeUtc;
 	Save->SaveRevision = Current.Save ? Current.Save->SaveRevision + 1 : 1;
-	ProjectCheckpointPreview::Capture(World, Cast<APlayerController>(Player->GetController()), Save->PreviewPng);
-	Save->PreviewCrc = Save->PreviewPng.IsEmpty() ? 0 : FCrc::MemCrc32(Save->PreviewPng.GetData(), Save->PreviewPng.Num());
-	Save->IntegrityHash = Save->CalculateIntegrityHash();
-
 	PreviousSlotIndexBeforeSave = CurrentSlotIndex;
 	CurrentSlotIndex = SlotIndex;
 	PendingSaveSuccessMessage = CheckpointId == TEXT("ManualPauseMenu")
 		? TEXT("체크포인트가 수동 저장되었습니다.")
 		: TEXT("체크포인트가 자동 저장되었습니다.");
+	// Blocks other saves, loads and slot deletion until HandleAsyncSaveComplete, exactly as before.
 	bSaveInProgress = true;
+	PendingWriteSlot = ProjectCheckpointStore::NextWriteSlot(PrimarySlot, Current);
+	PendingWriteSave = Save;
+	const uint64 Generation = ++PendingSaveGeneration;
+
+	// The scene is rendered from this frame's camera; the GPU readback completes over the next frames and the
+	// PNG encode runs on a worker, so neither stalls the game thread. A failed capture saves without a preview.
+	const TWeakObjectPtr<UProjectProject01SaveSubsystem> WeakThis(this);
+	const bool bCaptureStarted = ProjectCheckpointPreview::PrepareEncoder() && ProjectCheckpointPreview::CapturePixelsAsync(
+		World, Cast<APlayerController>(Player->GetController()), [WeakThis, Generation](TArray<FColor>&& Pixels)
+		{
+			if (Pixels.IsEmpty())
+			{
+				if (UProjectProject01SaveSubsystem* Self = WeakThis.Get()) Self->WriteCheckpoint(Generation, TArray<uint8>());
+				return;
+			}
+			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, Generation, Pixels = MoveTemp(Pixels)]()
+			{
+				TArray<uint8> Png;
+				ProjectCheckpointPreview::EncodePixels(Pixels, Png);
+				AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Png = MoveTemp(Png)]() mutable
+				{
+					if (UProjectProject01SaveSubsystem* Self = WeakThis.Get()) Self->WriteCheckpoint(Generation, MoveTemp(Png));
+				});
+			});
+		});
+	if (!bCaptureStarted) WriteCheckpoint(Generation, TArray<uint8>());
+	return true;
+}
+
+void UProjectProject01SaveSubsystem::WriteCheckpoint(const uint64 Generation, TArray<uint8>&& PreviewPng)
+{
+	check(IsInGameThread());
+	UProjectProject01SinglePlayerSaveGame* Save = PendingWriteSave;
+	// A stale or cancelled encode never touches a newer save attempt.
+	if (!bSaveInProgress || Generation != PendingSaveGeneration || !IsValid(Save)) return;
+	PendingWriteSave = nullptr;
+	Save->PreviewPng = MoveTemp(PreviewPng);
+	Save->PreviewCrc = Save->PreviewPng.IsEmpty() ? 0 : FCrc::MemCrc32(Save->PreviewPng.GetData(), Save->PreviewPng.Num());
+	Save->IntegrityHash = Save->CalculateIntegrityHash();
+
 	FAsyncSaveGameToSlotDelegate Delegate;
 	Delegate.BindUObject(this, &UProjectProject01SaveSubsystem::HandleAsyncSaveComplete);
-	PendingWriteSlot = ProjectCheckpointStore::NextWriteSlot(PrimarySlot, Current);
 	PendingSaveRevision = Save->SaveRevision;
 	PendingSaveHash = Save->IntegrityHash;
 	auto Bytes = MakeShared<TArray<uint8>>();
@@ -187,7 +225,6 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 			});
 	}
 	else Delegate.ExecuteIfBound(PendingWriteSlot, UserIndex, false);
-	return true;
 }
 
 bool UProjectProject01SaveSubsystem::LoadLatestCheckpoint()

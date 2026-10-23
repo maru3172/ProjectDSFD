@@ -36,6 +36,17 @@ internal static class DashboardSelfTest
         var aiProxyClient = new DiagnosticEvent("2026-01-01T00:00:01.050Z", "Client_PIE1_P0", "Client", 2.05, "Normal", "ActorStateChanged", "Mannequin;Slot=-1;Manual=0;Frozen=0;Command=None;Controller=None;Location=(100,200,0)", "UEDPIE_1_Level:PersistentLevel.BP_MannequinAICharacter_C_10");
         var differentUnassignedClient = aiProxyClient with { Actor = "UEDPIE_1_Level:PersistentLevel.BP_MannequinAICharacter_C_11", Message = "Mannequin;Slot=-1;Manual=0;Frozen=0;Command=None;Controller=None;Location=(3000,200,0)" };
         if (DashboardForm.FindMultiplayerMismatchCandidates([aiProxyServer, aiProxyClient, differentUnassignedClient]).Count != 0) return 11;
+        // 2026-10-22 capture: 226 of 242 position candidates were exactly speed x 0.33 s of per-world sampling skew.
+        var movingServer = aiProxyServer with { GameSeconds = 5.0, Message = "Mannequin;Slot=0;Manual=0;Frozen=0;Command=None;Controller=MannequinAIController;Location=(0,0,90);Velocity=600.0" };
+        var skewedClient = aiProxyClient with { GameSeconds = 5.0, Actor = movingServer.Actor, Message = "Mannequin;Slot=0;Manual=0;Frozen=0;Command=None;Controller=None;Location=(200,0,90);Velocity=600.5" };
+        if (DashboardForm.FindMultiplayerMismatchCandidates([movingServer, skewedClient]).Count != 0) return 18;
+        var desyncedClient = skewedClient with { Message = "Mannequin;Slot=0;Manual=0;Frozen=0;Command=None;Controller=None;Location=(1200,0,90);Velocity=600.5" };
+        if (DashboardForm.FindMultiplayerMismatchCandidates([movingServer, desyncedClient]).Count != 1) return 19;
+        if (DashboardForm.FindMultiplayerMismatchCandidates([movingServer with { GameSeconds = 0.008 }, desyncedClient with { GameSeconds = 0.008 }]).Count != 0) return 20;
+        var remotePlayerServer = new DiagnosticEvent("2026-01-01T00:00:05Z", "DedicatedServer_PIE0_P-1", "DedicatedServer", 5.0, "Normal", "ActorStateChanged", "Player;Controller=MultiplayTestPlayerController_1;Location=(0,0,90);Velocity=0.0", "UEDPIE_0_Level:PersistentLevel.BP_PlayerCharacter_C_0");
+        var remotePlayerProxy = remotePlayerServer with { Role = "Client_PIE1_P0", NetMode = "Client", Message = "Player;Controller=None;Location=(0,0,90);Velocity=0.0", Actor = "UEDPIE_1_Level:PersistentLevel.BP_PlayerCharacter_C_0" };
+        if (DashboardForm.FindMultiplayerMismatchCandidates([remotePlayerServer, remotePlayerProxy]).Count != 0) return 21;
+        if (DashboardForm.FindMultiplayerMismatchCandidates([remotePlayerServer, remotePlayerProxy with { Message = "Player;Controller=SomeAIController;Location=(0,0,90);Velocity=0.0" }]).Count != 1) return 22;
         var searchableEvent = DashboardForm.EventSearchText(server, "All searchable fields");
         if (!searchableEvent.Contains("ActorStateChanged", StringComparison.Ordinal) || searchableEvent.Contains(server.UtcTime, StringComparison.Ordinal)) return 9;
         if (DashboardForm.SortTimelineEvents([server, client], "GameSeconds", false).First().Role != client.Role) return 10;
@@ -1145,7 +1156,9 @@ internal sealed class DashboardForm : Form
                 var match = clients.Where(item => item.Event.Role == role && item.Key == source.Key)
                     .OrderBy(item => Math.Abs(item.Event.GameSeconds - source.Event.GameSeconds)).FirstOrDefault();
                 if (match.Event is null || Math.Abs(match.Event.GameSeconds - source.Event.GameSeconds) > 1.25) continue;
-                var reasons = CompareActorStates(source.Event.Message, match.Event.Message);
+                // The first sample is taken before the initial replication of spawned pawns can arrive.
+                if (source.Event.GameSeconds < MismatchWarmupSeconds) continue;
+                var reasons = CompareActorStates(source.Event.Message, match.Event.Message, Math.Abs(match.Event.GameSeconds - source.Event.GameSeconds));
                 if (reasons.Count == 0) continue;
                 var dedupe = $"{source.Key}|{role}|{Math.Floor(source.Event.GameSeconds)}|{string.Join('|', reasons)}";
                 if (!emitted.Add(dedupe)) continue;
@@ -1168,7 +1181,12 @@ internal sealed class DashboardForm : Form
         return actor.Length > 0 ? $"{type}:{actor.Split('.').Last()}" : string.Empty;
     }
 
-    private static List<string> CompareActorStates(string serverMessage, string clientMessage)
+    internal const double MismatchWarmupSeconds = 1.0;
+    internal const double MismatchPositionToleranceCm = 150.0;
+    // Each world samples on its own 1 Hz schedule; observed skew between paired samples reached ~0.33 s.
+    internal const double MismatchSampleSkewSeconds = 0.5;
+
+    private static List<string> CompareActorStates(string serverMessage, string clientMessage, double gameSecondsApart = 0)
     {
         var server = ParseState(serverMessage);
         var client = ParseState(clientMessage);
@@ -1176,7 +1194,10 @@ internal sealed class DashboardForm : Form
         if (TryVector(server, "Location", out var serverPosition) && TryVector(client, "Location", out var clientPosition))
         {
             var distance = Math.Sqrt(Math.Pow(serverPosition.X - clientPosition.X, 2) + Math.Pow(serverPosition.Y - clientPosition.Y, 2) + Math.Pow(serverPosition.Z - clientPosition.Z, 2));
-            if (distance > 150) reasons.Add($"PositionDelta={distance:F1}cm");
+            // A moving actor legitimately travels speed x (sample skew + pairing gap) between the two samples.
+            var speed = Math.Max(server.TryGetValue("Velocity", out var sv) ? ParseDouble(sv) : 0, client.TryGetValue("Velocity", out var cv) ? ParseDouble(cv) : 0);
+            var tolerance = MismatchPositionToleranceCm + speed * (MismatchSampleSkewSeconds + gameSecondsApart);
+            if (distance > tolerance) reasons.Add($"PositionDelta={distance:F1}cm (allowed {tolerance:F0}cm)");
         }
         foreach (var key in new[] { "Manual", "Frozen", "Command", "Target", "Retreat" })
         {
@@ -1186,9 +1207,9 @@ internal sealed class DashboardForm : Form
         {
             var serverControllerKind = ControllerKind(serverController);
             var clientControllerKind = ControllerKind(clientController);
-            // AIController is authoritative and normally absent on a client-side pawn proxy.
-            // Do not classify the expected server AI / client None pair as a replication mismatch.
-            if (serverControllerKind != clientControllerKind && !(serverControllerKind == "AI" && clientControllerKind == "None"))
+            // Controllers exist on the server and only on the owning client. A client-side proxy of an AI or of
+            // another player therefore reports None; only a different, non-None controller kind is a mismatch.
+            if (serverControllerKind != clientControllerKind && clientControllerKind != "None")
                 reasons.Add($"Controller server={serverControllerKind} client={clientControllerKind}");
         }
         return reasons;

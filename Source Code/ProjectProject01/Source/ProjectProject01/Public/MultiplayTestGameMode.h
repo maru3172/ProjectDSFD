@@ -34,12 +34,15 @@ struct FMultiplayTestServerPlayerRecord
 	bool bWasManualMannequinControl = false;
 	bool bForfeited = false;
 	bool bDisconnected = false;
+    bool bServerBot=false;
 	double ReconnectDeadlineWorldSeconds = 0.0;
 };
 
 struct FMultiplayTestMatchCarryover
 {
     FString MatchId;
+    FString BotRoomId;
+    TArray<FProjectMatchBotSpec> Bots;
     TMap<FString,FMultiplayTestServerPlayerRecord> Players,Disconnected;
     double ElapsedSeconds=0,PreparedRealSeconds=0,PreparedWorldSeconds=0;
 };
@@ -60,6 +63,10 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectSpectatorFadeTest;
 	friend class FProjectSurvivorPresentationTest;
 	friend class AProjectProject01TutorialGameMode;
+    friend class UProjectMatchBots;
+    friend class FProjectMatchBotsRuntimeTest;
+    friend class FProjectActualBotMatchEditorTest;
+    friend class AProjectOpenObserverController;
 
 public:
 	const FString& GetServerMatchId() const { return AuthoritativeMatchId; }
@@ -68,6 +75,8 @@ public:
 	void ReceiveLoadingStage(AMultiplayTestPlayerController* Controller,const FString& Epoch,uint8 Progress);
 	AMultiplayTestGameMode();
 	virtual void BeginPlay() override;
+    virtual APlayerController* SpawnPlayerController(ENetRole InRemoteRole,const FString& Options) override;
+    bool HasOpenObservers()const;
 
 	/** 서버가 DataTable의 검증된 생존자 시야 수치를 적용한다. */
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
@@ -135,6 +144,7 @@ protected:
 	virtual class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
 
 private:
+    UPROPERTY(Transient) TObjectPtr<class UProjectMatchBots> MatchBots;
 	void UpdateVoiceAudibility();
 	float VoiceAudibilityAccumulator=0;
 	void RecordTimeline(EProjectMatchEvent Kind, const FString& PlayerName = {}, const FString& Detail = {});

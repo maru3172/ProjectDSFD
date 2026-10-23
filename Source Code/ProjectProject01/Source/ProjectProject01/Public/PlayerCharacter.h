@@ -32,6 +32,7 @@ class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
 {
 	GENERATED_BODY()
 	friend class AProjectTutorialTargetCharacter;
+	friend class AProjectMatchBotCharacter;
 	friend class FProjectFreePracticeRuntimeTest;
 
 public:

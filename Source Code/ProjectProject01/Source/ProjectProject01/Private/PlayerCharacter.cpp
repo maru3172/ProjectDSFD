@@ -351,7 +351,21 @@ void APlayerCharacter::BeginPlay()
 			}
 		}
 	}
-	
+	else if (IsValid(World) && World->GetNetMode() == NM_Client)
+	{
+		// Other players' replicated pawns never receive the owner-only ClientApplyPlayerTuning RPC, yet a
+		// spectator renders their heartbeat, damage and death feedback. Use the same cooked tuning table here;
+		// for the owning client the server RPC still arrives afterwards and remains authoritative.
+		if (UProjectProject01TuningSubsystem* TuningSubsystem = World->GetSubsystem<UProjectProject01TuningSubsystem>())
+		{
+			FPlayerTuningRow PlayerTuning;
+			if (TuningSubsystem->GetPlayerTuning(PlayerTuning))
+			{
+				ApplyPlayerTuningValues(PlayerTuning);
+			}
+		}
+	}
+
 	InitializeLocalPlayerInput();
 
     // 카메라 B 키 디버깅 관련
@@ -1400,6 +1414,8 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 
 	const auto* Practice=World->GetAuthGameMode<AProjectProject01TutorialGameMode>();
 	const bool bInfinitePracticeLives=Practice && Practice->HasPracticeInfiniteLives();
+	const auto* MatchController=Cast<AMultiplayTestPlayerController>(GetController());
+	const bool bServerBot=MatchController&&MatchController->IsServerControlledBot();
 	if (RemainingDeathCount > 0 || bInfinitePracticeLives)
 	{
 		if (!bInfinitePracticeLives) --RemainingDeathCount;
@@ -1426,7 +1442,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 		{
 			PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 		}
-		else
+		else if(!bServerBot)
 		{
 			ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection, DamageSeverity);
 		}
@@ -1447,7 +1463,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	{
 		PlayLocalDeathSequence(FallPitchDirection, FallRollDirection);
 	}
-	else
+	else if(!bServerBot)
 	{
 		ClientPlayDeathSequence(FallPitchDirection, FallRollDirection);
 	}

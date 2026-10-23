@@ -584,6 +584,34 @@ void UProjectProject01GameInstance::Init()
 				TEXT("Saved multiplayer server selection was not applied: %s"), *EndpointError);
 		}
 	}
+#if WITH_EDITOR && WITH_DEV_AUTOMATION_TESTS
+    // Real network automation still uses the normal encrypted, one-use ticket.
+    // This fixture loader is absent from packaged games and accepts only a bounded
+    // file under the isolated Saved test tree, unattended and on loopback.
+    FString NetworkFixture;
+    if(!IsRunningDedicatedServer()&&FParse::Param(FCommandLine::Get(),TEXT("unattended"))&&
+        FParse::Value(FCommandLine::Get(),TEXT("ProjectProject01NetworkFixture="),NetworkFixture))
+    {
+        NetworkFixture=FPaths::ConvertRelativePathToFull(NetworkFixture);FPaths::MakeStandardFilename(NetworkFixture);
+        FString FixtureRoot=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("FeatureChecks/EditorNetwork/"));FPaths::MakeStandardFilename(FixtureRoot);
+        FString Text;TSharedPtr<FJsonObject> Json;
+        const int64 Size=IFileManager::Get().FileSize(*NetworkFixture);
+        if(NetworkFixture.StartsWith(FixtureRoot,ESearchCase::IgnoreCase)&&Size>0&&Size<16384&&FFileHelper::LoadFileToString(Text,*NetworkFixture)&&
+            FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),Json)&&Json.IsValid())
+        {
+            FString Ticket,Key,Room,Match,Role,Backend;
+            if(Json->TryGetStringField(TEXT("ticket"),Ticket)&&Json->TryGetStringField(TEXT("encryptionKey"),Key)&&
+                Json->TryGetStringField(TEXT("roomId"),Room)&&Json->TryGetStringField(TEXT("matchId"),Match)&&
+                Json->TryGetStringField(TEXT("role"),Role)&&Json->TryGetStringField(TEXT("backend"),Backend))
+            {
+                const FString Prefix=TEXT("http://127.0.0.1:");const FString Port=Backend.RightChop(Prefix.Len());
+                if(Backend.StartsWith(Prefix)&&Port.IsNumeric()&&FCString::Atoi(*Port)>0&&FCString::Atoi(*Port)<=65535&&
+                    ConfigurePendingGameConnection(Ticket,Key,Room,Match,Role))
+                    SecurityApiBaseUrl=Backend; // Transient only: never SaveConfig/SaveSettings.
+            }
+        }
+    }
+#endif
 	if (!IsRunningDedicatedServer() && FSlateApplication::IsInitialized())
 	{
 		ApplicationActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged().AddUObject(
@@ -1557,7 +1585,7 @@ bool UProjectProject01GameInstance::ConfigurePendingGameConnection(
 {
 	TArray<uint8> Key;
 	if (Ticket.Len() < 48 || Ticket.Len() > 256 || RoomId.IsEmpty() || MatchId.IsEmpty() ||
-		(Role != TEXT("Mannequin") && Role != TEXT("Survivor")) ||
+		(Role != TEXT("Mannequin") && Role != TEXT("Survivor") && Role != TEXT("Observer")) ||
 		!ProjectProject01NetworkSecurity::ParseEncryptionKey(EncryptionKeyBase64, Key))
 	{
 		UE_LOG(LogProjectProject01NetworkSecurity, Error,
@@ -1664,6 +1692,11 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
 				return;
 			}
 			FString VersionError;
+			const TArray<TSharedPtr<FJsonValue>>* BotValues=nullptr;FString BotError;
+            if(JsonResponse->HasField(TEXT("bots"))&&(!JsonResponse->TryGetArrayField(TEXT("bots"),BotValues)||!BotValues||!FProjectMatchBotSpec::Parse(*BotValues,Claim.Bots,BotError)))
+            {
+                ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid bot admission roster."));return;
+            }
 			if (!FProjectProject01VersionContract::Matches(
 				Claim.ClientBuildVersion, Claim.DedicatedServerBuildVersion, Claim.ApiVersion, Claim.GameDataVersion,
 				Claim.NetworkProtocolVersion, VersionError))

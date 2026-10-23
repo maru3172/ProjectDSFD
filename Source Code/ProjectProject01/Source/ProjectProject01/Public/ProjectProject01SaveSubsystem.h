@@ -107,6 +107,7 @@ public:
 private:
 	friend class FProjectReviewCheckpointStoreTest;
     friend class FProjectReviewAsyncStateTest;
+    friend class FProjectCheckpointAsyncPreviewWriteTest;
     bool ValidateActorIdentities(UWorld* World,FString& Error) const;
     static bool CheckDataCompatibility(const FString& Saved,const FString& Current,const TArray<FString>& Blocked,FString& Notice);
     void CancelPendingLoad(const FString& Error);
@@ -132,6 +133,8 @@ private:
 #endif
 
 	class UProjectProject01SinglePlayerSaveGame* LoadValidatedSlot(const FString& SlotName, FString& OutError) const;
+	/** Game thread: finalizes preview CRC and integrity hash, then starts the async file write. */
+	void WriteCheckpoint(uint64 Generation, TArray<uint8>&& PreviewPng);
 	void HandleAsyncSaveComplete(const FString& SlotName, int32 InUserIndex, bool bSucceeded);
 	void HandlePostLoadMap(UWorld* LoadedWorld);
 	bool ApplyPendingSave(UWorld* World, FString& OutError);
@@ -146,6 +149,11 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UProjectProject01SinglePlayerSaveGame> PendingLoad;
+
+	/** Kept alive by GC while its preview is encoded off the game thread. */
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectProject01SinglePlayerSaveGame> PendingWriteSave;
+	uint64 PendingSaveGeneration = 0;
 
 	UPROPERTY()
 	TMap<FName, int32> RuntimeProgressState;

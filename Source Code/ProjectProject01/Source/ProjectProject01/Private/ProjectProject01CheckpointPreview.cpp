@@ -14,11 +14,85 @@
 #include "Modules/ModuleManager.h"
 #include "HAL/IConsoleManager.h"
 #include "Engine/Engine.h"
+#include "Containers/Ticker.h"
+#include "RHIGPUReadback.h"
+#include "RenderingThread.h"
+#include "TextureResource.h"
+#include "UObject/StrongObjectPtr.h"
 #include "ProjectProject01DiagnosticsTypes.h"
+#include <atomic>
 
 namespace
 {
     struct FPreviewCaptureTiming { double SetupMs=0, RenderReadbackMs=0, EncodeMs=0; };
+
+    // Spawns a transient, one-shot scene capture matching the player's current camera. Capture is not issued yet.
+    ASceneCapture2D* SpawnPreviewCapture(UWorld* World, APlayerController* Player, UTextureRenderTarget2D*& OutTarget)
+    {
+        using namespace ProjectCheckpointPreview;
+        OutTarget=nullptr;
+        if (!FApp::CanEverRender() || !IsValid(World) || !IsValid(Player) || !IsValid(Player->PlayerCameraManager)) return nullptr;
+        FActorSpawnParameters Spawn;
+        Spawn.ObjectFlags |= RF_Transient;
+        ASceneCapture2D* Actor=World->SpawnActor<ASceneCapture2D>(Spawn);
+        if (!IsValid(Actor)) return nullptr;
+        USceneCaptureComponent2D* Capture=Actor->GetCaptureComponent2D();
+        Capture->bCaptureEveryFrame=false;
+        Capture->bCaptureOnMovement=false;
+        UTextureRenderTarget2D* Target=NewObject<UTextureRenderTarget2D>(Actor);
+        Target->ClearColor=FLinearColor::Black;
+        Target->InitCustomFormat(Width,Height,PF_B8G8R8A8,false);
+        Target->UpdateResourceImmediate(true);
+        const FMinimalViewInfo& View=Player->PlayerCameraManager->GetCameraCacheView();
+        Actor->SetActorLocationAndRotation(View.Location,View.Rotation);
+        Capture->FOVAngle=View.FOV;
+        Capture->PostProcessSettings=View.PostProcessSettings;
+        Capture->PostProcessBlendWeight=View.PostProcessBlendWeight;
+        Capture->CaptureSource=SCS_FinalColorLDR;
+        Capture->TextureTarget=Target;
+        if (APawn* Pawn=Player->GetPawn()) Capture->HideActorComponents(Pawn);
+        OutTarget=Target;
+        return Actor;
+    }
+
+    // Shared with the render thread. Holds no UObject references (released wherever the last owner drops it).
+    struct FPreviewReadbackState
+    {
+        TUniquePtr<FRHIGPUTextureReadback> Readback;
+        TArray<FColor> Pixels;              // Written on the render thread before bReady is published.
+        std::atomic<bool> bPollInFlight{false};
+        std::atomic<bool> bReady{false};
+        std::atomic<bool> bFailed{false};
+    };
+
+    // Render thread: copies the finished staging texture into tightly packed opaque pixels.
+    void CopyReadback_RenderThread(FPreviewReadbackState& State)
+    {
+        using namespace ProjectCheckpointPreview;
+        int32 RowPitchInPixels=0, BufferHeight=0;
+        const FColor* Source=static_cast<const FColor*>(State.Readback->Lock(RowPitchInPixels,&BufferHeight));
+        if (Source && RowPitchInPixels>=Width && BufferHeight>=Height)
+        {
+            State.Pixels.SetNumUninitialized(Width*Height);
+            for (int32 Row=0;Row<Height;++Row)
+                FMemory::Memcpy(State.Pixels.GetData()+Row*Width,Source+Row*RowPitchInPixels,Width*sizeof(FColor));
+            for (FColor& Pixel:State.Pixels) Pixel.A=255;
+        }
+        else State.bFailed.store(true);
+        State.Readback->Unlock();
+        State.Readback.Reset();
+        State.bReady.store(true,std::memory_order_release);
+    }
+
+    // Game-thread side of an async capture. Holds the UObjects, so it is never handed to the render thread.
+    struct FPreviewCaptureOwner
+    {
+        TStrongObjectPtr<UTextureRenderTarget2D> Target;
+        TWeakObjectPtr<ASceneCapture2D> Actor;
+        ProjectCheckpointPreview::FPixelsReady OnReady;
+        double Deadline=0;
+    };
+    constexpr double AsyncReadbackTimeoutSeconds=5.0;
 
     // Body of Capture without the standalone-only gate, so the dev benchmark below can time it in PIE worlds.
     // OutPixels set: return raw pixels and leave encoding to the caller (worker thread). Otherwise encode inline.
@@ -26,29 +100,12 @@ namespace
     {
     OutPng.Reset();
     if (OutPixels) OutPixels->Reset();
-    if (!FApp::CanEverRender() || !IsValid(World) || !IsValid(Player) || !IsValid(Player->PlayerCameraManager)) return;
     using namespace ProjectCheckpointPreview;
     const double SetupStart=FPlatformTime::Seconds();
-
-    FActorSpawnParameters Spawn;
-    Spawn.ObjectFlags |= RF_Transient;
-    ASceneCapture2D* Actor=World->SpawnActor<ASceneCapture2D>(Spawn);
+    UTextureRenderTarget2D* Target=nullptr;
+    ASceneCapture2D* Actor=SpawnPreviewCapture(World,Player,Target);
     if (!IsValid(Actor)) return;
     USceneCaptureComponent2D* Capture=Actor->GetCaptureComponent2D();
-    Capture->bCaptureEveryFrame=false;
-    Capture->bCaptureOnMovement=false;
-    UTextureRenderTarget2D* Target=NewObject<UTextureRenderTarget2D>(Actor);
-    Target->ClearColor=FLinearColor::Black;
-    Target->InitCustomFormat(Width,Height,PF_B8G8R8A8,false);
-    Target->UpdateResourceImmediate(true);
-    const FMinimalViewInfo& View=Player->PlayerCameraManager->GetCameraCacheView();
-    Actor->SetActorLocationAndRotation(View.Location,View.Rotation);
-    Capture->FOVAngle=View.FOV;
-    Capture->PostProcessSettings=View.PostProcessSettings;
-    Capture->PostProcessBlendWeight=View.PostProcessBlendWeight;
-    Capture->CaptureSource=SCS_FinalColorLDR;
-    Capture->TextureTarget=Target;
-    if (APawn* Pawn=Player->GetPawn()) Capture->HideActorComponents(Pawn);
     const double RenderStart=FPlatformTime::Seconds();
     Capture->CaptureScene();
     TArray<FColor> Pixels;
@@ -96,6 +153,22 @@ namespace
                     TEXT("CheckpointPreviewBench world=%s runs=%d avg setup=%.2fms render+readback=%.2fms png=%.2fms total=%.2fms max=%.2fms bytes=%d"),
                     *World->GetName(),Runs,Sum.SetupMs/Runs,Sum.RenderReadbackMs/Runs,Sum.EncodeMs/Runs,
                     (Sum.SetupMs+Sum.RenderReadbackMs+Sum.EncodeMs)/Runs,Max,Bytes);
+                // Save path: only the async request runs on the game thread; readback/encode complete later.
+                double RequestSum=0,RequestMax=0;
+                for (int32 Run=0;Run<Runs;++Run)
+                {
+                    const double Start=FPlatformTime::Seconds();
+                    const FString WorldName=World->GetName();
+                    ProjectCheckpointPreview::CapturePixelsAsync(World,Player,[Start,WorldName,Run](TArray<FColor>&& Pixels)
+                    {
+                        UE_LOG(LogProjectProject01Diagnostics,Display,TEXT("CheckpointPreviewAsyncBench world=%s run=%d pixels=%d completed_after=%.1fms"),
+                            *WorldName,Run,Pixels.Num(),(FPlatformTime::Seconds()-Start)*1000.0);
+                    });
+                    const double Request=(FPlatformTime::Seconds()-Start)*1000.0;
+                    RequestSum+=Request;RequestMax=FMath::Max(RequestMax,Request);
+                }
+                UE_LOG(LogProjectProject01Diagnostics,Display,TEXT("CheckpointPreviewAsyncBench world=%s runs=%d game-thread request avg=%.2fms max=%.2fms"),
+                    *World->GetName(),Runs,RequestSum/Runs,RequestMax);
             }
         }));
 #endif
@@ -115,6 +188,72 @@ bool ProjectCheckpointPreview::CapturePixels(UWorld* World, APlayerController* P
     TArray<uint8> Unused;
     CaptureView(World,Player,Unused,nullptr,&OutPixels);
     return OutPixels.Num()==Width*Height;
+}
+
+bool ProjectCheckpointPreview::CapturePixelsAsync(UWorld* World, APlayerController* Player, FPixelsReady OnReady)
+{
+    if (!IsInGameThread() || !OnReady || !IsValid(World) || World->GetNetMode()!=NM_Standalone) return false;
+    UTextureRenderTarget2D* Target=nullptr;
+    ASceneCapture2D* Actor=SpawnPreviewCapture(World,Player,Target);
+    if (!IsValid(Actor)) return false;
+    FTextureRenderTargetResource* Resource=IsValid(Target) ? Target->GameThread_GetRenderTargetResource() : nullptr;
+    if (!Resource) { Actor->Destroy(); return false; }
+    // Same image as the synchronous path: the scene is rendered from this frame's camera.
+    Actor->GetCaptureComponent2D()->CaptureScene();
+
+    const TSharedRef<FPreviewReadbackState,ESPMode::ThreadSafe> State=MakeShared<FPreviewReadbackState,ESPMode::ThreadSafe>();
+    State->Readback=MakeUnique<FRHIGPUTextureReadback>(TEXT("CheckpointPreviewReadback"));
+    // Render commands run in order, so this copy runs before the render target resource can be released.
+    ENQUEUE_RENDER_COMMAND(ProjectCheckpointPreviewReadbackCopy)([State,Resource](FRHICommandListImmediate& RHICmdList)
+    {
+        FRHITexture* Texture=Resource->GetRenderTargetTexture();
+        if (!Texture)
+        {
+            State->Readback.Reset();State->bFailed.store(true);State->bReady.store(true,std::memory_order_release);
+            return;
+        }
+        RHICmdList.Transition(FRHITransitionInfo(Texture,ERHIAccess::SRVMask,ERHIAccess::CopySrc));
+        State->Readback->EnqueueCopy(RHICmdList,Texture,FResolveRect(0,0,Width,Height));
+        RHICmdList.Transition(FRHITransitionInfo(Texture,ERHIAccess::CopySrc,ERHIAccess::SRVMask));
+    });
+
+    const TSharedRef<FPreviewCaptureOwner> Owner=MakeShared<FPreviewCaptureOwner>();
+    Owner->Target.Reset(Target);Owner->Actor=Actor;Owner->OnReady=MoveTemp(OnReady);
+    Owner->Deadline=FPlatformTime::Seconds()+AsyncReadbackTimeoutSeconds;
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([State,Owner](float)->bool
+    {
+        const bool bReady=State->bReady.load(std::memory_order_acquire);
+        if (!bReady && FPlatformTime::Seconds()<Owner->Deadline)
+        {
+            // Readback status may only be queried on the render thread; keep at most one poll in flight.
+            if (!State->bPollInFlight.exchange(true))
+            {
+                ENQUEUE_RENDER_COMMAND(ProjectCheckpointPreviewReadbackPoll)([State](FRHICommandListImmediate&)
+                {
+                    if (!State->bReady.load() && State->Readback && State->Readback->IsReady()) CopyReadback_RenderThread(*State);
+                    State->bPollInFlight.store(false);
+                });
+            }
+            return true;
+        }
+        if (!bReady)
+        {
+            // Timed out: release the staging resources on the render thread; the save continues without a preview.
+            ENQUEUE_RENDER_COMMAND(ProjectCheckpointPreviewReadbackCancel)([State](FRHICommandListImmediate&){ if (!State->bReady.load()) State->Readback.Reset(); });
+        }
+        if (ASceneCapture2D* CaptureActor=Owner->Actor.Get())
+        {
+            CaptureActor->GetCaptureComponent2D()->TextureTarget=nullptr;
+            CaptureActor->Destroy();
+        }
+        TArray<FColor> Pixels;
+        if (bReady && !State->bFailed.load() && State->Pixels.Num()==Width*Height) Pixels=MoveTemp(State->Pixels);
+        FPixelsReady Callback=MoveTemp(Owner->OnReady);
+        Owner->Target.Reset();
+        Callback(MoveTemp(Pixels));
+        return false;
+    }));
+    return true;
 }
 
 bool ProjectCheckpointPreview::PrepareEncoder()

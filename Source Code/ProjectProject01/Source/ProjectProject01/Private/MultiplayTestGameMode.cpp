@@ -17,6 +17,8 @@
 #include "ProjectProject01VersionContract.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/TriggerBox.h"
+#include "ProjectMatchBots.h"
+#include "ProjectOpenObserver.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -305,6 +307,7 @@ bool FProjectProject01MultiplayerMannequinAITest::RunTest(const FString& Paramet
 AMultiplayTestGameMode::AMultiplayTestGameMode()
 {
 	PrimaryActorTick.bCanEverTick = true;
+    MatchBots=CreateDefaultSubobject<UProjectMatchBots>(TEXT("ServerMatchBots"));
 	// 맵 구간 이동 때 접속을 끊거나 일회용 티켓을 다시 소비하지 않고 컨트롤러를 넘긴다.
 	bUseSeamlessTravel = true;
 
@@ -353,6 +356,10 @@ void AMultiplayTestGameMode::BeginPlay()
 		}
 	}
 	bServerWorldInitialized = true;
+    for(TActorIterator<AMultiplayTestPlayerController> It(GetWorld());It;++It)
+        if(IsMannequinController(*It)&&!It->GetViewedMannequin())AssignRandomInitialMannequinView(*It);
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();Instance&&Instance->ServerMatchCarryover&&!Instance->ServerMatchCarryover->Bots.IsEmpty())
+    {FString Error;MatchBots->AcceptRoster(Instance->ServerMatchCarryover->BotRoomId,Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Bots,Error);}
 	if (GetNetMode() == NM_DedicatedServer)
 		GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this,[this]()
 		{
@@ -1274,6 +1281,7 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 		}
 	}
 
+    if(MatchBots)MatchBots->Tick(DeltaSeconds);
 	if(TickLoadingGate(DeltaSeconds))return;
 	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		MatchTimeLimitSeconds > 0.0f && GetElapsedMatchSeconds() >= MatchTimeLimitSeconds)
@@ -1318,7 +1326,7 @@ void AMultiplayTestGameMode::UpdateVoiceAudibility()
 	for(const auto& Listener:MatchPlayerRecords)
 	{
 		auto* PC=Listener.Key.Get();const auto& Record=Listener.Value;
-		if(!PC || Record.Role!=TEXT("Survivor"))continue;
+		if(!PC || Record.bServerBot || Record.Role!=TEXT("Survivor"))continue;
 		const auto IsAudible=[this](const FMultiplayTestServerPlayerRecord& Player)
 		{
 			return AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress && !Player.bDisconnected && !Player.bForfeited &&
@@ -1338,7 +1346,7 @@ void AMultiplayTestGameMode::UpdateVoiceAudibility()
 		TArray<FProjectVoiceAudibility> Peers;
 		for(const auto& Other:MatchPlayerRecords)
 		{
-			if(Other.Key==Listener.Key || Other.Value.Role!=TEXT("Survivor"))continue;
+			if(Other.Key==Listener.Key || Other.Value.bServerBot || Other.Value.Role!=TEXT("Survivor"))continue;
 			FProjectVoiceAudibility Peer;Peer.UserId=Other.Value.UserId;
 			if(bAllowed && IsAudible(Other.Value))
 			{
@@ -1383,7 +1391,7 @@ void AMultiplayTestGameMode::PreLogin(
 		return;
 	}
 	if (Claim.RoomId.IsEmpty() || Claim.MatchId.IsEmpty() ||
-		(Claim.Role != TEXT("Mannequin") && Claim.Role != TEXT("Survivor")) ||
+		(Claim.Role != TEXT("Mannequin") && Claim.Role != TEXT("Survivor") && Claim.Role != TEXT("Observer")) ||
 		(!RequestedRoomId.IsEmpty() && !RequestedRoomId.Equals(Claim.RoomId, ESearchCase::CaseSensitive)))
 	{
 		ErrorMessage = TEXT("The game connection ticket does not match this room.");
@@ -1418,19 +1426,25 @@ void AMultiplayTestGameMode::PreLogin(
 		(DisconnectedRecord != nullptr && !DisconnectedRecord->bForfeited &&
 		 DisconnectedRecord->MatchId == Claim.MatchId && DisconnectedRecord->Role == Claim.Role) ||
 		(CompletedResult != nullptr && CompletedResult->MatchId == Claim.MatchId && CompletedResult->Role == Claim.Role);
-	if ((AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress ||
+    const bool Observer=Claim.Role==TEXT("Observer");int32 ObserverCount=0;
+    for(TActorIterator<AProjectOpenObserverController> It(GetWorld());It;++It)
+    {++ObserverCount;if(It->GetAuthenticatedUserId()==Claim.UserId){ErrorMessage=TEXT("This observer is already connected.");return;}}
+    if(Observer&&(ObserverCount>=2||(!AuthoritativeMatchId.IsEmpty()&&AuthoritativeMatchId!=Claim.MatchId)))
+    {ErrorMessage=TEXT("No observer admission is available for this match.");return;}
+	if (!Observer && (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress ||
 		 AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Ending ||
 		 AuthoritativeMatchPhase == EMultiplayTestMatchPhase::Results) && !bKnownReconnect)
 	{
 		ErrorMessage = TEXT("The match is already in progress and this account has no reconnect slot.");
 		return;
 	}
-	if (!bKnownReconnect && GetNumPlayers() >= ExpectedMatchPlayers)
+	if (!Observer && !bKnownReconnect && MatchPlayerRecords.Num() >= ExpectedMatchPlayers)
 	{
 		ErrorMessage = TEXT("The match is full.");
 		return;
 	}
 
+    if(MatchBots&&!MatchBots->AcceptRoster(Claim.RoomId,Claim.MatchId,Claim.Bots,ErrorMessage))return;
 	PendingValidatedJoinClaims.Add(Ticket, MoveTemp(Claim));
 }
 
@@ -1474,6 +1488,8 @@ FString AMultiplayTestGameMode::InitNewPlayer(
 
 void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 {
+    if(auto* Observer=Cast<AProjectOpenObserverController>(NewPlayer))
+    {Super::PostLogin(NewPlayer);Observer->Admit();return;}
 	AMultiplayTestPlayerController* NewMultiplayController = Cast<AMultiplayTestPlayerController>(NewPlayer);
 	const bool bHasExplicitRole = IsValid(NewMultiplayController) && ExplicitRoleControllers.Contains(NewMultiplayController);
 	const bool bRequestedMannequin = IsValid(NewMultiplayController) && RequestedMannequinControllers.Contains(NewMultiplayController);
@@ -1513,7 +1529,7 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 	// 스폰 후보는 이미 무작위로 골랐고, 여기서 다시 0~9 중 하나를 무작위로 골라
 	// 마네킹 플레이어가 실제로 빙의한 상태로 시작한다(이중 무작위 배정).
 	if (IsMannequinController(NewMultiplayController) &&
-		(!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld()) || GetWorld()->HasBegunPlay()))
+		bServerWorldInitialized)
 	{
 		AssignRandomInitialMannequinView(NewMultiplayController);
 	}
@@ -1525,6 +1541,7 @@ void AMultiplayTestGameMode::PostLogin(APlayerController* NewPlayer)
 
 void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
 {
+    if(NewPlayer&&NewPlayer->IsA<AProjectOpenObserverController>())return;
 	const AMultiplayTestPlayerController* MultiplayController =
 		Cast<AMultiplayTestPlayerController>(NewPlayer);
 	if (IsMannequinController(MultiplayController))
@@ -1552,7 +1569,17 @@ void AMultiplayTestGameMode::HandleStartingNewPlayer_Implementation(APlayerContr
 
 void AMultiplayTestGameMode::HandleSeamlessTravelPlayer(AController*& Controller)
 {
+    if(Controller&&Controller->IsA<AProjectOpenObserverController>())
+    {
+        // Engine swaps controller classes before our registration hook. Preserve the
+        // separately admitted observer class instead of turning it into a survivor.
+        TGuardValue<TSubclassOf<APlayerController>> ObserverClass(PlayerControllerClass,AProjectOpenObserverController::StaticClass());
+        Super::HandleSeamlessTravelPlayer(Controller);
+        if(auto* Observer=Cast<AProjectOpenObserverController>(Controller))Observer->Admit();
+        return;
+    }
 	Super::HandleSeamlessTravelPlayer(Controller);
+    if(auto* Observer=Cast<AProjectOpenObserverController>(Controller)){Observer->Admit();return;}
 
 	AMultiplayTestPlayerController* MultiplayController =
 		Cast<AMultiplayTestPlayerController>(Controller);
@@ -1576,7 +1603,7 @@ void AMultiplayTestGameMode::HandleSeamlessTravelPlayer(AController*& Controller
 
 AActor* AMultiplayTestGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
-	if (!HasAuthority() || !IsValid(Player) || IsMannequinController(Cast<AMultiplayTestPlayerController>(Player)))
+	if (!HasAuthority() || !IsValid(Player) || Player->IsA<AProjectOpenObserverController>() || IsMannequinController(Cast<AMultiplayTestPlayerController>(Player)))
 	{
 		return Super::ChoosePlayerStart_Implementation(Player);
 	}
@@ -1760,12 +1787,13 @@ void AMultiplayTestGameMode::HandleEscapeTriggerBeginOverlap(AActor* OverlappedA
 
 void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController* Controller)
 {
-	if (!HasAuthority() || !IsValid(Controller) || MatchPlayerRecords.Contains(Controller))
+	if (!HasAuthority() || !IsValid(Controller) || Controller->IsA<AProjectOpenObserverController>() || MatchPlayerRecords.Contains(Controller))
 	{
 		return;
 	}
 
 	FMultiplayTestServerPlayerRecord Record;
+    Record.bServerBot=Controller->IsServerControlledBot();
 	Record.UserId = Controller->GetAuthenticatedUserId();
 	Record.MatchId = Controller->GetAuthenticatedMatchId();
 	// 티켓 검증을 생략하는 Standalone/로컬 PIE에서도 통신 기능을 서로 격리된
@@ -1822,7 +1850,7 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 	Controller->SetServerMatchState(
 		EMultiplayTestMatchPhase::RoleAssignment,
 		MatchPlayerRecords.FindChecked(Controller).SurvivorState);
-	Controller->ClientConfigureSurvivorCommunication(
+	if(!Controller->IsServerControlledBot())Controller->ClientConfigureSurvivorCommunication(
 		MatchPlayerRecords.FindChecked(Controller).UserId,
 		MatchPlayerRecords.FindChecked(Controller).MatchId,
 		MatchPlayerRecords.FindChecked(Controller).Role);
@@ -2395,7 +2423,7 @@ void AMultiplayTestGameMode::NotifyMannequinCaptureFeedback(const bool bEliminat
 	{
 		return;
 	}
-	if (AMultiplayTestPlayerController* Controller = MannequinController.Get(); IsValid(Controller))
+	if (AMultiplayTestPlayerController* Controller = MannequinController.Get(); IsValid(Controller)&&!Controller->IsServerControlledBot())
 	{
 		Controller->ClientPlayMannequinCaptureFeedback(bElimination);
 	}
@@ -2550,6 +2578,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
 		return;
 	}
 	bLevelTransitionDeparting = true;
+    for(TActorIterator<AProjectOpenObserverController> It(GetWorld());It;++It)It->PrepareLevelTransitionCarryover(false,FadeSeconds);
 #if WITH_EDITOR
 	if (IsLocalEditorPlaySession(GetWorld()))
 	{
@@ -2578,6 +2607,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
     {
         auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
+        if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();}
         Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
         Carry->Disconnected=DisconnectedMatchRecords;
         for(const auto& Pair:MatchPlayerRecords)if(Pair.Key.IsValid())Carry->Players.Add(Pair.Value.UserId,Pair.Value);
@@ -2600,6 +2630,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
 
 bool AMultiplayTestGameMode::AreLevelTransitionClientsBlack() const
 {
+    for(TActorIterator<AProjectOpenObserverController> It(GetWorld());It;++It)if(!It->IsLevelTransitionBlackReady())return false;
 	for (const auto& Pair:MatchPlayerRecords)
 		if (const auto* Controller=Pair.Key.Get(); IsValid(Controller) && !Controller->IsLevelTransitionBlackReady()) return false;
 	return true;
@@ -2609,6 +2640,7 @@ void AMultiplayTestGameMode::CancelLevelTransitionTravel()
 {
 	if (!HasAuthority()) return;
 	bLevelTransitionDeparting = false;
+    for(TActorIterator<AProjectOpenObserverController> It(GetWorld());It;++It)It->CancelLevelTransitionCarryover(true);
 	const bool bRestoreGameplay = AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress;
 	for (auto& Pair : MatchPlayerRecords)
 	{
@@ -2811,7 +2843,7 @@ void AMultiplayTestGameMode::SubmitAuthoritativeResults()
 	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
 	{
 		AMultiplayTestPlayerController* Controller = Pair.Key.Get();
-		if (!IsValid(Controller) || Pair.Value.bForfeited)
+        if (!IsValid(Controller) || Pair.Value.bForfeited || Pair.Value.bServerBot)
 		{
 			continue;
 		}
@@ -2914,10 +2946,20 @@ void AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty()
 {
 	UWorld* World = GetWorld();
 	if (!ensureMsgf(IsValid(World), TEXT("Dedicated server reset requires a valid world.")) ||
-		World->GetNetMode() != NM_DedicatedServer || GetNumPlayers() > 0)
+		World->GetNetMode() != NM_DedicatedServer)
 	{
 		return;
 	}
+    // Server-owned bots have PlayerStates too. They must not keep an otherwise
+    // empty session alive forever; observers, on the other hand, are real users.
+    TArray<AMultiplayTestPlayerController*> RemainingBots;
+    for(FConstPlayerControllerIterator It=World->GetPlayerControllerIterator();It;++It)
+    {
+        auto* PC=It->Get();if(!IsValid(PC)||PC->IsActorBeingDestroyed())continue;
+        auto* MatchPC=Cast<AMultiplayTestPlayerController>(PC);
+        if(!MatchPC||!MatchPC->IsServerControlledBot())return;
+        RemainingBots.Add(MatchPC);
+    }
 	// 재접속 유예 중에는 서버 슬롯을 새 경기에 넘기거나 월드를 초기화하지 않습니다.
 	for (const auto& Pair : DisconnectedMatchRecords)
 	{
@@ -2930,6 +2972,13 @@ void AMultiplayTestGameMode::ResetDedicatedServerWorldIfEmpty()
 		}
 	}
 
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->ServerMatchCarryover.Reset();
+    for(auto* Bot:RemainingBots)
+    {
+        MatchPlayerRecords.Remove(Bot);
+        if(APawn* Body=Bot->GetPawn()){Bot->UnPossess();Body->Destroy();}
+        Bot->Destroy(); // Do not carry synthetic participants into an idle/reused world.
+    }
 	static const FString MultiplayTestMap = TEXT("/Game/MyProject/Level/MultiplayTest");
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("No players remain. Resetting the dedicated server world to %s."), *MultiplayTestMap);
@@ -3393,6 +3442,7 @@ bool AMultiplayTestGameMode::IsMannequinController(const AMultiplayTestPlayerCon
 {
 	return IsValid(Controller) &&
 		(MannequinController.Get() == Controller ||
+		 RequestedMannequinControllers.Contains(Controller) ||
 		 Controller->GetAuthenticatedRole().Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase));
 }
 

@@ -28,6 +28,12 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
+#include "Async/Async.h"
+#include "Tests/AutomationCommon.h"
+#include "UObject/StrongObjectPtr.h"
+#include "ProjectProject01GameInstance.h"
+#include "ProjectProject01SaveSubsystem.h"
+#include "ProjectProject01CheckpointStore.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCheckpointPreviewDataTest,"ProjectProject01.SinglePlayer.CheckpointPreviewData",
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -71,6 +77,55 @@ bool FProjectCheckpointPreviewDataTest::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCheckpointAsyncPreviewWriteTest,"ProjectProject01.SinglePlayer.CheckpointAsyncPreviewWrite",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCheckpointAsyncPreviewWriteTest::RunTest(const FString&)
+{
+    // Strong references keep the fixture alive across the latent frames below (no rooting of game objects).
+    TStrongObjectPtr<UProjectProject01GameInstance> Instance(NewObject<UProjectProject01GameInstance>());
+    TStrongObjectPtr<UProjectProject01SaveSubsystem> StoreRef(NewObject<UProjectProject01SaveSubsystem>(Instance.Get()));
+    UProjectProject01SaveSubsystem* Store=StoreRef.Get();
+    Store->TestSlotNamespace=FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    TArray<FColor> Pixels; Pixels.Init(FColor(40,100,180,255),ProjectCheckpointPreview::Width*ProjectCheckpointPreview::Height);
+    TestTrue(TEXT("Encoder prepared on game thread"),ProjectCheckpointPreview::PrepareEncoder());
+    TFuture<TArray<uint8>> Encoded=Async(EAsyncExecution::ThreadPool,[Pixels]{TArray<uint8> Png;ProjectCheckpointPreview::EncodePixels(Pixels,Png);return Png;});
+    TArray<uint8> Png=Encoded.Get();
+    TestTrue(TEXT("Worker-thread PNG is a valid bounded preview"),
+        ProjectCheckpointPreview::IsValidImage(Png,Png.IsEmpty()?0:FCrc::MemCrc32(Png.GetData(),Png.Num())));
+
+    auto* Save=NewObject<UProjectProject01SinglePlayerSaveGame>();
+    Save->SavedMapPackageName=TEXT("/Game/ReviewCheckpointFixture");Save->CheckpointId=TEXT("AsyncPreviewFixture");
+    Save->SavedAtUtc=FDateTime(2026,10,23);Save->LastPlayedAtUtc=Save->SavedAtUtc;Save->SaveRevision=1;
+    Store->bSaveInProgress=true;
+    Store->PendingWriteSlot=ProjectCheckpointStore::NextWriteSlot(Store->GetPrimarySlotName(1),ProjectCheckpointStore::FSelection());
+    Store->PendingWriteSave=Save;Store->PendingSaveGeneration=2;
+    Store->WriteCheckpoint(1,TArray<uint8>(Png));
+    TestTrue(TEXT("Stale encode result is ignored"),Store->PendingWriteSave==Save&&Save->PreviewPng.IsEmpty()&&Store->PendingSaveHash==0);
+
+    Store->WriteCheckpoint(2,TArray<uint8>(Png));
+    TestTrue(TEXT("Preview bytes and CRC stored as before"),Save->PreviewPng==Png&&Save->PreviewCrc==FCrc::MemCrc32(Png.GetData(),Png.Num()));
+    TestTrue(TEXT("Integrity hash covers the final preview"),Save->IntegrityHash==Save->CalculateIntegrityHash()&&Store->PendingSaveHash==Save->IntegrityHash);
+    TestNull(TEXT("Pending save object released once written"),Store->PendingWriteSave.Get());
+    // UE 5.8 delivers SaveGameAsync completion on a later core-ticker tick, so wait across frames.
+    const uint32 ExpectedHash=Save->IntegrityHash;
+    const double Deadline=FPlatformTime::Seconds()+10;
+    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,Instance,StoreRef,ExpectedHash,Deadline]()
+    {
+        UProjectProject01SaveSubsystem* Saves=StoreRef.Get();
+        if(Saves->bSaveInProgress&&FPlatformTime::Seconds()<Deadline)return false;
+        TestFalse(TEXT("Async file write completes"),Saves->bSaveInProgress);
+        const auto Selection=ProjectCheckpointStore::SelectNewest(Saves->GetPrimarySlotName(1),
+            [Saves](const FString& Slot){FString Error;return Saves->LoadValidatedSlot(Slot,Error);});
+        const auto* Written=Selection.Save;
+        TestTrue(TEXT("Committed generation is the one just written"),Written&&Written->SaveRevision==1&&Written->IntegrityHash==ExpectedHash);
+        if(TestNotNull(TEXT("Written checkpoint passes integrity validation"),Written))
+            TestTrue(TEXT("Saved preview decodes after reload"),ProjectCheckpointPreview::IsValidImage(Written->PreviewPng,Written->PreviewCrc));
+        for(int32 Index=1;Index<=3;++Index)Saves->DeleteSaveSlot(Index);
+        return true;
+    }));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCheckpointPreviewRenderTest,"ProjectProject01.SinglePlayer.CheckpointPreviewRender",
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
 bool FProjectCheckpointPreviewRenderTest::RunTest(const FString&)
@@ -111,6 +166,37 @@ bool FProjectCheckpointPreviewRenderTest::RunTest(const FString&)
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("CheckpointPreviewTests");
     IFileManager::Get().MakeDirectory(*Directory,true);
     if (!Image.IsEmpty()) FFileHelper::SaveArrayToFile(Image,*(Directory/TEXT("SceneCapture.png")));
-    World->DestroyWorld(false);GEngine->DestroyWorldContext(World);return true;
+
+    // Async readback path used by checkpoint saves: same view, completed over later frames.
+    struct FAsyncResult { bool bDone=false; TArray<FColor> Pixels; double GameThreadMs=0; };
+    const TSharedRef<FAsyncResult> Async=MakeShared<FAsyncResult>();
+    const double Start=FPlatformTime::Seconds();
+    const bool bStarted=ProjectCheckpointPreview::CapturePixelsAsync(World,PC,[Async](TArray<FColor>&& Pixels)
+    {
+        check(IsInGameThread());
+        Async->Pixels=MoveTemp(Pixels);Async->bDone=true;
+    });
+    Async->GameThreadMs=(FPlatformTime::Seconds()-Start)*1000.0;
+    TestTrue(TEXT("Async capture starts in a standalone render world"),bStarted);
+    TestFalse(TEXT("Async capture never completes inside the request call"),Async->bDone);
+    const int32 SyncBright=BrightPixels;
+    TWeakObjectPtr<UWorld> WeakWorld(World);
+    const double Deadline=FPlatformTime::Seconds()+10;
+    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,Async,WeakWorld,SyncBright,Deadline,bStarted]()
+    {
+        if (bStarted && !Async->bDone && FPlatformTime::Seconds()<Deadline) return false;
+        TestTrue(TEXT("Async readback completes"),Async->bDone);
+        TestEqual(TEXT("Async readback returns a full preview"),Async->Pixels.Num(),ProjectCheckpointPreview::Width*ProjectCheckpointPreview::Height);
+        int32 AsyncBright=0;
+        for (const FColor& Pixel:Async->Pixels) { if (FMath::Max3(Pixel.R,Pixel.G,Pixel.B)>32) ++AsyncBright; }
+        TestTrue(TEXT("Async capture contains the same visible geometry"),AsyncBright>1000 && FMath::Abs(AsyncBright-SyncBright)<=SyncBright/10);
+        TestTrue(TEXT("Async pixels are opaque"),Async->Pixels.Num()>0 && Async->Pixels[0].A==255);
+        TArray<uint8> Png;ProjectCheckpointPreview::EncodePixels(Async->Pixels,Png);
+        TestTrue(TEXT("Async pixels encode to a valid preview"),ProjectCheckpointPreview::IsValidImage(Png,Png.IsEmpty()?0:FCrc::MemCrc32(Png.GetData(),Png.Num())));
+        AddInfo(FString::Printf(TEXT("Async capture request game-thread time: %.2f ms"),Async->GameThreadMs));
+        if (UWorld* Fixture=WeakWorld.Get()) { Fixture->DestroyWorld(false);GEngine->DestroyWorldContext(Fixture); }
+        return true;
+    }));
+    return true;
 }
 #endif

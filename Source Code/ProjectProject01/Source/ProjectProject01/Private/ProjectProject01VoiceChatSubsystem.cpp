@@ -168,6 +168,9 @@ void UProjectProject01VoiceChatSubsystem::SetConnectionPhase(EProjectVoiceConnec
 void UProjectProject01VoiceChatSubsystem::BeginConnectionAttempt()
 {
 	if(!bConfiguredForSurvivor)return;
+	const auto* Auth=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>():nullptr;
+	if(!Auth||!Auth->IsSignedIn())
+	{FailConnection(TEXT("음성 연결에는 로그인된 게임 계정이 필요합니다."),false);return;}
 	AppliedTransmitState=-1;AppliedPeerGains.Reset();
 	++SessionGeneration;CancelVoiceRequests();bProductUserLoginPending=false;
 	bJoinedChannel=false;ConnectionFailure.Reset();

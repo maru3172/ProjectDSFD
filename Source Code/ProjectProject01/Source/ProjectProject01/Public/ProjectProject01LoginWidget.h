@@ -1026,6 +1026,28 @@ protected:
 
 private:
     UFUNCTION() void HandleOpenMatchClicked();
+    UFUNCTION() void HandleBotMatchClicked();
+    UFUNCTION() void HandleBotMatchCreateClicked();
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchRole;
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
+    UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCreateButton;
+    bool bShowingBotMatch=false;
+    UFUNCTION() void HandleAddRoomBot();
+    UFUNCTION() void HandleRemoveRoomBot();
+    UFUNCTION() void HandleChangeRoomBotDifficulty();
+    UPROPERTY(Transient) TObjectPtr<class UVerticalBox> RoomBotPanel;
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RoomBotSelection;
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RoomBotDifficulty;
+    UPROPERTY(Transient) TObjectPtr<class UButton> AddRoomBotButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RemoveRoomBotButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> ChangeRoomBotButton;
+    TArray<FString> RoomBotIds,RoomBotLabels;
+    UPROPERTY() TObjectPtr<class UButton> SwitchObserverButton;
+    UPROPERTY() TObjectPtr<class UVerticalBox> ParticipantManagement;
+    UFUNCTION() void HandleSwitchObserver();
+    UFUNCTION() void HandleMoveToObserver();
+    UFUNCTION() void HandleMoveToPlayer();
+    UFUNCTION() void HandleKickParticipant();
     UFUNCTION() void HandleTutorialClicked();
     UFUNCTION() void HandleSurvivorTutorialClicked();
     UFUNCTION() void HandleMannequinTutorialClicked();

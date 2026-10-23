@@ -1,4 +1,5 @@
 #include "ProjectProject01Tutorial.h"
+#include "ProjectPracticeEnvironment.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LoginWidget.h"
@@ -256,6 +257,7 @@ void AProjectProject01TutorialGameMode::InitGame(const FString& Map,const FStrin
 	};
 	PracticeMannequins=ReadCount(TEXT("PracticeMannequins"),10,10);
 	PracticeSurvivors=ReadCount(TEXT("PracticeSurvivors"),1,2);
+    bPracticeObstacles=bFreePractice && UGameplayStatics::ParseOption(Options,TEXT("PracticeObstacles"))==TEXT("1");
 	bPracticeStationary=UGameplayStatics::ParseOption(Options,TEXT("PracticeStationary"))==TEXT("1");
 	bPracticeStandingWatch=UGameplayStatics::ParseOption(Options,TEXT("PracticeStandingWatch"))!=TEXT("0");
 	bPracticeInfiniteLives=UGameplayStatics::ParseOption(Options,TEXT("PracticeInfiniteLives"))==TEXT("1");
@@ -338,6 +340,11 @@ void AProjectProject01TutorialGameMode::InitializePractice()
 	{
 		bAwaitingRead=false;PracticeTacticalSeconds=0;
 		NextDirectorContactToggle=GetWorld()->GetTimeSeconds()+PracticeRandom.FRandRange(6,12);
+        if(bPracticeObstacles)
+        {
+            PracticeEnvironment=GetWorld()->SpawnActor<AProjectPracticeEnvironment>();
+            if(PracticeEnvironment)PracticeEnvironment->Build(Plan->GetActorTransform());
+        }
 		if (bMannequin) SpawnPracticeSurvivors(PracticeSurvivors);
 		if (auto* Goals=Learner->FindComponentByClass<UProjectProject01ObjectiveComponent>())
 			Goals->UpdateObjective(bMannequin ? FName(TEXT("Practice.Capture")) : FName(TEXT("Survivor.Escape")),ProjectTutorial::Text(bMannequin ? TEXT("연습용 생존자를 붙잡으세요.") : TEXT("마네킹을 경계하며 탈출 지점에 도달하세요.")),FText());
@@ -1082,6 +1089,7 @@ FText AProjectProject01TutorialGameMode::GetFreePracticeStatus() const
 {
 	FString Result=bMannequin ? TEXT("마네킹 연습모드") : TEXT("생존자 연습모드");
 	Result+=FString::Printf(TEXT("\n마네킹 %d개"),PracticeMannequins);
+    Result+=bPracticeObstacles?TEXT("\n실전형 벽·엄폐물: 켜짐"):TEXT("\n실전형 벽·엄폐물: 꺼짐");
 	Result+=HasPracticeInfiniteLives()?TEXT("\n무한 목숨: 켜짐"):TEXT("\n목숨: 멀티플레이 규칙");
 	if (bPracticeRoundEnded) Result+=TEXT("\n연습이 끝났습니다. 다시 연습하거나 역할을 전환하세요.");
 	if (bMannequin)
@@ -1099,13 +1107,13 @@ FText AProjectProject01TutorialGameMode::GetFreePracticeStatus() const
 	if (bMannequin && bPracticeCorners) Result+=FString::Printf(TEXT("\n코너 배치: %d / %d명%s"),PracticeCornersPlaced,PracticeCornerCount,PracticeCornersPlaced<PracticeCornerCount?TEXT(" (나머지는 기본 위치)"):TEXT(""));
 	return FText::FromString(Result);
 }
-void AProjectProject01TutorialGameMode::RestartFreePractice(bool bAsMannequin,int32 Mannequins,int32 Survivors,bool bStationary,bool bStandingWatch,bool bInfiniteLives,bool bCorners,int32 CornerCount,bool bDirector,bool bAllowContactToggle)
+void AProjectProject01TutorialGameMode::RestartFreePractice(bool bAsMannequin,int32 Mannequins,int32 Survivors,bool bStationary,bool bStandingWatch,bool bInfiniteLives,bool bCorners,int32 CornerCount,bool bDirector,bool bAllowContactToggle,bool bObstacles)
 {
 	if (!bFreePractice || bReturning) return;
 	bReturning=true;UGameplayStatics::SetGamePaused(this,false);SetMenuInput(true);
 	SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending);StopAllMannequinsForMatchEnd();
-	const FString Options=FString::Printf(TEXT("FreePractice=1?TutorialRole=%s?PracticeMannequins=%d?PracticeSurvivors=%d?PracticeStationary=%d?PracticeStandingWatch=%d?PracticeInfiniteLives=%d?PracticeCorners=%d?PracticeCornerCount=%d?PracticeDirector=%d?PracticeDirectorToggleContact=%d"),
-		bAsMannequin ? TEXT("Mannequin") : TEXT("Survivor"),FMath::Clamp(Mannequins,1,10),FMath::Clamp(Survivors,1,2),bStationary?1:0,bStandingWatch?1:0,bInfiniteLives?1:0,bCorners?1:0,FMath::Clamp(CornerCount,1,FMath::Clamp(Survivors,1,2)),bDirector?1:0,bAllowContactToggle?1:0);
+    const FString Options=FString::Printf(TEXT("FreePractice=1?TutorialRole=%s?PracticeMannequins=%d?PracticeSurvivors=%d?PracticeStationary=%d?PracticeStandingWatch=%d?PracticeInfiniteLives=%d?PracticeCorners=%d?PracticeCornerCount=%d?PracticeDirector=%d?PracticeDirectorToggleContact=%d?PracticeObstacles=%d"),
+        bAsMannequin ? TEXT("Mannequin") : TEXT("Survivor"),FMath::Clamp(Mannequins,1,10),FMath::Clamp(Survivors,1,2),bStationary?1:0,bStandingWatch?1:0,bInfiniteLives?1:0,bCorners?1:0,FMath::Clamp(CornerCount,1,FMath::Clamp(Survivors,1,2)),bDirector?1:0,bAllowContactToggle?1:0,bObstacles?1:0);
 	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenToBlack(.6f);
 	GetWorldTimerManager().SetTimer(ReturnTimer,FTimerDelegate::CreateWeakLambda(this,[this,Options]()
 	{ UGameplayStatics::OpenLevel(this,ProjectTutorial::Map,true,Options); }),.65f,false);
@@ -1303,6 +1311,8 @@ bool UProjectProject01PracticeWidget::Initialize()
 	DirectorContactToggle=AddToggle(SettingsPanel,TEXT("AI의 접촉 피해 전환 허용"),!Mode || Mode->CanPracticeDirectorToggleContact());
 	DirectorContactToggle->SetToolTipText(ProjectTutorial::Text(TEXT("해제하면 AI가 접촉 피해 ON/OFF를 바꾸지 않습니다. 접촉 피해 자체를 끄는 설정은 아닙니다.")));
 	InfiniteLivesToggle=AddToggle(SettingsPanel,TEXT("무한 목숨"),Mode && Mode->HasPracticeInfiniteLives());
+    ObstaclesToggle=AddToggle(SettingsPanel,TEXT("실전형 벽·엄폐물 배치"),Mode && Mode->HasPracticeObstacles());
+    ObstaclesToggle->SetToolTipText(ProjectTutorial::Text(TEXT("시야 차단·코너 견제·우회 이동을 연습합니다. 인원 적용 / 다시 연습을 누르면 반영됩니다. 연습 AI는 기존 동작을 유지합니다.")));
 	MannequinCount=AddCount(SettingsPanel,TEXT("마네킹 수 (1~10)"),10,Mode ? Mode->GetPracticeMannequinCount() : 10,MannequinMinus,MannequinPlus);
 	SurvivorControls=WidgetTree->ConstructWidget<UVerticalBox>();SettingsPanel->AddChildToVerticalBox(SurvivorControls);
 	SurvivorCount=AddCount(SurvivorControls,TEXT("생존자 AI 수 (1~2)"),2,Mode ? Mode->GetPracticeSurvivorCount() : 1,SurvivorMinus,SurvivorPlus);
@@ -1367,7 +1377,7 @@ void UProjectProject01PracticeWidget::MoreSurvivors() { SetCount(SurvivorCount,1
 void UProjectProject01PracticeWidget::LessCorners() { SetCount(CornerCount,-1,FMath::RoundToInt(SurvivorCount->GetValue())); }
 void UProjectProject01PracticeWidget::MoreCorners() { SetCount(CornerCount,1,FMath::RoundToInt(SurvivorCount->GetValue())); }
 void UProjectProject01PracticeWidget::ApplyRole(bool bMannequin)
-{ if (auto* Mode=TutorialModeOf(this)) Mode->RestartFreePractice(bMannequin,FMath::RoundToInt(MannequinCount->GetValue()),FMath::RoundToInt(SurvivorCount->GetValue()),StationaryToggle->IsChecked(),StandingWatchToggle->IsChecked(),InfiniteLivesToggle->IsChecked(),CornerToggle->IsChecked(),FMath::RoundToInt(CornerCount->GetValue()),DirectorToggle->IsChecked(),DirectorContactToggle->IsChecked()); }
+{ if (auto* Mode=TutorialModeOf(this)) Mode->RestartFreePractice(bMannequin,FMath::RoundToInt(MannequinCount->GetValue()),FMath::RoundToInt(SurvivorCount->GetValue()),StationaryToggle->IsChecked(),StandingWatchToggle->IsChecked(),InfiniteLivesToggle->IsChecked(),CornerToggle->IsChecked(),FMath::RoundToInt(CornerCount->GetValue()),DirectorToggle->IsChecked(),DirectorContactToggle->IsChecked(),ObstaclesToggle->IsChecked()); }
 void UProjectProject01PracticeWidget::HandleApply() { if (auto* Mode=TutorialModeOf(this)) ApplyRole(Mode->IsMannequinTutorial()); }
 void UProjectProject01PracticeWidget::HandleSurvivor() { ApplyRole(false); }
 void UProjectProject01PracticeWidget::HandleMannequin() { ApplyRole(true); }

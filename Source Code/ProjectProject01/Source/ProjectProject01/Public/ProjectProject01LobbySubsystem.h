@@ -26,7 +26,7 @@ enum class EProjectProject01LobbyOperation : uint8
 	RequestGameTicket,
 	RefreshLeaderboard,
 	SubmitLeaderboardRecord,
-    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty
+    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty,CreateBotMatch,EditRoomBot,EditRoomParticipant
 };
 
 UENUM(BlueprintType)
@@ -170,6 +170,19 @@ struct PROJECTPROJECT01_API FProjectProject01RoomMember
 
 	UPROPERTY(BlueprintReadOnly)
 	FString AssignedRole;
+    // Local presentation only; server-owned bots never enter the human membership/auth list.
+    UPROPERTY(BlueprintReadOnly) bool bIsBot=false;
+    UPROPERTY(BlueprintReadOnly) bool bIsObserver=false;
+};
+
+USTRUCT(BlueprintType)
+struct PROJECTPROJECT01_API FProjectProject01RoomBot
+{
+    GENERATED_BODY()
+    UPROPERTY(BlueprintReadOnly) FString BotId;
+    UPROPERTY(BlueprintReadOnly) FString DisplayName;
+    UPROPERTY(BlueprintReadOnly) int32 Difficulty=2;
+    UPROPERTY(BlueprintReadOnly) FString AssignedRole;
 };
 
 USTRUCT(BlueprintType)
@@ -198,6 +211,8 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
     UPROPERTY(BlueprintReadOnly) bool bRandomMatch=false;
     UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;
     UPROPERTY(BlueprintReadOnly) FString MatchSearchId;
+    UPROPERTY(BlueprintReadOnly) bool bBotMatch=false;
+    UPROPERTY(BlueprintReadOnly) TArray<FProjectProject01RoomBot> Bots;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString RoomId;
@@ -252,6 +267,7 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 	TArray<FProjectProject01RoomChatMessage> ChatMessages;
 
 	bool IsValid() const { return !RoomId.IsEmpty(); }
+    bool bIsObserver=false;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
@@ -305,6 +321,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void CreateRoom(const FString& RoomName, bool bIsPublic, const FString& Password);
+    void CreateBotMatch(const FString& Role,int32 Difficulty);
+    void EditRoomBot(const FString& Action,const FString& BotId,int32 Difficulty);
+    void EditRoomParticipant(const FString& Action,const FString& UserId=FString());
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void JoinRoom(const FString& RoomCode, const FString& Password);

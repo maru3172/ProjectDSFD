@@ -80,7 +80,7 @@ internal static partial class CommunityEndpoints
         FROM users u LEFT JOIN social_profiles p ON p.user_id=u.id WHERE u.id=@id
         """,ct,("id",id));
 
-    private static async Task<IResult?> InviteToRoom(MySqlConnection c,MySqlTransaction tx,ulong me,ulong other,string name,bool blocked,CancellationToken ct)
+    private static async Task<IResult?> InviteToRoom(MySqlConnection c,MySqlTransaction tx,ulong me,ulong other,string name,bool blocked,bool allowObservers,CancellationToken ct)
     {
         if(blocked)return Error("초대를 전달할 수 없습니다.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM social_friends WHERE user_low=@low AND user_high=@high",ct,("low",Math.Min(me,other)),("high",Math.Max(me,other)))!=1)return Error("친구에게만 방 초대를 보낼 수 있습니다.");
@@ -88,7 +88,9 @@ internal static partial class CommunityEndpoints
         if(rooms.Count==0||Convert.ToString(rooms[0]["status"])!="Waiting")return Error("대기 중인 내 방에서만 초대할 수 있습니다.");
         string room=Convert.ToString(rooms[0]["id"])!;
         if(await LobbyEndpoints.IsRandomPartyAsync(c,tx,room,ct))return Error("랜덤 매칭은 솔로 전용입니다. 친구 초대는 오픈 매칭에서 이용하세요.");
-        if(await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room",ct,("room",room))>=3)return Error("방이 가득 찼습니다.");
+        if(await LobbyEndpoints.IsBotRoomAsync(c,tx,room,ct))return Error("봇전에서는 친구를 초대할 수 없습니다. 오픈 매칭을 이용하세요.");
+        if(await Scalar(c,tx,"SELECT (SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=FALSE)+(SELECT COUNT(*) FROM room_bots WHERE room_id=@room)",ct,("room",room))>=3&&
+            (!allowObservers||await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=TRUE",ct,("room",room))>=2))return Error("방이 가득 찼습니다.");
         if(await Scalar(c,tx,"""
             SELECT COUNT(*) FROM social_presence p WHERE p.user_id=@other AND p.context='Lobby' AND p.presence<>'Offline'
             AND p.last_seen_utc>UTC_TIMESTAMP(6)-INTERVAL 20 SECOND
@@ -99,7 +101,7 @@ internal static partial class CommunityEndpoints
         await Exec(c,tx,"DELETE FROM social_room_invites WHERE expires_at_utc<=UTC_TIMESTAMP(6);INSERT INTO social_room_invites(id,room_id,sender_id,recipient_id,expires_at_utc) VALUES(@id,@room,@me,@other,UTC_TIMESTAMP(6)+INTERVAL 2 MINUTE) ON DUPLICATE KEY UPDATE id=@id,sender_id=@me,expires_at_utc=UTC_TIMESTAMP(6)+INTERVAL 2 MINUTE,created_at_utc=UTC_TIMESTAMP(6)",ct,("id",Guid.NewGuid().ToString("D")),("room",room),("me",me),("other",other));
         await Notify(c,tx,other,"RoomInvite",name+"님이 '"+rooms[0]["name"]+"' 방에 초대했습니다.",ct);return null;
     }
-    private static async Task<IResult> RespondToRoomInvite(MySqlConnection c,ulong me,string name,ActionRequest input,CancellationToken ct)
+    private static async Task<IResult> RespondToRoomInvite(MySqlConnection c,ulong me,string name,ActionRequest input,bool allowObservers,CancellationToken ct)
     {
         if(!Guid.TryParse(input.Target,out var id))return Error("초대 정보를 확인하세요.");
         await using var tx=await c.BeginTransactionAsync(ct);
@@ -118,13 +120,15 @@ internal static partial class CommunityEndpoints
         ulong sender=Convert.ToUInt64(invitations[0]["sender_id"]);
         if(rooms.Count==0||Convert.ToString(rooms[0]["status"])!="Waiting")return Error("방이 사라졌거나 이미 시작되었습니다.");
         if(await LobbyEndpoints.IsRandomPartyAsync(c,tx,room,ct))return Error("랜덤 매칭 초대는 사용할 수 없습니다. 오픈 매칭에서 다시 초대받으세요.");
+        if(await LobbyEndpoints.IsBotRoomAsync(c,tx,room,ct))return Error("봇전 초대는 사용할 수 없습니다. 오픈 매칭을 이용하세요.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM social_blocks WHERE (owner_id=@me AND target_id=@sender) OR(owner_id=@sender AND target_id=@me)",ct,("me",me),("sender",sender))>0 ||
             await Scalar(c,tx,"SELECT COUNT(*) FROM social_friends WHERE user_low=@low AND user_high=@high",ct,("low",Math.Min(me,sender)),("high",Math.Max(me,sender)))!=1)return Error("초대를 사용할 수 없습니다.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room AND user_id=@sender",ct,("room",room),("sender",sender))!=1)return Error("초대한 친구가 방을 나갔습니다.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE user_id=@me",ct,("me",me))>0)return Error("현재 방을 먼저 나간 뒤 초대를 수락하세요.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM social_presence WHERE user_id=@me AND context='Lobby' AND last_seen_utc>UTC_TIMESTAMP(6)-INTERVAL 20 SECOND",ct,("me",me))!=1)return Error("로비에서 초대를 수락하세요.");
-        if(await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room",ct,("room",room))>=3)return Error("방 인원이 가득 찼습니다.");
-        await Exec(c,tx,"INSERT INTO room_members(room_id,user_id,is_ready) VALUES(@room,@me,FALSE);DELETE FROM social_room_invites WHERE recipient_id=@me",ct,("room",room),("me",me));
+        bool asObserver=await Scalar(c,tx,"SELECT (SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=FALSE)+(SELECT COUNT(*) FROM room_bots WHERE room_id=@room)",ct,("room",room))>=3;
+        if(asObserver&&(!allowObservers||await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=TRUE",ct,("room",room))>=2))return Error("방 인원이 가득 찼습니다.");
+        await Exec(c,tx,"INSERT INTO room_members(room_id,user_id,is_ready,is_observer) VALUES(@room,@me,FALSE,@observer);DELETE FROM social_room_invites WHERE recipient_id=@me",ct,("room",room),("me",me),("observer",asObserver));
         await Notify(c,tx,sender,"InviteAccepted",name+"님이 방 초대를 수락했습니다.",ct);
         await tx.CommitAsync(ct);return Results.Ok(new{message="친구의 방에 참가했습니다. 준비 상태는 초기화됩니다."});
     }

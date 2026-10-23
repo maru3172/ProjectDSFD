@@ -54,7 +54,8 @@ internal static class MatchmakingChecks
             Check((await Join(0,s)).GetProperty("state").GetString()=="Cancelled","취소 뒤 늦은 시작 요청이 대기열을 부활시키지 않음");
             s=Guid.NewGuid().ToString("D");await Cancel(0,s);Check((await Join(0,s)).GetProperty("state").GetString()=="Cancelled","시작보다 취소가 먼저 도착해도 안전");
             s=Guid.NewGuid().ToString("D");await Join(0,s);await Sql("UPDATE random_match_searches SET last_seen_utc=UTC_TIMESTAMP()-INTERVAL 31 SECOND WHERE search_id=@s",("s",s));Check((await Poll(0,s)).GetProperty("state").GetString()=="Expired","30초 응답 없는 대기 신청 제거·늦은 폴링 부활 금지");
-            s=Guid.NewGuid().ToString("D");await Join(0,s);await Sql("UPDATE random_match_searches SET created_at_utc=UTC_TIMESTAMP()-INTERVAL 181 SECOND WHERE search_id=@s",("s",s));Check((await Poll(0,s)).GetProperty("state").GetString()=="Expired","180초 대기 상한 뒤 재시작 가능");
+            s=Guid.NewGuid().ToString("D");await Join(0,s);await Sql("UPDATE random_match_searches SET created_at_utc=UTC_TIMESTAMP()-INTERVAL 181 SECOND WHERE search_id=@s",("s",s));Check((await Poll(0,s)).GetProperty("state").GetString()=="Waiting","봇 보충 전 180초에 조기 만료되지 않음");
+            await Sql("UPDATE random_match_searches SET created_at_utc=UTC_TIMESTAMP()-INTERVAL 901 SECOND WHERE search_id=@s",("s",s));Check((await Poll(0,s)).GetProperty("state").GetString()=="Expired","서버 자리 부족 등 15분 상한 뒤 안전하게 재시작 가능");
             await Sql("INSERT INTO social_friends(user_low,user_high) VALUES(@a,@b)",("a",Math.Min(clients[0].Id,clients[1].Id)),("b",Math.Max(clients[0].Id,clients[1].Id)));
             await Expect(clients[0].Client.PostAsJsonAsync("/api/social/action",new{operation="Invite",target=clients[1].Account}),HttpStatusCode.BadRequest,"랜덤 매칭 친구 초대 차단");
             string staging=(await Room(0)).GetProperty("roomId").GetString()!,staleInvite=Guid.NewGuid().ToString("D");

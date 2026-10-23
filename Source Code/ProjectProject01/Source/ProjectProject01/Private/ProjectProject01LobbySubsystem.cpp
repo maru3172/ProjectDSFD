@@ -197,6 +197,17 @@ bool UProjectProject01LobbySubsystem::ParseMatchmaking(const TSharedPtr<FJsonObj
     OnCurrentRoomChanged.Broadcast();return true;
 }
 
+void UProjectProject01LobbySubsystem::CreateBotMatch(const FString& Role,int32 Difficulty)
+{
+    if(HasCurrentRoom()||IsMatchmaking()||IsRequestInFlight())return;
+    if((Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))||Difficulty<1||Difficulty>5)
+    {Complete(EProjectProject01LobbyOperation::CreateBotMatch,false,TEXT("역할과 1~5단계 난이도를 선택하세요."));return;}
+    ClearGameJoinTicket();
+    TSharedRef<FJsonObject> Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("role"),Role);Json->SetNumberField(TEXT("difficulty"),Difficulty);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    SendRequest(EProjectProject01LobbyOperation::CreateBotMatch,TEXT("POST"),TEXT("/api/bot-matches"),Body);
+}
+
 void UProjectProject01LobbySubsystem::CreateRoom(
 	const FString& RoomName,
 	const bool bIsPublic,
@@ -317,6 +328,24 @@ void UProjectProject01LobbySubsystem::SendChat(const FString& Message)
 	FString Body;
 	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
 	SendRequest(EProjectProject01LobbyOperation::SendChat, TEXT("POST"), TEXT("/api/rooms/current/chat"), Body);
+}
+
+void UProjectProject01LobbySubsystem::EditRoomBot(const FString& Action,const FString& BotId,int32 Difficulty)
+{
+    if(!HasCurrentRoom()||!CurrentRoom.bIsHost||CurrentRoom.bBotMatch||CurrentRoom.bRandomMatch||CurrentRoom.bRandomParty||
+        CurrentRoom.bStarted||CurrentRoom.bStarting||CurrentRoom.bServerPreparing||Difficulty<1||Difficulty>5||
+        (Action!=TEXT("add")&&Action!=TEXT("remove")&&Action!=TEXT("difficulty")))return;
+    auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),Action);Json->SetStringField(TEXT("botId"),BotId);Json->SetNumberField(TEXT("difficulty"),Difficulty);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    SendRequest(EProjectProject01LobbyOperation::EditRoomBot,TEXT("POST"),TEXT("/api/rooms/current/bots"),Body);
+}
+void UProjectProject01LobbySubsystem::EditRoomParticipant(const FString& Action,const FString& UserId)
+{
+    if(!HasCurrentRoom()||CurrentRoom.bBotMatch||CurrentRoom.bRandomMatch||CurrentRoom.bRandomParty||CurrentRoom.bStarted||CurrentRoom.bStarting||CurrentRoom.bServerPreparing)return;
+    auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),Action);
+    if(!UserId.IsEmpty())Json->SetStringField(TEXT("userId"),UserId);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    SendRequest(EProjectProject01LobbyOperation::EditRoomParticipant,TEXT("POST"),TEXT("/api/rooms/current/participants"),Body);
 }
 
 void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
@@ -759,6 +788,26 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
     StateJson->TryGetBoolField(TEXT("randomMatch"),Parsed.bRandomMatch);
     StateJson->TryGetBoolField(TEXT("randomParty"),Parsed.bRandomParty);
     StateJson->TryGetStringField(TEXT("matchSearchId"),Parsed.MatchSearchId);
+    StateJson->TryGetBoolField(TEXT("botMatch"),Parsed.bBotMatch);
+    StateJson->TryGetBoolField(TEXT("isObserver"),Parsed.bIsObserver);
+    const TArray<TSharedPtr<FJsonValue>>* BotValues=nullptr;
+    if(StateJson->TryGetArrayField(TEXT("bots"),BotValues)&&BotValues)
+    {
+        if(BotValues->Num()>3){OutError=TEXT("봇 정원 응답이 올바르지 않습니다.");return false;}
+        TSet<FString> Ids;
+        for(const auto& Value:*BotValues)
+        {
+            auto BotJson=Value.IsValid()&&Value->Type==EJson::Object?Value->AsObject():nullptr;FProjectProject01RoomBot Bot;double Level=0;FGuid Id;
+            if(!ProjectProject01Lobby::ReadRequiredString(BotJson,TEXT("botId"),Bot.BotId)||!FGuid::Parse(Bot.BotId,Id)||!Id.IsValid()||Ids.Contains(Id.ToString(EGuidFormats::DigitsWithHyphensLower))||
+                !ProjectProject01Lobby::ReadRequiredString(BotJson,TEXT("displayName"),Bot.DisplayName)||Bot.DisplayName.Len()>48||
+                !BotJson->TryGetNumberField(TEXT("difficulty"),Level)||!FMath::IsFinite(Level)||Level<1||Level>5||Level!=static_cast<int32>(Level))
+            {OutError=TEXT("봇 구성 응답이 올바르지 않습니다.");return false;}
+            Bot.BotId=Id.ToString(EGuidFormats::DigitsWithHyphensLower);Ids.Add(Bot.BotId);Bot.Difficulty=static_cast<int32>(Level);BotJson->TryGetStringField(TEXT("assignedRole"),Bot.AssignedRole);
+            if(!Bot.AssignedRole.IsEmpty()&&Bot.AssignedRole!=TEXT("Mannequin")&&Bot.AssignedRole!=TEXT("Survivor"))
+            {OutError=TEXT("봇 역할 응답이 올바르지 않습니다.");return false;}
+            Parsed.Bots.Add(MoveTemp(Bot));
+        }
+    }
 	StateJson->TryGetStringField(TEXT("travelUrl"), Parsed.TravelUrl);
 	StateJson->TryGetStringField(TEXT("assignedRole"), Parsed.AssignedRole);
 
@@ -781,6 +830,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 			return false;
 		}
 		MemberJson->TryGetBoolField(TEXT("returnedToRoom"), Member.bReturnedToRoom);
+        MemberJson->TryGetBoolField(TEXT("isObserver"),Member.bIsObserver);
 		MemberJson->TryGetStringField(TEXT("assignedRole"), Member.AssignedRole);
 		Parsed.Members.Add(MoveTemp(Member));
 	}

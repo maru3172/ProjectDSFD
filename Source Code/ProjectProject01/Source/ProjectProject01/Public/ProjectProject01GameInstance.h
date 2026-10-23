@@ -11,6 +11,7 @@
 #include "GameFramework/GameUserSettings.h"
 #include "InputCoreTypes.h"
 #include "ProjectRequestCircuit.h"
+#include "ProjectMatchBotTypes.h"
 #include "ProjectProject01GameInstance.generated.h"
 
 class SBorder;
@@ -263,6 +264,7 @@ private:
 
 struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim
 {
+    TArray<FProjectMatchBotSpec> Bots;
 	FString UserId;
 	FString DisplayName;
 	FString RoomId;

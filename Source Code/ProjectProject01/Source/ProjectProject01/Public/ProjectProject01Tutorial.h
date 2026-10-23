@@ -188,6 +188,7 @@ class PROJECTPROJECT01_API AProjectProject01TutorialGameMode : public AMultiplay
     friend class FProjectTutorialRuntimeTest;
 	friend class FProjectFreePracticeRuntimeTest;
 	friend class FProjectPracticeDirectorTest;
+    friend class FProjectPracticeEnvironmentEditorTest;
 public:
 	static bool IsTutorialWorld(const UWorld* World);
 	virtual void InitGame(const FString& Map, const FString& Options, FString& Error) override;
@@ -224,16 +225,19 @@ public:
 	int32 GetPracticeCornerCount() const { return PracticeCornerCount; }
 	bool IsPracticeDirectorEnabled() const { return bFreePractice && !bMannequin && bPracticeDirector; }
 	bool IsPracticeDirectorConfigured() const { return bPracticeDirector; }
+    bool HasPracticeObstacles() const { return bPracticeObstacles; }
 	bool CanPracticeDirectorToggleContact() const { return bPracticeDirectorToggleContact; }
 	FText GetPracticeContactDamageText() const;
 	bool IsPracticeContactDamageEnabled() const;
 	FText GetFreePracticeStatus() const;
 	void ShowPracticeMenu(bool bShow);
-	void RestartFreePractice(bool bAsMannequin,int32 Mannequins,int32 Survivors,bool bStationary=false,bool bStandingWatch=true,bool bInfiniteLives=false,bool bCorners=false,int32 CornerCount=1,bool bDirector=false,bool bAllowContactToggle=true);
+	void RestartFreePractice(bool bAsMannequin,int32 Mannequins,int32 Survivors,bool bStationary=false,bool bStandingWatch=true,bool bInfiniteLives=false,bool bCorners=false,int32 CornerCount=1,bool bDirector=false,bool bAllowContactToggle=true,bool bObstacles=false);
 protected:
 	virtual void FinishAuthoritativeMatch(const FString& Reason) override;
 	virtual AMannequinAICharacter* GetMannequinPlayerFocusPawn() const override;
 private:
+    bool bPracticeObstacles=false;
+    UPROPERTY(Transient) TObjectPtr<class AProjectPracticeEnvironment> PracticeEnvironment;
 	void InitializePractice();
 	void EnterStep();
 	void AdvanceStep();
@@ -341,6 +345,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> InfiniteLivesToggle;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> DirectorToggle;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> DirectorContactToggle;
+    UPROPERTY(Transient) TObjectPtr<class UCheckBox> ObstaclesToggle;
 	UPROPERTY(Transient) TObjectPtr<class UCheckBox> CornerToggle;
 	UPROPERTY(Transient) TObjectPtr<class USpinBox> CornerCount;
 	UPROPERTY(Transient) TObjectPtr<class UButton> CornerMinus;

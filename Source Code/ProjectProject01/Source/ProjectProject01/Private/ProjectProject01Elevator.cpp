@@ -286,6 +286,29 @@ bool AProjectProject01Elevator::CanInteract_Implementation(APawn* Interactor) co
 {
 	return CanUseButton(Interactor,TraceButton(Interactor));
 }
+bool AProjectProject01Elevator::GetBotObjective(APawn* Interactor,FVector& MoveGoal,FVector& LookGoal) const
+{
+    const auto* PC=Interactor?Cast<AMultiplayTestPlayerController>(Interactor->GetController()):nullptr;
+    const auto* Mode=GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();
+    if(!HasAuthority()||!PC||!PC->IsServerControlledBot()||!IsEligibleInteractor(Interactor)||bArrivalOnly||State.bArrivalTrip||
+        !Mode||!Mode->CanUseEmergencyElevator()||!IsDestinationAvailable())return false;
+    const auto Phase=State.Phase;
+    if(Phase!=EProjectElevatorPhase::Ready&&Phase!=EProjectElevatorPhase::CallDelay&&Phase!=EProjectElevatorPhase::Rising&&
+        Phase!=EProjectElevatorPhase::Opening&&Phase!=EProjectElevatorPhase::Open)return false;
+    const bool Enter=Phase==EProjectElevatorPhase::Open;
+    MoveGoal=Enter?CabinVolume->GetComponentLocation():CallButtonVolume->GetComponentLocation()+GetActorForwardVector()*120;
+    LookGoal=Enter?InsideButtonVolume->GetComponentLocation():CallButtonVolume->GetComponentLocation();
+    return true;
+}
+bool AProjectProject01Elevator::TryBotInteraction(APawn* Interactor)
+{
+    FVector MoveGoal,LookGoal;if(!GetBotObjective(Interactor,MoveGoal,LookGoal))return false;
+    if(State.Phase!=EProjectElevatorPhase::Ready&&State.Phase!=EProjectElevatorPhase::Open)return false;
+    FVector Eye;FRotator Facing;Interactor->GetController()->GetPlayerViewPoint(Eye,Facing);
+    // Do not grant a bot remote interaction or permission to bypass a wall.
+    if(FVector::DotProduct(Facing.Vector(),(LookGoal-Eye).GetSafeNormal())<.985f)return false;
+    return TryInteractFromView(Interactor,Eye,Facing.Vector(),500,ECC_Visibility);
+}
 bool AProjectProject01Elevator::CanUseButton(APawn* Interactor, const UPrimitiveComponent* Button) const
 {
 	if (bArrivalOnly || State.bArrivalTrip || !IsEligibleInteractor(Interactor)) return false;

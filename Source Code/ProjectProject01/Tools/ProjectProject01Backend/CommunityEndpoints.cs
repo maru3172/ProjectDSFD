@@ -156,7 +156,8 @@ internal static partial class CommunityEndpoints
         var user=await LobbyEndpoints.AuthenticateAsync(req,db,ct);
         if(user is null)return Results.Unauthorized();
         await using var c=await db.OpenConnectionAsync(ct);
-        if(input.Operation is "AcceptInvite" or "DeclineInvite")return await RespondToRoomInvite(c,user.Id,user.DisplayName,input,ct);
+        bool allowObservers=req.HttpContext.RequestServices.GetRequiredService<IConfiguration>().GetValue<bool>("Bots:EnableOpenObservers");
+        if(input.Operation is "AcceptInvite" or "DeclineInvite")return await RespondToRoomInvite(c,user.Id,user.DisplayName,input,allowObservers,ct);
         if(input.Operation=="Presence")
         {
             if(!ValidPresence(input.Presence)|| input.Context is not ("Lobby" or "Game" or "Other"))return Error("접속 상태가 올바르지 않습니다.");
@@ -198,7 +199,7 @@ internal static partial class CommunityEndpoints
             case "Unblock":await Exec(c,tx,"DELETE FROM social_blocks WHERE owner_id=@me AND target_id=@other",ct,pair);break;
             case "Remove":await Exec(c,tx,"DELETE FROM social_friends WHERE user_low=@low AND user_high=@high;DELETE FROM social_room_invites WHERE (sender_id=@me AND recipient_id=@other) OR (sender_id=@other AND recipient_id=@me)",ct,pair);break;
             case "Invite":
-                var inviteError=await InviteToRoom(c,tx,user.Id,target,user.DisplayName,blocked,ct);
+                var inviteError=await InviteToRoom(c,tx,user.Id,target,user.DisplayName,blocked,allowObservers,ct);
                 if(inviteError is not null)return inviteError;
                 break;
             case "Decline":await Exec(c,tx,"DELETE FROM social_requests WHERE sender_id=@other AND recipient_id=@me",ct,pair);break;

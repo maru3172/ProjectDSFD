@@ -80,7 +80,7 @@ internal static partial class LobbyEndpoints
                     else await FormRandomGroupAsync(c,tx,req,travelUrl,demand,ct);
                 }
                 await ClearInactivePartySearchesAsync(c,tx,ct);
-                var rows=await CommunityEndpoints.Rows(c,tx,"SELECT state,room_id,GREATEST(0,180-TIMESTAMPDIFF(SECOND,created_at_utc,UTC_TIMESTAMP(6))) remaining FROM random_match_searches WHERE search_id=@s",ct,("s",searchId));
+                var rows=await CommunityEndpoints.Rows(c,tx,"SELECT state,room_id,GREATEST(0,900-TIMESTAMPDIFF(SECOND,created_at_utc,UTC_TIMESTAMP(6))) remaining FROM random_match_searches WHERE search_id=@s",ct,("s",searchId));
                 string state=rows.Count==0?"Idle":Convert.ToString(rows[0]["state"])!;
                 var current=await LoadCurrentRoomAsync(c,tx,user.Id,available(),ct);
                 if(state=="Matched"&&current?.RoomId!=Convert.ToString(rows[0]["room_id"]))state="Idle";
@@ -97,8 +97,9 @@ internal static partial class LobbyEndpoints
     private static async Task FormRandomGroupAsync(MySqlConnection c,MySqlTransaction tx,HttpRequest req,string url,GameServerDemandManager? demand,CancellationToken ct)
     {
         // Internal staging rooms are single-user only. Never recruit from open rooms or grouped parties.
-        var selected=await CommunityEndpoints.Rows(c,tx,"SELECT q.search_id,q.room_id FROM random_match_searches q JOIN random_match_search_members m ON m.search_id=q.search_id WHERE q.state='Waiting' GROUP BY q.search_id,q.room_id HAVING COUNT(m.user_id)=1 ORDER BY MIN(q.created_at_utc),q.search_id LIMIT 3",ct);
-        if(selected.Count!=3)return;
+        var selected=await CommunityEndpoints.Rows(c,tx,"SELECT q.search_id,q.room_id,TIMESTAMPDIFF(SECOND,MIN(q.created_at_utc),UTC_TIMESTAMP(6)) age FROM random_match_searches q JOIN random_match_search_members m ON m.search_id=q.search_id WHERE q.state='Waiting' GROUP BY q.search_id,q.room_id HAVING COUNT(m.user_id)=1 ORDER BY MIN(q.created_at_utc),q.search_id LIMIT 3",ct);
+        if(selected.Count==0)return;
+        if(selected.Count<3 && (Convert.ToInt32(selected[0]["age"])<300 || !req.HttpContext.RequestServices.GetRequiredService<IConfiguration>().GetValue<bool>("Bots:EnableDedicatedMatches")))return;
         string room=Convert.ToString(selected[0]["room_id"])!;
         int? port=demand?.Configured==true?7777:await GameServerSlots.ReserveAsync(c,tx,room,ct);if(port is null)return;
         List<ulong> ids=[];
@@ -113,14 +114,25 @@ internal static partial class LobbyEndpoints
             if(old!=room)await CommunityEndpoints.Exec(c,tx,"UPDATE room_members SET room_id=@r WHERE room_id=@old;DELETE FROM game_rooms WHERE id=@old",ct,("r",room),("old",old));
             await CommunityEndpoints.Exec(c,tx,"UPDATE random_match_searches SET state='Matched',room_id=@r WHERE search_id=@s",ct,("r",room),("s",entry["search_id"]));
         }
-        if(ids.Count!=3||ids.Distinct().Count()!=3)throw new MatchmakingChangedException();
-        ulong mannequin=ids[RandomNumberGenerator.GetInt32(3)];string host=new Uri("http://"+ResolveTravelUrlForRequest(req,url)).Host;
+        if(ids.Count!=selected.Count||ids.Distinct().Count()!=ids.Count)throw new MatchmakingChangedException();
+        int mannequinSlot=RandomNumberGenerator.GetInt32(3);
+        ulong mannequin=mannequinSlot<ids.Count?ids[mannequinSlot]:0;string host=new Uri("http://"+ResolveTravelUrlForRequest(req,url)).Host;
         await CommunityEndpoints.Exec(c,tx,"""
             INSERT INTO random_match_rooms(room_id) VALUES(@r) ON DUPLICATE KEY UPDATE room_id=@r;
             UPDATE room_members SET is_ready=TRUE,returned_to_room=FALSE,assigned_role=IF(user_id=@mannequin,'Mannequin','Survivor') WHERE room_id=@r;
             UPDATE game_rooms SET status='Starting',travel_url=@url,started_at_utc=UTC_TIMESTAMP(6) WHERE id=@r;
             UPDATE random_match_parties SET search_id=NULL WHERE room_id=@r;
             """,ct,("r",room),("url",$"{host}:{port}"),("mannequin",mannequin));
+        if(ids.Count<3)
+        {
+            var survivorRatings=new List<double>();
+            foreach(ulong user in ids.Where(u=>u!=mannequin))survivorRatings.Add(await BotSkillRatings.ReadAsync(c,tx,user,"Survivor",ct));
+            int mannequinLevel=BotSkillRatings.Level(survivorRatings.Count>0?survivorRatings.Average():1200);
+            double opponent=mannequin!=0?await BotSkillRatings.ReadAsync(c,tx,mannequin,"Mannequin",ct):BotSkillRatings.BotRating(mannequinLevel);
+            for(int slot=ids.Count;slot<3;++slot)
+                await CommunityEndpoints.Exec(c,tx,"INSERT INTO room_bots(bot_id,room_id,difficulty,assigned_role) VALUES(@b,@r,@d,@role)",ct,
+                    ("b",Guid.NewGuid().ToString("D")),("r",room),("d",slot==mannequinSlot?mannequinLevel:BotSkillRatings.Level(opponent)),("role",slot==mannequinSlot?"Mannequin":"Survivor"));
+        }
     }
     internal static async Task<bool> IsRandomPartyAsync(MySqlConnection c,MySqlTransaction? tx,string room,CancellationToken ct)=>
         (await CommunityEndpoints.Rows(c,tx,"SELECT room_id FROM random_match_parties WHERE room_id=@r",ct,("r",room))).Count>0;
@@ -140,7 +152,7 @@ internal static partial class LobbyEndpoints
         }
         await CommunityEndpoints.Exec(c,tx,"""
             UPDATE random_match_searches q SET state='Expired' WHERE state='Waiting' AND
-              (last_seen_utc<=UTC_TIMESTAMP(6)-INTERVAL 30 SECOND OR created_at_utc<=UTC_TIMESTAMP(6)-INTERVAL 180 SECOND
+              (last_seen_utc<=UTC_TIMESTAMP(6)-INTERVAL 30 SECOND OR created_at_utc<=UTC_TIMESTAMP(6)-INTERVAL 900 SECOND
                OR NOT EXISTS(SELECT 1 FROM random_match_parties p WHERE p.room_id=q.room_id AND p.search_id=q.search_id)
                OR EXISTS(SELECT 1 FROM random_match_search_members sm WHERE sm.search_id=q.search_id AND
                 (NOT EXISTS(SELECT 1 FROM room_members m WHERE m.user_id=sm.user_id AND m.room_id=q.room_id AND m.last_seen_at_utc>UTC_TIMESTAMP(6)-INTERVAL 30 SECOND)
@@ -181,7 +193,7 @@ internal static partial class LobbyEndpoints
             foreach(ulong user in users)await CommunityEndpoints.Exec(c,tx,"UPDATE room_members SET room_id=@target,is_ready=FALSE,assigned_role=NULL,returned_to_room=FALSE WHERE room_id=@r AND user_id=@u",ct,("target",target),("r",room),("u",user));
             first=false;
         }
-        await CommunityEndpoints.Exec(c,tx,"DELETE FROM random_match_origins WHERE room_id=@r;DELETE FROM random_match_rooms WHERE room_id=@r;UPDATE random_match_parties SET search_id=NULL WHERE room_id=@r",ct,("r",room));
+        await CommunityEndpoints.Exec(c,tx,"DELETE FROM random_match_origins WHERE room_id=@r;DELETE FROM random_match_rooms WHERE room_id=@r;DELETE FROM room_bots WHERE room_id=@r;UPDATE random_match_parties SET search_id=NULL WHERE room_id=@r",ct,("r",room));
     }
 
     // Called only after the authoritative match ledger says the match ended.

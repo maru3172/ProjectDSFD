@@ -199,6 +199,8 @@ internal static class IntegrationChecks
             await DemandSessionChecks.RunAsync(database,admin,demand,demandFactory,demandClock,output);
             await DrainSessionChecks.RunAsync(database,admin,demand,demandFactory,output);
             await MatchmakingChecks.RunAsync(database,admin,demand,demandFactory,output);
+            await BotMatchChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
+            await OpenObserverChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await StartupRecoveryChecks.RunAsync(database,demand,Check);
             await ResultDeliveryChecks.RunAsync(database,admin,output,Check);
             if(!string.IsNullOrWhiteSpace(editorExecutable))await EditorSessionSmokeChecks.RunAsync(database,projectRoot,editorExecutable);

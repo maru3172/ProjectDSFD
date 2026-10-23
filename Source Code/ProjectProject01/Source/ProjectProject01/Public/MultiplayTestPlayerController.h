@@ -54,6 +54,22 @@ struct FMultiplaySurvivorSpectatorView
 	UPROPERTY() uint32 RequestId = 0;
 };
 
+/** Final match-only statistics for the separately admitted observer; never a rating submission. */
+USTRUCT(BlueprintType)
+struct PROJECTPROJECT01_API FProjectObservedPlayerResult
+{
+    GENERATED_BODY()
+    UPROPERTY(BlueprintReadOnly) FString Name;
+    UPROPERTY(BlueprintReadOnly) FString Role;
+    UPROPERTY(BlueprintReadOnly) FString Outcome;
+    UPROPERTY(BlueprintReadOnly) bool bSuccess=false;
+    UPROPERTY(BlueprintReadOnly) int32 CaptureCount=0;
+    UPROPERTY(BlueprintReadOnly) int32 RescueCount=0;
+    UPROPERTY(BlueprintReadOnly) double FirstCaptureSeconds=0;
+    UPROPERTY(BlueprintReadOnly) double AllCapturedSeconds=0;
+    UPROPERTY(BlueprintReadOnly) double EscapeSeconds=0;
+};
+
 /** 서버가 확정하여 해당 소유 클라이언트에만 전달하는 한 경기의 결과입니다. */
 USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FMultiplayTestMatchResult
@@ -102,6 +118,7 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 	TArray<FProjectMatchTimelineEvent> Timeline;
 	UPROPERTY(BlueprintReadOnly)
 	int32 OmittedTimelineEvents = 0;
+    UPROPERTY(BlueprintReadOnly) TArray<FProjectObservedPlayerResult> ObservedPlayers;
 };
 
 /** 마네킹 슬롯 선택 입력을 서버에 요청하는 MultiplayTest 전용 컨트롤러입니다. */
@@ -113,6 +130,14 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 
 public:
 	AMultiplayTestPlayerController();
+    friend class UProjectMatchBots;
+    friend class AProjectOpenObserverController;
+    void AdjustObserverViewStream(int32 Delta);
+    FRotator GetObserverViewRotation()const{return ObserverViewRotation;}
+    UFUNCTION(Client,Reliable) void ClientObserverViewStream(bool Enabled);
+    UFUNCTION(Server,Unreliable) void ServerObserverViewRotation(FRotator Rotation);
+    bool IsServerControlledBot()const{return bServerControlledBot;}
+    virtual bool IsLocalController()const override;
 	friend class FProjectElevatorTest;
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectSpectatorFadeTest;
@@ -153,6 +178,7 @@ public:
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 	virtual void SeamlessTravelFrom(APlayerController* OldPC) override;
 	virtual void PostSeamlessTravel() override;
+    virtual void ReceivedPlayer() override;
 	virtual void PlayerTick(float DeltaTime) override;
 	UFUNCTION(Client,Reliable) void ClientBeginLoadingGate(const FString& Epoch,const FString& OwnId,const FString& OwnName,int32 Expected,bool bReleased);
 	UFUNCTION(Client,Unreliable) void ClientUpdateLoadingParticipants(const FString& Epoch,const TArray<FProjectLoadingParticipant>& Participants);
@@ -166,11 +192,18 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+    void InitializeLocalPresentation();
+    bool bLocalPresentationInitialized=false;
 	virtual void SetupInputComponent() override;
 	virtual void OnRep_Pawn() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+    bool bServerControlledBot=false;
+    int32 ObserverViewConsumers=0;
+    bool bSendObserverView=false;
+    double NextObserverViewAt=0,LastObserverViewAt=-1;
+    FRotator ObserverViewRotation=FRotator::ZeroRotator;
 	UFUNCTION() void OnRep_SurvivorSpectatorView();
 	void ApplySurvivorSpectatorView();
 	void TryFinishSpectatorFade();

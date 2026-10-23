@@ -12,6 +12,6 @@ protected:
 	virtual void UpdateViewTargetInternal(FTViewTarget& OutVT,float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
-	TWeakObjectPtr<class APlayerCharacter> HiddenObservedTarget;
+	TWeakObjectPtr<class AActor> HiddenObservedTarget;
 	bool bAddedHiddenTarget=false;
 };

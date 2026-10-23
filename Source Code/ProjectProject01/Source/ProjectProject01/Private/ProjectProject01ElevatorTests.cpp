@@ -96,6 +96,18 @@ bool FProjectElevatorTest::RunTest(const FString&)
 	TestTrue(TEXT("Only active survivor is an eligible elevator interactor"),Lift->IsEligibleInteractor(Pawn));
 	if (!TestTrue(TEXT("Visibility ray hits the actual outside button"),Lift->TraceButton(Pawn)==Lift->CallButtonVolume)) return false;
 	TestTrue(TEXT("Outside button can be interacted with"),Lift->CanInteract_Implementation(Pawn));
+    {
+        FVector BotMove,BotLook;
+        TestFalse(TEXT("Bot objective adapter never changes human interactions"),Lift->GetBotObjective(Pawn,BotMove,BotLook));
+        PC->bServerControlledBot=true;
+        TestTrue(TEXT("An eligible survivor bot can find the outside call point"),Lift->GetBotObjective(Pawn,BotMove,BotLook));
+        TestTrue(TEXT("Bot call target is the actual authored button"),BotLook.Equals(Lift->CallButtonVolume->GetComponentLocation()));
+        const auto SavedLiftState=Lift->State;
+        Lift->State.bArrivalTrip=true;
+        TestFalse(TEXT("Arrival elevator cannot trap a bot in a second departure loop"),Lift->GetBotObjective(Pawn,BotMove,BotLook));
+        Lift->State=SavedLiftState;
+        PC->bServerControlledBot=false;
+    }
 	auto* Interaction=Pawn->FindComponentByClass<UPlayerInteractionComponent>();
 	if (!TestNotNull(TEXT("Existing interaction component routes server RPC"),Interaction)) return false;
 	TestTrue(TEXT("Existing focus/UI targeting recognizes the native elevator button"),Interaction->FindInteractableActor(false)==Lift);

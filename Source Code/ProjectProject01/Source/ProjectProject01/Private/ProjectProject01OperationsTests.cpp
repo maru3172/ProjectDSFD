@@ -30,6 +30,7 @@
 #include "RenderingThread.h"
 #include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectLoadingScreenState.h"
+#include "ProjectOpenObserver.h"
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 
@@ -225,7 +226,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	{
 		auto Slate=Widget==Lobby?LobbySlate:Widget->TakeWidget();if(Widget==Lobby)Lobby->SetStatus(TEXT("입력란·공개방 표시 렌더링 검사"),false);
 		FWidgetRenderer Renderer(true);const FVector2D Size(1920,1080);auto* Target=Renderer.DrawWidget(Slate,Size);
-		Renderer.DrawWidget(Target,Slate,Size,.016f);FlushRenderingCommands();FBufferArchive Image;
+		Renderer.DrawWidget(Target,Slate,Size,Name==TEXT("ObserverResults")?2.f:.016f);FlushRenderingCommands();FBufferArchive Image;
 		TestTrue(TEXT("Readability UI renders"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));TestTrue(TEXT("Readability screenshot written"),FFileHelper::SaveArrayToFile(Image,*(Directory/(Name+TEXT(".png")))));
 	};
     Render(Lobby,TEXT("MatchingModes"));TestEqual(TEXT("Lobby opens matching mode chooser"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),4);
@@ -235,6 +236,28 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     TestTrue(TEXT("Leaderboard opens from the matching-mode selection page"),
         Lobby->OpenLeaderboardTestButton->GetParent()==Lobby->ModesLogoutButton->GetParent());
     auto* State=Instance->GetSubsystem<UProjectProject01LobbySubsystem>();
+    Lobby->HandleBotMatchClicked();
+    TestEqual(TEXT("Bot match has a separate authenticated match setup page"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
+    TestTrue(TEXT("Opening bot match does not start offline practice or join a queue"),!State->HasCurrentRoom()&&!State->IsMatchmaking());
+    TestEqual(TEXT("Bot setup offers both player roles"),Lobby->BotMatchRole->GetOptionCount(),2);
+    TestEqual(TEXT("Bot setup offers exactly five difficulty levels"),Lobby->BotMatchDifficulty->GetOptionCount(),5);
+    Lobby->RefreshCurrentRoomView();TestEqual(TEXT("Polling preserves bot match configuration"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
+    Render(Lobby,TEXT("BotMatchSetup"));
+    Lobby->HandleLobbyModesClicked();TestEqual(TEXT("Bot match back returns to matching selection"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),4);
+    State->CurrentRoom.RoomId=TEXT("fixture-open-bots");State->CurrentRoom.bIsHost=true;
+    FProjectProject01RoomMember BotHost;BotHost.UserId=TEXT("11");BotHost.DisplayName=TEXT("방장");BotHost.bIsHost=true;State->CurrentRoom.Members={BotHost};
+    FProjectProject01RoomBot BotA;BotA.BotId=FGuid::NewGuid().ToString();BotA.DisplayName=TEXT("봇 1");BotA.Difficulty=1;
+    auto BotB=BotA;BotB.BotId=FGuid::NewGuid().ToString();BotB.DisplayName=TEXT("봇 2");BotB.Difficulty=5;State->CurrentRoom.Bots={BotA,BotB};
+    Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Host sees open-room bot controls"),Lobby->RoomBotPanel->GetVisibility(),ESlateVisibility::Visible);
+    TestFalse(TEXT("Human plus two bots fills playing capacity"),Lobby->AddRoomBotButton->GetIsEnabled());
+    TestTrue(TEXT("Host can choose each bot for delete or level change"),Lobby->RoomBotSelection->GetOptionCount()==2&&Lobby->RemoveRoomBotButton->GetIsEnabled()&&Lobby->ChangeRoomBotButton->GetIsEnabled());
+    Lobby->RoomBotSelection->SetSelectedIndex(1);Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Room polling does not reset bot selection"),Lobby->RoomBotSelection->GetSelectedIndex(),1);
+    Render(Lobby,TEXT("OpenRoomBots"));
+    State->CurrentRoom.bIsHost=false;Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Non-host cannot access bot management UI"),Lobby->RoomBotPanel->GetVisibility(),ESlateVisibility::Collapsed);
+    State->CurrentRoom={};Lobby->RefreshCurrentRoomView();
     Lobby->HandleTutorialClicked();
     TestEqual(TEXT("Tutorial role chooser is separate from both matching flows"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),6);
     TestTrue(TEXT("Opening tutorial selection does not join a room or queue"),!State->HasCurrentRoom() && !State->IsMatchmaking());
@@ -344,6 +367,17 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	Lobby->ShowLobbyView(2);Lobby->ChatLogText->SetText(FText::FromString(TEXT("[친구] 같이 탈출하자!\n[나] 준비됐어요.")));Lobby->ChatInput->SetText(FText::FromString(TEXT("한글 채팅 입력 가독성 검사")));Render(Lobby,TEXT("RoomChat"));
 	UUserWidget* SurveyBase=NewObject<UProjectProject01SurveyWidget>(World);SurveyBase->Initialize();auto* Survey=CastChecked<UProjectProject01SurveyWidget>(SurveyBase);
 	FProjectProject01SurveyDefinition Definition;Definition.Title=TEXT("설문조사 입력란 가독성");FProjectProject01SurveyQuestion Q;Q.Id=TEXT("readability");Q.Type=TEXT("Text");Q.Prompt=TEXT("게임을 하면서 느낀 점을 적어주세요.");Definition.Questions={Q};Survey->ConfigureSurvey(Definition,nullptr);Render(Survey,TEXT("SurveyWriting"));Survey->ReleaseSlateResources(true);
+    auto* ObserverView=NewObject<UProjectOpenObserverWidget>(World);ObserverView->Initialize();
+    TArray<FProjectOpenObserverEntry> Participants;
+    for(int32 I=0;I<3;++I){FProjectOpenObserverEntry Entry;Entry.PlayerId=FString::FromInt(I);Entry.Name=I==0?TEXT("마네킹 플레이어"):FString::Printf(TEXT("생존자 %d"),I);Entry.State=I==0?TEXT("마네킹"):TEXT("생존");Participants.Add(Entry);}
+    ObserverView->Refresh(Participants,TEXT("MultiplayTest\n경기 시간 128초\n생존 2 / 탈출 0 / 탈락 0"));Render(ObserverView,TEXT("ObserverPanels"));ObserverView->ReleaseSlateResources(true);
+    auto* ObserverResult=NewObject<UProjectProject01MatchResultWidget>(World);static_cast<UUserWidget*>(ObserverResult)->Initialize();
+    FMultiplayTestMatchResult Observed;Observed.Role=TEXT("Observer");Observed.MatchDurationSeconds=128;
+    for(int32 I=0;I<3;++I){FProjectObservedPlayerResult Row;Row.Name=Participants[I].Name;Row.Role=I==0?TEXT("Mannequin"):TEXT("Survivor");Row.bSuccess=I==2;Row.CaptureCount=I==0?1:0;Row.FirstCaptureSeconds=73;Row.EscapeSeconds=I==2?128:0;Row.RescueCount=I==2?1:0;Observed.ObservedPlayers.Add(Row);}
+    ObserverResult->ConfigureResult(Observed);FString AllText;
+    ObserverResult->WidgetTree->ForEachWidget([&](UWidget* Item){if(auto* Text=Cast<UTextBlock>(Item))AllText+=Text->GetText().ToString();});
+    TestTrue(TEXT("Observer results show the requested heading and both survivor records"),AllText.Contains(TEXT("경기가 종료되었습니다."))&&AllText.Contains(TEXT("생존자 1"))&&AllText.Contains(TEXT("생존자 2"))&&AllText.Contains(TEXT("포획 1회")));
+    Render(ObserverResult,TEXT("ObserverResults"));ObserverResult->ReleaseSlateResources(true);
 	return true;
 }
 #endif

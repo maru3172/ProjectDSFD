@@ -80,7 +80,7 @@ The **엔진 프로파일러 기록** tab reads Unreal Engine CSV Profiler outpu
 
 ## Interpretation limits
 
-- State mismatch is a time-tolerant candidate check (1.25 seconds, 150 cm), not proof of a replication defect.
+- State mismatch is a time-tolerant candidate check, not proof of a replication defect. Samples are paired within 1.25 seconds; the position tolerance is 150 cm plus speed × (0.5 s per-world sampling skew + pairing gap). Samples in the first second of a capture are skipped because spawned pawns may not have replicated yet. A client-side `None` controller is expected for AI and for other players' pawns; only a different non-`None` controller kind is reported.
 - A mannequin uses `ControlSlot` as its cross-role identity only when the slot is non-negative. Unassigned `Slot=-1` mannequins use their PIE-prefix-normalized Actor path so separate mannequins are not collapsed into one identity.
 - Server `AIController` versus client `None` is treated as the expected authoritative AI proxy state and is not reported as a controller mismatch.
 - Engine Warning/Error collection is bounded to 512 recent records and records matching `Net`, `RPC`, or `replic` as networking candidates.

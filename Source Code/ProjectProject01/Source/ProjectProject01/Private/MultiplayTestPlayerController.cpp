@@ -67,6 +67,9 @@ bool FProjectProject01SurvivorVoiceRoleIsolationTest::RunTest(const FString& Par
 }
 #endif
 
+bool AMultiplayTestPlayerController::IsLocalController()const
+{return !bServerControlledBot&&Super::IsLocalController();}
+
 AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 {
 	PlayerCameraManagerClass=AProjectSpectatorCameraManager::StaticClass();
@@ -81,11 +84,22 @@ AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 void AMultiplayTestPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
-
-	if (!IsLocalController())
+    InitializeLocalPresentation();
+}
+void AMultiplayTestPlayerController::ReceivedPlayer()
+{
+    Super::ReceivedPlayer();
+    if(HasActorBegunPlay())InitializeLocalPresentation();
+}
+void AMultiplayTestPlayerController::InitializeLocalPresentation()
+{
+    // Seamless travel creates the new controller before transferring its UPlayer.
+    // Build local UI only once a real viewport owner is attached, including late client arrival.
+	if (!IsLocalController()||!GetLocalPlayer()||bLocalPresentationInitialized)
 	{
 		return;
 	}
+    bLocalPresentationInitialized=true;
 
 	// 로비의 UIOnly 입력 상태가 클라이언트 트래블 뒤에도 남지 않도록 게임 입력을 명시적으로 복구한다.
 	if(GetNetMode()!=NM_Standalone && !AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld()) && LoadingGateEpoch.IsEmpty())bLoadingGateRequired=true;
@@ -156,6 +170,7 @@ void AMultiplayTestPlayerController::SeamlessTravelFrom(APlayerController* OldPC
 	}
 
 	AuthenticatedUserId = Previous->AuthenticatedUserId;
+	bServerControlledBot = Previous->bServerControlledBot;
 	AuthenticatedDisplayName = Previous->AuthenticatedDisplayName;
 	AuthenticatedMatchId = Previous->AuthenticatedMatchId;
 	AuthenticatedRole = Previous->AuthenticatedRole;
@@ -199,6 +214,8 @@ void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 	if (!IsLocalController() || bLocalMatchResultRequested) return;
+    if(bSendObserverView&&GetWorld()->GetTimeSeconds()>=NextObserverViewAt)
+    {NextObserverViewAt=GetWorld()->GetTimeSeconds()+.1;ServerObserverViewRotation(GetControlRotation());}
 	TryConfirmLevelTransitionBlack();
 	if(bLoadingGateRequired && !LoadingGateEpoch.IsEmpty())
 		if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())
@@ -468,6 +485,7 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 	const FString& MatchId,
 	const FString& InRole)
 {
+	if(bServerControlledBot)return;
 	const bool bTutorial=AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld());
 	const bool bAllowSurvivorVoice = !bTutorial && ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
 	if (!InRole.Equals(TEXT("Mannequin"),ESearchCase::IgnoreCase)) RemoveMannequinLookBinding();
@@ -856,7 +874,7 @@ void AMultiplayTestPlayerController::SetServerMatchState(
 	if (NewSurvivorState==EMultiplayTestSurvivorState::Active || NewSurvivorState==EMultiplayTestSurvivorState::NotApplicable)
 		SurvivorSpectatorView={};
 	ForceNetUpdate();
-	if (PreviousSurvivorState == EMultiplayTestSurvivorState::Active &&
+	if (!bServerControlledBot && PreviousSurvivorState == EMultiplayTestSurvivorState::Active &&
 		NewSurvivorState != EMultiplayTestSurvivorState::Active &&
 		NewSurvivorState != EMultiplayTestSurvivorState::Eliminated)
 	{
@@ -866,6 +884,7 @@ void AMultiplayTestPlayerController::SetServerMatchState(
 
 void AMultiplayTestPlayerController::DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result)
 {
+	if(bServerControlledBot)return;
 	if (!HasAuthority())
 	{
 		return;
@@ -895,6 +914,7 @@ void AMultiplayTestPlayerController::EnterSurvivorSpectator(
 	SurvivorSpectatorView.Target=Cast<APlayerCharacter>(InitialTarget);
 	SurvivorSpectatorView.bFadeTransition=bFadeTransition;
 	SurvivorSpectatorView.RequestId=++SpectatorRequestSerial;
+	if(bServerControlledBot)return; // No owner connection, camera or voice endpoint.
 	bAutoManageActiveCameraTarget=false;
 	// SetViewTarget on the server sends an implicit ClientSetViewTarget RPC, which used
 	// to expose the observer camera BEFORE ClientEnterSurvivorSpectator could fade it.
@@ -924,6 +944,7 @@ void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
 	bLevelTransitionCarryover = true;
 	bServerTransitionBlackReady = false;
 	bSpawnAfterLevelTransition = bSpawnInNextLevel;
+	if(bServerControlledBot){bServerTransitionBlackReady=true;return;}
 	SetIgnoreMoveInput(true);
 	SetIgnoreLookInput(true);
 	ClientPrepareForLevelTransition(FadeSeconds, ++TransitionFadeSerial);
@@ -950,7 +971,7 @@ void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
 	{
 		SetViewTarget(InitialViewTarget);
 	}
-	ClientCompleteLevelTransition(InitialViewTarget, bCanPlay);
+	if(!bServerControlledBot)ClientCompleteLevelTransition(InitialViewTarget, bCanPlay);
 	bLevelTransitionCarryover = false;
 	bServerTransitionBlackReady = false;
 	bSpawnAfterLevelTransition = false;

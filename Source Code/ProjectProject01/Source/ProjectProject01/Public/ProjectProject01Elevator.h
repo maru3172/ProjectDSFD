@@ -43,6 +43,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Elevator") EProjectElevatorPhase GetElevatorPhase() const { return State.Phase; }
 	/** Validates the click-time view on the server, not the remote camera's stale cache. */
 	bool TryInteractFromView(APawn* Interactor, const FVector& ViewOrigin, const FVector& ViewDirection, float Range, ECollisionChannel Channel);
+    /** Server bot uses the same role, cabin, range and visibility checks as an F interaction. */
+    bool GetBotObjective(APawn* Interactor,FVector& MoveGoal,FVector& LookGoal) const;
+    bool TryBotInteraction(APawn* Interactor);
 	/** GameMode가 Pawn 생성 전에 호출하므로 화면 공개 후 순간이동하지 않습니다. */
 	static AActor* FindArrivalStart(UWorld* World, const FString& Options);
 protected:

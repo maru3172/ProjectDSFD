@@ -35,6 +35,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Level Transition")
 	bool RequestTransition(APlayerCharacter* Survivor);
 
+	/** Bot routing may approach ordinary enabled overlap exits, never bypass button devices. */
+	bool IsAutomaticBotObjective() const { return bUseOverlapActivation && !bTransitionStarted && IsDestinationAvailable(); }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
