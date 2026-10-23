@@ -13,22 +13,37 @@
 #include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"
 
+namespace
+{
+// The owning GameInstance can be absent during teardown; never dereference it unchecked.
+UProjectProject01AuthSubsystem* AuthOf(const UGameInstanceSubsystem* Owner)
+{
+    const UGameInstance* Instance=Owner?Owner->GetGameInstance():nullptr;
+    return IsValid(Instance)?Instance->GetSubsystem<UProjectProject01AuthSubsystem>():nullptr;
+}
+UProjectProject01LobbySubsystem* LobbyOf(const UGameInstanceSubsystem* Owner)
+{
+    const UGameInstance* Instance=Owner?Owner->GetGameInstance():nullptr;
+    return IsValid(Instance)?Instance->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
+}
+}
+
 void UProjectProject01SocialSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
     Collection.InitializeDependency<UProjectProject01AuthSubsystem>();
-    GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->OnLocalSessionCleared.AddUObject(this,&ThisClass::Clear);
+    if(auto* Auth=AuthOf(this))Auth->OnLocalSessionCleared.AddUObject(this,&ThisClass::Clear);
     Ticker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this,&ThisClass::Tick),1.0f);
 }
 void UProjectProject01SocialSubsystem::Deinitialize()
 {
     FTSTicker::GetCoreTicker().RemoveTicker(Ticker);
-    if(auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>())Auth->OnLocalSessionCleared.RemoveAll(this);
+    if(auto* Auth=AuthOf(this))Auth->OnLocalSessionCleared.RemoveAll(this);
     Clear();Super::Deinitialize();
 }
 bool UProjectProject01SocialSubsystem::IsAuthenticated() const
 {
-    const auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();return Auth && Auth->IsSignedIn();
+    const auto* Auth=AuthOf(this);return Auth && Auth->IsSignedIn();
 }
 void UProjectProject01SocialSubsystem::Clear()
 {
@@ -38,10 +53,10 @@ void UProjectProject01SocialSubsystem::Clear()
 }
 bool UProjectProject01SocialSubsystem::Tick(float Delta)
 {
-    auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();
+    auto* Auth=AuthOf(this);
     if(!Auth || !Auth->IsSignedIn())return true;
     if(!PendingReadId.IsEmpty()&&!ConversationAccount.IsEmpty()&&!WriteRequest.IsValid())Act(TEXT("ReadConversation"),ConversationAccount,PendingReadId);
-    if(bRoomRefreshPending)if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())if(!Lobby->IsRequestInFlight()){bRoomRefreshPending=false;Lobby->RefreshCurrentRoom();}
+    if(bRoomRefreshPending)if(auto* Lobby=LobbyOf(this))if(!Lobby->IsRequestInFlight()){bRoomRefreshPending=false;Lobby->RefreshCurrentRoom();}
     if(SessionIdentity!=Auth->GetAccessTokenForAuthenticatedRequest())
     {
         // Tokens also rotate on refresh: discard old in-flight responses but retain the UI context.
@@ -90,7 +105,7 @@ void UProjectProject01SocialSubsystem::Act(const FString& Operation,const FStrin
 }
 void UProjectProject01SocialSubsystem::Send(bool bRead,const FString& Body,bool bPresence,const FString& Path,const FString& Verb)
 {
-    auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();if(!Auth||!Auth->IsSignedIn())return;
+    auto* Auth=AuthOf(this);if(!Auth||!Auth->IsSignedIn())return;
     const FString Token=Auth->GetAccessTokenForAuthenticatedRequest();
     auto Request=FHttpModule::Get().CreateRequest();(bRead?ReadRequest:bPresence?PresenceRequest:WriteRequest)=Request;
     Request->SetURL(Auth->GetApiBaseUrlForAuthenticatedRequest()+(Path.IsEmpty()?(bRead?TEXT("/api/social"):TEXT("/api/social/action")):Path));
@@ -99,7 +114,7 @@ void UProjectProject01SocialSubsystem::Send(bool bRead,const FString& Body,bool 
     Request->OnProcessRequestComplete().BindWeakLambda(this,[this,bRead,bPresence,Token,Body](FHttpRequestPtr Req,FHttpResponsePtr Response,bool Connected)
     {
         auto& Pending=bRead?ReadRequest:bPresence?PresenceRequest:WriteRequest;if(Pending!=Req)return;Pending.Reset();
-        auto* CurrentAuth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();
+        auto* CurrentAuth=AuthOf(this);
         if(!CurrentAuth||!CurrentAuth->IsSignedIn()||Token!=CurrentAuth->GetAccessTokenForAuthenticatedRequest())return;
         TSharedPtr<FJsonObject> Json;
         if(Response.IsValid())FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json);
@@ -176,7 +191,7 @@ void UProjectProject01SocialSubsystem::SaveProfile(const FString& Message,const 
 }
 void UProjectProject01SocialSubsystem::Detail(int32 Kind,const FString& Path)
 {
-    auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();if(!Auth||!Auth->IsSignedIn())return;
+    auto* Auth=AuthOf(this);if(!Auth||!Auth->IsSignedIn())return;
     auto& Pending=Kind==0?SearchRequest:Kind==1?ProfileRequest:Kind==2?ConversationRequest:RoomContextRequest;
     if(Pending.IsValid()){Pending->OnProcessRequestComplete().Unbind();Pending->CancelRequest();}
     const FString Token=Auth->GetAccessTokenForAuthenticatedRequest();auto Request=FHttpModule::Get().CreateRequest();Pending=Request;
@@ -185,7 +200,7 @@ void UProjectProject01SocialSubsystem::Detail(int32 Kind,const FString& Path)
     Request->OnProcessRequestComplete().BindWeakLambda(this,[this,Kind,Token](FHttpRequestPtr Req,FHttpResponsePtr Response,bool Connected)
     {
         auto& Pending=Kind==0?SearchRequest:Kind==1?ProfileRequest:Kind==2?ConversationRequest:RoomContextRequest;if(Pending!=Req)return;Pending.Reset();
-        auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();if(!Auth||!Auth->IsSignedIn()||Auth->GetAccessTokenForAuthenticatedRequest()!=Token)return;
+        auto* Auth=AuthOf(this);if(!Auth||!Auth->IsSignedIn()||Auth->GetAccessTokenForAuthenticatedRequest()!=Token)return;
         TSharedPtr<FJsonObject> Json;if(Response.IsValid())FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json);
         const bool Ok=Connected&&Response.IsValid()&&EHttpResponseCodes::IsOk(Response->GetResponseCode())&&Json.IsValid();
         if(Ok)(Kind==0?SearchResults:Kind==1?Profile:Kind==2?Conversation:RoomContext)=Json;

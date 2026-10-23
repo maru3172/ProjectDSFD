@@ -73,6 +73,17 @@
 #include "ImageUtils.h"
 #endif
 
+namespace
+{
+	// Widgets can tick, receive input or be destroyed while detached from a GameInstance.
+	template <typename TSubsystem>
+	TSubsystem* GameInstanceSubsystemOf(const UUserWidget* Widget)
+	{
+		const UGameInstance* Instance = IsValid(Widget) ? Widget->GetGameInstance() : nullptr;
+		return IsValid(Instance) ? Instance->GetSubsystem<TSubsystem>() : nullptr;
+	}
+}
+
 namespace ProjectProject01LoginUI
 {
 	bool IsSupportedServerIpv4(FString Address)
@@ -4164,7 +4175,6 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 
 void UProjectProject01SettingsWidget::NativeDestruct()
 {
-    if(IsValid(VoiceSettingsWidget))VoiceSettingsWidget->RemoveFromParent();
 	if (IsValid(VoiceSettingsWidget)) VoiceSettingsWidget->RemoveFromParent();
 	if (IsValid(VoiceSettingsButton)) VoiceSettingsButton->OnClicked.RemoveDynamic(this,&UProjectProject01SettingsWidget::HandleVoiceSettingsClicked);
 	if (IsValid(MasterVolumeSlider)) MasterVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
@@ -5142,7 +5152,7 @@ bool UProjectProject01LobbyWidget::Initialize()
 
 void UProjectProject01LobbyWidget::NativeConstruct()
 {
-    GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SetLobbyVisible(true);
+    if(auto* Social=GameInstanceSubsystemOf<UProjectProject01SocialSubsystem>(this))Social->SetLobbyVisible(true);
     if(IsValid(LobbySettingsButton))LobbySettingsButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbySettingsClicked);
 	Super::NativeConstruct();
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
@@ -5223,7 +5233,7 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 void UProjectProject01LobbyWidget::NativeDestruct()
 {
 	if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(TutorialTravelTimer);
-    GetGameInstance()->GetSubsystem<UProjectProject01SocialSubsystem>()->SetLobbyVisible(false);
+    if(auto* Social=GameInstanceSubsystemOf<UProjectProject01SocialSubsystem>(this))Social->SetLobbyVisible(false);
     if(IsValid(LobbySettingsWidget))LobbySettingsWidget->RemoveFromParent();
     LobbySettingsWidget=nullptr;
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
@@ -5298,7 +5308,7 @@ void UProjectProject01LobbyWidget::HandleOpenMatchClicked()
 }
 void UProjectProject01LobbyWidget::HandleTutorialClicked()
 {
-	auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
+	auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
 	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || bTravelRequested || bGameStartFadeActive) return;
 	bShowingTutorial=true; ShowLobbyView(6);
 }
@@ -5308,15 +5318,17 @@ void UProjectProject01LobbyWidget::HandleSurvivorPracticeClicked() { StartTutori
 void UProjectProject01LobbyWidget::HandleMannequinPracticeClicked() { StartTutorial(true,true); }
 void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin,bool bFreePractice)
 {
-	auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
+	auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
 	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || Lobby->IsRequestInFlight() || bTravelRequested || bGameStartFadeActive) return;
+	UWorld* World=GetWorld();
+	if (!IsValid(World)) return;
 	const FName TutorialMap(TEXT("/Game/MyProject/Level/MultiplayerTutorial"));
 	if (!FPackageName::DoesPackageExist(TutorialMap.ToString()))
 	{ SetStatus(TEXT("튜토리얼 맵이 없습니다. MultiplayerTutorial 맵을 준비하세요."),true); return; }
 	bTravelRequested=true; SetIsEnabled(false);
 	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenToBlack(0.6f);
 	const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
-	GetWorld()->GetTimerManager().SetTimer(TutorialTravelTimer,[Weak,bMannequin,bFreePractice,TutorialMap]()
+	World->GetTimerManager().SetTimer(TutorialTravelTimer,[Weak,bMannequin,bFreePractice,TutorialMap]()
 	{
 		FString Options=bMannequin ? TEXT("TutorialRole=Mannequin") : TEXT("TutorialRole=Survivor");
 		if (bFreePractice) Options+=TEXT("?FreePractice=1");
@@ -5331,7 +5343,8 @@ void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
 void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
 {
     bShowingTutorial=false;
-    auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    if(!Lobby)return;
     if(Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||(Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomMatch))return;
     if(Lobby->HasCurrentRoom()&&!Lobby->GetCurrentRoom().bRandomParty)return;
     HandleCloseCodeJoinClicked();
@@ -5340,11 +5353,13 @@ void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
 }
 void UProjectProject01LobbyWidget::HandleMatchStartClicked()
 {
-    GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>()->JoinMatchmaking();RefreshMatchmakingView();
+    if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))Lobby->JoinMatchmaking();
+    RefreshMatchmakingView();
 }
 void UProjectProject01LobbyWidget::HandleMatchCancelClicked()
 {
-    GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>()->CancelMatchmaking();RefreshMatchmakingView();
+    if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))Lobby->CancelMatchmaking();
+    RefreshMatchmakingView();
 }
 void UProjectProject01LobbyWidget::RefreshMatchmakingView()
 {
@@ -6376,7 +6391,7 @@ void UProjectProject01LobbyWidget::ContinueGameAdmission(float DeltaSeconds)
     if(AdmissionWaitSeconds>=15 || (!Lobby->IsRequestInFlight() && AdmissionTicketAttempts>=3 && !Lobby->HasGameJoinTicketForCurrentRoom()))
     {
         CancelGameStartCountdown();
-        if(auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>())Auth->InvalidateSessionFromServerFailure(TEXT("경기 접속 허가 대기 시간이 초과되었습니다. 다시 로그인하세요."));
+        if(auto* Auth=GameInstanceSubsystemOf<UProjectProject01AuthSubsystem>(this))Auth->InvalidateSessionFromServerFailure(TEXT("경기 접속 허가 대기 시간이 초과되었습니다. 다시 로그인하세요."));
         return;
     }
     if(Lobby->HasGameJoinTicketForCurrentRoom())TravelToStartedGame(Lobby->GetCurrentRoom());

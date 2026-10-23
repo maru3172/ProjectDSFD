@@ -21,9 +21,11 @@ namespace
     struct FPreviewCaptureTiming { double SetupMs=0, RenderReadbackMs=0, EncodeMs=0; };
 
     // Body of Capture without the standalone-only gate, so the dev benchmark below can time it in PIE worlds.
-    void CaptureView(UWorld* World, APlayerController* Player, TArray<uint8>& OutPng, FPreviewCaptureTiming* Timing)
+    // OutPixels set: return raw pixels and leave encoding to the caller (worker thread). Otherwise encode inline.
+    void CaptureView(UWorld* World, APlayerController* Player, TArray<uint8>& OutPng, FPreviewCaptureTiming* Timing, TArray<FColor>* OutPixels=nullptr)
     {
     OutPng.Reset();
+    if (OutPixels) OutPixels->Reset();
     if (!FApp::CanEverRender() || !IsValid(World) || !IsValid(Player) || !IsValid(Player->PlayerCameraManager)) return;
     using namespace ProjectCheckpointPreview;
     const double SetupStart=FPlatformTime::Seconds();
@@ -52,16 +54,15 @@ namespace
     TArray<FColor> Pixels;
     FTextureRenderTargetResource* Resource=Target->GameThread_GetRenderTargetResource();
     const bool bRead=Resource && Resource->ReadPixels(Pixels) && Pixels.Num()==Width*Height;
+    Capture->TextureTarget=nullptr;
+    Actor->Destroy();
     const double EncodeStart=FPlatformTime::Seconds();
     if (bRead)
     {
         for (FColor& Pixel:Pixels) Pixel.A=255;
-        TArray64<uint8> Png;
-        FImageUtils::PNGCompressImageArray(Width,Height,Pixels,Png);
-        if (Png.Num()>0 && Png.Num()<=MaximumBytes) OutPng.Append(Png.GetData(),static_cast<int32>(Png.Num()));
+        if (OutPixels) *OutPixels=MoveTemp(Pixels);
+        else ProjectCheckpointPreview::EncodePixels(Pixels,OutPng);
     }
-    Capture->TextureTarget=nullptr;
-    Actor->Destroy();
     if (Timing)
     {
         const double End=FPlatformTime::Seconds();
@@ -105,6 +106,31 @@ void ProjectCheckpointPreview::Capture(UWorld* World, APlayerController* Player,
     OutPng.Reset();
     if (!IsValid(World) || World->GetNetMode()!=NM_Standalone) return;
     CaptureView(World,Player,OutPng,nullptr);
+}
+
+bool ProjectCheckpointPreview::CapturePixels(UWorld* World, APlayerController* Player, TArray<FColor>& OutPixels)
+{
+    OutPixels.Reset();
+    if (!IsInGameThread() || !IsValid(World) || World->GetNetMode()!=NM_Standalone) return false;
+    TArray<uint8> Unused;
+    CaptureView(World,Player,Unused,nullptr,&OutPixels);
+    return OutPixels.Num()==Width*Height;
+}
+
+bool ProjectCheckpointPreview::PrepareEncoder()
+{
+    // UE 5.8 FImageUtils::CompressImage only uses an already-loaded ImageWrapper module off the game thread.
+    if (!IsInGameThread()) return FModuleManager::Get().IsModuleLoaded(TEXT("ImageWrapper"));
+    return FModuleManager::Get().LoadModule(TEXT("ImageWrapper"))!=nullptr;
+}
+
+void ProjectCheckpointPreview::EncodePixels(const TArray<FColor>& Pixels, TArray<uint8>& OutPng)
+{
+    OutPng.Reset();
+    if (Pixels.Num()!=Width*Height) return;
+    TArray64<uint8> Png;
+    FImageUtils::PNGCompressImageArray(Width,Height,Pixels,Png);
+    if (Png.Num()>0 && Png.Num()<=MaximumBytes) OutPng.Append(Png.GetData(),static_cast<int32>(Png.Num()));
 }
 
 bool ProjectCheckpointPreview::IsValidImage(const TArray<uint8>& Png, uint32 ExpectedCrc)

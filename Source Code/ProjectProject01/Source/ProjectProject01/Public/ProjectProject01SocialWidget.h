@@ -21,6 +21,8 @@ protected:
     virtual void ReleaseSlateResources(bool bReleaseChildren) override;
 private:
     friend class FProjectSocialWidgetLayoutTest;
+    /** Null while the widget has no owning GameInstance (teardown, design-time preview). */
+    class UProjectProject01SocialSubsystem* SocialSubsystem() const;
     void RefreshView();
     void Open(const FString& PageName);
     void BuildPanel();

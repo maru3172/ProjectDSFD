@@ -1121,7 +1121,7 @@ void AProjectProject01TutorialGameMode::ReturnToMatching()
 	if (auto* GI=GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenToBlack(0.6f);
 	GetWorldTimerManager().SetTimer(ReturnTimer,FTimerDelegate::CreateWeakLambda(this,[this]()
 	{
-		auto* Auth=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();
+		UGameInstance* CurrentInstance=GetGameInstance();auto* Auth=IsValid(CurrentInstance)?CurrentInstance->GetSubsystem<UProjectProject01AuthSubsystem>():nullptr;
 		const TWeakObjectPtr<UProjectProject01GameInstance> WeakInstance(GetGameInstance<UProjectProject01GameInstance>());
 		const TWeakObjectPtr<UWorld> OldWorld(GetWorld());
 		const TWeakObjectPtr<AProjectProject01TutorialGameMode> WeakMode(this);
@@ -1161,6 +1161,16 @@ void AProjectProject01TutorialGameMode::RestartTutorial(const bool bOnlyPractice
 	}),0.65f,false);
 }
 
+namespace
+{
+	// Tutorial widgets tick and receive input during world transitions; the world may be gone.
+	AProjectProject01TutorialGameMode* TutorialModeOf(const UUserWidget* Widget)
+	{
+		const UWorld* World=IsValid(Widget) ? Widget->GetWorld() : nullptr;
+		return IsValid(World) ? World->GetAuthGameMode<AProjectProject01TutorialGameMode>() : nullptr;
+	}
+}
+
 bool UProjectProject01TutorialWidget::Initialize()
 {
 	if (!Super::Initialize()) return false;
@@ -1197,7 +1207,7 @@ bool UProjectProject01TutorialWidget::Initialize()
 void UProjectProject01TutorialWidget::NativeTick(const FGeometry& G,float Delta)
 {
 	Super::NativeTick(G,Delta);
-	auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>(); if (!Mode) return;
+	auto* Mode=TutorialModeOf(this); if (!Mode) return;
 	const auto* Step=Mode->GetCurrentStep(); const bool Result=Mode->IsResultVisible(), Finish=Mode->IsFinishing();
 	Heading->SetText(ProjectTutorial::Text(Result ? TEXT("튜토리얼 완료") : Mode->IsMannequinTutorial() ? TEXT("마네킹 튜토리얼") : TEXT("생존자 튜토리얼")));
 	const FText PreviousBody=Body->GetText();
@@ -1220,25 +1230,25 @@ void UProjectProject01TutorialWidget::NativeTick(const FGeometry& G,float Delta)
 }
 FReply UProjectProject01TutorialWidget::NativeOnPreviewKeyDown(const FGeometry& G,const FKeyEvent& Event)
 {
-	if (auto* M=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>();
+	if (auto* M=TutorialModeOf(this);
 		M && !M->IsResultVisible() && (M->IsAwaitingRead() || M->IsFinishing())) return FReply::Handled();
 	return Super::NativeOnPreviewKeyDown(G,Event);
 }
 FReply UProjectProject01TutorialWidget::NativeOnKeyDown(const FGeometry& G,const FKeyEvent& Event)
 {
-	if (auto* M=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>();
+	if (auto* M=TutorialModeOf(this);
 		M && !M->IsResultVisible() && (M->IsAwaitingRead() || M->IsFinishing())) return FReply::Handled();
 	return Super::NativeOnKeyDown(G,Event);
 }
-void UProjectProject01TutorialWidget::HandleContinue() { if (auto* M=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) M->ContinueTutorial(); }
+void UProjectProject01TutorialWidget::HandleContinue() { if (auto* M=TutorialModeOf(this)) M->ContinueTutorial(); }
 FReply UProjectProject01TutorialWidget::NativeOnMouseButtonDown(const FGeometry& G,const FPointerEvent& Event)
 {
 	// Backdrop/text clicks never acknowledge a step. The confirmation button owns that action.
 	return Super::NativeOnMouseButtonDown(G,Event);
 }
-void UProjectProject01TutorialWidget::HandleReturn() { if (auto* M=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) M->ReturnToMatching(); }
-void UProjectProject01TutorialWidget::HandleRestart() { if (auto* M=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) M->RestartTutorial(true); }
-void UProjectProject01TutorialWidget::HandleRestartFromBeginning() { if (auto* M=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) M->RestartTutorial(false); }
+void UProjectProject01TutorialWidget::HandleReturn() { if (auto* M=TutorialModeOf(this)) M->ReturnToMatching(); }
+void UProjectProject01TutorialWidget::HandleRestart() { if (auto* M=TutorialModeOf(this)) M->RestartTutorial(true); }
+void UProjectProject01TutorialWidget::HandleRestartFromBeginning() { if (auto* M=TutorialModeOf(this)) M->RestartTutorial(false); }
 
 bool UProjectProject01PracticeWidget::Initialize()
 {
@@ -1282,7 +1292,7 @@ bool UProjectProject01PracticeWidget::Initialize()
 		Plus=CountButton(TEXT(" + "));Row->AddChildToHorizontalBox(Plus);
 		return Input;
 	};
-	auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>();
+	auto* Mode=TutorialModeOf(this);
 	auto AddToggle=[&](UVerticalBox* Parent,const TCHAR* Caption,bool Checked)
 	{
 		auto* Toggle=WidgetTree->ConstructWidget<UCheckBox>();auto* Text=WidgetTree->ConstructWidget<UTextBlock>();
@@ -1315,7 +1325,7 @@ bool UProjectProject01PracticeWidget::Initialize()
 void UProjectProject01PracticeWidget::NativeTick(const FGeometry& Geometry,float Delta)
 {
 	Super::NativeTick(Geometry,Delta);
-	if (auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>())
+	if (auto* Mode=TutorialModeOf(this))
 	{
 		SettingsPanel->SetVisibility(Mode->IsPracticeMenuOpen() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		ApplyButton->GetParent()->SetVisibility(Mode->IsPracticeMenuOpen() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -1347,7 +1357,7 @@ FReply UProjectProject01PracticeWidget::NativeOnKeyDown(const FGeometry& Geometr
 	if (Event.GetKey()==EKeys::Escape) { HandleToggle();return FReply::Handled(); }
 	return Super::NativeOnKeyDown(Geometry,Event);
 }
-void UProjectProject01PracticeWidget::HandleToggle() { if (auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) Mode->ShowPracticeMenu(!Mode->IsPracticeMenuOpen()); }
+void UProjectProject01PracticeWidget::HandleToggle() { if (auto* Mode=TutorialModeOf(this)) Mode->ShowPracticeMenu(!Mode->IsPracticeMenuOpen()); }
 void UProjectProject01PracticeWidget::SetCount(USpinBox* Input,int32 Delta,int32 Maximum)
 { if (Input) Input->SetValue(FMath::Clamp(FMath::RoundToInt(Input->GetValue())+Delta,1,Maximum)); }
 void UProjectProject01PracticeWidget::LessMannequins() { SetCount(MannequinCount,-1,10); }
@@ -1357,8 +1367,8 @@ void UProjectProject01PracticeWidget::MoreSurvivors() { SetCount(SurvivorCount,1
 void UProjectProject01PracticeWidget::LessCorners() { SetCount(CornerCount,-1,FMath::RoundToInt(SurvivorCount->GetValue())); }
 void UProjectProject01PracticeWidget::MoreCorners() { SetCount(CornerCount,1,FMath::RoundToInt(SurvivorCount->GetValue())); }
 void UProjectProject01PracticeWidget::ApplyRole(bool bMannequin)
-{ if (auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) Mode->RestartFreePractice(bMannequin,FMath::RoundToInt(MannequinCount->GetValue()),FMath::RoundToInt(SurvivorCount->GetValue()),StationaryToggle->IsChecked(),StandingWatchToggle->IsChecked(),InfiniteLivesToggle->IsChecked(),CornerToggle->IsChecked(),FMath::RoundToInt(CornerCount->GetValue()),DirectorToggle->IsChecked(),DirectorContactToggle->IsChecked()); }
-void UProjectProject01PracticeWidget::HandleApply() { if (auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) ApplyRole(Mode->IsMannequinTutorial()); }
+{ if (auto* Mode=TutorialModeOf(this)) Mode->RestartFreePractice(bMannequin,FMath::RoundToInt(MannequinCount->GetValue()),FMath::RoundToInt(SurvivorCount->GetValue()),StationaryToggle->IsChecked(),StandingWatchToggle->IsChecked(),InfiniteLivesToggle->IsChecked(),CornerToggle->IsChecked(),FMath::RoundToInt(CornerCount->GetValue()),DirectorToggle->IsChecked(),DirectorContactToggle->IsChecked()); }
+void UProjectProject01PracticeWidget::HandleApply() { if (auto* Mode=TutorialModeOf(this)) ApplyRole(Mode->IsMannequinTutorial()); }
 void UProjectProject01PracticeWidget::HandleSurvivor() { ApplyRole(false); }
 void UProjectProject01PracticeWidget::HandleMannequin() { ApplyRole(true); }
-void UProjectProject01PracticeWidget::HandleReturn() { if (auto* Mode=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>()) Mode->ReturnToMatching(); }
+void UProjectProject01PracticeWidget::HandleReturn() { if (auto* Mode=TutorialModeOf(this)) Mode->ReturnToMatching(); }
