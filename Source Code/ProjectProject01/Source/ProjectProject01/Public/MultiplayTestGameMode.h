@@ -67,6 +67,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
     friend class UProjectMatchBots;
     friend class FProjectMatchBotsRuntimeTest;
     friend class FProjectActualBotMatchEditorTest;
+    friend class FProjectBotSimulationTest;
     friend class AProjectOpenObserverController;
 
 public:
@@ -104,6 +105,16 @@ public:
 	bool CanCommitLevelTransition() const;
 	/** 사망/포획/확정 기권만 인정. 층 이동 대기·탈출·재접속 유예는 인정하지 않습니다. */
 	bool CanUseEmergencyElevator() const;
+	/** 이 높이(cm) 아래로 떨어진 생존자는 사망합니다. 맵의 가장 낮은 시작 지점에서 FallDeathDepth만큼 아래이며,
+	 *  시작 지점이 없는 맵은 월드 KillZ만 씁니다. */
+	float GetFallDeathZ() const;
+	/** 가장 낮은 시작 지점 아래로 이만큼(cm) 떨어지면 낙사합니다. */
+	UPROPERTY(EditAnywhere, Config, Category = "Multiplay|Fall", meta = (ClampMin = "100"))
+	float FallDeathDepth = 1000.f;
+private:
+	mutable float CachedFallDeathZ = 0.f;
+	mutable bool bFallDeathZReady = false;
+public:
 	/** Server-owned match membership, including ticket-free local PIE role assignments. */
 	bool IsRegisteredActiveSurvivor(const class APlayerCharacter* Survivor) const;
 	bool IsAuthoritativeMatchInProgress() const { return AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress; }
@@ -114,7 +125,8 @@ public:
 	void CancelLevelTransitionTravel();
 
 	/** 기존 마네킹 접촉 포획 로직이 생존자를 게임 오버로 만든 뒤 서버 경기 기록에 알린다. */
-	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor);
+	/** bCaughtByMannequin=false: a fall death eliminates the survivor without crediting the mannequin. */
+	void NotifyExistingMannequinCatch(class APlayerCharacter* Survivor, bool bCaughtByMannequin = true);
 	/** 서버가 확정한 포획 성공 피드백을 이번 경기의 마네킹 플레이어에게만 전달합니다. */
 	void NotifyMannequinCaptureFeedback(bool bElimination);
 	void NotifySurvivorDeathCountLost(class APlayerCharacter* Survivor);

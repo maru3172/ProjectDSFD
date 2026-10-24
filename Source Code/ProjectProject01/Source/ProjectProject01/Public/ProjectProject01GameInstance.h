@@ -385,7 +385,7 @@ public:
 		TFunction<void(bool)> Completion);
 
 	/** 재접속 유예시간이 만료된 플레이어를 백엔드 방에서도 서버 권위로 정리합니다. */
-	void NotifyAuthoritativeMatchEnded(const FString& MatchId);
+	void NotifyAuthoritativeMatchEnded(const FString& MatchId,const TArray<FProjectBotExperienceUpload>& BotExperience={});
 	void NotifyAuthoritativePlayerForfeit(const FString& MatchId, const FString& UserId, const FString& Role);
 
 	/** 데디케이티드 서버가 실행 중임을 백엔드에 알립니다. 서버 월드에서만 전송됩니다. */

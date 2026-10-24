@@ -15,6 +15,8 @@ bool FProjectMatchBotSpec::Parse(const TArray<TSharedPtr<FJsonValue>>& Values,TA
             (Bot.Role!=TEXT("Mannequin")&&Bot.Role!=TEXT("Survivor"))||
             !Json->TryGetNumberField(TEXT("difficulty"),Level)||!FMath::IsFinite(Level)||Level<1||Level>5||Level!=static_cast<int32>(Level))
         {Error=TEXT("Invalid server-owned bot participant.");return false;}
+        // Experience is optional; a malformed one is dropped rather than refusing the match.
+        if(Json->TryGetStringField(TEXT("experience"),Bot.Experience)&&!IsExperienceText(Bot.Experience))Bot.Experience.Reset();
         Bot.BotId=Id.ToString(EGuidFormats::DigitsWithHyphensLower);
         if(Ids.Contains(Bot.BotId)){Error=TEXT("Duplicate server-owned bot identity.");return false;}
         Ids.Add(Bot.BotId);Bot.Difficulty=static_cast<int32>(Level);
@@ -23,4 +25,11 @@ bool FProjectMatchBotSpec::Parse(const TArray<TSharedPtr<FJsonValue>>& Values,TA
         Parsed.Add(MoveTemp(Bot));
     }
     Out=MoveTemp(Parsed);Error.Reset();return true;
+}
+bool FProjectMatchBotSpec::IsExperienceText(const FString& Text)
+{
+    // Same rule as the backend: "v1" then digits and the separators | ; , - only, at most 2048 characters.
+    if(Text.Len()>2048||!Text.StartsWith(TEXT("v1")))return false;
+    for(int32 I=2;I<Text.Len();++I){const TCHAR C=Text[I];if(!FChar::IsDigit(C)&&C!='|'&&C!=';'&&C!=','&&C!='-')return false;}
+    return true;
 }

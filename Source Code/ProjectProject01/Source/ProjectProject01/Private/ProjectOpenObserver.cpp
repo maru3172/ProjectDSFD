@@ -88,10 +88,22 @@ void AProjectOpenObserverController::ApplyObservationPresentation()
         }
     }
     ClientConfigureSurvivorCommunication_Implementation(FString(),FString(),TEXT("Disabled"));
-    bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());SetIgnoreLookInput(true);
+    bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());SetIgnoreLookInput(true);AppliedLookMode=0;
     bAutoManageActiveCameraTarget=false;
     if(AActor* Followed=LocalTarget.Get()){SetIgnoreMoveInput(true);SetViewTarget(Followed);}
     else if(GetPawn())SetViewTarget(GetPawn());
+    UpdateLookMode();
+}
+void AProjectOpenObserverController::UpdateLookMode()
+{
+    // Switch the input mode only when it really changes: re-applying it (e.g. on every mannequin body swap)
+    // releases the mouse capture, and the view stops turning until the viewport is clicked again.
+    const int8 Wanted=LocalTarget.IsValid()&&!bLocked&&!bCursorHeld&&!bResultDelivered?1:0;
+    if(Wanted)ResetIgnoreLookInput();else SetIgnoreLookInput(true);
+    if(Wanted==AppliedLookMode)return;
+    AppliedLookMode=Wanted;
+    if(Wanted){bShowMouseCursor=false;SetInputMode(FInputModeGameOnly());}
+    else{bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());}
 }
 void AProjectOpenObserverController::ShowObserverWidget()
 {
@@ -123,10 +135,13 @@ void AProjectOpenObserverController::SetupInputComponent()
 bool AProjectOpenObserverController::InputKey(const FInputKeyEventArgs& Params)
 {
     if(bResultDelivered)return true; // Do not reopen movement/look during the final blackout.
-    if(Params.Key==EKeys::RightMouseButton&&!bLocked)
+    if((Params.Key==EKeys::LeftAlt||Params.Key==EKeys::RightAlt)&&LocalTarget.IsValid()&&!bLocked&&(Params.Event==IE_Pressed||Params.Event==IE_Released))
+    {bCursorHeld=Params.Event==IE_Pressed;UpdateLookMode();}
+    // Free flight: hold the right button to turn the view.
+    if(Params.Key==EKeys::RightMouseButton&&!bLocked&&!LocalTarget.IsValid())
     {
-        if(Params.Event==IE_Pressed){ResetIgnoreLookInput();bShowMouseCursor=false;SetInputMode(FInputModeGameOnly());}
-        else if(Params.Event==IE_Released){SetIgnoreLookInput(true);bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());}
+        if(Params.Event==IE_Pressed){ResetIgnoreLookInput();bShowMouseCursor=false;SetInputMode(FInputModeGameOnly());AppliedLookMode=1;}
+        else if(Params.Event==IE_Released){SetIgnoreLookInput(true);bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());AppliedLookMode=0;}
     }
     return APlayerController::InputKey(Params); // No voice, attack, possession or player command bindings.
 }
@@ -158,7 +173,12 @@ void AProjectOpenObserverController::TickActor(float Delta,ELevelTick Kind,FActo
         Entry.State=State==EMultiplayTestSurvivorState::Active?TEXT("생존"):State==EMultiplayTestSurvivorState::Eliminated?TEXT("탈락"):
             State==EMultiplayTestSurvivorState::Escaped?TEXT("탈출"):State==EMultiplayTestSurvivorState::TransitionWaiting?TEXT("다음 층 대기"):TEXT("마네킹");
         Entries.Add(Entry);
-        if(Entry.PlayerId==Selected){SelectedController=PC;Target=Pair.Value.Role==TEXT("Mannequin")?static_cast<AActor*>(PC->GetViewedMannequin()):static_cast<AActor*>(Pair.Value.SurvivorPawn.Get());}
+        if(Entry.PlayerId==Selected)
+        {
+            SelectedController=PC;Target=Pair.Value.Role==TEXT("Mannequin")?static_cast<AActor*>(PC->GetViewedMannequin()):static_cast<AActor*>(Pair.Value.SurvivorPawn.Get());
+            // Mid body swap the mannequin player has no viewed body for a moment: stay on the last one.
+            if(!Target&&Pair.Value.Role==TEXT("Mannequin")&&!ServerTarget.IsStale())Target=ServerTarget.Get();
+        }
     }
     if(StreamedPlayer.Get()!=(bLocked?SelectedController:nullptr))
     {
@@ -209,7 +229,7 @@ void AProjectOpenObserverController::ClientObservationTarget_Implementation(AAct
     SurvivorSpectatorView.bEnabled=Target&&Target->IsA<APlayerCharacter>();SurvivorSpectatorView.Target=Cast<APlayerCharacter>(Target);
     LocalSpectatorLookTarget=Target;
     ResetIgnoreMoveInput();if(Target)SetIgnoreMoveInput(true);
-    SetIgnoreLookInput(true);bShowMouseCursor=true;SetInputMode(FInputModeGameAndUI());
+    bCursorHeld=false;UpdateLookMode();
     if(!Target&&GetPawn()&&PlayerCameraManager)GetPawn()->SetActorLocation(PlayerCameraManager->GetCameraLocation());
     SetViewTarget(Target?Target:GetPawn());
 }

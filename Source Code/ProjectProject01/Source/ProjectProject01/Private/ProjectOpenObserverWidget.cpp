@@ -40,7 +40,7 @@ bool UProjectOpenObserverWidget::Initialize()
     auto* ViewPanel=Panel(false);auto* Fold=Button(WidgetTree,ViewPanel,TEXT("관전 시점 — 펼치기 / 접기"));Fold->OnClicked.AddUniqueDynamic(this,&ThisClass::FoldViews);
     Views=WidgetTree->ConstructWidget<UVerticalBox>();ViewPanel->AddChildToVerticalBox(Views);
     auto* All=Button(WidgetTree,Views,TEXT("전체 — 자유 비행"));auto* Binding=NewObject<UProjectObserverTargetBinding>(this);Binding->Owner=this;Bindings.Add(Binding);All->OnClicked.AddUniqueDynamic(Binding,&UProjectObserverTargetBinding::Click);
-    Views->AddChildToVerticalBox(Label(WidgetTree,TEXT("WASD 이동 · Space/Ctrl 상승/하강\n우클릭을 누른 채 시점 회전")));
+    Views->AddChildToVerticalBox(Label(WidgetTree,TEXT("WASD 이동 · Space/Ctrl 상승/하강\n우클릭을 누른 채 시점 회전\n사람을 따라볼 때: 마우스로 시점 회전, Alt를 누른 채 목록 선택")));
     Lock=WidgetTree->ConstructWidget<UCheckBox>();Lock->AddChild(Label(WidgetTree,TEXT("선택한 사람의 시선까지 함께 보기")));Views->AddChildToVerticalBox(Lock);Lock->SetIsEnabled(false);Lock->OnCheckStateChanged.AddUniqueDynamic(this,&ThisClass::LockChanged);
     auto* MatchPanel=Panel(true);auto* MatchFold=Button(WidgetTree,MatchPanel,TEXT("경기 상황 — 펼치기 / 접기"));MatchFold->OnClicked.AddUniqueDynamic(this,&ThisClass::FoldProgress);
     Progress=Label(WidgetTree,TEXT("경기를 준비 중입니다."));MatchPanel->AddChildToVerticalBox(Progress);

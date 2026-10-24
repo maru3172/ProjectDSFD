@@ -33,6 +33,7 @@ internal static partial class LobbyEndpoints
         var columns=await CommunityEndpoints.Rows(c,null,"SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='bot_match_rosters' AND column_name='display_name'",ct);
         if(columns.Count==0)await CommunityEndpoints.Exec(c,null,"ALTER TABLE bot_match_rosters ADD COLUMN display_name VARCHAR(48) NOT NULL DEFAULT '봇'",ct);
         await BotSkillRatings.EnsureAsync(c,ct);
+        await BotExperience.EnsureAsync(c,ct);
         await EnsureObserverSchemaAsync(c,ct);
     }
 

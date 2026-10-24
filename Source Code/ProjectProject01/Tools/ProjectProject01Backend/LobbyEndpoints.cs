@@ -1060,7 +1060,11 @@ internal static partial class LobbyEndpoints
                 await ExecuteAsync(connection, transaction,
                     "UPDATE game_join_tickets SET consumed_at_utc = UTC_TIMESTAMP(6) WHERE id = @ticketId;",
                     ("@ticketId", ticketId), ct);
-                var bots=await LoadMatchBotsAsync(connection,transaction,matchId,ct);
+                var roster=await LoadMatchBotsAsync(connection,transaction,matchId,ct);
+                // Each bot arrives with its role/level pool from earlier matches (optional field).
+                var pools=await BotExperience.LoadAsync(connection,transaction,roster,ct);
+                var bots=roster.Select(b=>new{b.BotId,b.DisplayName,b.Difficulty,b.AssignedRole,
+                    experience=pools.TryGetValue($"{b.AssignedRole}:{b.Difficulty}",out var pool)?pool:null}).ToList();
                 await transaction.CommitAsync(ct);
 
                 var encryptionKey = Convert.ToBase64String(securityOptions.DeriveConnectionEncryptionKey(ticket));
@@ -1098,6 +1102,7 @@ internal static partial class LobbyEndpoints
                 await using var transaction=await connection.BeginTransactionAsync(ct);
                 await LockLobbyStateAsync(connection,transaction,ct);
                 if(!await AuthoritativeMatchLedger.EndAsync(connection,transaction,match.ToString("D"),ct))return Results.NotFound();
+                await BotExperience.ApplyAsync(connection,transaction,match.ToString("D"),body.BotExperience,ct);
                 await transaction.CommitAsync(ct);return Results.Ok(new {message="경기 종료를 확인했습니다."});
             }
             catch(MySqlException){return DatabaseUnavailable();}
@@ -2413,7 +2418,7 @@ internal sealed record SubmitVerifiedMatchResultRequest(
     int? RescueCount,
     double? EscapeSeconds);
 internal sealed record AuthoritativeForfeitRequest(string? MatchId, string? UserId, string? Role);
-internal sealed record CompleteAuthoritativeMatchRequest(string? MatchId);
+internal sealed record CompleteAuthoritativeMatchRequest(string? MatchId,List<BotExperienceUpload>? BotExperience=null);
 internal sealed record SubmitLeaderboardRecordRequest(
     string? MatchId,
     string? Role,

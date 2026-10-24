@@ -467,7 +467,17 @@ void APlayerCharacter::Tick(float DeltaTime)
 	{
 		return;
 	}
-	
+	// 낙사: 맵의 낙사 높이 아래로 내려가면 서버가 사망 처리한다. 그 위에서는 떨어져도 죽지 않는다.
+	if (HasAuthority() && !bGameOver && !IsHidden())
+	{
+		if (MovementComponent->IsMovingOnGround()) { LastFootingLocation = GetActorLocation(); bHasFooting = true; }
+		if (AMultiplayTestGameMode* MultiplayGameMode = GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();
+			IsValid(MultiplayGameMode) && GetActorLocation().Z < MultiplayGameMode->GetFallDeathZ())
+		{
+			HandleFallDeath();
+		}
+	}
+
 	// 플레이어의 방향키 입력을 기준으로 디버그 원 방향 조절 가능하도록 설정하기
 	const FVector InputMovementDirection = MovementComponent->GetCurrentAcceleration().GetSafeNormal2D();
 	if (!InputMovementDirection.IsNearlyZero())
@@ -1481,6 +1491,59 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	UE_LOG(LogTemp, Warning, TEXT("Player %s reached game over after being caught by mannequin %s."),
 		*GetName(), *CatchingMannequin->GetName());
 	return true;
+}
+
+bool APlayerCharacter::HandleFallDeath()
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || bGameOver || !IsValid(World))
+	{
+		return false;
+	}
+	const auto* Practice = World->GetAuthGameMode<AProjectProject01TutorialGameMode>();
+	if (Practice && Practice->HasPracticeInfiniteLives())
+	{
+		// 무한 목숨 연습: 죽지 않고 마지막 발판으로 돌아간다.
+		if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement)) Movement->StopMovementImmediately();
+		if (bHasFooting) TeleportTo(LastFootingLocation, GetActorRotation(), false, true);
+		return true;
+	}
+	RemainingDeathCount = 0;
+	bGameOver = true;
+	const auto* MatchController = Cast<AMultiplayTestPlayerController>(GetController());
+	const bool bServerBot = MatchController && MatchController->IsServerControlledBot();
+	RecordObserverFeedback(1.f, 0.f, 1.f, true);
+	MulticastPlayPainAndDeathWorldSFX(true, 1.0f);
+	if (IsLocallyControlled())
+	{
+		PlayLocalDeathSequence(1.f, 0.f);
+	}
+	else if (!bServerBot)
+	{
+		ClientPlayDeathSequence(1.f, 0.f);
+	}
+	ApplyGameOverState();
+	ForceNetUpdate();
+	if (AMultiplayTestGameMode* MultiplayGameMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(MultiplayGameMode))
+	{
+		MultiplayGameMode->NotifyExistingMannequinCatch(this, false);
+	}
+	UE_LOG(LogTemp, Warning, TEXT("Player %s died from a fall."), *GetName());
+	return true;
+}
+
+void APlayerCharacter::FellOutOfWorld(const UDamageType& DamageType)
+{
+	// 월드 KillZ 아래: 액터를 없애지 않고 낙사로 처리한다(경기 기록과 관전이 끊기지 않게).
+	if (HasAuthority() && !bGameOver && HandleFallDeath())
+	{
+		return;
+	}
+	if (bGameOver)
+	{
+		return;
+	}
+	Super::FellOutOfWorld(DamageType);
 }
 
 bool APlayerCharacter::CanPlayTensionBreathing() const

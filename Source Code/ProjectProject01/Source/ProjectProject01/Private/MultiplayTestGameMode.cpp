@@ -20,6 +20,7 @@
 #include "ProjectMatchBots.h"
 #include "ProjectOpenObserver.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerStart.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -2330,10 +2331,12 @@ bool AMultiplayTestGameMode::TryBroadcastSurvivorPing(
 			Target->ClientReceiveTeamPing(Type, Location, SenderName);
 		}
 	}
+	// Server-owned bot teammates have no client to show the marker; they hear the ping here.
+	if (MatchBots) MatchBots->HearPing(RequestingController, static_cast<uint8>(Type), Location);
 	return true;
 }
 
-void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Survivor)
+void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Survivor, const bool bCaughtByMannequin)
 {
 	if (!HasAuthority() || !IsValid(Survivor) || !Survivor->IsGameOver())
 	{
@@ -2372,7 +2375,7 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 	Survivor->SetActorEnableCollision(false);
 	for (TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
 	{
-		if (Pair.Value.Role == TEXT("Mannequin"))
+		if (Pair.Value.Role == TEXT("Mannequin") && bCaughtByMannequin)
 		{
 			++Pair.Value.CaptureCount;
 			if (Pair.Value.FirstCaptureSeconds <= 0.0)
@@ -2554,6 +2557,21 @@ bool AMultiplayTestGameMode::IsRegisteredActiveSurvivor(const APlayerCharacter* 
 		Record->SurvivorState==EMultiplayTestSurvivorState::Active && !Record->bDisconnected && !Record->bForfeited;
 }
 
+float AMultiplayTestGameMode::GetFallDeathZ() const
+{
+	if (!bFallDeathZReady && GetWorld())
+	{
+		// The map's floor level: its lowest start point (player starts and role spawn points).
+		float Lowest = TNumericLimits<float>::Max();
+		for (TActorIterator<APlayerStart> It(GetWorld()); It; ++It) Lowest = FMath::Min(Lowest, static_cast<float>(It->GetActorLocation().Z));
+		for (TActorIterator<AProjectProject01RoleSpawnPoint> It(GetWorld()); It; ++It) Lowest = FMath::Min(Lowest, static_cast<float>(It->GetActorLocation().Z));
+		// No start points: no height rule here, only the world KillZ (FellOutOfWorld).
+		CachedFallDeathZ = Lowest < TNumericLimits<float>::Max() ? Lowest - FMath::Max(100.f, FallDeathDepth) : -TNumericLimits<float>::Max();
+		bFallDeathZReady = true;
+	}
+	return CachedFallDeathZ;
+}
+
 bool AMultiplayTestGameMode::CanUseEmergencyElevator() const
 {
 	if (!HasAuthority() || !IsAuthoritativeMatchInProgress()) return false;
@@ -2569,6 +2587,12 @@ bool AMultiplayTestGameMode::CanUseEmergencyElevator() const
 
 bool AMultiplayTestGameMode::CanCommitLevelTransition() const
 {
+	// The player's survivor is out of a bot match: the match ends after the death sequence. A bot that was
+	// already waiting at the exit must not carry the level travel on without the player (infinite loading).
+	if (AreAllHumanSurvivorsEliminatedInBotMatch())
+	{
+		return false;
+	}
 	// Bot match with a single human player who is a survivor: when that player takes the exit, everyone
 	// travels; the bot survivors still in play come along (they respawn alive on the next floor).
 	if (MatchBots && MatchBots->HasRoster())
@@ -2880,7 +2904,9 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 
 void AMultiplayTestGameMode::SubmitAuthoritativeResults()
 {
-	if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())Instance->NotifyAuthoritativeMatchEnded(AuthoritativeMatchId);
+	// Bot growth rides on the match-complete report (durable outbox, once per match).
+	if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
+		Instance->NotifyAuthoritativeMatchEnded(AuthoritativeMatchId,MatchBots&&MatchBots->HasRoster()?MatchBots->ExportExperience():TArray<FProjectBotExperienceUpload>());
 	if (bMatchEndedByForfeit)
 	{
 		PendingResultSubmissions = 0;

@@ -40,16 +40,37 @@ struct Difficulty
     bool AllowsDeception() const { return Level>=4; }
     // Levels 1-3 only read openly visible habits; turn/rest/escape reading is psychological play (4-5).
     int TraitBudget() const { static constexpr int Budget[]={1,2,3,5,6};return Budget[std::max(1,std::min(5,Level))-1]; }
-    float EvolutionSeconds() const { return 480.f-60.f*(std::max(1,std::min(5,Level))-1); }
+    // Habit growth time: 8 min at easy down to 4 min at master (restored from the halved 4..2 min, which let the
+    // mannequin read survivors' escape and rest habits within most matches).
+    // Balance runs only: EvolutionScale multiplies it (1 = as designed).
+    static float& EvolutionScale(){static float Scale=1.f;return Scale;}
+    float EvolutionSeconds() const { return (480.f-60.f*(std::max(1,std::min(5,Level))-1))*Clamp(EvolutionScale(),.25f,4.f); }
     float Progress(double MatchSeconds) const { return Finite(MatchSeconds)?Clamp(static_cast<float>(MatchSeconds)/EvolutionSeconds(),0,1):0; }
+    // Trust in read habits at match start: 15% for beginners up to 55% at master.
+    float InitialTrust() const { return .05f+.1f*std::max(1,std::min(5,Level)); }
     // The longer the match runs, the more evidence the bot trusts, never above its level cap.
-    float Evolution(double MatchSeconds) const { return .45f+.55f*Progress(MatchSeconds); }
+    float Evolution(double MatchSeconds) const { return InitialTrust()+(1-InitialTrust())*Progress(MatchSeconds); }
     int UnlockedTraits(double MatchSeconds) const { return std::max(1,std::min(TraitBudget(),1+static_cast<int>(TraitBudget()*Progress(MatchSeconds)))); }
     bool Uses(Trait T,double MatchSeconds) const { return static_cast<int>(T)<UnlockedTraits(MatchSeconds); }
     // Candidate positions judged per tactical re-plan: low levels see fewer environmental options.
     int TacticSamples() const { return 4+2*(std::max(1,std::min(5,Level))-1); }
     // Skilled players vary their approach so they cannot be read: repetition is penalised more at high levels.
     float Variety() const { return .04f+.22f*Skill; }
+    static float BaseSkill(int Level){const float T=(std::max(1,std::min(5,Level))-1)/4.f;return T*T;}
+    // Per-match condition (-1 bad day .. +1 good day). It moves skill by at most a fifth of the gap to the
+    // neighbouring level, so a level never reaches its neighbour. Level-keyed tables do not change.
+    static float ConditionSkill(int Level,float Condition)
+    {
+        const int L=std::max(1,std::min(5,Level));const float C=Finite(Condition)?Clamp(Condition,-1,1):0.f,S=BaseSkill(L);
+        const float Up=L<5?BaseSkill(L+1)-S:0.f,Down=L>1?S-BaseSkill(L-1):0.f;
+        return Clamp(S+(C>=0?C*.2f*Up:C*.2f*Down),0,1);
+    }
+    static Difficulty For(int Level,float Condition)
+    {
+        Difficulty D=For(Level);const float S=ConditionSkill(D.Level,Condition);
+        D.Reaction=1.65f-1.25f*S;D.Memory=2.5f+5.5f*S;D.Sharing=.15f+.75f*S;D.Adaptation=.04f+.48f*S;
+        D.Coordination=.12f+.78f*S;D.TurnRate=85.f+125.f*S;D.Skill=S;return D;
+    }
     static Difficulty For(int Level)
     {
         Difficulty D;D.Level=std::max(1,std::min(5,Level));
@@ -82,6 +103,11 @@ struct Difficulty
     }
 };
 
+// How long a survivor keeps one mannequin frozen with a stare before looking away (bot team: 1.2..3.5 s;
+// beside a human the helper's cover stays short), and how long the look-away lasts: the mannequin's window.
+inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:1.45+2.85*D.Skill;}
+inline float LookAwaySeconds(const Difficulty& D){return std::max(.9f,D.Reaction*1.7f);}
+
 // How human the mistakes are: frequent and large at easy, rare micro-imperfections at master (never zero).
 inline float MistakeScale(const Difficulty& D){return Clamp(1.f-.8f*D.Skill,.2f,1.f);}
 
@@ -100,6 +126,16 @@ struct Persona
         P.Handedness=Trait()*2.f-1.f;P.Wobble=Trait();P.Phase=Next()*6.2831853f;return P;
     }
 };
+
+// How strongly situational boldness (endgame, floor depth, exit proximity) shows for this character:
+// bold people and pressing styles take more of it, careful people and waiting styles less (0.5..1.4).
+// It only scales the push; it never turns one style into another.
+inline float BoldnessScale(const Persona& P)
+{
+    float Style=1.f;
+    switch(P.PlayStyle){case 0:case 4:Style=1.15f;break;case 1:case 7:Style=.8f;break;case 3:case 6:Style=.92f;break;default:break;} // Hunter/Runner, Stalker/Sneak, Warden/Supporter.
+    return Clamp((.7f+.6f*Clamp(P.Boldness,0,1))*Style,.5f,1.4f);
+}
 
 // Play style per bot, derived from its personality: the same level plays differently per character.
 //  Mannequin: Hunter (presses), Stalker (waits and ambushes), Trickster (feints and baits), Warden (holds exits, coordinates).
@@ -287,6 +323,11 @@ struct Policy
     std::array<float,ActionCount> Recent{}; // Decaying count of recently chosen tactics.
     double NextDecision=0,LastUpdate=-1,ComplacentUntil=-1,RecentAt=-1;
     float Relief=0; // In-match relief (0..Relief::Cap), set by the adapter each tick.
+    float Tilt=0;   // Shown frustration (Mood::Tilt), set by the adapter: rushes in, waits less.
+    float Urgency=0;// Endgame (EndgameUrgency): mannequin goes for the last survivor, the last survivor goes for the exit.
+    float Resolve=0;// Floor depth (FloorResolve): fewer long hesitations and fewer handed-out openings.
+    float Stealth=0;// Mannequin Shadow plan (MatchScript): lurk and close in quietly rather than charge.
+    float Cohesion=0;// Survivor plan: + stay together (Together), - spread out (Split).
     double AllySupportSince=-1,AllySupportAvailableAt=0;
     uint32_t RandomState=17;
     void Reset(int Level,uint32_t Seed){*this=Policy{};Profile=Difficulty::For(Level);RandomState=Seed?Seed:17;Weights.fill(0);}
@@ -325,7 +366,7 @@ struct Policy
             // Gaze lock is a limited resource. A helper beside a human offers brief cover; a bot-only
             // team holds longer at higher level but still looks away, so the mannequin always gets a window.
             const bool Supporting=Current.Tactic==Action::Cover||Current.Tactic==Action::Observe;
-            const double Limit=C.HumanAlly?2.+.5*Profile.Skill:1.5+3.*Profile.Skill;
+            const double Limit=GazeHoldLimit(Profile,C.HumanAlly);
             if(Supporting && AllySupportSince>=0 && Now-AllySupportSince>=Limit)
             {AllySupportAvailableAt=Now+std::max(1.f,Profile.Reaction*2.5f);AllySupportSince=-1;NextDecision=Now;}
             // Never manufacture an opening by forbidding emergency self-protection at point-blank range.
@@ -377,6 +418,38 @@ struct Policy
         Desired[static_cast<size_t>(Action::Recover)]+=C.Mannequin?0:std::max(0.f,-Bold)*.12f;
         if(Knows){Desired[static_cast<size_t>(Action::FlankLeft)]+=std::max(0.f,-Hand)*.06f;Desired[static_cast<size_t>(Action::FlankRight)]+=std::max(0.f,Hand)*.06f;}
         if(Complacent(Now)&&Knows)Desired[static_cast<size_t>(Action::Pressure)]-=.15f*MistakeScale(Profile);
+        // Endgame: the mannequin presses the last survivor; the last survivor stops watching and makes for the exit.
+        // Scaled by who the bot is, so a cautious stalker stays a stalker (BoldnessScale).
+        if(const float Hurry=Clamp(Urgency*BoldnessScale(Character),0,1);Hurry>0)
+        {
+            if(C.Mannequin)
+            {
+                if(Knows)Desired[static_cast<size_t>(Action::Pressure)]+=.3f*Hurry;
+                Desired[static_cast<size_t>(Action::Hold)]-=.15f*Hurry;Desired[static_cast<size_t>(Action::Observe)]-=.15f*Hurry;Desired[static_cast<size_t>(Action::Lure)]-=.1f*Hurry;
+            }
+            else
+            {
+                Desired[static_cast<size_t>(Action::Search)]+=.5f*Hurry;
+                Desired[static_cast<size_t>(Action::Observe)]-=.3f*Hurry;Desired[static_cast<size_t>(Action::Cover)]-=.3f*Hurry;Desired[static_cast<size_t>(Action::Hold)]-=.1f*Hurry;
+            }
+        }
+        // Match plan leans (MatchScript), already scaled by level commitment and personality fit.
+        if(const float Quiet=Clamp(Stealth,0,1.2f);Quiet>0&&C.Mannequin)
+        {
+            if(Knows){Desired[static_cast<size_t>(Action::Observe)]+=.06f*Quiet;Desired[static_cast<size_t>(Action::Pressure)]-=.03f*Quiet;}
+            Desired[static_cast<size_t>(Action::Hold)]+=.04f*Quiet;
+        }
+        if(const float Together=Clamp(Cohesion,-1.2f,1.2f);Together!=0&&!C.Mannequin&&C.HasAlly)
+        {
+            Desired[static_cast<size_t>(Action::Regroup)]=std::max(0.f,Desired[static_cast<size_t>(Action::Regroup)]+.1f*Together);
+            if(Together>0)Desired[static_cast<size_t>(Action::Cover)]+=.04f*Together;
+        }
+        // Frustration: pushes straight in and stops waiting it out.
+        if(const float Tilted=Clamp(Tilt,0,1);Tilted>0&&C.Mannequin)
+        {
+            if(Knows)Desired[static_cast<size_t>(Action::Pressure)]+=.2f*Tilted;
+            Desired[static_cast<size_t>(Action::Hold)]-=.12f*Tilted;Desired[static_cast<size_t>(Action::Observe)]-=.1f*Tilted;
+        }
         // Play style: a consistent lean, small enough that the level still decides how good the play is.
         auto Lean=[&](Action A,float V){Desired[static_cast<size_t>(A)]+=V;};
         switch(static_cast<Style>(Character.PlayStyle))
@@ -418,7 +491,8 @@ struct Policy
         float Pick=Random()*Total;Action Chosen=Action::Hold;
         for(size_t I=0;I<ActionCount;++I){Pick-=Chances[I];if(Pick<=0){Chosen=static_cast<Action>(I);break;}}
         // Natural disengagement, not suicide or frozen controls. A relaxed winner also drifts off briefly.
-        const float Opening=Profile.Opening+(Complacent(Now)?.3f*MistakeScale(Profile):0.f)+.15f*Clamp(Relief,0,1);
+        // Deeper floors hand out a third fewer deliberate openings; complacency and relief stay as they are.
+        const float Opening=Profile.Opening*(1-.3f*Clamp(Resolve,0,1))+(Complacent(Now)?.3f*MistakeScale(Profile):0.f)+.15f*Clamp(Relief,0,1);
         if(Opening>0&&IsLegal(Action::Search,C,Allowed)&&Random()<Opening)Chosen=Action::Search;
         State Child=State::Engage;
         switch(Chosen){case Action::Search:Child=State::Search;break;case Action::Cover:case Action::Regroup:Child=State::Support;break;
@@ -428,7 +502,7 @@ struct Policy
         else AllySupportSince=-1;
         // Human rhythm: usually quick, occasionally a longer think. Long pauses get rarer with level and patience.
         float Rhythm=(.7f+Random()*.5f)*(1+.35f*Clamp(Relief,0,1));
-        if(Random()<(.06f+.14f*MistakeScale(Profile))*(1.3f-.6f*Clamp(Character.Patience,0,1)))Rhythm*=1.6f+Random();
+        if(Random()<(.06f+.14f*MistakeScale(Profile))*(1.3f-.6f*Clamp(Character.Patience,0,1))*(1-.5f*Clamp(Resolve,0,1)))Rhythm*=1.6f+Random();
         Recent[static_cast<size_t>(Chosen)]=std::min(10.f,Recent[static_cast<size_t>(Chosen)]+1);
         Current={Root::Active,Child,Chosen};NextDecision=Now+Profile.Reaction*(C.HumanAlly?1.25f:1.f)*Rhythm;return Current;
     }
@@ -490,6 +564,18 @@ enum class Play:uint8_t
     ExitFeint,    // Survivor heads for one exit, then switches.                         Counter: hold between the exits.
     StepApproach, // Creeps a few steps whenever unwatched, then stands still again.     Counter: look back often.
     HideStill,    // Survivor hears footsteps and freezes in place to stay silent.       Counter: search where the steps stopped.
+    WatchRetreat, // Survivor stops, faces a close mannequin, then backs away watching it. Counter: a second body from the side.
+    CoverRun,     // Survivor pair: one stops to freeze the mannequin, the other runs.     Counter: break the watcher (CoverBreak).
+    FalseRetreat, // Survivor runs away in plain view, then doubles back to the exit.      Counter: don't chase far, hold the exit.
+    NoiseLure,    // Survivor pair: one runs loudly away from its partner, then goes silent. Counter: ignore the noise, find the quiet one.
+    RunForIt,     // Survivor: stops and turns to the exit, then sprints all the way (loud).  Counter: hear the run, cut it off at the exit.
+    ZigZag,       // Survivor chased: a sharp side-step, then a zigzag run.                 Counter: don't follow each turn, aim where it's heading.
+    LeapFrog,     // Survivor pair: one stands facing back while the other moves, then swap. Counter: strike at the swap, or from the side neither watches.
+    SplitRun,     // Survivor pair: both stop facing each other, then run apart and meet at the exit. Counter: chase one, guard the exit.
+    SearchSweep,  // Mannequin lost you: searches around the last sighting point by point. Counter: leave the area quietly.
+    ExitSweep,    // Mannequin walks a round between the exits it knows, pausing at each.   Counter: time the round, use the far exit.
+    Herding,      // Mannequin cuts across between you and the exit instead of coming straight. Counter: switch exits or go round.
+    FakeRetreat,  // Mannequin released from a stare backs off, then turns and charges.    Counter: keep watching it after it backs off.
     Count
 };
 constexpr size_t PlayCount=static_cast<size_t>(Play::Count);
@@ -513,9 +599,38 @@ inline const PlayInfo& Info(Play P)
         {5,true ,true ,.9f, 5, 25},  // FeintFlank
         {5,true ,true ,3.f, 6, 40},  // ExitFeint: the visible run toward the first exit is the tell.
         {2,false,true ,.6f, 8, 20},  // StepApproach
-        {2,false,true ,.5f, 5, 15}}; // HideStill
+        {2,false,true ,.5f, 5, 15},  // HideStill
+        {3,false,true ,.5f, 4, 12},  // WatchRetreat
+        {3,false,true ,.6f, 6, 18},  // CoverRun
+        {4,true ,true ,2.f, 6, 35},  // FalseRetreat: the visible run away is the tell.
+        {4,true ,true ,1.5f,6, 35},  // NoiseLure: the loud run is the tell.
+        {2,false,true ,.6f, 8, 25},  // RunForIt
+        {3,false,true ,.4f, 5, 18},  // ZigZag
+        {3,false,true ,.6f,12, 30},  // LeapFrog
+        {4,true ,true ,.7f, 6, 35},  // SplitRun
+        {2,false,true ,.8f,12, 30},  // SearchSweep
+        {3,false,true ,1.f,18, 45},  // ExitSweep: the footsteps along the exit route are the tell.
+        {3,false,true ,.8f, 7, 22},  // Herding
+        {4,true ,true ,1.2f,5, 30}}; // FakeRetreat: the visible backing off is the tell.
     const auto I=static_cast<size_t>(P);return Table[I<PlayCount?I:0];
 }
+// Which side uses a play. Both sides get the same number of plays at every level (1/4/9/13/14):
+// survivor solo (8) and pair (6) plays together match the mannequin repertoire (14).
+enum PlaySide:uint8_t { MannequinSide=1,SurvivorSide=2,BothSides=3 };
+inline uint8_t SideOf(Play P)
+{
+    switch(P)
+    {
+    case Play::Listen:return BothSides;
+    case Play::PeekDash:case Play::BackToBack:case Play::BaitRunner:case Play::ExitFeint:case Play::HideStill:
+    case Play::WatchRetreat:case Play::CoverRun:case Play::FalseRetreat:case Play::NoiseLure:
+    case Play::RunForIt:case Play::ZigZag:case Play::LeapFrog:case Play::SplitRun:return SurvivorSide;
+    case Play::None:case Play::Count:return 0;
+    default:return MannequinSide;
+    }
+}
+// Pair plays need a bot partner; the rest work alone.
+inline bool PairPlay(Play P){return P==Play::BackToBack||P==Play::BaitRunner||P==Play::CoverRun||P==Play::NoiseLure||P==Play::LeapFrog||P==Play::SplitRun;}
 
 // In-match relief after the human side suffered several setbacks in a short time.
 // Capped per level and almost absent at master.
@@ -538,6 +653,7 @@ struct Director
     static int Concurrency(const Difficulty& D){static constexpr int L[]={1,1,2,2,3};return L[std::max(1,std::min(5,D.Level))-1];}
     static bool Unlocked(Play P,const Difficulty& D){const auto& I=Info(P);return P!=Play::None&&D.Level>=I.MinLevel&&(!I.Psych||D.AllowsDeception());}
     static int UnlockedCount(const Difficulty& D){int N=0;for(size_t I=1;I<PlayCount;++I)N+=Unlocked(static_cast<Play>(I),D);return N;}
+    static int UnlockedCount(const Difficulty& D,uint8_t Side){int N=0;for(size_t I=1;I<PlayCount;++I)N+=(SideOf(static_cast<Play>(I))&Side)&&Unlocked(static_cast<Play>(I),D);return N;}
     // Shorter tells at high level, never instant; relief lengthens them.
     static float SignalSeconds(Play P,const Difficulty& D,float Relief){return std::max(.35f,Info(P).Signal*(1.3f-.6f*D.Skill)*(1+.6f*Clamp(Relief,0,1)));}
     static float CooldownSeconds(Play P,const Difficulty& D,float Relief){return Info(P).Cooldown*(1.35f-.5f*D.Skill)*(1+Clamp(Relief,0,1));}
@@ -568,17 +684,327 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
     auto Is=[P](std::initializer_list<Play> L){for(Play X:L)if(X==P)return true;return false;};
     switch(static_cast<Style>(PlayStyle))
     {
-    case Style::Hunter:   return Is({Play::Pincer,Play::CoverBreak,Play::FeintFlank})?1.f:Is({Play::StillAmbush,Play::ExitAmbush,Play::StepApproach})?.35f:.7f;
-    case Style::Stalker:  return Is({Play::StillAmbush,Play::ExitAmbush,Play::Listen,Play::StepApproach})?1.f:Is({Play::Pincer,Play::FeintFlank})?.35f:.7f;
-    case Style::Trickster:return Is({Play::DecoyBody,Play::FeintFlank,Play::HabitFlank})?1.f:Is({Play::ExitAmbush})?.35f:.7f;
-    case Style::Warden:   return Is({Play::ExitAmbush,Play::GazeRelay,Play::Pincer})?1.f:Is({Play::StillAmbush})?.35f:.7f;
-    case Style::Runner:   return Is({Play::PeekDash,Play::ExitFeint})?1.f:Is({Play::BackToBack,Play::HideStill})?.35f:.7f;
-    case Style::Scout:    return Is({Play::BackToBack,Play::Listen,Play::PeekDash})?1.f:.7f;
-    case Style::Supporter:return Is({Play::BaitRunner,Play::BackToBack})?1.f:Is({Play::ExitFeint})?.35f:.7f;
-    case Style::Sneak:    return Is({Play::Listen,Play::ExitFeint,Play::HideStill})?1.f:Is({Play::PeekDash,Play::BaitRunner})?.35f:.7f;
+    case Style::Hunter:   return Is({Play::Pincer,Play::CoverBreak,Play::FeintFlank,Play::Herding})?1.f:Is({Play::StillAmbush,Play::ExitAmbush,Play::StepApproach,Play::ExitSweep})?.35f:.7f;
+    case Style::Stalker:  return Is({Play::StillAmbush,Play::ExitAmbush,Play::Listen,Play::StepApproach,Play::SearchSweep})?1.f:Is({Play::Pincer,Play::FeintFlank})?.35f:.7f;
+    case Style::Trickster:return Is({Play::DecoyBody,Play::FeintFlank,Play::HabitFlank,Play::FakeRetreat})?1.f:Is({Play::ExitAmbush})?.35f:.7f;
+    case Style::Warden:   return Is({Play::ExitAmbush,Play::GazeRelay,Play::Pincer,Play::ExitSweep})?1.f:Is({Play::StillAmbush})?.35f:.7f;
+    case Style::Runner:   return Is({Play::PeekDash,Play::ExitFeint,Play::FalseRetreat,Play::RunForIt,Play::ZigZag})?1.f:Is({Play::BackToBack,Play::HideStill})?.35f:.7f;
+    case Style::Scout:    return Is({Play::BackToBack,Play::Listen,Play::PeekDash,Play::WatchRetreat,Play::LeapFrog})?1.f:.7f;
+    case Style::Supporter:return Is({Play::BaitRunner,Play::BackToBack,Play::CoverRun,Play::NoiseLure,Play::LeapFrog,Play::SplitRun})?1.f:Is({Play::ExitFeint})?.35f:.7f;
+    case Style::Sneak:    return Is({Play::Listen,Play::ExitFeint,Play::HideStill,Play::WatchRetreat})?1.f:Is({Play::PeekDash,Play::BaitRunner,Play::RunForIt})?.35f:.7f;
     default:return .7f;
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Survivor craft. The game's core rule: a mannequin freezes while a survivor looks at it. Skilled
+// survivors keep threats in view while they move, back away from danger, route around mannequins
+// and split the watching with a partner. These scale with level the same way the mannequin does.
+// ---------------------------------------------------------------------------------------------
+// Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.86f,.95f};return L[std::max(1,std::min(5,D.Level))-1];}
+// Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
+inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
+inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}
+inline bool InWatchLapse(double Now,float Phase,const Difficulty& D)
+{
+    if(!Finite(Now))return false;
+    const double Period=LapsePeriod(D),Offset=Clamp(Phase,0,6.3f)/6.2831853*Period;
+    return std::fmod(Now+Offset,Period)<LapseLength(D);
+}
+struct ThreatView { Vec Position{};float Distance=0;bool CoveredByPartner=false; };
+// Which mannequin to keep in view: the nearest one nobody on the team is already freezing.
+inline int PickWatchTarget(const ThreatView* Threats,size_t Count,float Range)
+{
+    int Best=-1,Covered=-1;float BestD=Range,CoveredD=Range;
+    for(size_t I=0;I<Count&&Threats;++I)
+    {
+        const float D=Threats[I].Distance;if(!Finite(D)||D>Range)continue;
+        if(!Threats[I].CoveredByPartner){if(D<BestD){BestD=D;Best=static_cast<int>(I);}}
+        else if(D<CoveredD){CoveredD=D;Covered=static_cast<int>(I);}
+    }
+    // Everything nearby is covered: still watch the closest one if it is really close (partner may look away).
+    return Best>=0?Best:(Covered>=0&&CoveredD<500.f?Covered:-1);
+}
+// Direction to back away: away from nearby threats (closer weighs more), bent toward the objective
+// whenever that does not lead back into them. Zero when nothing is close.
+inline Vec RetreatDirection(Vec Self,const ThreatView* Threats,size_t Count,float DangerRadius,Vec Objective)
+{
+    Vec Push{};
+    for(size_t I=0;I<Count&&Threats;++I)
+    {
+        const float D=Threats[I].Distance;if(!Finite(D)||D>DangerRadius||D<1.f)continue;
+        const Vec Away=Flat(Self-Threats[I].Position).Unit();
+        Push=Push+Away*((DangerRadius-D)/DangerRadius);
+    }
+    if(Push.Length()<.001f)return {};
+    Push=Push.Unit();
+    const Vec ToGoal=Flat(Objective-Self).Unit();
+    if(ToGoal.Length()>.5f&&Dot(ToGoal,Push)>-.2f)Push=(Push*.65f+ToGoal*.35f).Unit();
+    return Push;
+}
+// Fleeing must not run into another mannequin: keep the wanted heading if no known threat lies ahead
+// within Range, else try 45/90/135 degrees either side, else the heading with the most clearance.
+inline Vec ClearHeading(Vec Self,Vec Wanted,const ThreatView* Threats,size_t Count,float Range)
+{
+    Wanted=Flat(Wanted).Unit();if(Wanted.Length()<.5f)return {};
+    auto Clearance=[&](Vec Heading){float Worst=Range;
+        for(size_t I=0;I<Count&&Threats;++I)
+        {
+            const Vec To=Flat(Threats[I].Position-Self);const float D=To.Length();
+            if(!Finite(D)||D>Range||D<1.f||Dot(Heading,To.Unit())<.55f)continue;
+            Worst=std::min(Worst,D);
+        }
+        return Worst;};
+    static constexpr float Offsets[]={0,45,-45,90,-90,135,-135};
+    Vec Best=Wanted;float BestClear=-1;
+    for(float Offset:Offsets)
+    {
+        const Vec Heading=RotateYaw(Wanted,Offset);const float Clear=Clearance(Heading);
+        if(Clear>=Range)return Heading;
+        if(Clear>BestClear){BestClear=Clear;Best=Heading;}
+    }
+    return Best;
+}
+
+// Self-made patterns. A bot remembers which play it ran right after another and whether the pair
+// worked; a pair that keeps working becomes its own combo and is reached for again. Every step is
+// still an existing play, so the combo keeps each step's tell, cooldown and counter, and the opener's
+// tell announces it. Level controls how many combos a bot keeps, how fast it learns and how strongly
+// it reaches for them.
+struct ComboBook
+{
+    struct Link { Play From=Play::None,To=Play::None;float Score=0; };
+    std::array<Link,4> Links{};
+    Play Last=Play::None;double LastEnded=-100;
+    static int Capacity(const Difficulty& D){static constexpr int C[]={1,1,2,3,4};return C[std::max(1,std::min(5,D.Level))-1];}
+    static float Needed(const Difficulty& D){static constexpr float N[]={4,3,3,2,2};return N[std::max(1,std::min(5,D.Level))-1];}
+    static float Bias(const Difficulty& D){static constexpr float B[]={.15f,.25f,.35f,.5f,.65f};return B[std::max(1,std::min(5,D.Level))-1];}
+    static constexpr float Window=6.f; // Seconds after the opener in which the follow-up counts as one combo.
+    // A play ended; Worked = it ended without a setback for this bot.
+    void Ended(Play P,bool Worked,double Now,const Difficulty& D)
+    {
+        if(P==Play::None||!Finite(Now))return;
+        if(Last!=Play::None&&Last!=P&&Now>=LastEnded&&Now-LastEnded<=Window)
+        {
+            Link* Slot=nullptr;
+            for(auto& L:Links)if(L.From==Last&&L.To==P){Slot=&L;break;}
+            if(!Slot&&Worked)
+            {
+                // Only the level's capacity is kept; a new idea replaces the weakest one.
+                const int Cap=std::min(static_cast<int>(Links.size()),Capacity(D));
+                for(int I=0;I<Cap;++I)if(!Slot||Links[I].Score<Slot->Score)Slot=&Links[I];
+                if(Slot&&Slot->Score>=Needed(D))Slot=nullptr; // Never overwrite an established combo.
+                if(Slot)*Slot={Last,P,0};
+            }
+            if(Slot){Slot->Score=Worked?std::min(6.f,Slot->Score+1):Slot->Score-1.5f;if(Slot->Score<=0)*Slot={};}
+        }
+        Last=P;LastEnded=Now;
+    }
+    bool Established(Play From,Play To,const Difficulty& D)const
+    {const int Cap=std::min(static_cast<int>(Links.size()),Capacity(D));for(int I=0;I<Cap;++I)if(Links[I].From==From&&Links[I].To==To&&Links[I].Score>=Needed(D))return true;return false;}
+    int Count(const Difficulty& D)const{int N=0;const int Cap=std::min(static_cast<int>(Links.size()),Capacity(D));for(int I=0;I<Cap;++I)N+=Links[I].From!=Play::None&&Links[I].Score>=Needed(D);return N;}
+    // Extra eagerness for Next right after the opener of an established combo.
+    float FollowUp(Play Next,double Now,const Difficulty& D)const
+    {return Finite(Now)&&Now>=LastEnded&&Now-LastEnded<=Window&&Established(Last,Next,D)?Bias(D):0.f;}
+    void Rebase(){Last=Play::None;LastEnded=-100;} // Next floor: keep the combos, not the timing.
+    // Next match: a carried combo stays within this level's capacity and is only just established,
+    // so two or three failures in the new match are enough to drop it.
+    // Level cap: links past this level's capacity are dropped, scores stay just above "established".
+    void Cap(const Difficulty& D,float Fade=0)
+    {
+        const int Limit=std::min(static_cast<int>(Links.size()),Capacity(D));
+        for(int I=0;I<static_cast<int>(Links.size());++I)
+        {
+            auto& L=Links[I];
+            const bool Valid=I<Limit&&L.From!=Play::None&&L.To!=Play::None&&L.From!=L.To&&L.From<Play::Count&&L.To<Play::Count&&Finite(L.Score);
+            if(!Valid){L={};continue;}
+            L.Score=std::min(L.Score-Fade,Needed(D)+1);if(L.Score<=0)L={};
+        }
+    }
+    void CarryOver(const Difficulty& D){Rebase();Cap(D,.5f);}
+};
+
+// Self-tuning. Every play has two knobs the bot adjusts from its own results: how long it keeps the
+// play going (Duration) and its main distance (Reach: how far it runs, backs off or engages from).
+// Each run tries a nearby variant; variants that worked pull the knob their way. The tell (signal
+// time) never changes. Level caps how far the knobs may drift and how fast they move.
+struct PlayTuning
+{
+    struct Knob { float Duration=1,Reach=1,TrialDuration=1,TrialReach=1;bool Trial=false; };
+    std::array<Knob,PlayCount> Knobs{};
+    static float Range(const Difficulty& D){static constexpr float R[]={.08f,.12f,.18f,.24f,.3f};return R[std::max(1,std::min(5,D.Level))-1];}
+    static float Rate(const Difficulty& D){static constexpr float R[]={.2f,.25f,.3f,.35f,.4f};return R[std::max(1,std::min(5,D.Level))-1];}
+    static size_t Index(Play P){const auto I=static_cast<size_t>(P);return I>0&&I<PlayCount?I:0;}
+    // A play started: try a variant around the current knob (U1/U2 uniform in [0,1)).
+    void Begin(Play P,const Difficulty& D,float U1,float U2)
+    {
+        const size_t I=Index(P);if(!I||Knobs[I].Trial)return;auto& K=Knobs[I];const float R=Range(D),Step=R*.5f;
+        K.TrialDuration=Clamp(K.Duration+(Clamp(U1,0,1)*2-1)*Step,1-R,1+R);
+        K.TrialReach=Clamp(K.Reach+(Clamp(U2,0,1)*2-1)*Step,1-R,1+R);K.Trial=true;
+    }
+    // A play ended: move toward a variant that worked, a little away from one that did not.
+    void End(Play P,bool Worked,const Difficulty& D)
+    {
+        const size_t I=Index(P);if(!I||!Knobs[I].Trial)return;auto& K=Knobs[I];const float R=Range(D),Step=Rate(D)*(Worked?1.f:-.5f);
+        K.Duration=Clamp(K.Duration+(K.TrialDuration-K.Duration)*Step,1-R,1+R);
+        K.Reach=Clamp(K.Reach+(K.TrialReach-K.Reach)*Step,1-R,1+R);K.Trial=false;
+    }
+    float DurationScale(Play P)const{const size_t I=Index(P);return !I?1.f:Knobs[I].Trial?Knobs[I].TrialDuration:Knobs[I].Duration;}
+    float ReachScale(Play P)const{const size_t I=Index(P);return !I?1.f:Knobs[I].Trial?Knobs[I].TrialReach:Knobs[I].Reach;}
+    // Next match: back inside this level's range and eased 20% toward the default, so nothing hardens.
+    void CarryOver(const Difficulty& D)
+    {
+        const float R=Range(D);
+        for(auto& K:Knobs)
+        {
+            const float Dur=Finite(K.Duration)?K.Duration:1.f,Rch=Finite(K.Reach)?K.Reach:1.f;
+            K={Clamp(1+(Dur-1)*.8f,1-R,1+R),Clamp(1+(Rch-1)*.8f,1-R,1+R),1,1,false};
+            K.TrialDuration=K.Duration;K.TrialReach=K.Reach;
+        }
+        Knobs[0]={};
+    }
+};
+
+// ---------------------------------------------------------------------------------------------
+// Human layer II: what a person knows, feels, says and does while waiting.
+// ---------------------------------------------------------------------------------------------
+// Map familiarity: chance a bot already knows an exit when a floor begins. The rest it finds by
+// seeing it, a teammate's word or a ping. Masters know the building; beginners explore.
+inline float MapFamiliarity(const Difficulty& D){static constexpr float F[]={.1f,.25f,.45f,.7f,.9f};return F[std::max(1,std::min(5,D.Level))-1];}
+inline bool KnowsExitAtStart(const Difficulty& D,uint32_t Hash){return static_cast<float>(Hash%1000u)/1000.f<MapFamiliarity(D);}
+
+// Emotions. Fear jumps on a near miss and fades in seconds; frustration builds on lost or frozen
+// chases and fades slower. Composure (level, plus the bot's steadiness) decides how much shows.
+struct Mood
+{
+    float Fear=0,Frustration=0;double At=-1;
+    static float Composure(const Difficulty& D,const Persona& P)
+    {static constexpr float C[]={.1f,.25f,.45f,.65f,.8f};return Clamp(C[std::max(1,std::min(5,D.Level))-1]+.2f*(Clamp(P.Steadiness,0,1)-.5f),0,.95f);}
+    void Decay(double Now)
+    {
+        if(!Finite(Now))return;
+        if(At>=0&&Now>At){const float Dt=static_cast<float>(Now-At);Fear*=std::exp(-Dt/4.f);Frustration*=std::exp(-Dt/9.f);}
+        At=Now;
+    }
+    void Startle(double Now,float Amount){Decay(Now);if(Finite(Amount))Fear=Clamp(Fear+Amount,0,1);}
+    void Frustrate(double Now,float Amount){Decay(Now);if(Finite(Amount))Frustration=Clamp(Frustration+Amount,0,1);}
+    float Panic(const Difficulty& D,const Persona& P)const{return Fear*(1-Composure(D,P));}
+    float Tilt(const Difficulty& D,const Persona& P)const{return Frustration*(1-Composure(D,P));}
+};
+
+// Talking with pings. How often a bot remembers to call out what it saw, and how late and how far
+// off the mark the ping lands. Higher levels and curious characters call out more and more precisely.
+inline float PingHabit(const Difficulty& D,const Persona& P)
+{static constexpr float H[]={.35f,.5f,.65f,.8f,.9f};return Clamp(H[std::max(1,std::min(5,D.Level))-1]*(.8f+.4f*Clamp(P.Curiosity,0,1)),0,1);}
+inline float PingDelay(const Difficulty& D,float U){return D.Reaction*(1.f+Clamp(U,0,1))+.3f;}
+inline float PingError(const Difficulty& D){return 300.f*MistakeScale(D);}
+// Answering a teammate's ping: beginners often miss it.
+inline float PingResponse(const Difficulty& D){return .45f+.5f*D.Skill;}
+
+// Per-match condition from the bot and match identity: most matches are ordinary, a few are good or bad
+// days. Late in a long match concentration drops a little. Always within ConditionSkill's band.
+inline float MatchCondition(uint32_t Seed,double MatchSeconds)
+{
+    uint32_t S=Seed?Seed:0x2545f491u;
+    auto Next=[&S](){S^=S<<13;S^=S>>17;S^=S<<5;return (S>>8)*(1.f/16777216.f);};
+    const float Day=(Next()+Next())-1.f; // -1..1, centred
+    const float Fatigue=Finite(MatchSeconds)?.3f*Clamp(static_cast<float>(MatchSeconds-600.)/900.f,0,1):0.f;
+    return Clamp(Day-Fatigue,-1,1);
+}
+
+// Endgame boldness: once only one survivor is left in play (the other caught, escaped or through the exit),
+// both sides commit. Stronger at higher level; it is a state for the rest of the floor, not a play.
+//  Mannequin tell: louder, straighter, fewer pauses. Counter: it walks into stares and baits more easily.
+//  Survivor tell: a constant run for the exits.       Counter: listen for it and guard the exits.
+inline float EndgameUrgency(const Difficulty& D,int Survivors,int ActiveSurvivors)
+{return Survivors>=2&&ActiveSurvivors==1?.6f+.4f*Clamp(D.Skill,0,1):0.f;}
+// The last survivor's way out. Chosen when it is left alone and re-chosen when the situation changes; a state
+// for the rest of the floor like the endgame boldness, not a play. Each way has a tell and a weak spot:
+//  Dash   - straight for the nearest exit.                 Tell: constant running steps.   Weak: a guarded exit stops it.
+//  Lurk   - hide near the exit, wait for the guard to leave. Tell: long silence near exits. Weak: a search sweep finds it; time runs.
+//  Detour - quietly round to another exit it knows.          Tell: a wide arc, no rush.     Weak: the long way meets an exit round.
+//  Decoy  - run loudly away from the exit, then break for it. Tell: loud steps away from exits. Weak: a mannequin that ignores it.
+enum class LoneApproach:uint8_t { Dash,Lurk,Detour,Decoy };
+inline LoneApproach ChooseLoneApproach(const Difficulty& D,const Persona& P,bool ExitGuarded,bool OtherExitKnown,float U)
+{
+    // Style leaning, then the situation; beginners mostly just run for it, experts vary by what they see.
+    float W[4]={1.f,.4f,.4f,.4f};
+    switch(P.PlayStyle){case 4:W[0]+=.8f;W[3]+=.3f;break;case 5:W[2]+=.6f;W[1]+=.2f;break;case 6:W[3]+=.6f;W[1]+=.2f;break;case 7:W[1]+=.8f;W[2]+=.3f;break;default:break;}
+    if(ExitGuarded){W[0]*=.35f;W[1]*=1.6f;W[3]*=1.5f;W[2]*=OtherExitKnown?2.f:1.f;}
+    if(!OtherExitKnown)W[2]=0;
+    const float Variety=.35f+.65f*Clamp(D.Skill,0,1);for(int I=1;I<4;++I)W[I]*=Variety;
+    const float Total=W[0]+W[1]+W[2]+W[3];float Pick=Clamp(U,0,.9999f)*Total;
+    for(int I=0;I<4;++I){Pick-=W[I];if(Pick<0)return static_cast<LoneApproach>(I);}
+    return LoneApproach::Dash;
+}
+// How long a lurking survivor is willing to wait before it goes anyway (patient characters and experts wait longer).
+inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*Clamp(D.Skill,0,1)+6.f*Clamp(P.Patience,0,1);}
+
+// Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
+// sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the
+// rest in. Masters break it sooner. The side that moves first is the side that exposes itself.
+inline float StallSeconds(const Difficulty& D){return 25.f-10.f*Clamp(D.Skill,0,1);}
+
+// Floor depth (0 = first floor of the match): each floor down adds firmer judgement, full after four.
+// It trims long hesitations and handed-out openings and adds a little steady boldness. The weak spots stay:
+// complacency after a catch, gaze lapses, panic, and boldness itself (louder, straighter, easier to bait).
+// Match plans. Each match (same id across floors) a team commits to one way of playing, so a run of matches
+// lands near the intended spread: the mannequin wins about 4 in 7 (half by open pressure, half by quiet
+// pressure); the survivors win about 3 in 7 (one with both out, two with one out). The plan shapes how the
+// bots play, never the outcome itself: a player who reads it and answers it wins, one who does not loses
+// (and is not let off). Higher levels commit harder, so the plan reads more clearly - and is punished harder
+// when it is read. Plans scale with personality fit: a hunter given the quiet plan follows it only lightly.
+//  Blitz  (mannequin): bodies converge and go straight in.    Tell: loud, several bodies at once.  Weak: stares and baits.
+//  Shadow (mannequin): posts at exits, statues, creeping.     Tell: silence, still figures.         Weak: slow, gaps to run.
+//  Together (survivors): stay close, pair plays, both out.    Tell: always in pairs.               Weak: one pincer catches two.
+//  Split    (survivors): separate routes, one draws, one runs. Tell: one loud, one gone.           Weak: alone each, easy singles.
+enum class MannequinPlan:uint8_t { Blitz,Shadow };
+enum class SurvivorPlan:uint8_t { Together,Split };
+struct MatchScript
+{
+    MannequinPlan Mannequin=MannequinPlan::Blitz;
+    SurvivorPlan Survivors=SurvivorPlan::Split;
+    static MatchScript For(uint32_t Seed)
+    {
+        uint32_t S=Seed?Seed:0x6a09e667u;auto Next=[&S](){S^=S<<13;S^=S>>17;S^=S<<5;return (S>>8)*(1.f/16777216.f);};
+        MatchScript M;M.Mannequin=Next()<.5f?MannequinPlan::Blitz:MannequinPlan::Shadow;
+        M.Survivors=Next()<.4f?SurvivorPlan::Together:SurvivorPlan::Split;return M;
+    }
+    // How firmly a level executes the plan: loosely at easy (mistakes blur it), all-in at master.
+    static float Commit(const Difficulty& D){return .35f+.65f*Clamp(D.Skill,0,1);}
+    // How well the plan suits this character (0.6..1.2): bold pressing types lean into open plans, careful ones into quiet ones.
+    static float Fit(const Persona& P,bool Open){const float B=BoldnessScale(P);return Clamp(Open?B:1.9f-B,.6f,1.2f);}
+    static const char* Name(MannequinPlan P){return P==MannequinPlan::Blitz?"Blitz":"Shadow";}
+    static const char* Name(SurvivorPlan P){return P==SurvivorPlan::Together?"Together":"Split";}
+};
+// Play preference under a plan (multiplies the style's own affinity; 1 = unaffected).
+inline float PlanAffinity(const MatchScript& M,bool Mannequin,Play P,float Strength)
+{
+    auto Is=[P](std::initializer_list<Play> L){for(Play X:L)if(X==P)return true;return false;};
+    const float S=Clamp(Strength,0,1.2f);
+    if(Mannequin)
+    {
+        // Tuned from bot-vs-bot runs: open pressure was winning every match, quiet pressure too few.
+        if(M.Mannequin==MannequinPlan::Blitz)
+            return Is({Play::Pincer,Play::CoverBreak,Play::Herding,Play::FakeRetreat,Play::GazeRelay})?1+.15f*S:Is({Play::StillAmbush,Play::ExitSweep,Play::ExitAmbush})?1-.3f*S:1.f;
+        return Is({Play::StillAmbush,Play::ExitAmbush,Play::ExitSweep,Play::SearchSweep,Play::StepApproach,Play::DecoyBody})?1+.7f*S:Is({Play::Pincer,Play::FakeRetreat})?1-.3f*S:1.f;
+    }
+    // Together favours the moving pair plays; standing back to back got both caught at once too often.
+    if(M.Survivors==SurvivorPlan::Together)
+        return Is({Play::LeapFrog,Play::CoverRun,Play::SplitRun})?1+.4f*S:Is({Play::NoiseLure,Play::BaitRunner,Play::ExitFeint})?1-.2f*S:1.f;
+    return Is({Play::NoiseLure,Play::BaitRunner,Play::RunForIt,Play::FalseRetreat,Play::ExitFeint})?1+.4f*S:Is({Play::LeapFrog,Play::BackToBack})?1-.3f*S:1.f;
+}
+
+// Exit proximity (0 beyond 25 m, 1 at the exit): survivors commit to the last stretch, mannequins hurry to stop
+// a survivor they have seen near one. Weak spots: the survivor gets tunnel vision, the mannequin charges in straight.
+inline float ExitProximityBoldness(const Difficulty& D,float Distance)
+{return Finite(Distance)?Clamp(1.f-Distance/2500.f,0,1)*(.6f+.4f*Clamp(D.Skill,0,1)):0.f;}
+inline float FloorResolve(const Difficulty& D,int Depth){return Clamp(.25f*static_cast<float>(std::max(0,Depth)),0,1)*(.6f+.4f*Clamp(D.Skill,0,1));}
+
+// Fidgets while waiting (elevator, standing guard with nothing in sight): look-around sweeps, a glance
+// at the partner, a small shuffle. Curious characters fidget more, patient ones less.
+inline float FidgetInterval(const Persona& P,float U){return (1.5f+2.5f*Clamp(U,0,1))*(1.2f-.5f*Clamp(P.Curiosity,0,1)+.3f*Clamp(P.Patience,0,1));}
 
 // Footsteps are audible: running carries far, walking barely. Walls muffle (occluded = 60%).
 inline float HearingRadius(float Speed2D,bool Occluded)

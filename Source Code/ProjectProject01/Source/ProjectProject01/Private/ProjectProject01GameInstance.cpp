@@ -1843,12 +1843,20 @@ void UProjectProject01GameInstance::SubmitAuthoritativeMatchResultWithCallback(
 	FProjectResultOutbox::Submit(SecurityApiBaseUrl,TEXT("/api/server/matches/results"),Body,ServerSecret,MoveTemp(Completion));
 }
 
-void UProjectProject01GameInstance::NotifyAuthoritativeMatchEnded(const FString& MatchId)
+void UProjectProject01GameInstance::NotifyAuthoritativeMatchEnded(const FString& MatchId,const TArray<FProjectBotExperienceUpload>& BotExperience)
 {
     if(!FProjectResultOutbox::IsProductionMatchId(MatchId))return;
     if(!GetWorld()||GetWorld()->GetNetMode()==NM_Client||!IsBackendUrlAllowed()||MatchId.IsEmpty())return;
     FString Secret=LoadGameServerSharedSecret();if(Secret.Len()<32)return;
     auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("matchId"),MatchId);FString Body;
+    TArray<TSharedPtr<FJsonValue>> Experience;
+    for(const auto& Pool:BotExperience)if(FProjectMatchBotSpec::IsExperienceText(Pool.Payload))
+    {
+        auto Entry=MakeShared<FJsonObject>();Entry->SetStringField(TEXT("role"),Pool.Role);
+        Entry->SetNumberField(TEXT("difficulty"),Pool.Difficulty);Entry->SetStringField(TEXT("payload"),Pool.Payload);
+        Experience.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    if(!Experience.IsEmpty())Json->SetArrayField(TEXT("botExperience"),Experience);
     FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
     FProjectResultOutbox::Submit(SecurityApiBaseUrl,TEXT("/api/server/matches/complete"),Body,Secret);
 }

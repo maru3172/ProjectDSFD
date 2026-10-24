@@ -115,7 +115,8 @@ bool FProjectActualBotMatchEditorTest::RunTest(const FString& Parameter)
             if(Locked)
             {Observer->PlayerTick(1);TestTrue(TEXT("Locked mode receives the selected bot look direction"),Observer->GetControlRotation().Equals(Target->GetActorRotation(),.5f));}
             else
-            {Observer->SetControlRotation(FRotator(0,113,0));Observer->PlayerTick(.01f);TestTrue(TEXT("Free-look does not rotate the living target"),!Observer->GetControlRotation().Equals(TargetController->GetControlRotation(),.5f));}
+            {TestFalse(TEXT("Following without the player's view turns the camera with the mouse"),Observer->IsLookInputIgnored());
+             Observer->SetControlRotation(FRotator(0,113,0));Observer->PlayerTick(.01f);TestTrue(TEXT("Free-look does not rotate the living target"),!Observer->GetControlRotation().Equals(TargetController->GetControlRotation(),.5f));}
             World->Tick(LEVELTICK_All,.1f);
             Observer->Select(TEXT("Not-A-Participant"),false);Observer->TickActor(.1f,LEVELTICK_All,Observer->PrimaryActorTick);
             TestTrue(TEXT("Unknown player selection cannot change the target"),Observer->GetObservedActor()==Target);
@@ -182,6 +183,9 @@ bool FProjectActualBotMatchEditorTest::RunTest(const FString& Parameter)
                 else if(Pair.Value.Role==TEXT("Survivor"))BotSurvivor=Pair.Value.SurvivorPawn.Get();
             }
             TestTrue(TEXT("The eliminated player leaves no human survivor in the bot match"),Mode->AreAllHumanSurvivorsEliminatedInBotMatch());
+            for(auto& Pair:Mode->MatchPlayerRecords)if(Pair.Value.bServerBot&&Pair.Value.Role==TEXT("Survivor"))Pair.Value.SurvivorState=EMultiplayTestSurvivorState::TransitionWaiting;
+            TestFalse(TEXT("A bot already waiting at the exit cannot carry the travel on without the player"),Mode->CanCommitLevelTransition());
+            for(auto& Pair:Mode->MatchPlayerRecords)if(Pair.Value.bServerBot&&Pair.Value.Role==TEXT("Survivor"))Pair.Value.SurvivorState=EMultiplayTestSurvivorState::Active;
             TestFalse(TEXT("A bot reaching the exit cannot travel without the player"),BotSurvivor&&Mode->MarkSurvivorWaitingForLevelTransition(BotSurvivor));
             Mode->CheckForMatchCompletion();
             TestFalse(TEXT("The bot match ends right away"),Mode->IsAuthoritativeMatchInProgress());

@@ -42,7 +42,10 @@ public:
 private:
     void ShowObserverWidget();
     void ApplyObservationPresentation();
-    bool bObservationEntered=false;
+    // Following someone without their view: the mouse turns the camera directly; hold Alt for the cursor.
+    void UpdateLookMode();
+    bool bObservationEntered=false,bCursorHeld=false;
+    int8 AppliedLookMode=-1; // -1 unknown, 0 cursor, 1 free look.
     UPROPERTY(Transient) TObjectPtr<class UProjectOpenObserverWidget> ObserverWidget;
     bool bObserverWidgetPending=false;
     TWeakObjectPtr<AActor> LocalTarget,ServerTarget;

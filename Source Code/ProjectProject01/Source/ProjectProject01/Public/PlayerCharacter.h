@@ -83,6 +83,12 @@ public:
 	/** 마네킹 서버가 물리 접촉 포획을 확정할 때만 호출합니다. */
 	bool HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin);
 
+	/** 서버: 맵의 낙사 높이(GameMode::GetFallDeathZ) 또는 월드 KillZ 아래로 떨어지면 남은 데스카운트와 상관없이
+	 *  사망 처리합니다. 그 위에서는 떨어져도 죽지 않습니다. 마네킹 포획으로 집계하지 않습니다.
+	 *  무한 목숨 연습에서는 마지막으로 딛고 있던 곳으로 되돌립니다. */
+	bool HandleFallDeath();
+	virtual void FellOutOfWorld(const class UDamageType& DamageType) override;
+
 	/** 서버 GameMode가 게임 규칙별 시작 데스카운트를 설정한다. */
 	void SetRemainingDeathCountForGameMode(int32 NewDeathCount);
 
@@ -344,7 +350,10 @@ private:
 	bool bGameOver = false;
 	
 	FVector LastAIMovementDirection = FVector::ZeroVector;
-	
+	// Where the feet last were on the ground (server): the practice return point after a fall.
+	FVector LastFootingLocation = FVector::ZeroVector;
+	bool bHasFooting = false;
+
 	// 플레이어 심박수 관련 변수
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Heartbeat", meta=(AllowPrivateAccess = "true"))
 	TObjectPtr<UPlayerHeartbeatComponent> HeartbeatComponent;

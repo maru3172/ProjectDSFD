@@ -231,6 +231,162 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         Check(Director::UnlockedCount(Difficulty::For(5))==static_cast<int>(PlayCount)-1,"Master has the full, finite repertoire");
         Director Crowded;
         Check(!Crowded.Start(Play::BackToBack,Hard,0,0,2),"Team-wide concurrency is respected");
+        // Both sides get the same repertoire size at every level: 1/4/9/13/14.
+        static constexpr int Expected[]={1,4,9,13,14};
+        for(int L=1;L<=5;++L)
+        {
+            const auto D=Difficulty::For(L);
+            Check(Director::UnlockedCount(D,MannequinSide)==Expected[L-1]&&Director::UnlockedCount(D,SurvivorSide)==Expected[L-1],"Survivor solo+pair plays match the mannequin count per level");
+        }
+        bool Sided=true;for(size_t I=1;I<PlayCount;++I)Sided&=SideOf(static_cast<Play>(I))!=0;
+        Check(Sided,"Every play belongs to a side");
+        Check(PairPlay(Play::CoverRun)&&PairPlay(Play::NoiseLure)&&!PairPlay(Play::WatchRetreat)&&!PairPlay(Play::FalseRetreat),"Solo and pair survivor plays are told apart");
+        int Solo=0,Pair=0;for(size_t I=1;I<PlayCount;++I){const auto Kind=static_cast<Play>(I);if(SideOf(Kind)&SurvivorSide){Pair+=PairPlay(Kind);Solo+=!PairPlay(Kind);}}
+        Check(Solo==8&&Pair==6,"Master survivors: 8 solo and 6 pair plays");
+        Check(Director::Unlocked(Play::RunForIt,Difficulty::For(2))&&!Director::Unlocked(Play::ZigZag,Difficulty::For(2))&&Director::Unlocked(Play::LeapFrog,Difficulty::For(3))&&
+            !Director::Unlocked(Play::SplitRun,Difficulty::For(3))&&Info(Play::SplitRun).Psych&&Info(Play::FakeRetreat).Psych&&Director::Unlocked(Play::SearchSweep,Difficulty::For(2)),"New plays open at their levels; psychological ones at 4");
+        Check(!Director::Unlocked(Play::WatchRetreat,Difficulty::For(2))&&Director::Unlocked(Play::CoverRun,Difficulty::For(3))&&!Director::Unlocked(Play::FalseRetreat,Difficulty::For(3))&&Info(Play::NoiseLure).Psych,"New survivor plays: two at 3, two psychological at 4");
+    }
+    // Fleeing never heads into another known mannequin.
+    {
+        const ThreatView Ahead[]={{{1000,0,0},1000,false}};
+        const Vec Free=ClearHeading({0,0,0},{1,0,0},Ahead,1,1500.f);
+        Check(Dot(Free,{1,0,0})<.8f&&Free.Length()>.5f,"A mannequin ahead turns the run aside");
+        const Vec Open=ClearHeading({0,0,0},{0,1,0},Ahead,1,1500.f);
+        Check(Dot(Open,{0,1,0})>.99f,"A clear heading is kept");
+        const ThreatView Far[]={{{2000,0,0},2000,false}};
+        Check(Dot(ClearHeading({0,0,0},{1,0,0},Far,1,1500.f),{1,0,0})>.99f,"Threats past the check range do not bend the run");
+        ThreatView Ring[8];for(int I=0;I<8;++I){const Vec At=RotateYaw({600,0,0},45.f*I);Ring[I]={At,600,false};}
+        Check(ClearHeading({0,0,0},{1,0,0},Ring,8,1500.f).Length()>.5f,"Surrounded still yields a heading");
+    }
+    // Self-made patterns: learned from plays that worked together, level-controlled, never above capacity.
+    {
+        const auto Rookie=Difficulty::For(1),Master=Difficulty::For(5);
+        Check(ComboBook::Capacity(Rookie)<ComboBook::Capacity(Master)&&ComboBook::Needed(Rookie)>ComboBook::Needed(Master)&&ComboBook::Bias(Rookie)<ComboBook::Bias(Master),"Combo capacity, learning speed and eagerness rise with level");
+        auto Run=[](ComboBook& Book,const Difficulty& D,int Times,bool Worked){double T=0;for(int I=0;I<Times;++I){Book.Ended(Play::PeekDash,true,T,D);Book.Ended(Play::ExitFeint,Worked,T+3,D);T+=60;}};
+        ComboBook QuickBook,SlowBook;Run(QuickBook,Master,2,true);Run(SlowBook,Rookie,2,true);
+        Check(QuickBook.Established(Play::PeekDash,Play::ExitFeint,Master)&&!SlowBook.Established(Play::PeekDash,Play::ExitFeint,Rookie),"Master invents a combo after two wins, beginners need more");
+        QuickBook.Ended(Play::PeekDash,true,1000,Master);
+        Check(QuickBook.FollowUp(Play::ExitFeint,1002,Master)==ComboBook::Bias(Master)&&QuickBook.FollowUp(Play::ExitFeint,1000+ComboBook::Window+1,Master)==0&&QuickBook.FollowUp(Play::Listen,1002,Master)==0,"Follow-up only right after its opener");
+        ComboBook Unlucky;Run(Unlucky,Master,2,true);Run(Unlucky,Master,3,false);
+        Check(!Unlucky.Established(Play::PeekDash,Play::ExitFeint,Master),"A combo that stops working is forgotten");
+        ComboBook Gap;Gap.Ended(Play::PeekDash,true,0,Master);Gap.Ended(Play::ExitFeint,true,ComboBook::Window+5,Master);Gap.Ended(Play::PeekDash,true,100,Master);Gap.Ended(Play::ExitFeint,true,100+ComboBook::Window+5,Master);
+        Check(Gap.Count(Master)==0,"Plays far apart are not a combo");
+        ComboBook Many;double T=0;const Play Kinds[]={Play::Listen,Play::PeekDash,Play::HideStill,Play::WatchRetreat,Play::CoverRun,Play::FalseRetreat};
+        for(int Round=0;Round<4;++Round)for(size_t I=0;I+1<6;++I){Many.Ended(Kinds[I],true,T,Rookie);Many.Ended(Kinds[I+1],true,T+1,Rookie);T+=60;}
+        Check(Many.Count(Rookie)<=ComboBook::Capacity(Rookie),"Beginners keep at most their level's combos");
+        Run(QuickBook,Master,1,true);ComboBook Carried=QuickBook;Carried.Rebase();
+        Check(Carried.Established(Play::PeekDash,Play::ExitFeint,Master)&&Carried.FollowUp(Play::ExitFeint,1,Master)==0,"Next floor keeps combos, not the timing");
+    }
+    // Self-tuning: knobs follow what worked, never leave the level's range, the tell is untouched.
+    {
+        const auto Rookie=Difficulty::For(1),Master=Difficulty::For(5);
+        Check(PlayTuning::Range(Rookie)<PlayTuning::Range(Master)&&PlayTuning::Rate(Rookie)<PlayTuning::Rate(Master),"Tuning range and speed rise with level");
+        PlayTuning Up;for(int I=0;I<40;++I){Up.Begin(Play::FalseRetreat,Master,.99f,.99f);Up.End(Play::FalseRetreat,true,Master);}
+        Check(Up.ReachScale(Play::FalseRetreat)>1.2f&&Up.ReachScale(Play::FalseRetreat)<=1+PlayTuning::Range(Master)+1e-4f,"Winning longer runs grows the reach up to the master cap");
+        PlayTuning Low;for(int I=0;I<40;++I){Low.Begin(Play::FalseRetreat,Rookie,.99f,.99f);Low.End(Play::FalseRetreat,true,Rookie);}
+        Check(Low.ReachScale(Play::FalseRetreat)<=1+PlayTuning::Range(Rookie)+1e-4f,"Beginners drift only within their small range");
+        PlayTuning Mixed;for(int I=0;I<40;++I){Mixed.Begin(Play::Pincer,Master,.99f,.5f);Mixed.End(Play::Pincer,false,Master);}
+        Check(Mixed.DurationScale(Play::Pincer)<=1.f,"A variant that keeps failing is not adopted");
+        PlayTuning Once;Once.Begin(Play::Listen,Master,.99f,.99f);const float Trial=Once.ReachScale(Play::Listen);Once.Begin(Play::Listen,Master,0,0);
+        Check(Once.ReachScale(Play::Listen)==Trial,"One trial per run");
+        Check(PlayTuning::Index(Play::Count)==0&&PlayTuning::Index(Play::None)==0,"Invalid plays are never tuned");
+        PlayTuning Carried=Up;Carried.CarryOver(Rookie);
+        Check(Carried.ReachScale(Play::FalseRetreat)<=1+PlayTuning::Range(Rookie)+1e-4f&&!Carried.Knobs[static_cast<size_t>(Play::FalseRetreat)].Trial,"Carried tuning is cut back to the receiving level");
+        PlayTuning Eased=Up;Eased.CarryOver(Master);
+        Check(Eased.ReachScale(Play::FalseRetreat)<Up.ReachScale(Play::FalseRetreat),"Each new match eases knobs toward the default");
+        ComboBook Big;for(auto& L:Big.Links)L={Play::PeekDash,Play::ExitFeint,6};Big.Links[1].To=Play::HideStill;Big.Links[2].To=Play::Listen;Big.Links[3].To=Play::BackToBack;
+        ComboBook Cut=Big;Cut.Cap(Rookie);
+        Check(Cut.Count(Master)<=ComboBook::Capacity(Rookie)&&Cut.Links[0].Score<=ComboBook::Needed(Rookie)+1,"Carried combos obey the receiving level's capacity and score cap");
+        ComboBook Next=Big;Next.CarryOver(Master);
+        Check(Next.Count(Master)==4&&Next.Links[0].Score<=ComboBook::Needed(Master)+1,"Master keeps its four combos, just established");
+    }
+    // Human layer II: map knowledge, emotions, pings, fidgets, per-match condition - all level-controlled.
+    {
+        bool Rising=true;
+        for(int L=1;L<5;++L)
+        {
+            const auto Lo=Difficulty::For(L),Hi=Difficulty::For(L+1);
+            Rising&=MapFamiliarity(Lo)<MapFamiliarity(Hi)&&PingHabit(Lo,Persona{})<PingHabit(Hi,Persona{})&&PingError(Lo)>PingError(Hi)&&
+                PingResponse(Lo)<PingResponse(Hi)&&Mood::Composure(Lo,Persona{})<Mood::Composure(Hi,Persona{});
+            // A good day at L never reaches a bad day at L+1.
+            Rising&=Difficulty::For(L,1).Skill<Difficulty::For(L+1,-1).Skill&&Difficulty::For(L,1).Reaction>Difficulty::For(L+1,-1).Reaction;
+        }
+        Check(Rising,"Map familiarity, ping habits, composure and condition bands all rise with level without overlap");
+        Check(Difficulty::For(1,-1).Skill==Difficulty::For(1).Skill&&Difficulty::For(5,1).Skill==Difficulty::For(5).Skill,"Condition never pushes past the ends of the scale");
+        Check(Difficulty::For(3,.7f).Level==3&&Difficulty::For(3,.7f).TraitBudget()==Difficulty::For(3).TraitBudget(),"Condition keeps the level and its tables");
+        Check(Difficulty::For(3,std::numeric_limits<float>::quiet_NaN()).Skill==Difficulty::For(3).Skill,"Invalid condition is neutral");
+        int KnownExits=0;for(uint32_t H=0;H<1000;++H)KnownExits+=KnowsExitAtStart(Difficulty::For(5),H*2654435761u);
+        Check(KnownExits>800&&KnownExits<980,"Masters know most exits when a floor starts");
+        float Sum=0,Lo=1,Hi=-1;for(uint32_t Seed=1;Seed<=500;++Seed){const float Day=MatchCondition(Seed*747796405u,0);Sum+=Day;Lo=std::min(Lo,Day);Hi=std::max(Hi,Day);}
+        Check(Lo>=-1&&Hi<=1&&std::abs(Sum/500)<.1f&&Hi-Lo>1.f,"Condition varies per match around an ordinary day");
+        Check(MatchCondition(7,1500)<MatchCondition(7,0)&&MatchCondition(7,300)==MatchCondition(7,0),"Concentration drops only late in a long match");
+        Mood Scared;Scared.Startle(0,.8f);const float Early=Scared.Fear;Scared.Decay(8);
+        Check(Early>.7f&&Scared.Fear<.15f,"A scare fades within seconds");
+        Mood Same;Same.Startle(0,.8f);
+        Check(Same.Panic(Difficulty::For(5),Persona{})<Same.Panic(Difficulty::For(1),Persona{})*.4f,"Masters keep their composure; beginners panic");
+        Mood Mad;Mad.Frustrate(0,.6f);Mad.Decay(4);
+        Check(Mad.Frustration>.3f&&Mad.Tilt(Difficulty::For(1),Persona{})>Mad.Tilt(Difficulty::For(5),Persona{}),"Frustration lingers and shows more at low level");
+        Policy Calm,Tilted;Calm.Reset(3,5);Tilted.Reset(3,5);Tilted.Tilt=1;Context Hunt;Hunt.Playing=true;Hunt.Mannequin=true;Hunt.Visible=true;Hunt.Remembered=true;Hunt.Range=.5f;
+        int CalmPress=0,TiltPress=0;for(int I=0;I<200;++I){CalmPress+=Calm.Tick(Hunt,I*2.).Tactic==Action::Pressure;TiltPress+=Tilted.Tick(Hunt,I*2.).Tactic==Action::Pressure;}
+        Check(TiltPress>CalmPress,"A frustrated mannequin rushes in more often");
+        // Endgame: one survivor left in play -> both sides commit; stronger with level, off otherwise.
+        Check(EndgameUrgency(Difficulty::For(3),2,2)==0&&EndgameUrgency(Difficulty::For(3),2,1)>0&&EndgameUrgency(Difficulty::For(3),1,1)==0&&
+            EndgameUrgency(Difficulty::For(5),2,1)>EndgameUrgency(Difficulty::For(1),2,1),"Endgame boldness only with one survivor left, stronger at master");
+        Policy Patient,Hunting;Patient.Reset(3,9);Hunting.Reset(3,9);Hunting.Urgency=1;int PatientPress=0,HuntPress=0;
+        for(int I=0;I<200;++I){PatientPress+=Patient.Tick(Hunt,I*2.).Tactic==Action::Pressure;HuntPress+=Hunting.Tick(Hunt,I*2.).Tactic==Action::Pressure;}
+        Context Last;Last.Playing=true;Last.Mannequin=false;Last.Visible=true;Last.Remembered=true;Last.Range=.6f;
+        Policy Calmer,Rushing;Calmer.Reset(3,11);Rushing.Reset(3,11);Rushing.Urgency=1;int CalmSearch=0,RushSearch=0;
+        for(int I=0;I<200;++I){CalmSearch+=Calmer.Tick(Last,I*2.).Tactic==Action::Search;RushSearch+=Rushing.Tick(Last,I*2.).Tactic==Action::Search;}
+        Check(HuntPress>PatientPress&&RushSearch>CalmSearch,"Endgame: the mannequin presses, the last survivor heads for the exit");
+        // Match plans: about half Blitz / half Shadow, about 40% Together; firmer with level; fit follows character.
+        {
+            int BlitzCount=0,TogetherCount=0;
+            for(uint32_t Seed=1;Seed<=1000;++Seed){const auto M=MatchScript::For(Seed*2246822519u);BlitzCount+=M.Mannequin==MannequinPlan::Blitz;TogetherCount+=M.Survivors==SurvivorPlan::Together;}
+            Check(BlitzCount>430&&BlitzCount<570&&TogetherCount>330&&TogetherCount<470,"Plans are drawn at the intended rates");
+            Check(MatchScript::For(77).Mannequin==MatchScript::For(77).Mannequin&&MatchScript::For(77).Survivors==MatchScript::For(77).Survivors,"A match keeps its plan on every floor");
+            Check(MatchScript::Commit(Difficulty::For(1))<MatchScript::Commit(Difficulty::For(5))&&MatchScript::Commit(Difficulty::For(5))<=1.f,"Higher levels commit to the plan harder");
+            Persona Brash,Wary;Brash.Boldness=.8f;Brash.PlayStyle=static_cast<uint8_t>(Style::Hunter);Wary.Boldness=.3f;Wary.PlayStyle=static_cast<uint8_t>(Style::Stalker);
+            Check(MatchScript::Fit(Brash,true)>MatchScript::Fit(Wary,true)&&MatchScript::Fit(Wary,false)>MatchScript::Fit(Brash,false),"Each plan suits its own kind of character more");
+            MatchScript Quiet;Quiet.Mannequin=MannequinPlan::Shadow;
+            Check(PlanAffinity(Quiet,true,Play::StillAmbush,1)>1&&PlanAffinity(Quiet,true,Play::Pincer,1)<1&&PlanAffinity(Quiet,true,Play::Listen,1)==1&&PlanAffinity(Quiet,true,Play::StillAmbush,0)==1,
+                "A plan only scales preferences, and nothing at zero strength");
+            Policy Open,Lurking;Open.Reset(4,21);Lurking.Reset(4,21);Lurking.Stealth=1;int OpenObserve=0,LurkObserve=0;
+            for(int I=0;I<200;++I){OpenObserve+=Open.Tick(Hunt,I*2.).Tactic==Action::Observe;LurkObserve+=Lurking.Tick(Hunt,I*2.).Tactic==Action::Observe;}
+            Check(LurkObserve>OpenObserve,"The quiet plan lurks more than the open one");
+        }
+        // Last survivor's way out: a guarded exit changes the choice; masters vary more; no detour without another exit.
+        {
+            auto WayCount=[](const Difficulty& D,const Persona& P,bool Guarded,bool Other,LoneApproach Way){int N=0;for(int I=0;I<1000;++I)N+=ChooseLoneApproach(D,P,Guarded,Other,(I+.5f)/1000.f)==Way;return N;};
+            const Persona Ordinary;const auto Master=Difficulty::For(5),Rookie=Difficulty::For(1);
+            Check(WayCount(Master,Ordinary,true,true,LoneApproach::Dash)<WayCount(Master,Ordinary,false,true,LoneApproach::Dash),"A guarded exit makes the last survivor rethink the straight run");
+            Check(WayCount(Rookie,Ordinary,true,true,LoneApproach::Dash)>WayCount(Master,Ordinary,true,true,LoneApproach::Dash),"Beginners mostly just run for it");
+            Check(WayCount(Master,Ordinary,true,false,LoneApproach::Detour)==0,"No detour without another known exit");
+            Persona Quiet;Quiet.PlayStyle=static_cast<uint8_t>(Style::Sneak);Persona Sprinter;Sprinter.PlayStyle=static_cast<uint8_t>(Style::Runner);
+            Check(WayCount(Master,Quiet,true,true,LoneApproach::Lurk)>WayCount(Master,Sprinter,true,true,LoneApproach::Lurk),"Sneaks lurk more than runners");
+            Persona Waiter;Waiter.Patience=1;
+            Check(LurkPatience(Master,Waiter)>LurkPatience(Rookie,Ordinary),"Patient experts wait longer before going anyway");
+        }
+        Check(StallSeconds(Difficulty::For(5))<StallSeconds(Difficulty::For(1))&&StallSeconds(Difficulty::For(5))>=15.f,"Masters break a stalemate sooner, never instantly");
+        // Floor depth: firmer each floor down, full after four, level-scaled, never negative.
+        Check(FloorResolve(Difficulty::For(3),0)==0&&FloorResolve(Difficulty::For(3),1)<FloorResolve(Difficulty::For(3),2)&&
+            FloorResolve(Difficulty::For(3),4)==FloorResolve(Difficulty::For(3),9)&&FloorResolve(Difficulty::For(1),4)<FloorResolve(Difficulty::For(5),4)&&
+            FloorResolve(Difficulty::For(5),4)<=1&&FloorResolve(Difficulty::For(3),-2)==0,"Floor resolve grows per floor, caps, and scales with level");
+        // Boldness follows the character: it scales the push, never swaps one style for another.
+        Persona Pressing,Waiting,Neutral;Pressing.Boldness=.8f;Pressing.PlayStyle=static_cast<uint8_t>(Style::Hunter);Waiting.Boldness=.3f;Waiting.PlayStyle=static_cast<uint8_t>(Style::Stalker);
+        Check(BoldnessScale(Waiting)<BoldnessScale(Neutral)&&BoldnessScale(Neutral)<BoldnessScale(Pressing)&&BoldnessScale(Waiting)>=.5f&&BoldnessScale(Pressing)<=1.4f,
+            "Bold pressing characters show more boldness than careful waiting ones, within bounds");
+        Check(PlayAffinity(static_cast<uint8_t>(Style::Stalker),Play::Pincer)*1.4f<PlayAffinity(static_cast<uint8_t>(Style::Stalker),Play::StillAmbush)*1.4f,"A multiplied push keeps the style's own order");
+        Check(ExitProximityBoldness(Difficulty::For(3),3000)==0&&ExitProximityBoldness(Difficulty::For(3),500)>ExitProximityBoldness(Difficulty::For(3),1500)&&
+            ExitProximityBoldness(Difficulty::For(5),500)>ExitProximityBoldness(Difficulty::For(1),500)&&ExitProximityBoldness(Difficulty::For(5),0)<=1&&
+            ExitProximityBoldness(Difficulty::For(3),std::numeric_limits<float>::quiet_NaN())==0,"Boldness rises toward the exit, by level, and is off far away");        Persona Fidgety;Fidgety.Curiosity=1;Fidgety.Patience=0;Persona Still;Still.Curiosity=0;Still.Patience=1;
+        Check(FidgetInterval(Fidgety,.5f)<FidgetInterval(Still,.5f)&&FidgetInterval(Still,1)>0,"Curious characters fidget more often than patient ones");
+    }
+    // Faster growth: half the time, and start trust 15-55% by level.
+    {
+        static constexpr float Trust[]={.15f,.25f,.35f,.45f,.55f};static constexpr float Seconds[]={480,420,360,300,240};
+        bool Ok=true;for(int L=1;L<=5;++L){const auto D=Difficulty::For(L);Ok&=std::abs(D.Evolution(0)-Trust[L-1])<.001f&&std::abs(D.EvolutionSeconds()-Seconds[L-1])<.01f&&std::abs(D.Evolution(1.e6)-1.f)<.001f;}
+        Check(Ok,"Evolution takes 8 to 4 minutes and starts at 15/25/35/45/55% trust");
     }
     // In-match relief: real for beginners, almost nothing at master, and it fades.
     {
