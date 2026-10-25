@@ -19,7 +19,16 @@ AFireShutterActor::AFireShutterActor()
 	ItemMesh->SetCollisionProfileName(TEXT("BlockAll"));
 	
 	// UI 에 표시할 기본 상호작용 문구
-	InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "방화 셔터 열기");
+	if (TargetOpenAlpha >= 0.5f)
+	{
+		// 셔터가 올라가 있으면? -> 내린다는 문구
+		InteractionText = NSLOCTEXT("Interaction", "LowerFireShutter", "F 키: 방화 셔터 내리기");
+	}
+	else
+	{
+		// 셔터가 내려가 있으면? -> 올린다는 문구
+		InteractionText = NSLOCTEXT("Interaction", "RaiseFireShutter", "F 키: 방화 셔터 올리기");
+	}
 }
 
 void AFireShutterActor::BeginPlay()
@@ -104,12 +113,12 @@ void AFireShutterActor::HandleInteraction(APawn* Interator)
 	if (TargetOpenAlpha >= 0.5f)
 	{
 		// 현재 올라가는 중이므로 다음 행동은 내리기
-		InteractionText = NSLOCTEXT("Interaction", "LowerFireShutter", "F 키: 방화 셔터 열기");
+		InteractionText = NSLOCTEXT("Interaction", "LowerFireShutter", "F 키: 방화 셔터 내리기");
 	}
 	else
 	{
 		// 현재 내려가는 중이므로 다음 행동은 올리기
-		InteractionText = NSLOCTEXT("Interaction", "RaiseFireShutter", "F 키: 방화 셔터 닫기");
+		InteractionText = NSLOCTEXT("Interaction", "RaiseFireShutter", "F 키: 방화 셔터 올리기");
 	}
 	
 	// 셔터 이동을 위해 Tick 을 활성화한다.
