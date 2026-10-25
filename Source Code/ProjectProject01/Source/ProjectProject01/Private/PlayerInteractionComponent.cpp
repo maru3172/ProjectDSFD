@@ -268,10 +268,11 @@ AActor* UPlayerInteractionComponent::FindInteractableActor(const bool bDrawDebug
 void UPlayerInteractionComponent::UpdateInteractionTarget()
 {
 	AActor* NewTarget = FindInteractableActor(false);
-	if (CurrentInteractable == NewTarget)
-	{
-		return;
-	}
+	//// 같은 오브젝트를 바라볼 때 다른 상호작용 텍스트를 띄우기 위해 주석 처리
+	// if (CurrentInteractable == NewTarget)
+	// {
+	// 	return;
+	// }
 
 	CurrentInteractable = NewTarget;
 	if (!IsValid(InteractionWidget))
