@@ -19,7 +19,7 @@ AFireShutterActor::AFireShutterActor()
 	ItemMesh->SetCollisionProfileName(TEXT("BlockAll"));
 	
 	// UI 에 표시할 기본 상호작용 문구
-	InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "방화 셔터 작동");
+	InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "방화 셔터 열기");
 }
 
 void AFireShutterActor::BeginPlay()
@@ -100,6 +100,17 @@ void AFireShutterActor::HandleInteraction(APawn* Interator)
 	// 현재 목표가 열린 상태라면 닫힌 상태로 변경하고, 닫힌 상태라면 열린 상태로 변경한다.
 	// 이동 중에 다시 상호작용해도 목표값이 반전되므로 현재 위치부터 즉시 반대 방향으로 이동한다.
 	TargetOpenAlpha = TargetOpenAlpha >= 0.5f ? 0.0f : 1.0f;
+	
+	if (TargetOpenAlpha >= 0.5f)
+	{
+		// UI 에 표시할 기본 상호작용 문구 - 방화 셔터 열기
+		InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "F 키: 방화 셔터 열기");
+	}
+	else
+	{
+		// UI 에 표시할 기본 상호작용 문구 - 방화 셔터 닫기
+		InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "F 키: 방화 셔터 닫기");
+	}
 	
 	// 셔터 이동을 위해 Tick 을 활성화한다.
 	SetActorTickEnabled(true);
