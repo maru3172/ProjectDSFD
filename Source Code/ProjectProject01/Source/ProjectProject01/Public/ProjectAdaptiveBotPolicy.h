@@ -69,8 +69,16 @@ struct Difficulty
     {
         Difficulty D=For(Level);const float S=ConditionSkill(D.Level,Condition);
         D.Reaction=1.65f-1.25f*S;D.Memory=2.5f+8.5f*S;D.Sharing=.15f+.75f*S;D.Adaptation=.04f+.48f*S;
-        D.Coordination=.12f+.78f*S;D.TurnRate=85.f+125.f*S;D.Skill=S;return D;
+        D.Coordination=.12f+.78f*S;D.TurnRate=85.f+125.f*S;D.Skill=S;
+        // Balance runs only: give a master one value of the expert curve to find what weakens it.
+        if(D.Level==5&&Probe()>0)
+        {
+            const float E=BaseSkill(4);
+            switch(Probe()){case 1:D.Reaction=1.65f-1.25f*E;break;case 2:D.Sharing=.15f+.75f*E;break;case 3:D.Coordination=.12f+.78f*E;break;case 4:D.Skill=E;break;default:break;}
+        }
+        return D;
     }
+    static int& Probe(){static int Value=0;return Value;}
     static Difficulty For(int Level)
     {
         Difficulty D;D.Level=std::max(1,std::min(5,Level));

@@ -44,8 +44,11 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
     const int32 Level=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(8,1)),1,5):FMath::Clamp(FCString::Atoi(*Parameter.Mid(5,1)),1,5);
     const int32 SurvivorLevel=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(10,1)),1,5):Level;
     ProjectBots::ParkOverride()=Parameter.StartsWith(TEXT("Ladder.H"))?0:-1;
+    // -BotSimProbe=N: masters take one expert value (1 reaction, 2 sharing, 3 coordination, 4 skill).
+    int32 Probe=0;FParse::Value(FCommandLine::Get(),TEXT("BotSimProbe="),Probe);ProjectBots::Difficulty::Probe()=Probe;
     float Dilation=4.f;FParse::Value(FCommandLine::Get(),TEXT("BotSimDilation="),Dilation);Dilation=FMath::Clamp(Dilation,1.f,8.f);
-    float LimitSeconds=900.f;FParse::Value(FCommandLine::Get(),TEXT("BotSimLimit="),LimitSeconds);
+    // 10 min cap: the rare long stalemates otherwise hold a whole batch; results barely change.
+    float LimitSeconds=600.f;FParse::Value(FCommandLine::Get(),TEXT("BotSimLimit="),LimitSeconds);
     // Comparison runs: -BotSimEvolution=2 restores the earlier, slower habit growth (read by the bot adapter).
     const FString Previous=GEditor->UserEditedPlayWorldURL;
     GEditor->UserEditedPlayWorldURL=TEXT("/Game/MyProject/Level/MultiplayTest?LobbyRole=Survivor");
