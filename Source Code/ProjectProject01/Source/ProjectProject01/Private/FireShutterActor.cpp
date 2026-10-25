@@ -103,13 +103,13 @@ void AFireShutterActor::HandleInteraction(APawn* Interator)
 	
 	if (TargetOpenAlpha >= 0.5f)
 	{
-		// UI 에 표시할 기본 상호작용 문구 - 방화 셔터 열기
-		InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "F 키: 방화 셔터 열기");
+		// 현재 올라가는 중이므로 다음 행동은 내리기
+		InteractionText = NSLOCTEXT("Interaction", "LowerFireShutter", "F 키: 방화 셔터 열기");
 	}
 	else
 	{
-		// UI 에 표시할 기본 상호작용 문구 - 방화 셔터 닫기
-		InteractionText = NSLOCTEXT("Interaction", "FireShutterInteractionText", "F 키: 방화 셔터 닫기");
+		// 현재 내려가는 중이므로 다음 행동은 올리기
+		InteractionText = NSLOCTEXT("Interaction", "RaiseFireShutter", "F 키: 방화 셔터 닫기");
 	}
 	
 	// 셔터 이동을 위해 Tick 을 활성화한다.
