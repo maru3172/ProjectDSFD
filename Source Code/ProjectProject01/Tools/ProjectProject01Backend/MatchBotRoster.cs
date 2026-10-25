@@ -50,7 +50,7 @@ internal static partial class LobbyEndpoints
                 return Results.Json(new LobbyFailure("봇전 게임 서버 연결을 준비 중입니다."),statusCode:503);
             if(await LocalEditorTesting.EnsureEditorServerAsync(request,available(),ct) is { } editorError)
                 return Results.Json(new LobbyFailure(editorError),statusCode:503);
-            if(body.Role is not ("Mannequin" or "Survivor") || body.Difficulty is <1 or >5)
+            if(body.Role is not ("Any" or "Mannequin" or "Survivor") || body.Difficulty is <1 or >5)
                 return Results.BadRequest(new LobbyFailure("생존자/마네킹과 1~5단계 난이도를 선택하세요."));
             try
             {
@@ -70,6 +70,7 @@ internal static partial class LobbyEndpoints
                 for(int i=0;i<2;++i)
                     await CommunityEndpoints.Exec(c,tx,"INSERT INTO room_bots(bot_id,room_id,difficulty) VALUES(@b,@r,@d)",ct,
                         ("b",Guid.NewGuid().ToString("D")),("r",room),("d",body.Difficulty));
+                if(!await OpenParties.AttachToRoomAsync(c,tx,user.Id,room,"Bot",ct))return Results.Conflict(new LobbyFailure("파티장만 봇전 파티를 시작할 수 있습니다. 파티원의 방·접속 상태와 역할 정원을 확인하세요."));
                 await tx.CommitAsync(ct);
                 return Results.Ok(new {message="봇전 구성을 완료했습니다. 실제 게임 서버가 준비되면 시작할 수 있습니다.",room=await LoadCurrentRoomAsync(c,null,user.Id,available(),ct)});
             }
@@ -134,7 +135,7 @@ internal static partial class LobbyEndpoints
     internal static async Task<bool> HasCompletePlayingRosterAsync(MySqlConnection c,MySqlTransaction? tx,string room,int humans,CancellationToken ct)
     {
         var bots=await LoadRoomBotsAsync(c,tx,room,ct);
-        return humans+bots.Count==MaximumPlayers && bots.All(b=>b.Difficulty is >=1 and <=5) &&
+        return humans+bots.Count==MaximumPlayers && bots.All(b=>b.Difficulty is >=1 and <=5) && await RoomRoleChoices.CanFormAsync(c,tx,room,bots.Count,ct) &&
             (await CommunityEndpoints.Rows(c,tx,"SELECT user_id FROM room_members WHERE room_id=@r LIMIT 1",ct,("r",room))).Count>0;
     }
 
@@ -151,10 +152,12 @@ internal static partial class LobbyEndpoints
             {await CommunityEndpoints.Exec(c,tx,"UPDATE room_members SET returned_to_room=FALSE WHERE room_id=@r",ct,("r",room));return;}
         }
         int mannequin;
+        if(await RoomRoleChoices.ApplyIfNeededAsync(c,tx,room,humans,bots,ct))return;
         if(chosen.Count!=0)
         {
-            if(humans.Count!=1 || bots.Count!=2)throw new InvalidOperationException("Invalid solo bot match");
-            mannequin=Convert.ToString(chosen[0]["human_role"])=="Mannequin"?0:1+RandomNumberGenerator.GetInt32(2);
+            // Party bot rooms use the same three playing slots; missing humans remain real bots.
+            if(humans.Count+bots.Count!=3)throw new InvalidOperationException("Invalid bot match party");
+            mannequin=RandomNumberGenerator.GetInt32(3);
         }
         else if(bots.Count==0)
         {

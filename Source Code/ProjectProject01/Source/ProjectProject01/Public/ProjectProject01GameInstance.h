@@ -423,6 +423,7 @@ public:
 
 private:
 	void HandleApplicationActivationChanged(bool bApplicationActive);
+	friend class AProjectCaseInvestigationRegion;
 	friend class FProjectSpectatorFadeTest;
 	void HandleNetworkFailure(UWorld* World, class UNetDriver* NetDriver,
 		ENetworkFailure::Type FailureType, const FString& ErrorString);

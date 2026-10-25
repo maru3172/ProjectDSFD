@@ -1,4 +1,5 @@
 #include "ProjectLoadingScreenSubsystem.h"
+#include "ProjectMatchReplay.h"
 #include "ProjectLoadingScreenState.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01AuthSubsystem.h"
@@ -176,6 +177,7 @@ void UProjectLoadingScreenSubsystem::PreLoadMap(const FWorldContext& Context,con
 void UProjectLoadingScreenSubsystem::PostLoadMap(UWorld* World)
 {
 	if(!World || World->GetGameInstance()!=GetGameInstance())return;
+	if(World->IsPlayingReplay()){CancelLoading();return;}
 	if(ProjectLoading::IsFrontEnd(World->GetOutermost()->GetName())){CancelLoading();return;}
 	if(!IsLoading())return;
 	State->Advance(70,TEXT("맵 로딩 완료 · 플레이 화면 준비 중"));AttachOverlay();

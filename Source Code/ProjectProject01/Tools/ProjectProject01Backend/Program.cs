@@ -257,6 +257,7 @@ app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
 app.MapProjectProject01ClientUpdates();
 app.MapBackendDiagnostics();
 app.MapCommunity();
+app.MapCaseRecords();
 app.MapProjectProject01ServiceAdministration();
 app.MapProjectProject01Surveys();
 app.MapProjectProject01Voice();
@@ -541,6 +542,7 @@ app.MapPost("/api/auth/logout", async (
             // and deletes the room only when its final member logs out.
             await LobbyEndpoints.RemoveUserFromCurrentRoomAsync(
                 connection, transaction, authenticatedUserId, cancellationToken);
+            await OpenParties.LeaveAsync(connection,transaction,authenticatedUserId,cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         await SecurityAudit.WriteAsync(database, request, "AuthLogout", revokedCount > 0 ? "Success" : "UnknownSession",
@@ -824,6 +826,10 @@ internal sealed class AuthDatabase
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
         await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
         await LobbyEndpoints.EnsureMatchBotSchemaAsync(connection, cancellationToken);
+        await CaseRecords.EnsureAsync(connection,cancellationToken);
+        await CaseMissionSlots.EnsureAsync(connection,cancellationToken);
+        await CaseInvestigation.EnsureAsync(connection,cancellationToken);
+        await OpenParties.EnsureAsync(connection,cancellationToken);
     }
 
     private static async Task EnsureSurveyReviewSchemaAsync(MySqlConnection connection, CancellationToken ct)

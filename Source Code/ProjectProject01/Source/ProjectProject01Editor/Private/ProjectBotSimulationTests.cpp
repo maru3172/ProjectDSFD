@@ -24,9 +24,11 @@ void FProjectBotSimulationTest::GetTests(TArray<FString>& Names,TArray<FString>&
     for(int32 Level=1;Level<=5;++Level)for(int32 Run=1;Run<=20;++Run)
     {const FString Name=FString::Printf(TEXT("Level%d.Run%02d"),Level,Run);Names.Add(Name);Commands.Add(Name);}
     // Difficulty ladder: a level-3 side stands in for an average player against each level of the other side.
-    for(int32 Level=1;Level<=5;++Level)for(int32 Run=1;Run<=10;++Run)
+    // "M%dS3": average survivors vs each mannequin level. "H3S%d": a level-3 mannequin that parks no bodies, like a
+    // human mannequin player, vs each survivor level.
+    for(int32 Level=1;Level<=5;++Level)for(int32 Run=1;Run<=30;++Run)
     {
-        const FString AsSurvivor=FString::Printf(TEXT("Ladder.M%dS3.Run%02d"),Level,Run),AsMannequin=FString::Printf(TEXT("Ladder.M3S%d.Run%02d"),Level,Run);
+        const FString AsSurvivor=FString::Printf(TEXT("Ladder.M%dS3.Run%02d"),Level,Run),AsMannequin=FString::Printf(TEXT("Ladder.H3S%d.Run%02d"),Level,Run);
         Names.Add(AsSurvivor);Commands.Add(AsSurvivor);Names.Add(AsMannequin);Commands.Add(AsMannequin);
     }
 }
@@ -41,6 +43,7 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
     const bool Ladder=Parameter.StartsWith(TEXT("Ladder."));
     const int32 Level=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(8,1)),1,5):FMath::Clamp(FCString::Atoi(*Parameter.Mid(5,1)),1,5);
     const int32 SurvivorLevel=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(10,1)),1,5):Level;
+    ProjectBots::ParkOverride()=Parameter.StartsWith(TEXT("Ladder.H"))?0:-1;
     float Dilation=4.f;FParse::Value(FCommandLine::Get(),TEXT("BotSimDilation="),Dilation);Dilation=FMath::Clamp(Dilation,1.f,8.f);
     float LimitSeconds=900.f;FParse::Value(FCommandLine::Get(),TEXT("BotSimLimit="),LimitSeconds);
     // Comparison runs: -BotSimEvolution=2 restores the earlier, slower habit growth (read by the bot adapter).

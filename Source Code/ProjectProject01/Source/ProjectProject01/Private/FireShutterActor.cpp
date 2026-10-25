@@ -5,11 +5,20 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/GameStateBase.h"
+#include "Components/BoxComponent.h"
+#include "MultiplayTestGameMode.h"
+#include "PlayerCharacter.h"
+#include "Net/UnrealNetwork.h"
+#include "Engine/World.h"
 
 AFireShutterActor::AFireShutterActor()
 {
 	// 셔터가 움직이는 동안 Tick 을 사용할 수 있도록 설정
 	PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bAllowTickOnDedicatedServer=true;
+    bReplicates=true;SetReplicateMovement(false);NetUpdateFrequency=5;
+    ItemMesh->SetMobility(EComponentMobility::Movable);
 	
 	// 실제 이동이 시작되기 전까지는 Tick 을 실행하지 않는다.
 	PrimaryActorTick.bStartWithTickEnabled = false;
@@ -25,6 +34,8 @@ AFireShutterActor::AFireShutterActor()
 void AFireShutterActor::BeginPlay()
 {
 	Super::BeginPlay();
+    ItemMesh->SetMobility(EComponentMobility::Movable);
+    if(HasAuthority()&&GetNetMode()!=NM_Standalone)SetReplicates(true); // Refresh old placed Blueprint defaults too.
 	
 	// 에디터에서 배치한 셔터 메시의 위치를 닫힌 위치로 사용한다.
 	ClosedLocation = ItemMesh->GetRelativeLocation();
@@ -42,11 +53,22 @@ void AFireShutterActor::BeginPlay()
 	
 	// 매 프레임 호출되던 Tick 을 중지
 	SetActorTickEnabled(false);
+    bMotionReady=true;
+    if(GetNetMode()!=NM_Standalone)OnRep_Motion();
 }
 
 void AFireShutterActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+    if(GetNetMode()!=NM_Standalone)
+    {
+        if(!bMotionReady)return;
+        const float AlphaSpeed=Motion.Height>UE_SMALL_NUMBER?FMath::Max(0.f,Motion.Speed)/Motion.Height:0.f;
+        CurrentOpenAlpha=FMath::Clamp(FMath::FInterpConstantTo(Motion.Start,Motion.Target,float(FMath::Max(0.,ServerNow()-Motion.StartedAt)),AlphaSpeed),0.f,1.f);
+        ItemMesh->SetRelativeLocation(ClosedLocation+FVector(0,0,FMath::Max(0.f,Motion.Height)*CurrentOpenAlpha));
+        if(FMath::IsNearlyEqual(CurrentOpenAlpha,Motion.Target,ArrivalTolerance)||AlphaSpeed<=UE_SMALL_NUMBER)SetActorTickEnabled(false);
+        return;
+    }
 	
 	const float TotalDistance = FVector::Distance(ClosedLocation, OpenLocation);
 	
@@ -95,6 +117,13 @@ void AFireShutterActor::Tick(float DeltaTime)
 
 void AFireShutterActor::HandleInteraction(APawn* Interator)
 {
+    if(GetNetMode()!=NM_Standalone)
+    {
+        if(!HasAuthority()||!CanInteract_Implementation(Interator))return;
+        if(IsActorTickEnabled())Tick(0);
+        Motion.Start=CurrentOpenAlpha;Motion.Target=Motion.Target>=.5f?0.f:1.f;Motion.Speed=FMath::Max(0.f,MoveSpeed);Motion.Height=FMath::Max(0.f,OpenHeight);Motion.StartedAt=ServerNow();
+        ForceNetUpdate();OnRep_Motion();return;
+    }
 	Super::HandleInteraction(Interator);
 	
 	// 현재 목표가 열린 상태라면 닫힌 상태로 변경하고, 닫힌 상태라면 열린 상태로 변경한다.
@@ -103,4 +132,23 @@ void AFireShutterActor::HandleInteraction(APawn* Interator)
 	
 	// 셔터 이동을 위해 Tick 을 활성화한다.
 	SetActorTickEnabled(true);
+}
+double AFireShutterActor::ServerNow()const{const auto* State=GetWorld()->GetGameState();return State?State->GetServerWorldTimeSeconds():GetWorld()->GetTimeSeconds();}
+void AFireShutterActor::OnRep_Motion(){if(bMotionReady){SetActorTickEnabled(true);Tick(0);}}
+void AFireShutterActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps)const{Super::GetLifetimeReplicatedProps(OutLifetimeProps);DOREPLIFETIME(AFireShutterActor,Motion);}
+bool AFireShutterActor::CanInteract_Implementation(APawn* Interactor)const
+{
+    if(GetNetMode()==NM_Standalone)return Super::CanInteract_Implementation(Interactor);
+    const auto* Survivor=Cast<APlayerCharacter>(Interactor);const auto* PC=Survivor?Cast<AMultiplayTestPlayerController>(Survivor->GetController()):nullptr;
+    if(!Super::CanInteract_Implementation(Interactor)||!Survivor||Survivor->IsGameOver()||!PC||PC->IsServerControlledBot()||PC->GetSurvivorState()!=EMultiplayTestSurvivorState::Active)return false;
+    if(!HasAuthority())return true;
+    const auto* Mode=GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();return Mode&&Mode->IsAuthoritativeMatchInProgress()&&Mode->IsRegisteredActiveSurvivor(Survivor);
+}
+bool AFireShutterActor::TryInteractFromView(APawn* Interactor,const FVector& Origin,const FVector& Direction,float Range,ECollisionChannel Channel)
+{
+    if(!HasAuthority()||!CanInteract_Implementation(Interactor)||Origin.ContainsNaN()||Direction.ContainsNaN()||!FMath::IsFinite(Range)||!FMath::IsNearlyEqual(Direction.SizeSquared(),1.,.02)||FVector::DistSquared(Origin,Interactor->GetActorLocation())>FMath::Square(400.f))return false;
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(ShutterClick),false,Interactor);FHitResult Hit;
+    if(GetWorld()->LineTraceSingleByChannel(Hit,Interactor->GetPawnViewLocation(),Origin,ECC_Visibility,Query))return false;
+    if(!GetWorld()->LineTraceSingleByChannel(Hit,Origin,Origin+Direction*FMath::Clamp(Range,0.f,500.f),Channel,Query)||Hit.GetActor()!=this)return false;
+    HandleInteraction(Interactor);return true;
 }

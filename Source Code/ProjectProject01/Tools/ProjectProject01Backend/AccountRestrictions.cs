@@ -61,6 +61,7 @@ internal static class AccountRestrictions
             command.Parameters.AddWithValue("@expires",(object?)expires??DBNull.Value);
             await command.ExecuteNonQueryAsync(ct);
             await LobbyEndpoints.RemoveUserFromCurrentRoomAsync(connection,transaction,userId,ct);
+            await OpenParties.LeaveAsync(connection,transaction,userId,ct);
             await transaction.CommitAsync(ct);
             await SecurityAudit.WriteAsync(database,request,"AccountRestriction","Applied",userId,$"DurationMinutes={body.DurationMinutes}",ct);
             return Results.Ok(new {message="계정을 이용 제한하고 기존 로그인 세션을 종료했습니다.",expiresAtUtc=expires});

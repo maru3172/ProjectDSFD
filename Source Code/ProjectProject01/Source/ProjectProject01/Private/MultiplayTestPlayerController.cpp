@@ -2,6 +2,7 @@
 // Build target: ProjectProject01Server / ProjectProject01
 
 #include "MultiplayTestPlayerController.h"
+#include "ProjectInstantReplay.h"
 
 #include "InputCoreTypes.h"
 #include "MannequinAICharacter.h"
@@ -93,6 +94,7 @@ void AMultiplayTestPlayerController::ReceivedPlayer()
 }
 void AMultiplayTestPlayerController::InitializeLocalPresentation()
 {
+    if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
     // Seamless travel creates the new controller before transferring its UPlayer.
     // Build local UI only once a real viewport owner is attached, including late client arrival.
 	if (!IsLocalController()||!GetLocalPlayer()||bLocalPresentationInitialized)
@@ -213,6 +215,7 @@ void AMultiplayTestPlayerController::PostSeamlessTravel()
 void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if (!IsLocalController() || bLocalMatchResultRequested) return;
     if(bSendObserverView&&GetWorld()->GetTimeSeconds()>=NextObserverViewAt)
     {NextObserverViewAt=GetWorld()->GetTimeSeconds()+.1;ServerObserverViewRotation(GetControlRotation());}
@@ -230,6 +233,7 @@ void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 
 void AMultiplayTestPlayerController::OnRep_SurvivorSpectatorView()
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if (bLocalMatchResultRequested || MatchPhase==EMultiplayTestMatchPhase::Ending || MatchPhase==EMultiplayTestMatchPhase::Results) return;
 	// Keep the server's view target for network relevancy, but let this owner
 	// control the visible handoff. Implicit ClientSetViewTarget must not jump early.
@@ -485,6 +489,7 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 	const FString& MatchId,
 	const FString& InRole)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if(bServerControlledBot)return;
 	const bool bTutorial=AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld());
 	const bool bAllowSurvivorVoice = !bTutorial && ProjectProject01SurvivorVoice::IsAllowedRole(InRole);
@@ -514,6 +519,7 @@ void AMultiplayTestPlayerController::ClientConfigureSurvivorCommunication_Implem
 
 void AMultiplayTestPlayerController::ClientUpdateVoiceAudibility_Implementation(const FString& InMatchId,bool bAllowed,const TArray<FProjectVoiceAudibility>& Peers)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if(IsLocalController() && GetGameInstance())
 		if(auto* Voice=GetGameInstance()->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
 			Voice->UpdateAuthoritativeAudibility(InMatchId,bAllowed,Peers);
@@ -1068,6 +1074,7 @@ void AMultiplayTestPlayerController::ClientApplyViewedMannequin_Implementation(A
 void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 	const FMultiplayTestMatchResult& Result)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	bLoadingGateRequired=false;LoadingGateEpoch.Reset();
 	if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->CancelLoading();
 	if (!IsLocalController())
@@ -1102,6 +1109,18 @@ void AMultiplayTestPlayerController::ClientPresentMatchResult_Implementation(
 		return;
 	}
 	GetWorldTimerManager().ClearTimer(LocalMatchResultHandoffTimer);
+	if(auto* Replay=GetGameInstance()->GetSubsystem<UProjectInstantReplay>();Replay&&Replay->IsDeathCameraPending())
+	{
+		if(auto* GI=GetGameInstance<UProjectProject01GameInstance>())GI->HoldEntireScreenBlack();
+		if(LocalDeathCameraDeadline==0)LocalDeathCameraDeadline=Now+10;
+		if(Now<LocalDeathCameraDeadline)
+		{
+			GetWorldTimerManager().SetTimer(LocalMatchResultHandoffTimer,FTimerDelegate::CreateWeakLambda(this,[this]()
+				{ClientPresentMatchResult_Implementation(PendingLocalMatchResult);}),.1f,false);
+			return;
+		}
+		Replay->CancelPresentation();
+	}
 
 	// Blackout -> release -> results: if the screen is not fully black yet (e.g. a spectator fade was
 	// still running when the match ended), black it out first, then hand over to the result screen.
@@ -1229,6 +1248,7 @@ void AMultiplayTestPlayerController::StopMatchGameplayAudio()
 void AMultiplayTestPlayerController::ClientEnterSurvivorSpectator_Implementation(
 	const FMultiplaySurvivorSpectatorView& View)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if (!IsLocalController() || bLocalMatchResultRequested || MatchPhase==EMultiplayTestMatchPhase::Ending || MatchPhase==EMultiplayTestMatchPhase::Results)
 	{
 		return;
@@ -1269,6 +1289,8 @@ void AMultiplayTestPlayerController::ReleaseLocalDeathBlackouts()
 
 void AMultiplayTestPlayerController::ClientPrepareForLevelTransition_Implementation(const float FadeSeconds, const uint32 RequestId)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
+	if(auto* GI=GetGameInstance())if(auto* Replay=GI->GetSubsystem<UProjectInstantReplay>())Replay->CancelPresentation();
 	if (bLocalMatchResultRequested) return;
 	if (!IsLocalController())
 	{
@@ -1345,6 +1367,7 @@ void AMultiplayTestPlayerController::ClientCompleteLevelTransition_Implementatio
 	AActor* InitialViewTarget,
 	const bool bCanPlay)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if (!IsLocalController() || bLocalMatchResultRequested)
 	{
 		return;

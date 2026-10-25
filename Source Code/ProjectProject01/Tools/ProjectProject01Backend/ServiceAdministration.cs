@@ -119,6 +119,7 @@ internal sealed record UpdateServiceControlRequest(
     string? Announcement,
     DateTime? MaintenanceStartAtUtc,
     DateTime? ShutdownAtUtc);
+internal sealed record UpdateAnnouncementRequest(string? Announcement);
 
 internal sealed record CreateMaintenanceScheduleRequest(
     DateTime StartsAtUtc,
@@ -362,6 +363,18 @@ internal static class ServiceAdministration
         app.MapGet("/api/admin/service", (HttpRequest request, ServiceControlState state, AdministratorOptions admin) =>
             IsAuthorized(request, admin) ? Results.Ok(state.Get().ToResponse()) : Results.Unauthorized());
 
+        app.MapPut("/api/admin/service/announcement",async(HttpRequest request,UpdateAnnouncementRequest body,AuthDatabase database,ServiceControlState state,AdministratorOptions admin,CancellationToken ct)=>
+        {
+            if(!IsAuthorized(request,admin))return Results.Unauthorized();
+            string text=body.Announcement??string.Empty;if(text.Length>512)return Results.BadRequest(new{message="공지는 512자 이내로 입력하세요."});
+            await using(var c=await database.OpenConnectionAsync(ct))
+            await using(var command=new MySqlCommand("UPDATE service_control SET announcement=@text,revision=revision+1 WHERE id=1",c){CommandTimeout=5})
+            {command.Parameters.AddWithValue("@text",text);await command.ExecuteNonQueryAsync(ct);}
+            var updated=await ServiceControlStore.LoadAsync(database,ct);state.Set(updated);
+            await SecurityAudit.WriteAsync(database,request,"AdminAnnouncement","Updated",null,$"Length={text.Length}; Revision={updated.Revision}",ct);
+            return Results.Ok(updated.ToResponse());
+        }).RequireRateLimiting("admin");
+
         app.MapGet("/api/admin/crash-reports", async (
             HttpRequest request, AuthDatabase database, AdministratorOptions admin, CancellationToken ct) =>
         {
@@ -511,7 +524,7 @@ internal static class ServiceAdministration
                 connection, transaction) { CommandTimeout = 5 };
             var count = await command.ExecuteNonQueryAsync(ct);
             await using var deleteRooms = new MySqlCommand(
-                "DELETE FROM game_rooms;", connection, transaction) { CommandTimeout = 5 };
+                "DELETE FROM game_rooms;DELETE FROM case_parties;", connection, transaction) { CommandTimeout = 5 };
             var deletedRoomCount = await deleteRooms.ExecuteNonQueryAsync(ct);
             await transaction.CommitAsync(ct);
             await SecurityAudit.WriteAsync(database, request, "AdminForceLogout", "AllSessions", null,
@@ -553,6 +566,7 @@ internal static class ServiceAdministration
             if (userId is ulong selectedUserId)
             {
                 await LobbyEndpoints.RemoveUserFromCurrentRoomAsync(connection, transaction, selectedUserId, ct);
+                await OpenParties.LeaveAsync(connection,transaction,selectedUserId,ct);
             }
             await transaction.CommitAsync(ct);
             await SecurityAudit.WriteAsync(database, request, "AdminForceLogout", "AccountSessions", null,

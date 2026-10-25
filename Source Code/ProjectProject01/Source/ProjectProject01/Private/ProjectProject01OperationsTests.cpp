@@ -16,9 +16,11 @@
 #include "Components/HorizontalBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/WidgetSwitcher.h"
+#include "Components/ScrollBox.h"
 #include "Components/Button.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "Engine/UserInterfaceSettings.h"
 #include "Slate/WidgetRenderer.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "ImageUtils.h"
@@ -224,7 +226,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     auto LobbySlate=Lobby->TakeWidget();
 	auto Render=[&](UUserWidget* Widget,const FString& Name)
 	{
-		auto Slate=Widget==Lobby?LobbySlate:Widget->TakeWidget();if(Widget==Lobby)Lobby->SetStatus(TEXT("입력란·공개방 표시 렌더링 검사"),false);
+		auto Slate=Widget==Lobby?LobbySlate:Widget->TakeWidget();if(Widget==Lobby)Lobby->SetStatus(TEXT("방을 생성했습니다."),false);
 		FWidgetRenderer Renderer(true);const FVector2D Size(1920,1080);auto* Target=Renderer.DrawWidget(Slate,Size);
 		Renderer.DrawWidget(Target,Slate,Size,Name==TEXT("ObserverResults")?2.f:.016f);FlushRenderingCommands();FBufferArchive Image;
 		TestTrue(TEXT("Readability UI renders"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));TestTrue(TEXT("Readability screenshot written"),FFileHelper::SaveArrayToFile(Image,*(Directory/(Name+TEXT(".png")))));
@@ -239,7 +241,10 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     Lobby->HandleBotMatchClicked();
     TestEqual(TEXT("Bot match has a separate authenticated match setup page"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
     TestTrue(TEXT("Opening bot match does not start offline practice or join a queue"),!State->HasCurrentRoom()&&!State->IsMatchmaking());
-    TestEqual(TEXT("Bot setup offers both player roles"),Lobby->BotMatchRole->GetOptionCount(),2);
+    TestEqual(TEXT("Bot setup offers both player roles and random"),Lobby->BotMatchRole->GetOptionCount(),3);
+    TestTrue(TEXT("Each matching flow has its own role chooser"),Lobby->RandomMatchRole&&Lobby->RoomMatchRole);
+    TestEqual(TEXT("Random role choice uses requested label"),Lobby->RandomMatchRole->GetOptionAtIndex(0),FString(TEXT("무작위")));
+    TestEqual(TEXT("Open room role choice uses requested label"),Lobby->RoomMatchRole->GetOptionAtIndex(0),FString(TEXT("무작위")));
     TestEqual(TEXT("Bot setup offers exactly five difficulty levels"),Lobby->BotMatchDifficulty->GetOptionCount(),5);
     Lobby->RefreshCurrentRoomView();TestEqual(TEXT("Polling preserves bot match configuration"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
     Render(Lobby,TEXT("BotMatchSetup"));
@@ -293,6 +298,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     State->bMatchmaking=true;State->MatchmakingWaiting=1;State->MatchmakingSeconds=175;State->MatchmakingStartedAtSeconds=FPlatformTime::Seconds();
     Lobby->RefreshMatchmakingView();
     TestTrue(TEXT("Waiting shows elapsed time from zero, not the expiry countdown"),Lobby->MatchStatusText->GetText().ToString().Contains(TEXT("매칭 경과 시간: 0분 00초")) && !Lobby->MatchStatusText->GetText().ToString().Contains(TEXT("남은 대기 시간")));
+    TestFalse(TEXT("Role preference is locked while searching"),Lobby->RandomMatchRole->GetIsEnabled());
     for(const int32 Elapsed:{59,60,125})
     {
         State->MatchmakingStartedAtSeconds=FPlatformTime::Seconds()-Elapsed-.01;
@@ -364,7 +370,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	FPointerEvent RightClick(0,FVector2D::ZeroVector,FVector2D::ZeroVector,TSet<FKey>{EKeys::RightMouseButton},EKeys::RightMouseButton,0,FModifierKeysState());
 	TestFalse(TEXT("Old right-click callback is harmless after room exit"),FirstBinding->HandleMouseButtonDown(FGeometry(),RightClick).NativeReply.IsEventHandled());
 	Lobby->PopulateRoomMemberProfiles({M1,M2},false);
-	Lobby->ShowLobbyView(2);Lobby->ChatLogText->SetText(FText::FromString(TEXT("[친구] 같이 탈출하자!\n[나] 준비됐어요.")));Lobby->ChatInput->SetText(FText::FromString(TEXT("한글 채팅 입력 가독성 검사")));Render(Lobby,TEXT("RoomChat"));
+	Lobby->ShowLobbyView(2);Lobby->ChatLogText->SetText(FText::FromString(TEXT("[친구] 같이 탈출하자!\n[나] 준비됐어요.")));Lobby->ChatInput->SetText(FText::GetEmpty());Render(Lobby,TEXT("RoomChat"));
 	UUserWidget* SurveyBase=NewObject<UProjectProject01SurveyWidget>(World);SurveyBase->Initialize();auto* Survey=CastChecked<UProjectProject01SurveyWidget>(SurveyBase);
 	FProjectProject01SurveyDefinition Definition;Definition.Title=TEXT("설문조사 입력란 가독성");FProjectProject01SurveyQuestion Q;Q.Id=TEXT("readability");Q.Type=TEXT("Text");Q.Prompt=TEXT("게임을 하면서 느낀 점을 적어주세요.");Definition.Questions={Q};Survey->ConfigureSurvey(Definition,nullptr);Render(Survey,TEXT("SurveyWriting"));Survey->ReleaseSlateResources(true);
     auto* ObserverView=NewObject<UProjectOpenObserverWidget>(World);ObserverView->Initialize();
@@ -378,6 +384,66 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     ObserverResult->WidgetTree->ForEachWidget([&](UWidget* Item){if(auto* Text=Cast<UTextBlock>(Item))AllText+=Text->GetText().ToString();});
     TestTrue(TEXT("Observer results show the requested heading and both survivor records"),AllText.Contains(TEXT("경기가 종료되었습니다."))&&AllText.Contains(TEXT("생존자 1"))&&AllText.Contains(TEXT("생존자 2"))&&AllText.Contains(TEXT("포획 1회")));
     Render(ObserverResult,TEXT("ObserverResults"));ObserverResult->ReleaseSlateResources(true);
+	// Regression for the whole-page scroll that previously hid room/browser actions.
+	TestFalse(TEXT("Open browser does not scroll its entire page"),Lobby->LobbyViewSwitcher->GetWidgetAtIndex(0)->IsA<UScrollBox>());
+	TestFalse(TEXT("Room does not scroll its entire page"),Lobby->LobbyViewSwitcher->GetWidgetAtIndex(2)->IsA<UScrollBox>());
+	auto RenderLayout=[&](const FString& Name,const TArray<UWidget*>& Required)
+	{
+		for(const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
+		{
+			FWidgetRenderer Renderer(false);auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);
+			if(!TestNotNull(TEXT("Fixed layout render target"),Target))continue;
+			const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+			for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,LobbySlate,Dpi,FVector2D(Size),.016f);
+			FReadSurfaceDataFlags PixelFlags(RCM_UNorm);PixelFlags.SetLinearToGamma(true);
+			TArray<FColor> Pixels;TestTrue(TEXT("Fixed layout readback"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,PixelFlags));
+			for(UWidget* Control:Required)
+			{
+				if(!TestNotNull(TEXT("Required room/browser control exists"),Control))continue;
+				const auto Geometry=Control->GetCachedGeometry();const auto Position=Geometry.GetAbsolutePosition(),Extent=Geometry.GetAbsoluteSize();
+				TestTrue(FString::Printf(TEXT("%s: %s is visible without page scrolling at %dx%d"),*Name,*Control->GetName(),Size.X,Size.Y),
+					Control->GetVisibility()!=ESlateVisibility::Collapsed&&Extent.X>1&&Extent.Y>1&&Position.X>=-1&&Position.Y>=-1&&Position.X+Extent.X<=Size.X+1&&Position.Y+Extent.Y<=Size.Y+1);
+			}
+			TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,Png);
+			TestTrue(TEXT("Fixed layout screenshot written"),FFileHelper::SaveArrayToFile(Png,*(Directory/FString::Printf(TEXT("%s-%dx%d.png"),*Name,Size.X,Size.Y))));
+		}
+	};
+	State->ForceClearLocalSession();Lobby->HandleOpenMatchClicked();Lobby->PopulatePublicRooms({A,B});Lobby->PublicRoomBindings[0]->HandleClicked();
+	RenderLayout(TEXT("FixedBrowser"),{Lobby->JoinRoomButton,Lobby->OpenCodeJoinButton,Lobby->OpenCreateRoomButton,BrowserBack,Lobby->LogoutButton});
+	State->CurrentRoom={};State->CurrentRoom.RoomId=TEXT("layout-host");State->CurrentRoom.Name=TEXT("함께 탈출해요");State->CurrentRoom.JoinCode=TEXT("ABCD1234");
+	State->CurrentRoom.bIsHost=true;State->CurrentRoom.bGameServerOnline=true;State->CurrentRoom.bCanStart=true;
+	auto ObserverMember=M2;ObserverMember.UserId=TEXT("303");ObserverMember.DisplayName=TEXT("관전자");ObserverMember.bIsObserver=true;
+	State->CurrentRoom.Members={M1,M2,ObserverMember};State->CurrentRoom.Bots={BotA};Lobby->RefreshCurrentRoomView();
+	TestEqual(TEXT("Host administration starts folded, leaving room for chat"),Lobby->RoomToolsFrame->GetVisibility(),ESlateVisibility::Collapsed);
+	RenderLayout(TEXT("FixedHostDefault"),{Lobby->StartRoomButton,Lobby->LeaveRoomButton,Lobby->ChatInput,Lobby->RoomToolsToggleButton});
+    auto Third=M2;Third.UserId=TEXT("304");Third.DisplayName=TEXT("세 번째 참가자");
+    auto SecondObserver=ObserverMember;SecondObserver.UserId=TEXT("305");SecondObserver.DisplayName=TEXT("두 번째 관전자");
+    State->CurrentRoom.Members={M1,M2,Third,ObserverMember,SecondObserver};State->CurrentRoom.Bots={};Lobby->RefreshCurrentRoomView();
+    TArray<UWidget*> FullRoster{Lobby->StartRoomButton,Lobby->ChatInput};
+    for(auto* Roster:{Lobby->MemberProfilePanel.Get(),Lobby->ObserverProfilePanel.Get()})
+    {
+        for(auto* Parent=Roster->GetParent();Parent;Parent=Parent->GetParent())TestFalse(TEXT("Participant and observer rosters have no scroll container"),Parent->IsA<UScrollBox>());
+        for(auto* Row:Roster->GetAllChildren())FullRoster.Add(Row);
+    }
+    RenderLayout(TEXT("FixedFullRoster"),FullRoster);
+    TestEqual(TEXT("All three playing participants remain visible"),Lobby->MemberProfilePanel->GetChildrenCount(),3);
+    TestEqual(TEXT("Both observers remain visible"),Lobby->ObserverProfilePanel->GetChildrenCount(),2);
+	State->CurrentRoom.Members={M1,M2,ObserverMember};State->CurrentRoom.Bots={BotA};Lobby->RefreshCurrentRoomView();
+	Lobby->HandleRoomToolsToggle();
+	FString LongChat;for(int32 Line=0;Line<150;++Line)LongChat+=FString::Printf(TEXT("[참가자] 오래된 채팅 %d\n"),Line);
+	Lobby->ChatLogText->SetText(FText::FromString(LongChat));Lobby->HandleRoomBotsTabClicked();
+	RenderLayout(TEXT("FixedHostBots"),{Lobby->StartRoomButton,Lobby->LeaveRoomButton,Lobby->SwitchObserverButton,Lobby->ChatInput,Lobby->AddRoomBotButton,Lobby->RemoveRoomBotButton});
+	Lobby->HandleRoomMembersTabClicked();
+	RenderLayout(TEXT("FixedHostMembers"),{Lobby->StartRoomButton,Lobby->LeaveRoomButton,Lobby->TransferHostButton,Lobby->ParticipantManagement});
+	for(UWidget* Child:Lobby->ParticipantManagement->GetAllChildren())
+	{
+		const auto Action=Child->GetCachedGeometry(),Panel=Lobby->RoomToolsFrame->GetCachedGeometry();
+		TestTrue(TEXT("Every administration action fits inside its panel, clear of the room footer"),Action.GetAbsolutePosition().Y+Action.GetAbsoluteSize().Y<=Panel.GetAbsolutePosition().Y+Panel.GetAbsoluteSize().Y+1);
+	}
+	Lobby->HandleRoomSessionTabClicked();RenderLayout(TEXT("FixedHostSession"),{Lobby->DeleteRoomButton,Lobby->LeaveRoomButton,Lobby->StartRoomButton});
+	State->CurrentRoom.bIsHost=false;Lobby->RefreshCurrentRoomView();
+	TestEqual(TEXT("Guest does not reserve a host administration column"),Lobby->RoomToolsFrame->GetVisibility(),ESlateVisibility::Collapsed);
+	RenderLayout(TEXT("FixedGuestRoom"),{Lobby->ReadyButton,Lobby->LeaveRoomButton,Lobby->SwitchObserverButton,Lobby->ChatInput});
 	return true;
 }
 #endif

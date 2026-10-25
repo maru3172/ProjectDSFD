@@ -97,6 +97,7 @@ internal sealed partial class LauncherForm : Form
             "ProjectProject01", "ClientLauncher.json");
         BuildUi();
         LoadSettings();
+        InitializeAnnouncement();
         FormClosing += (_, e) =>
         {
             if(busy){e.Cancel=true;closeRequested=true;}
@@ -109,6 +110,7 @@ internal sealed partial class LauncherForm : Form
         Shown += async (_, _) =>
         {
             if(installationRoot is not null)return;
+            announcementTimer.Start();_ = RefreshAnnouncementAsync();
             if (HasValidSavedServerAddress())
             {
                 await RunBusyAsync(CheckForUpdatesAsync);
@@ -126,9 +128,10 @@ internal sealed partial class LauncherForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 7,
+            RowCount = 8,
             Padding = new Padding(12)
         };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -149,6 +152,7 @@ internal sealed partial class LauncherForm : Form
         var settings=new Button {Text="⚙ 환경설정",AutoSize=true};
         settings.Click+=(_,_)=>{if(!busy)OpenLauncherSettings();};heading.Controls.Add(settings,1,0);
         root.Controls.Add(heading);
+        root.Controls.Add(announcementPanel);
         root.Controls.Add(new Label {AutoSize=true,Text="서버·설치 관리·공지·패치노트·고객센터는 환경설정에서 확인하세요."});
 
         var versionRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };

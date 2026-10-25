@@ -958,12 +958,12 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     else if(Now-B.WatchSince>GazeHoldLimit(Level,HumanAlly))
     {
         B.LookAwayUntil=Now+LookAwaySeconds(Level)*(.8f+.4f*B.Policy.Random());B.WatchSince=-1;Watching=false;
-        // Eyes go to the way ahead (or a quick look around), not back to the mannequin.
-        B.GlanceDirection=Pawn->GetActorForwardVector().GetSafeNormal2D().RotateAngleAxis((B.Policy.Random()-.5f)*120.f,FVector::UpVector);
+        // Eyes go to the way ahead (or a quick look around), not back to the mannequin; skilled survivors also check behind.
+        B.GlanceDirection=Pawn->GetActorForwardVector().GetSafeNormal2D().RotateAngleAxis((B.Policy.Random()-.5f)*(120.f+180.f*Level.Skill),FVector::UpVector);
     }
     const bool LookingAway=Now<B.LookAwayUntil;
     const FVector ObjectiveAt=Mine.Objective.IsValid()?Mine.Objective->GetActorLocation():Pawn->GetActorLocation();
-    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f;
+    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+350.f*Level.Skill;
     const Vec Retreat=B.Disciplined?RetreatDirection(V(Pawn->GetActorLocation()),Views.GetData(),Views.Num(),DangerRadius,V(ObjectiveAt)):Vec{};
     const bool Danger=Retreat.Length()>.5f;
     // Partner relay: every nearby threat is being frozen by the teammate, so this one makes ground.
@@ -976,7 +976,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Run headings never lead into another known mannequin; only a disciplined moment checks (level-scaled).
     // A panicked run drifts off the chosen line.
     const float PanicDrift=50.f*Panic*FMath::Sin(static_cast<float>(Now)*.7f+Quirks.Phase);
-    auto SafeHeading=[&](const FVector& Wanted){return (B.Disciplined?U(ClearHeading(V(Here),V(Wanted),Views.GetData(),Views.Num(),1500.f)):Wanted.GetSafeNormal2D()).RotateAngleAxis(PanicDrift,FVector::UpVector);};
+    auto SafeHeading=[&](const FVector& Wanted){return (B.Disciplined?U(ClearHeading(V(Here),V(Wanted),Views.GetData(),Views.Num(),1500.f+700.f*Level.Skill)):Wanted.GetSafeNormal2D()).RotateAngleAxis(PanicDrift,FVector::UpVector);};
     auto ThreatOf=[&](const AActor* Actor)->const FProjectMatchBotBrain::FSeenThreat*{return Actor?B.Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==Actor;}):nullptr;};
 
     // Self-tuned main distance of a play; starts this run's trial variant if it has not begun yet.
@@ -1330,6 +1330,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
          Kind==Play::Pincer||Kind==Play::CoverBreak||Kind==Play::StepApproach?.4f*Urgency:
          Kind==Play::StillAmbush||Kind==Play::FakeRetreat||Kind==Play::ExitSweep?-.3f*Urgency:0.f))*
         PlanAffinity(Script,true,Kind,PlanStrength)+Mine.Combos.FollowUp(Kind,Now,Level);};
+    auto IsParked=[&](const AMannequinAICharacter* X){return Mine.Parked.ContainsByPredicate([X](const TWeakObjectPtr<AMannequinAICharacter>& W){return W.Get()==X;});};
     struct FSurvivorView{APlayerCharacter* Pawn;AMultiplayTestPlayerController* Controller;};
     TArray<FSurvivorView,TInlineAllocator<4>> Survivors;
     for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)
@@ -1403,12 +1404,12 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         }
     // Held frozen for a while: a person switches to a body that can move (sooner at higher level).
     const auto* Held=Body?Brains.Find(Body):nullptr;
-    const bool StuckFrozen=Body&&Body->IsFrozenBySurvivorVision()&&Held&&Held->FrozenSince>=0&&Now-Held->FrozenSince>2.5-1.5*Level.Skill;
+    const bool StuckFrozen=Body&&Body->IsFrozenBySurvivorVision()&&Held&&Held->FrozenSince>=0&&Now-Held->FrozenSince>4.0-3.0*Level.Skill;
     // While one body is held, send a free one in on the watcher (more often with coordination, i.e. level).
-    if(StuckFrozen&&Now-Mine.HelperSentAt>4.&&FMath::FRand()<Level.Coordination+.2f+(Blitz?.1f*PlanStrength:0.f))
+    if(StuckFrozen&&Now-Mine.HelperSentAt>4.&&FMath::FRand()<Level.Coordination+(Blitz?.1f*PlanStrength:0.f))
     {
         AMannequinAICharacter* Free=nullptr;float Best=MAX_flt;
-        for(auto* X:Bodies)if(X!=Body&&!X->IsFrozenBySurvivorVision()){const float D=FVector::DistSquared2D(X->GetActorLocation(),Held->Known);if(D<Best){Best=D;Free=X;}}
+        for(auto* X:Bodies)if(X!=Body&&!X->IsFrozenBySurvivorVision()&&!IsParked(X)){const float D=FVector::DistSquared2D(X->GetActorLocation(),Held->Known);if(D<Best){Best=D;Free=X;}}
         if(Free){GM->AssignMannequinCommand(Free,EMultiplayMannequinCommand::ChaseInDetectionRange);Mine.HelperSentAt=Now;}
     }
     // Stalemate: settle on the free body closest to where a survivor was last seen and send the rest in
@@ -1426,7 +1427,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             {
                 // Only the two nearest free bodies: sending them all bunches them up where one stare freezes the lot.
                 Mine.HelperSentAt=Now;TArray<AMannequinAICharacter*,TInlineAllocator<10>> Free;
-                for(auto* X:Bodies)if(X!=Settle&&X!=Body&&!X->IsFrozenBySurvivorVision())Free.Add(X);
+                for(auto* X:Bodies)if(X!=Settle&&X!=Body&&!X->IsFrozenBySurvivorVision()&&!IsParked(X))Free.Add(X);
                 Free.Sort([&](const AMannequinAICharacter& A,const AMannequinAICharacter& C){return FVector::DistSquared2D(A.GetActorLocation(),LastSeen)<FVector::DistSquared2D(C.GetActorLocation(),LastSeen);});
                 for(int32 I=0;I<FMath::Min(2,Free.Num());++I)
                     GM->AssignMannequinCommand(Free[I],FVector::DistSquared2D(Free[I]->GetActorLocation(),LastSeen)<FMath::Square(2000.f)?EMultiplayMannequinCommand::ChaseInDetectionRange:EMultiplayMannequinCommand::FollowMannequinPlayer);
@@ -1452,6 +1453,28 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         SwitchBodyAt=Now+Level.Reaction*FMath::FRandRange(2.f,4.f)*(Hunting?1.f+Focus->Policy.Character.Patience:1.f);
     }
     if(!Body)return;
+    // Lower levels leave some bodies parked (the existing Hold command): the ones farthest from where survivors
+    // were last seen, as a beginner does not manage them all. Reviewed every 1.5 s (a body just left behind is parked
+    // again promptly instead of hunting on its own); the rest keep their AI.
+    if(Now>=Mine.ParkCheckAt)
+    {
+        Mine.ParkCheckAt=Now+1.5;
+        const int32 ParkCount=ParkedBodies(Level,Urgency>0);
+        FVector Ref=Body->GetActorLocation();double RefAt=-1;
+        for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==1&&Entry.Seen.Target&&Entry.Seen.At>RefAt){RefAt=Entry.Seen.At;Ref=U(Entry.Seen.Position);}
+        TArray<AMannequinAICharacter*,TInlineAllocator<10>> Order;for(auto* X:Bodies)if(X!=Body)Order.Add(X);
+        Order.Sort([&](const AMannequinAICharacter& A,const AMannequinAICharacter& C){return FVector::DistSquared2D(A.GetActorLocation(),Ref)>FVector::DistSquared2D(C.GetActorLocation(),Ref);});
+        TArray<TWeakObjectPtr<AMannequinAICharacter>> Next;
+        for(int32 I=0;I<FMath::Min(ParkCount,Order.Num());++I)
+        {
+            Next.Add(Order[I]);
+            if(!Mine.Parked.ContainsByPredicate([&](const TWeakObjectPtr<AMannequinAICharacter>& W){return W.Get()==Order[I];}))
+                GM->AssignMannequinCommand(Order[I],EMultiplayMannequinCommand::HoldPosition);
+        }
+        for(const auto& Old:Mine.Parked)if(AMannequinAICharacter* X=Old.Get();X&&X!=Body&&!Next.Contains(Old))
+            GM->AssignMannequinCommand(X,EMultiplayMannequinCommand::Patrol);
+        Mine.Parked=MoveTemp(Next);
+    }
     if(Stalled&&Now>=Mine.StallLogAt)
     {
         Mine.StallLogAt=Now+10.;int32 Frozen=0;for(auto* X:Bodies)Frozen+=X->IsFrozenBySurvivorVision();
@@ -1612,7 +1635,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         // In the endgame the other bodies are pulled in on the hunt more often.
         if((Tactic==Action::Cover||Tactic==Action::Regroup||Urgency>0)&&B.Policy.Random()<B.Policy.Profile.Coordination*(1+Urgency))
         {
-            for(auto* Other:Bodies)if(Other!=Body){GM->AssignMannequinCommand(Other,EMultiplayMannequinCommand::FollowMannequinPlayer);break;}
+            for(auto* Other:Bodies)if(Other!=Body&&!IsParked(Other)){GM->AssignMannequinCommand(Other,EMultiplayMannequinCommand::FollowMannequinPlayer);break;}
         }
         else if(Tactic==Action::Search&&B.Policy.Random()<.2f)GM->TryResetFollowingMannequins(PC);
         if(B.Policy.Random()<.025f)GM->ToggleMannequinCatchDamage(PC);
@@ -1753,7 +1776,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* Target=Cast<APlayerCharacter>(B.Target.Get());
     if(Target&&B.Visible&&!Target->IsGameOver()&&Tactic!=Action::Lure&&!Decoy&&Now>=B.AttackAt)
     {
-        B.AttackAt=Now+FMath::Lerp(1.1f,.46f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
+        B.AttackAt=Now+FMath::Lerp(2.1f,.46f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
         bool Watched=false;for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.IsValid()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)Watched|=GM->CanSurvivorSeeMannequin(Pair.Key.Get(),Body);
         if(!Watched&&!Body->IsFrozenBySurvivorVision()&&Offset.SizeSquared()<=FMath::Square(GM->MultiplayerManualAttackRange)&&FVector::DotProduct(Body->GetActorForwardVector(),Offset.GetSafeNormal())>=.25f&&AI->LineOfSightTo(Target)&&Target->HandleMannequinCatch(Body))
         {

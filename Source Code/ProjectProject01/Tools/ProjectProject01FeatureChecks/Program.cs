@@ -11,6 +11,47 @@ internal static class FeatureChecks
         try
         {
             Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+            if(args.Length==2&&args[0]=="--case-ui-checks")
+            {
+                string output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);
+                HttpRequestMessage MockCaseRequest(HttpMethod method,string endpoint,object? body)=>new(method,"http://127.0.0.1:1"+endpoint);
+                using(var settings=new CaseInvestigationForm(MockCaseRequest))
+                {
+                    PrepareRender(settings);var amount=Children(settings).OfType<NumericUpDown>().Single();Check(amount.Minimum==15&&amount.Maximum==117,"사건 조사 수량 도우미 범위 15~117");
+                    using var bitmap=new Bitmap(settings.Width,settings.Height);settings.DrawToBitmap(bitmap,new Rectangle(Point.Empty,settings.Size));bitmap.Save(Path.Combine(output,"case-investigation-settings.png"));
+                    foreach(var button in Children(settings).OfType<Button>())Check(settings.ClientRectangle.Contains(settings.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),"조사 수량·구성 버튼 가시 영역 "+button.Text);
+                }
+                using(var catalogue=new CaseInvestigationCatalogueForm(MockCaseRequest))
+                {
+                    PrepareRender(catalogue);Children(catalogue).OfType<Button>().Single(b=>b.Text=="빈 117칸 생성").PerformClick();
+                    var grid=Children(catalogue).OfType<DataGridView>().Single();Check(grid.Rows.Count==117&&grid.Columns.Count==8,"117조각 조사 구성 편집 가능");
+                    Check(Convert.ToInt32(grid.Rows[116].Cells[1].Value)==13&&Convert.ToInt32(grid.Rows[116].Cells[2].Value)==9,"마지막 조각이 13파트 9조각");
+                    using var bitmap=new Bitmap(catalogue.Width,catalogue.Height);catalogue.DrawToBitmap(bitmap,new Rectangle(Point.Empty,catalogue.Size));bitmap.Save(Path.Combine(output,"case-investigation-catalogue.png"));
+                    Check(grid.Height>400,"조사 구성 목록 가시 영역과 스크롤 높이");
+                    Check(grid.Columns[4].HeaderText=="단어 단서","조각 입력은 스토리 문단이 아닌 단어 단서");
+                }
+                using(var stories=new CasePartStoriesForm(MockCaseRequest))
+                {
+                    PrepareRender(stories);var parts=Children(stories).OfType<ListBox>().Single();var storyInput=Children(stories).OfType<TextBox>().Single(t=>t.Name=="PartStoryText");
+                    Check(parts.Items.Count==13,"전체 스토리는 13파트별 별도 작성");
+                    storyInput.Text="첫 문단입니다.\r\n\r\n두 번째 문단입니다.";parts.SelectedIndex=1;parts.SelectedIndex=0;
+                    Check(storyInput.Text=="첫 문단입니다.\r\n\r\n두 번째 문단입니다.","파트 전환 중 스토리 초안과 줄바꿈 보존");
+                    using var bitmap=new Bitmap(stories.Width,stories.Height);stories.DrawToBitmap(bitmap,new Rectangle(Point.Empty,stories.Size));bitmap.Save(Path.Combine(output,"case-part-stories.png"));
+                }
+                int publications=0;string sent="";
+                using(var notice=new AnnouncementEditorForm("",text=>{publications++;sent=text;return Task.CompletedTask;}))
+                {
+                    PrepareRender(notice);var noticeInput=Children(notice).OfType<TextBox>().Single();noticeInput.Text="첫 줄\r\n두  칸 유지";
+                    Check(publications==0,"공지 작성 창 열기와 입력만으로는 전송하지 않음");
+                    Check(noticeInput.Multiline&&noticeInput.Height>=90,"공지 작성란은 여러 줄과 충분한 높이를 제공");
+                    using var bitmap=new Bitmap(notice.Width,notice.Height);notice.DrawToBitmap(bitmap,new Rectangle(Point.Empty,notice.Size));bitmap.Save(Path.Combine(output,"announcement-editor.png"));
+                    Children(notice).OfType<Button>().Single(b=>b.Text=="띄우기").PerformClick();
+                    Check(publications==1&&sent=="첫 줄\r\n두  칸 유지","띄우기를 눌러야 한 번 전송하고 원문 보존");
+                }
+                using(var notice=new AnnouncementEditorForm("닫을 때는 미전송",_=>{publications++;return Task.CompletedTask;}))
+                {PrepareRender(notice);Children(notice).OfType<Button>().Single(b=>b.Text=="닫기").PerformClick();Check(publications==1,"공지 작성 취소는 서버 상태를 변경하지 않음");}
+                Console.WriteLine($"PASS: {checks} case helper UI checks (offline, no publishing)");return 0;
+            }
             if(args.Length==1&&args[0]=="--diagnostics-checks")
             {
                 DiagnosticsChecks.RunAsync(Check).GetAwaiter().GetResult();
@@ -59,18 +100,18 @@ internal static class FeatureChecks
             }
             var compatibility=VersionCompatibilityOptions.FromConfiguration(
                 new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
-            Check(compatibility.NetworkProtocolVersion=="5","관전 연출 공유 통신 프로토콜 기본값 5");
+            Check(compatibility.NetworkProtocolVersion=="6","조사 기록 발견 알림 통신 프로토콜 기본값 6");
             var versionHeaders=new Microsoft.AspNetCore.Http.HeaderDictionary
             {
                 [VersionCompatibilityOptions.ClientBuildHeader]=compatibility.ClientBuildVersion,
                 [VersionCompatibilityOptions.DedicatedServerBuildHeader]=compatibility.DedicatedServerBuildVersion,
                 [VersionCompatibilityOptions.ApiVersionHeader]=compatibility.ApiVersion,
                 [VersionCompatibilityOptions.GameDataVersionHeader]=compatibility.GameDataVersion,
-                [VersionCompatibilityOptions.NetworkProtocolHeader]="5"
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="6"
             };
-            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 5 클라이언트 허용");
-            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 5 데디 서버 허용");
-            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="4";
+            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 6 클라이언트 허용");
+            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 6 데디 서버 허용");
+            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="5";
             Check(compatibility.GetMismatches(versionHeaders,false).SequenceEqual(new[]{"NetworkProtocol"}),"구형 클라이언트 프로토콜 혼용 차단");
             Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");
@@ -158,6 +199,12 @@ internal static class FeatureChecks
             foreach(string caption in new[]{"동시 경기 수 적용","방 한도 설정·적용","경기 종료 후 운영 중지","종료 대기 취소","게임 서버 운영 즉시 중지"})
             {
                 var button=Children(helper).OfType<Button>().Single(b=>b.Text==caption);
+                // Actions are intentionally grouped into tabs instead of exposing
+                // every shutdown/deployment button at once. Select the owning tab
+                // without clicking the operational action under test.
+                for(Control? parent=button.Parent;parent is not null;parent=parent.Parent)
+                    if(parent is TabPage page&&page.Parent is TabControl tabs){tabs.SelectedTab=page;break;}
+                helper.PerformLayout();Application.DoEvents();
                 Check(helper.ClientRectangle.Contains(helper.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),caption+" 버튼이 메인 창에 표시됨");
             }
             using var bitmap=new Bitmap(helper.Width,helper.Height);helper.DrawToBitmap(bitmap,new Rectangle(Point.Empty,helper.Size));bitmap.Save(Path.Combine(output,"helper-capacity-buttons.png"));
@@ -165,6 +212,10 @@ internal static class FeatureChecks
         using(var launcher=new ProjectProject01ClientLauncher.LauncherForm(Path.Combine(output,"LauncherUiFixture")))
         {
             PrepareRender(launcher);
+            launcher.FeatureSetAnnouncement("첫 줄\n둘째 줄\n마지막 줄");Application.DoEvents();
+            Check(launcher.FeatureAnnouncementVisible&&launcher.FeatureAnnouncementText.Replace("\r\n","\n")=="첫 줄\n둘째 줄\n마지막 줄","런처 상시 공지의 줄바꿈 보존");
+            using(var noticeImage=new Bitmap(launcher.Width,launcher.Height)){launcher.DrawToBitmap(noticeImage,new Rectangle(Point.Empty,launcher.Size));noticeImage.Save(Path.Combine(output,"launcher-persistent-announcement.png"));}
+            launcher.FeatureSetAnnouncement(string.Empty);Check(!launcher.FeatureAnnouncementVisible,"빈 공지는 런처에서 영역까지 숨김");
             var pause=Children(launcher).OfType<Button>().Single(b=>b.Text=="다운로드 중단");
             Check(!pause.Enabled&&!pause.Visible,"런처 다운로드 중단은 작업 중에만 표시·유휴 중 숨김");
             using var bitmap=new Bitmap(launcher.Width,launcher.Height);launcher.DrawToBitmap(bitmap,new Rectangle(Point.Empty,launcher.Size));bitmap.Save(Path.Combine(output,"resumable-launcher.png"));

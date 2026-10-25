@@ -14,6 +14,7 @@ internal static partial class LobbyEndpoints
             if(req.HttpContext.RequestServices.GetRequiredService<ServiceControlState>().Get().MaintenanceEnabled)return Results.Conflict(new{message="점검 중에는 랜덤 매칭을 준비할 수 없습니다."});
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
             int maximum=await LockLobbyStateAsync(c,tx,ct);
+            if(await OpenParties.HasPartyAsync(c,tx,user.Id,ct))return Results.Conflict(new{message="랜덤 매칭은 개인 신청만 가능합니다. 파티를 나간 뒤 시작하세요."});
             string? current=await FindCurrentRoomIdAsync(c,tx,user.Id,ct);
             if(current is not null)
             {
@@ -115,7 +116,7 @@ internal static partial class LobbyEndpoints
             await CommunityEndpoints.Exec(c,tx,"UPDATE random_match_searches SET state='Matched',room_id=@r WHERE search_id=@s",ct,("r",room),("s",entry["search_id"]));
         }
         if(ids.Count!=selected.Count||ids.Distinct().Count()!=ids.Count)throw new MatchmakingChangedException();
-        int mannequinSlot=RandomNumberGenerator.GetInt32(3);
+        int mannequinSlot=await RoomRoleChoices.PreferredMannequinSlotAsync(c,tx,ids,ct);
         ulong mannequin=mannequinSlot<ids.Count?ids[mannequinSlot]:0;string host=new Uri("http://"+ResolveTravelUrlForRequest(req,url)).Host;
         await CommunityEndpoints.Exec(c,tx,"""
             INSERT INTO random_match_rooms(room_id) VALUES(@r) ON DUPLICATE KEY UPDATE room_id=@r;

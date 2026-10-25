@@ -204,6 +204,7 @@ internal static partial class LobbyEndpoints
                     insertMember.Parameters.AddWithValue("@userId", user.Id);
                     await insertMember.ExecuteNonQueryAsync(ct);
                 }
+                if(!await OpenParties.AttachToRoomAsync(connection,transaction,user.Id,roomId,"Open",ct))return Results.Conflict(new LobbyFailure("파티장만 같은 모드에서 방을 만들 수 있습니다. 파티원의 방·접속 상태를 확인하세요."));
                 await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(
                     connection, null, user.Id,
@@ -253,6 +254,8 @@ internal static partial class LobbyEndpoints
                 }
                 string? resolvedRoomId = null;
                 bool joinAsObserver=false;
+                int partySize=await OpenParties.AdmissionSizeAsync(connection,transaction,user.Id,"Open",ct);
+                if(partySize<1)return Results.Conflict(new LobbyFailure("오픈매칭 파티장만 파티와 함께 방에 참가할 수 있습니다."));
                 // Serialize explicit room entry with random-match formation and retire the old search.
                 await CancelUserSearchesAsync(connection,transaction,user.Id,ct);
                 if(await FindCurrentRoomIdAsync(connection,transaction,user.Id,ct) is not null)return Results.Conflict(new LobbyFailure("이미 다른 방에 참가 중입니다."));
@@ -299,7 +302,9 @@ internal static partial class LobbyEndpoints
                     "SELECT (SELECT COUNT(*) FROM room_members WHERE room_id=@roomId AND is_observer=FALSE)+(SELECT COUNT(*) FROM room_bots WHERE room_id=@roomId);", connection, transaction) { CommandTimeout = 5 })
                 {
                     countMembers.Parameters.AddWithValue("@roomId", resolvedRoomId!);
-                    if (Convert.ToInt32(await countMembers.ExecuteScalarAsync(ct)) >= MaximumPlayers)
+                    int playingCount=Convert.ToInt32(await countMembers.ExecuteScalarAsync(ct));
+                    if(partySize>1&&playingCount+partySize>MaximumPlayers)return Results.Conflict(new LobbyFailure("파티 전원이 플레이할 자리가 부족합니다."));
+                    if (playingCount >= MaximumPlayers)
                     {
                         if(!LocalEditorTesting.ObserversEnabled(request))return Results.Conflict(new LobbyFailure("방 인원이 가득 찼습니다."));
                         var observers=await CommunityEndpoints.Rows(connection,transaction,"SELECT user_id FROM room_members WHERE room_id=@r AND is_observer=TRUE",ct,("r",resolvedRoomId));
@@ -316,6 +321,7 @@ internal static partial class LobbyEndpoints
                     insert.Parameters.AddWithValue("@observer",joinAsObserver);
                     await insert.ExecuteNonQueryAsync(ct);
                 }
+                if(!await OpenParties.AttachToRoomAsync(connection,transaction,user.Id,resolvedRoomId!,"Open",ct))return Results.Conflict(new LobbyFailure("파티원의 방·접속 상태 또는 역할 정원을 확인하세요. 전원 입장을 취소했습니다."));
                 await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(
                     connection, null, user.Id,
@@ -1211,6 +1217,7 @@ internal static partial class LobbyEndpoints
                 await using(var receipt=new MySqlCommand("UPDATE authoritative_match_players SET result_digest=@digest WHERE match_id=@match AND user_id=@user;",connection,transaction))
                 {receipt.Parameters.AddWithValue("@match",matchId.ToString("D"));receipt.Parameters.AddWithValue("@user",userId);receipt.Parameters.AddWithValue("@digest",digest);await receipt.ExecuteNonQueryAsync(ct);}
                 await BotSkillRatings.ApplyAsync(connection,transaction,matchId.ToString("D"),userId,body.Success,ct);
+                await CaseRecords.AwardVerifiedAsync(connection,transaction,matchId.ToString("D"),userId,ct);
                 await AuthoritativeMatchLedger.EndAsync(connection,transaction,matchId.ToString("D"),ct);
                 await transaction.CommitAsync(ct);
                 if (normalizedRole == "Survivor" && body.Success)

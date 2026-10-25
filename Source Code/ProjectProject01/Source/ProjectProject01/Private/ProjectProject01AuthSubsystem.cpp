@@ -351,9 +351,11 @@ void UProjectProject01AuthSubsystem::HandleServiceStatusRequestComplete(
 		return;
 	}
 	bServiceReachable = true;
-	ServiceAnnouncement.Reset();
+	ServiceAnnouncement.Reset();OperatorAnnouncement.Reset();
 	ServiceShutdownAtUtc.Reset();
 	Json->TryGetStringField(TEXT("announcement"), ServiceAnnouncement);
+    Json->TryGetNumberField(TEXT("revision"), ServiceRevision);
+    if(!Json->TryGetStringField(TEXT("baseAnnouncement"),OperatorAnnouncement))OperatorAnnouncement=ServiceAnnouncement;
 	Json->TryGetStringField(TEXT("shutdownAtUtc"), ServiceShutdownAtUtc);
 	FString Message;
 	Json->TryGetStringField(TEXT("message"), Message);
@@ -773,7 +775,7 @@ bool UProjectProject01AuthSubsystem::ConfigureLocalTestApiEndpoint(const FString
 	const bool bAllowed = IsApiBaseUrlAllowed();
 	bServiceReachable = false;
 	bMaintenanceEnabled = false;
-	ServiceAnnouncement.Reset();
+	ServiceAnnouncement.Reset();OperatorAnnouncement.Reset();
 	ServiceShutdownAtUtc.Reset();
 	OnServiceStatusChanged.Broadcast(false, FString(), FString(),
 		bAllowed ? TEXT("서버 상태를 다시 확인하고 있습니다.") : TEXT("서버가 꺼져 있습니다."));

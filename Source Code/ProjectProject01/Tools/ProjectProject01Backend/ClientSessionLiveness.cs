@@ -49,6 +49,7 @@ internal static class ClientSessionLiveness
                 if(live.Count==0)
                 {
                     await LobbyEndpoints.RemoveUserFromCurrentRoomAsync(c,tx,user,ct);
+                    await OpenParties.LeaveAsync(c,tx,user,ct);
                     await CommunityEndpoints.Exec(c,tx,"UPDATE social_presence SET presence='Offline',context='Other' WHERE user_id=@u;DELETE FROM social_room_invites WHERE sender_id=@u OR recipient_id=@u",ct,("u",user));
                 }
                 count++;

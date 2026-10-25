@@ -35,6 +35,8 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerInteractElevator(class AProjectProject01Elevator* Elevator, FVector_NetQuantize ViewOrigin, FVector_NetQuantizeNormal ViewDirection);
 	double LastElevatorRequestSeconds = -1.0;
+    UFUNCTION(Server,Reliable) void ServerInteractShutter(class AFireShutterActor* Shutter,FVector_NetQuantize Origin,FVector_NetQuantizeNormal Direction);
+    double LastShutterRequestSeconds=-1;
 
 	// 카메라 방향으로 라인 트레이스를 실행하고 현재 상호작용 가능한 액터를 반환한다.
 	AActor* FindInteractableActor(bool bDrawDebug) const;

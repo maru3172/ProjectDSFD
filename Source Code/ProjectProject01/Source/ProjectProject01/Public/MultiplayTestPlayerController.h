@@ -155,6 +155,8 @@ public:
 	const FString& GetAuthenticatedDisplayName() const { return AuthenticatedDisplayName; }
 	void SetServerMatchState(EMultiplayTestMatchPhase NewPhase, EMultiplayTestSurvivorState NewSurvivorState);
 	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
+	UFUNCTION(Client,Reliable)
+	void ClientQueueDeathCamera(class APlayerCharacter* Victim,const FString& Reason);
 	void DeclareVoluntaryExit();
 	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
 	bool IsFreeSpectatingTarget(const AActor* Target) const;
@@ -173,6 +175,7 @@ public:
 	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	bool HasQueuedManualMannequinCommand() const { return bManualMannequinCommandIssued; }
+	UFUNCTION(Client,Reliable) void ClientNotifyCaseDiscovery(int32 Count);
 	FString GetMannequinCommandNotice() const;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
@@ -213,6 +216,7 @@ private:
 	FTimerHandle LocalMatchResultHandoffTimer;
 	double LocalMatchResultHandoffDeadline = 0;
 	bool bResultBlackoutStarted = false; // Result handoff blacked the screen out itself (once per match end).
+	double LocalDeathCameraDeadline = 0;
 	uint32 LastSpectatorFadeRequest = 0;
 	uint32 SpectatorRequestSerial = 0;
 	bool bSpectatorFadePending = false;
