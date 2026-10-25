@@ -8,6 +8,17 @@
 
 class APawn;
 
+USTRUCT()
+struct FProjectShutterMotion
+{
+    GENERATED_BODY()
+    UPROPERTY() float Start=0;
+    UPROPERTY() float Target=0;
+    UPROPERTY() float Speed=150;
+    UPROPERTY() float Height=300;
+    UPROPERTY() double StartedAt=0;
+};
+
 /**
  * CurrentOpenAlpha
  * 0.0 = 완전히 닫힘
@@ -17,11 +28,15 @@ UCLASS()
 class PROJECTPROJECT01_API AFireShutterActor : public AInteractionActorBase
 {
 	GENERATED_BODY()
+	friend class FProjectShutterTest;
 	
 public:
 	AFireShutterActor();
 	
 	virtual void Tick(float DeltaTime) override;
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+    virtual bool CanInteract_Implementation(APawn* Interactor) const override;
+    bool TryInteractFromView(APawn* Interactor,const FVector& Origin,const FVector& Direction,float Range,ECollisionChannel Channel);
 	
 protected:
 	virtual void BeginPlay() override;
@@ -42,6 +57,10 @@ protected:
 	float ArrivalTolerance = 0.001f;
 	
 private:
+    UPROPERTY(ReplicatedUsing=OnRep_Motion) FProjectShutterMotion Motion;
+    UFUNCTION() void OnRep_Motion();
+    double ServerNow()const;
+    bool bMotionReady=false;
 	// 셔터가 완전히 내려가 있을 때의 상대 위치
 	FVector ClosedLocation = FVector::ZeroVector;
 	

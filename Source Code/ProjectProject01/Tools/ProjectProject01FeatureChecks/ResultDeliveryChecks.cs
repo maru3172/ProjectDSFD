@@ -77,7 +77,7 @@ internal static class ResultDeliveryChecks
         check(await Scalar(database,$"SELECT COUNT(*) FROM leaderboard_records WHERE match_id='{match}' AND room_name='보존할 경기 이름';")==1,"F26 게시 기록에 경기 당시 방 이름 보존");
 
         string root=Path.Combine(output,"ResultOutboxFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
-        var headers=new Dictionary<string,string>{{VersionCompatibilityOptions.ClientBuildHeader,"1.0.0"},{VersionCompatibilityOptions.DedicatedServerBuildHeader,"1.0.0"},{VersionCompatibilityOptions.ApiVersionHeader,"1"},{VersionCompatibilityOptions.GameDataVersionHeader,"1"},{VersionCompatibilityOptions.NetworkProtocolHeader,"5"}};
+        var headers=new Dictionary<string,string>{{VersionCompatibilityOptions.ClientBuildHeader,"1.0.0"},{VersionCompatibilityOptions.DedicatedServerBuildHeader,"1.0.0"},{VersionCompatibilityOptions.ApiVersionHeader,"1"},{VersionCompatibilityOptions.GameDataVersionHeader,"1"},{VersionCompatibilityOptions.NetworkProtocolHeader,"6"}};
         string Journal(string backend,string route,object body)
         {
             string payload=JsonSerializer.Serialize(new {schema=1,backend,route,body=JsonSerializer.Serialize(body),headers});

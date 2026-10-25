@@ -68,7 +68,7 @@ struct Difficulty
     static Difficulty For(int Level,float Condition)
     {
         Difficulty D=For(Level);const float S=ConditionSkill(D.Level,Condition);
-        D.Reaction=1.65f-1.25f*S;D.Memory=2.5f+5.5f*S;D.Sharing=.15f+.75f*S;D.Adaptation=.04f+.48f*S;
+        D.Reaction=1.65f-1.25f*S;D.Memory=2.5f+8.5f*S;D.Sharing=.15f+.75f*S;D.Adaptation=.04f+.48f*S;
         D.Coordination=.12f+.78f*S;D.TurnRate=85.f+125.f*S;D.Skill=S;return D;
     }
     static Difficulty For(int Level)
@@ -76,11 +76,11 @@ struct Difficulty
         Difficulty D;D.Level=std::max(1,std::min(5,Level));
         const float T=(D.Level-1)/4.f;D.Skill=T*T;
         D.Reaction=1.65f-1.25f*D.Skill;
-        D.Memory=2.5f+5.5f*D.Skill;
+        D.Memory=2.5f+8.5f*D.Skill;
         D.Sharing=.15f+.75f*D.Skill;
         D.Adaptation=.04f+.48f*D.Skill;
         D.Coordination=.12f+.78f*D.Skill;
-        D.Opening=D.Level==1?.24f:D.Level==2?.12f:0.f;
+        D.Opening=D.Level==1?.5f:D.Level==2?.35f:0.f;
         D.TurnRate=85.f+125.f*D.Skill;
         return D;
     }
@@ -103,9 +103,10 @@ struct Difficulty
     }
 };
 
-// How long a survivor keeps one mannequin frozen with a stare before looking away (bot team: 1.2..3.5 s;
+// How long a survivor keeps one mannequin frozen with a stare before looking away (bot team: 1.45..3.05 s, kept
+// short at the top because a long stare lets the other bodies close in from behind;
 // beside a human the helper's cover stays short), and how long the look-away lasts: the mannequin's window.
-inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:1.45+2.85*D.Skill;}
+inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:1.45+1.6*D.Skill;}
 inline float LookAwaySeconds(const Difficulty& D){return std::max(.9f,D.Reaction*1.7f);}
 
 // How human the mistakes are: frequent and large at easy, rare micro-imperfections at master (never zero).
@@ -650,7 +651,7 @@ struct Director
     struct Slot { Play Kind=Play::None;double SignalEnds=-1,Ends=-1; };
     std::array<Slot,3> Slots{};
     std::array<double,PlayCount> ReadyAt{};
-    static int Concurrency(const Difficulty& D){static constexpr int L[]={1,1,2,2,3};return L[std::max(1,std::min(5,D.Level))-1];}
+    static int Concurrency(const Difficulty& D){static constexpr int L[]={1,1,2,2,2};return L[std::max(1,std::min(5,D.Level))-1];}
     static bool Unlocked(Play P,const Difficulty& D){const auto& I=Info(P);return P!=Play::None&&D.Level>=I.MinLevel&&(!I.Psych||D.AllowsDeception());}
     static int UnlockedCount(const Difficulty& D){int N=0;for(size_t I=1;I<PlayCount;++I)N+=Unlocked(static_cast<Play>(I),D);return N;}
     static int UnlockedCount(const Difficulty& D,uint8_t Side){int N=0;for(size_t I=1;I<PlayCount;++I)N+=(SideOf(static_cast<Play>(I))&Side)&&Unlocked(static_cast<Play>(I),D);return N;}
@@ -940,6 +941,12 @@ inline LoneApproach ChooseLoneApproach(const Difficulty& D,const Persona& P,bool
 }
 // How long a lurking survivor is willing to wait before it goes anyway (patient characters and experts wait longer).
 inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*Clamp(D.Skill,0,1)+6.f*Clamp(P.Patience,0,1);}
+
+// Bodies a mannequin player of this level leaves parked (the existing Hold command): a beginner does not manage
+// all ten bodies. The rest keep their usual AI. A quarter fewer in the endgame.
+// Balance runs only: a value >= 0 replaces the count (0 stands in for a human mannequin, who parks nothing).
+inline int& ParkOverride(){static int Value=-1;return Value;}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,7,5,4,0};if(ParkOverride()>=0)return ParkOverride();const int N=P[std::max(1,std::min(5,D.Level))-1];return Endgame?N-N/4:N;}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the

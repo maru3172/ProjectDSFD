@@ -9,6 +9,7 @@
 #include "InteractionInterface.h"
 #include "InteractionPromptWidget.h"
 #include "ProjectProject01Elevator.h"
+#include "FireShutterActor.h"
 
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/UserWidget.h"
@@ -21,6 +22,7 @@ namespace
 		// Elevator permissions are always its concrete native contract, on both peers.
 		// Do not let a Blueprint interface event replace server role/state checks.
 		if (auto* Elevator=Cast<AProjectProject01Elevator>(Target)) return Elevator->CanInteract_Implementation(Interactor);
+        if(auto* Shutter=Cast<AFireShutterActor>(Target))return Shutter->CanInteract_Implementation(Interactor);
 		return IsValid(Target) && Target->Implements<UInteractionInterface>() &&
 			IInteractionInterface::Execute_CanInteract(Target,Interactor);
 	}
@@ -175,7 +177,20 @@ void UPlayerInteractionComponent::TryInteract()
 		}
 		return;
 	}
+    if(auto* Shutter=Cast<AFireShutterActor>(HitActor);Shutter&&GetWorld()->GetNetMode()!=NM_Standalone)
+    {
+        if(OwnerPawn->HasAuthority())Shutter->TryInteractFromView(OwnerPawn,ViewLocation,ViewRotation.Vector(),InteractionDistance,TraceChannel);
+        else ServerInteractShutter(Shutter,ViewLocation,ViewRotation.Vector());
+        return;
+    }
 	IInteractionInterface::Execute_Interact(HitActor, OwnerPawn);
+    // Generic/single-player interaction remains unchanged below the native network paths.
+}
+void UPlayerInteractionComponent::ServerInteractShutter_Implementation(AFireShutterActor* Shutter,FVector_NetQuantize Origin,FVector_NetQuantizeNormal Direction)
+{
+    auto* Pawn=Cast<APawn>(GetOwner());if(!Pawn||!Pawn->HasAuthority()||!IsValid(Shutter)||!GetWorld()||Shutter->GetWorld()!=GetWorld())return;
+    const double Now=GetWorld()->GetTimeSeconds();if(Now-LastShutterRequestSeconds<.15)return;LastShutterRequestSeconds=Now;
+    Shutter->TryInteractFromView(Pawn,Origin,Direction,InteractionDistance,TraceChannel);
 }
 
 void UPlayerInteractionComponent::ServerInteractElevator_Implementation(AProjectProject01Elevator* Elevator, FVector_NetQuantize ViewOrigin, FVector_NetQuantizeNormal ViewDirection)

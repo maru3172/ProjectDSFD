@@ -1032,6 +1032,12 @@ private:
     UFUNCTION() class UWidget* GenerateBotDifficultyItem(FString Item);
     UFUNCTION() void HandleBotDifficultyChanged(FString Item, ESelectInfo::Type SelectionType);
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchRole;
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RandomMatchRole;
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RoomMatchRole;
+    UPROPERTY(Transient) TObjectPtr<class UHorizontalBox> RoomRoleRow;
+    UFUNCTION() void HandleMatchRoleChanged(FString Item, ESelectInfo::Type SelectionType);
+    void RefreshRoleSelection();
+    bool bRoleWritePending=false;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
     UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCreateButton;
     bool bShowingBotMatch=false;
@@ -1040,6 +1046,17 @@ private:
     UFUNCTION() void HandleRemoveRoomBot();
     UFUNCTION() void HandleChangeRoomBotDifficulty();
     UPROPERTY(Transient) TObjectPtr<class UVerticalBox> RoomBotPanel;
+    UPROPERTY(Transient) TObjectPtr<class UBorder> RoomToolsFrame;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomToolsToggleButton;
+    bool bRoomToolsExpanded=false;
+    UFUNCTION() void HandleRoomToolsToggle();
+    UPROPERTY(Transient) TObjectPtr<class UWidgetSwitcher> RoomToolsSwitcher;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomBotsTabButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomMembersTabButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomSessionTabButton;
+    UFUNCTION() void HandleRoomBotsTabClicked();
+    UFUNCTION() void HandleRoomMembersTabClicked();
+    UFUNCTION() void HandleRoomSessionTabClicked();
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RoomBotSelection;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RoomBotDifficulty;
     UPROPERTY(Transient) TObjectPtr<class UButton> AddRoomBotButton;
@@ -1080,6 +1097,7 @@ private:
     UPROPERTY(Transient) TObjectPtr<UProjectProject01SettingsWidget> LobbySettingsWidget;
     UPROPERTY(Transient) TObjectPtr<class UProjectProject01SocialWidget> SocialOverlay;
     UPROPERTY(Transient) TObjectPtr<class UVerticalBox> MemberProfilePanel;
+    UPROPERTY(Transient) TObjectPtr<class UVerticalBox> ObserverProfilePanel;
     UPROPERTY(Transient) TArray<TObjectPtr<UProjectProject01RoomProfileBinding>> MemberProfileBindings;
     TArray<FString> MemberProfileRowKeys;
     void PopulateRoomMemberProfiles(const TArray<FProjectProject01RoomMember>& Members,bool bRevealRoles);

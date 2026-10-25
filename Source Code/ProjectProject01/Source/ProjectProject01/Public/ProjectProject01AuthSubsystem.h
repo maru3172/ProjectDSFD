@@ -93,6 +93,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Service")
 	FString GetServiceAnnouncement() const { return ServiceAnnouncement; }
+    int64 GetServiceRevision() const { return ServiceRevision; }
+    const FString& GetOperatorAnnouncement()const{return OperatorAnnouncement;}
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Authentication")
 	bool IsSignedIn() const { return AuthState == EProjectProject01AuthState::SignedIn && !AccessToken.IsEmpty(); }
@@ -124,6 +126,7 @@ private:
 	friend class FProjectReviewAsyncStateTest;
 	friend class FProjectLoginRegistrationTest;
 	friend class FProjectSocialWidgetLayoutTest;
+	friend class FProjectCaseUiRenderTest;
 	enum class EAuthOperation : uint8
 	{
 		Register,
@@ -204,6 +207,8 @@ private:
 
 	UPROPERTY(Transient)
 	FString ServiceAnnouncement;
+    int64 ServiceRevision=0;
+    FString OperatorAnnouncement;
 
 	UPROPERTY(Transient)
 	FString ServiceShutdownAtUtc;

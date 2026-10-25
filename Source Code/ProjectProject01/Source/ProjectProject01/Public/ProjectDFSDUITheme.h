@@ -12,6 +12,7 @@ class UMultiLineEditableTextBox;
 class UComboBoxString;
 class UCheckBox;
 class UWidgetTree;
+struct FGeometry;
 
 /** UComboBoxString exposes its caption foreground only at construction. */
 UCLASS()
@@ -29,12 +30,28 @@ class PROJECTPROJECT01_API UProjectDFSDPageFrame final : public UContentWidget
 	GENERATED_BODY()
 public:
 	float ContentWidth = 1120;
+    float BottomClearance=32;
+protected:
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+};
+
+/** Portrait case-file cover used by the three campaign save slots. */
+UCLASS()
+class PROJECTPROJECT01_API UProjectDFSDCaseFolder final : public UContentWidget
+{
+	GENERATED_BODY()
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 };
 
 namespace ProjectDFSDUI
 {
+    enum class EIcon : uint8 { Profile, Party, Friends, Whisper, Report, Bell, Add };
+    PROJECTPROJECT01_API TSharedRef<class SWidget> Icon(EIcon Kind,float Size=24.f);
+    struct FPageMetrics { float Left=0,Width=0,Scale=1; };
+    PROJECTPROJECT01_API FPageMetrics PageMetrics(const FGeometry& Geometry,float Width=1120.f);
+    PROJECTPROJECT01_API FPageMetrics FooterMetrics(const FGeometry& Geometry);
+    PROJECTPROJECT01_API TSharedRef<class SWidget> FooterSlate(TSharedRef<class SWidget> Content);
 	PROJECTPROJECT01_API FLinearColor Canvas();
 	PROJECTPROJECT01_API FLinearColor Panel();
 	PROJECTPROJECT01_API FLinearColor Text();
@@ -53,4 +70,5 @@ namespace ProjectDFSDUI
 	PROJECTPROJECT01_API void Apply(class UCheckBox* Check);
 	PROJECTPROJECT01_API void ApplyTree(class UWidgetTree* Tree);
 	PROJECTPROJECT01_API void FramePage(class UWidgetTree* Tree, float Width);
+	PROJECTPROJECT01_API TSharedRef<class SWidget> FrameSlate(TSharedRef<class SWidget> Content,float Width=1120,float Bottom=32);
 }

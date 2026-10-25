@@ -1,4 +1,6 @@
 #include "ProjectProject01SocialWidget.h"
+#include "ProjectCaseRecords.h"
+#include "ProjectCasePresentation.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01SocialSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
@@ -8,6 +10,7 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/SNullWidget.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
@@ -66,29 +69,35 @@ TSharedRef<SWidget> UProjectProject01SocialWidget::RebuildWidget()
     if(bBlocksOnly)Bar->AddSlot().AutoWidth()[Btn(TEXT("차단 목록"),[this]{Open(TEXT("Blocks"));})];
     else
     {
-        Bar->AddSlot().FillWidth(1)[Btn(TEXT("친구"),[this]{Open(TEXT("Friends"));})];
-        Bar->AddSlot().FillWidth(1)[Btn(TEXT("귓속말"),[this]{Open(TEXT("Whispers"));})];
-        Bar->AddSlot().AutoWidth()[Btn(TEXT("신고"),[this]
+        static const FButtonStyle Style=[] {auto S=ProjectDFSDUI::ButtonStyle();S.SetNormalPadding(FMargin(0)).SetPressedPadding(FMargin(0));return S;}();
+        auto AddIcon=[&](const FString& Tip,ProjectDFSDUI::EIcon Kind,TFunction<void()> Click,bool Bell=false)
         {
-            if(!ModalKind.IsEmpty())return;
-            if(auto* SocialPtr=SocialSubsystem())SocialPtr->Status.Reset();
-            Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"));
-        })];
-        Bar->AddSlot().AutoWidth()[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).ToolTipText(Txt(TEXT("알림"))).OnClicked_Lambda([this]{Open(TEXT("Notifications"));if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(TEXT("Read"));return FReply::Handled();})
-          [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth()[SNew(SCommunityBell)]+SHorizontalBox::Slot().AutoWidth()[SAssignNew(BellDot,STextBlock).Text(FText::FromString(TEXT("●"))).ColorAndOpacity(FLinearColor::Red)]]];
+            auto Content=SNew(SOverlay)+SOverlay::Slot()[ProjectDFSDUI::Icon(Kind,24)];
+            if(Bell)Content->AddSlot().HAlign(HAlign_Right).VAlign(VAlign_Top)[SAssignNew(BellDot,STextBlock).Text(FText::FromString(TEXT("●"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),10)).ColorAndOpacity(FLinearColor::Red)];
+            Bar->AddSlot().AutoWidth().Padding(3,0)[SNew(SBox).WidthOverride(42).HeightOverride(42)
+              [SNew(SButton).ButtonStyle(&Style).ContentPadding(8).ToolTipText(Txt(Tip)).OnClicked_Lambda([Click]{Click();return FReply::Handled();})[Content]]];
+        };
+        AddIcon(TEXT("친구 목록"),ProjectDFSDUI::EIcon::Friends,[this]{Open(TEXT("Friends"));});
+        AddIcon(TEXT("귓속말"),ProjectDFSDUI::EIcon::Whisper,[this]{Open(TEXT("Whispers"));});
+        AddIcon(TEXT("신고"),ProjectDFSDUI::EIcon::Report,[this]{if(!ModalKind.IsEmpty())return;if(auto* S=SocialSubsystem())S->Status.Reset();Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"));});
+        AddIcon(TEXT("알림"),ProjectDFSDUI::EIcon::Bell,[this]{Open(TEXT("Notifications"));if(auto* S=SocialSubsystem())S->Act(TEXT("Read"));},true);
     }
-    return SNew(SOverlay).Visibility_Lambda([this]{auto* GI=GetGameInstance();auto* S=GI?GI->GetSubsystem<UProjectProject01SocialSubsystem>():nullptr;return S&&S->IsAuthenticated()?EVisibility::SelfHitTestInvisible:EVisibility::Collapsed;})
-      +SOverlay::Slot().HAlign(HAlign_Right).VAlign(bBlocksOnly?VAlign_Top:VAlign_Bottom).Padding(12)
-      [SNew(SBox).WidthOverride(440)[SNew(SVerticalBox)
-        +SVerticalBox::Slot().AutoHeight()[SNew(SOverlay)
-          +SOverlay::Slot()[SAssignNew(Panel,SVerticalBox)]
-          +SOverlay::Slot().VAlign(VAlign_Center)[SAssignNew(Modal,SVerticalBox)]]
-        +SVerticalBox::Slot().AutoHeight()[Bar]]];
+    auto Popup=SNew(SOverlay)+SOverlay::Slot()[SAssignNew(Panel,SVerticalBox)]+SOverlay::Slot().VAlign(VAlign_Center)[SAssignNew(Modal,SVerticalBox)];
+    auto Root=SNew(SOverlay).Visibility_Lambda([this]{auto* S=SocialSubsystem();return S&&S->IsAuthenticated()?EVisibility::SelfHitTestInvisible:EVisibility::Collapsed;});
+    if(bBlocksOnly)
+        Root->AddSlot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(12)[SNew(SBox).WidthOverride(440)[SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[Popup]+SVerticalBox::Slot().AutoHeight()[Bar]]];
+    else
+    {
+        Root->AddSlot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(TAttribute<FMargin>::CreateLambda([this]{const auto M=ProjectDFSDUI::FooterMetrics(GetCachedGeometry());return FMargin(0,0,GetCachedGeometry().GetLocalSize().X-M.Left-M.Width*M.Scale+12*M.Scale,122*M.Scale); }))[SNew(SBox).WidthOverride(440)[Popup]];
+        Root->AddSlot()[ProjectDFSDUI::FooterSlate(SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1)[SNullWidget::NullWidget]+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,12,0)[Bar])];
+    }
+    return Root;
 }
 void UProjectProject01SocialWidget::NativeConstruct()
 {
     Super::NativeConstruct();if(!GetGameInstance())return;auto* S=SocialSubsystem();if(!S)return;
     S->OnChanged.AddUObject(this,&ThisClass::RefreshView);
+    if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->OnChanged.AddUObject(this,&ThisClass::RefreshView);
     S->OnRoomContextReady.AddUObject(this,&ThisClass::RoomContextReady);
     S->OnWhisperSent.AddWeakLambda(this,[this](const FString& Text){if(MessageInput&&Page==TEXT("Thread")&&MessageInput->GetText().ToString()==Text)MessageInput->SetText(FText::GetEmpty());});
     S->OnActionCompleted.AddWeakLambda(this,[this](const FString& Op,bool Ok)
@@ -99,6 +108,7 @@ void UProjectProject01SocialWidget::NativeConstruct()
 }
 void UProjectProject01SocialWidget::NativeDestruct()
 {
+    if(GetGameInstance())if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->OnChanged.RemoveAll(this);
     if(GetGameInstance())if(auto* S=SocialSubsystem())
     {S->OnChanged.RemoveAll(this);S->OnRoomContextReady.RemoveAll(this);S->OnWhisperSent.RemoveAll(this);S->OnActionCompleted.RemoveAll(this);if(!bBlocksOnly)S->OpenConversation(FString());}
     Page.Reset();ModalKind.Reset();bRoomMemberProfile=false;Super::NativeDestruct();
@@ -152,7 +162,7 @@ void UProjectProject01SocialWidget::BuildPanel()
     if(Page.IsEmpty())return;
     auto* S=SocialSubsystem();if(!S)return;
     auto Body=SNew(SVerticalBox);
-    FString Heading=Page==TEXT("RoomActions")?TEXT("방 참가자"):Page==TEXT("Friends")?TEXT("친구"):Page==TEXT("Whispers")?TEXT("귓속말"):Page==TEXT("Thread")?ThreadAccount+TEXT("님과의 대화"):Page==TEXT("Profile")?TEXT("프로필 / 전적"):Page==TEXT("Blocks")?TEXT("차단 목록"):TEXT("알림");
+    FString Heading=Page==TEXT("PartyInvite")?TEXT("파티 초대"):Page==TEXT("RoomActions")?TEXT("방 참가자"):Page==TEXT("Friends")?TEXT("친구"):Page==TEXT("Whispers")?TEXT("귓속말"):Page==TEXT("Thread")?ThreadAccount+TEXT("님과의 대화"):Page==TEXT("Profile")?TEXT("프로필 / 전적"):Page==TEXT("Blocks")?TEXT("차단 목록"):TEXT("알림");
     Body->AddSlot().AutoHeight()[SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1)[Label(Heading)]
       +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("닫기"),[this]{Page.Reset();bRoomMemberProfile=false;if(!bBlocksOnly)if(auto* SocialPtr=SocialSubsystem())SocialPtr->OpenConversation(FString());BuildPanel();})]];
     if(Page==TEXT("Friends"))
@@ -165,6 +175,14 @@ void UProjectProject01SocialWidget::BuildPanel()
         Body->AddSlot().AutoHeight()[SNew(SHorizontalBox)
           +SHorizontalBox::Slot().FillWidth(1)[Btn(TEXT("친구 추가"),[this]{ShowModal(TEXT("Add"));})]
           +SHorizontalBox::Slot().FillWidth(1)[Btn(TEXT("내 프로필 꾸미기"),[this]{ShowModal(TEXT("Edit"));})]];
+    }
+    if(Page==TEXT("PartyInvite"))
+    {
+        Body->AddSlot().AutoHeight().Padding(0,8)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).Text(Txt(PartyInviteDraft)).HintText(Txt(TEXT("초대할 계정 아이디"))).ForegroundColor(ProjectDFSDUI::Text())
+          .OnTextChanged_Lambda([this](const FText& Text){PartyInviteDraft=Text.ToString();})];
+        Body->AddSlot().AutoHeight()[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle())
+          .IsEnabled_Lambda([this]{auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;const TSharedPtr<FJsonObject>* State=nullptr,*Party=nullptr;if(R&&R->Snapshot&&R->Snapshot->TryGetObjectField(TEXT("partyState"),State))(*State)->TryGetObjectField(TEXT("party"),Party);return R&&R->IsAuthenticated()&&!R->IsBusy()&&(!Party||(Flag(*Party,TEXT("isLeader"))&&Rows(*Party,TEXT("members")).Num()<3))&&!PartyInviteDraft.TrimStartAndEnd().IsEmpty();})
+          .OnClicked_Lambda([this]{if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),PartyInviteDraft);return FReply::Handled();})[Label(TEXT("초대 보내기"))]];
     }
     if(Page==TEXT("Whispers"))
     {
@@ -186,7 +204,7 @@ void UProjectProject01SocialWidget::BuildPanel()
     if(Page==TEXT("Profile"))Body->AddSlot().AutoHeight()[Btn(bRoomMemberProfile?TEXT("닫고 방으로 돌아가기"):TEXT("친구 목록으로"),[this]{if(bRoomMemberProfile)CloseRoomMemberProfile();else{Page=TEXT("Friends");BuildPanel();}})];
     if(Page!=TEXT("Thread"))Body->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(340)[SNew(SScrollBox)+SScrollBox::Slot()[SAssignNew(List,SVerticalBox)]]];
     Body->AddSlot().AutoHeight().Padding(0,6)[SAssignNew(Feedback,STextBlock).AutoWrapText(true).ColorAndOpacity(FLinearColor::White)];
-    if(!bBlocksOnly)Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle())
+    if(!bBlocksOnly&&Page!=TEXT("PartyInvite"))Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle())
       .ButtonContent()[SNew(STextBlock).Text_Lambda([this]{const auto* SocialPtr=SocialSubsystem();return Txt(TEXT("내 상태: ")+PresenceName(SocialPtr?SocialPtr->GetPresence():FString()));}).ColorAndOpacity(FLinearColor::White)]
       .OnGetMenuContent_Lambda([this]()->TSharedRef<SWidget>
       {
@@ -200,13 +218,15 @@ void UProjectProject01SocialWidget::BuildPanel()
 void UProjectProject01SocialWidget::FriendMenu(const FString& Account,const FPointerEvent& Event)
 {
     FMenuBuilder Menu(true,nullptr);
-    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("내 방에 초대하기"),TEXT("Invite")},{TEXT("친구 삭제"),TEXT("Remove")},{TEXT("메시지 차단"),TEXT("Block")},{TEXT("프로필 확인"),TEXT("Profile")}})
+    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("내 방에 초대하기"),TEXT("Invite")},{TEXT("파티에 초대하기"),TEXT("PartyInvite")},{TEXT("친구 삭제"),TEXT("Remove")},{TEXT("메시지 차단"),TEXT("Block")},{TEXT("프로필 확인"),TEXT("Profile")}})
     {
         const FString Op=Entry.Value;
         const auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
         if(Op==TEXT("Invite")&&Lobby&&Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomParty)continue;
+        if(Op==TEXT("PartyInvite")&&Lobby&&Lobby->HasCurrentRoom())
+        {const auto& Room=Lobby->GetCurrentRoom();if(Room.bRandomParty||Room.bRandomMatch||Room.bBotMatch||Room.bStarting||Room.bServerPreparing||Room.bStarted)continue;}
         Menu.AddMenuEntry(Txt(Entry.Key),FText::GetEmpty(),FSlateIcon(),FUIAction(FExecuteAction::CreateWeakLambda(this,[this,Account,Op]
-        {if(Op==TEXT("Profile"))ShowProfile(Account);else if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(Op,Account);})));
+        {if(Op==TEXT("Profile"))ShowProfile(Account);else if(Op==TEXT("PartyInvite")){PartyInviteDraft=Account;Page=TEXT("PartyInvite");CloseModal();BuildPanel();if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),Account);}else if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(Op,Account);})));
     }
     FSlateApplication::Get().PushMenu(TakeWidget(),FWidgetPath(),Menu.MakeWidget(),Event.GetScreenSpacePosition(),FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
@@ -240,13 +260,19 @@ void UProjectProject01SocialWidget::RoomContextReady(const FString& UserId,bool 
             auto* Social=SocialSubsystem();if(!Social)return;
             if(Op==TEXT("Profile")){ShowRoomMemberProfile(UserId);return;}
             if(Op==TEXT("Whisper")){OpenThread(Account);return;}
+            if(Op==TEXT("PartyInvite")){PartyInviteDraft=Account;Page=TEXT("PartyInvite");BuildPanel();if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),Account);return;}
             Page=TEXT("RoomActions");bRoomMemberProfile=false;Social->Status.Reset();BuildPanel();
             if(Op==TEXT("Request")){ShowModal(TEXT("Add"),Account);return;}
             if(Op==TEXT("Report")){ShowModal(TEXT("Report"),UserId,Name+TEXT(" [")+Account+TEXT("]"));return;}
             Social->Act(Op,Account);
         })));
     };
-    for(const auto& Action:RoomMenuActions(Flag(J,TEXT("isSelf")),Flag(J,TEXT("isFriend")),Flag(J,TEXT("isBlocked"))))Add(Action.Key,Action.Value);
+    for(const auto& Action:RoomMenuActions(Flag(J,TEXT("isSelf")),Flag(J,TEXT("isFriend")),Flag(J,TEXT("isBlocked"))))
+    {
+        if(Action.Value==TEXT("PartyInvite"))if(auto* L=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())
+        {const auto& Room=L->GetCurrentRoom();if(Room.bRandomParty||Room.bRandomMatch||Room.bBotMatch||Room.bStarting||Room.bServerPreparing||Room.bStarted)continue;}
+        Add(Action.Key,Action.Value);
+    }
     FSlateApplication::Get().PushMenu(TakeWidget(),FWidgetPath(),Menu.MakeWidget(),RoomMenuPosition,FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
 TArray<TPair<FString,FString>> UProjectProject01SocialWidget::RoomMenuActions(bool bSelf,bool bFriend,bool bBlocked)
@@ -256,7 +282,27 @@ TArray<TPair<FString,FString>> UProjectProject01SocialWidget::RoomMenuActions(bo
     Actions.Emplace(bFriend?TEXT("친구 삭제"):TEXT("친구 추가"),bFriend?TEXT("Remove"):TEXT("Request"));
     Actions.Emplace(TEXT("귓속말"),TEXT("Whisper"));
     Actions.Emplace(bBlocked?TEXT("메시지 차단 해제"):TEXT("메시지 차단"),bBlocked?TEXT("Unblock"):TEXT("Block"));
-    Actions.Emplace(TEXT("신고"),TEXT("Report"));return Actions;
+    Actions.Emplace(TEXT("신고"),TEXT("Report"));Actions.Emplace(TEXT("파티 초대"),TEXT("PartyInvite"));return Actions;
+}
+bool UProjectProject01SocialWidget::ShowPartyMemberMenu(const FString& UserId,const FVector2D& Position)
+{
+    auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;
+    if(!R||!R->IsAuthenticated()||!R->Snapshot||!ModalKind.IsEmpty()||!FSlateApplication::IsInitialized())return false;
+    const TSharedPtr<FJsonObject>* State=nullptr,*Party=nullptr;
+    if(!R->Snapshot->TryGetObjectField(TEXT("partyState"),State)||!(*State)->TryGetObjectField(TEXT("party"),Party))return false;
+    TSharedPtr<FJsonObject> Person;for(const auto& V:Rows(*Party,TEXT("members")))if(Str(V->AsObject(),TEXT("userId"))==UserId){Person=V->AsObject();break;}
+    if(!Person)return false;
+    const FString Account=Str(Person,TEXT("accountId"));const bool Self=UserId==Str(R->Snapshot,TEXT("userId"));
+    FMenuBuilder Menu(true,nullptr);
+    auto Add=[&](const FString& Title,TFunction<void()> Click){Menu.AddMenuEntry(Txt(Title),FText::GetEmpty(),FSlateIcon(),FUIAction(FExecuteAction::CreateWeakLambda(this,[Click]{Click();})));};
+    Add(TEXT("프로필 확인"),[this,Account]{ShowProfile(Account);});
+    if(!Self)
+    {
+        Add(TEXT("귓속말"),[this,Account]{OpenThread(Account);});
+        Add(TEXT("신고"),[this,Account]{Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"),Account);});
+        if(Flag(*Party,TEXT("isLeader")))Add(TEXT("파티 강퇴"),[R,UserId]{R->PartyAction(TEXT("Kick"),UserId);});
+    }
+    FSlateApplication::Get().PushMenu(TakeWidget(),FWidgetPath(),Menu.MakeWidget(),Position,FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));return true;
 }
 void UProjectProject01SocialWidget::CloseModal(){ModalKind.Reset();ModalTarget.Reset();ModalRequestKey.Reset();if(Modal)Modal->ClearChildren();if(Panel)Panel->SetEnabled(true);}
 void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString& Target,const FString& Description)
@@ -275,7 +321,7 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
         if(Kind==TEXT("AccountReport"))
         {
             Body->AddSlot().AutoHeight().Padding(0,6)[Label(TEXT("상대 계정 아이디 (닉네임이 아닌 로그인 아이디)"))];
-            Body->AddSlot().AutoHeight()[SAssignNew(AccountInput,SEditableTextBox).Style(&SocialInputStyle()).ForegroundColor(ProjectDFSDUI::Text())];
+            Body->AddSlot().AutoHeight()[SAssignNew(AccountInput,SEditableTextBox).Style(&SocialInputStyle()).Text(Txt(Target)).ForegroundColor(ProjectDFSDUI::Text())];
         }
         else Body->AddSlot().AutoHeight().Padding(0,8)[Label(TEXT("신고 대상: ")+Description)];
         Body->AddSlot().AutoHeight()[SNew(SComboButton).ComboButtonStyle(&ProjectDFSDUI::ComboButtonStyle()).ButtonContent()[SNew(STextBlock).Text_Lambda([this]
@@ -289,7 +335,6 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
         Body->AddSlot().AutoHeight().Padding(0,6)[Label(TEXT("상세 신고 사유 (필수, 1000자 이내)"))];
         auto Input=SNew(SMultiLineEditableTextBox).Style(&SocialInputStyle()).AutoWrapText(true).ForegroundColor(ProjectDFSDUI::Text());
         Body->AddSlot().AutoHeight().Padding(0,8)[SNew(SBox).HeightOverride(150)[Input]];
-        Body->AddSlot().AutoHeight()[Label(TEXT("신고 내용은 운영자만 확인합니다. 신고만으로 자동 제재하지 않습니다."))];
         Body->AddSlot().AutoHeight()[Btn(TEXT("신고 제출"),[this,Input,AccountInput]
         {
             auto* Social=SocialSubsystem();if(!Social)return;
@@ -334,9 +379,13 @@ void UProjectProject01SocialWidget::RefreshView()
 {
     auto* S=SocialSubsystem();
     if(!S)return;SetVisibility(S->IsAuthenticated()?ESlateVisibility::SelfHitTestInvisible:ESlateVisibility::Collapsed);
-    if(!S->IsAuthenticated()){PendingRoomMenu.Reset();Page.Reset();ThreadAccount.Reset();Filter.Reset();SeenInvites.Reset();SeenFriendRequests.Reset();CloseModal();if(Panel)Panel->ClearChildren();if(FSlateApplication::IsInitialized())FSlateApplication::Get().DismissAllMenus();return;}
+    if(!S->IsAuthenticated()){PendingRoomMenu.Reset();Page.Reset();ThreadAccount.Reset();Filter.Reset();PartyInviteDraft.Reset();SeenInvites.Reset();SeenFriendRequests.Reset();CloseModal();if(Panel)Panel->ClearChildren();if(FSlateApplication::IsInitialized())FSlateApplication::Get().DismissAllMenus();return;}
     if(Feedback)Feedback->SetText(Txt(S->Status));
     bool Unread=false;for(auto V:Rows(S->Snapshot,TEXT("notifications")))Unread|=Flag(V->AsObject(),TEXT("unread"));for(auto V:Rows(S->Snapshot,TEXT("conversations")))Unread|=Flag(V->AsObject(),TEXT("unread"));
+    const auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;
+    if(Page==TEXT("PartyInvite")&&Feedback&&R)Feedback->SetText(Txt(R->Status));
+    const TSharedPtr<FJsonObject>* PartyState=nullptr;if(R&&R->Snapshot)R->Snapshot->TryGetObjectField(TEXT("partyState"),PartyState);
+    const int32 PartyInvites=PartyState?Rows(*PartyState,TEXT("invites")).Num():0;Unread|=PartyInvites>0;
     if(BellDot)BellDot->SetVisibility(Unread?EVisibility::Visible:EVisibility::Collapsed);
     if(!bBlocksOnly)
     {
@@ -358,6 +407,18 @@ void UProjectProject01SocialWidget::RefreshView()
     if(List)List->ClearChildren();
     auto Add=[this](const FString& T){if(List)List->AddSlot().AutoHeight().Padding(3)[Label(T)];};
     auto Action=[this](const FString& T,const FString& Op,const FString& A){if(List)List->AddSlot().AutoHeight().Padding(2)[Btn(T,[this,Op,A]{if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(Op,A);})];};
+    if(Page==TEXT("PartyInvite")&&List&&R)
+    {
+        const bool Ready=R->IsAuthenticated()&&!R->IsBusy();
+        for(const auto& Value:PartyState?Rows(*PartyState,TEXT("invites")):TArray<TSharedPtr<FJsonValue>>{})
+        {
+            const auto J=Value->AsObject();Add(Str(J,TEXT("leaderName"))+TEXT("님의 파티 초대"));
+            auto Choices=SNew(SHorizontalBox);
+            for(const FString Op:{FString(TEXT("Accept")),FString(TEXT("Decline"))})
+                Choices->AddSlot().FillWidth(1).Padding(2)[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).IsEnabled(Ready).OnClicked_Lambda([this,Op,Id=Str(J,TEXT("id"))]{if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->PartyAction(Op,Id);return FReply::Handled();})[Label(Op==TEXT("Accept")?TEXT("수락"):TEXT("거절"))]];
+            List->AddSlot().AutoHeight()[Choices];
+        }
+    }
     if(Page==TEXT("Friends")&&List)
     {
         int32 Count=0;
@@ -379,6 +440,7 @@ void UProjectProject01SocialWidget::RefreshView()
     if(Page==TEXT("Blocks"))for(auto V:Rows(S->Snapshot,TEXT("blocks"))){auto J=V->AsObject();Action(Str(J,TEXT("displayName"))+TEXT(" [")+Str(J,TEXT("accountId"))+TEXT("] 차단 해제"),TEXT("Unblock"),Str(J,TEXT("accountId")));}
     if(Page==TEXT("Notifications")&&List)
     {
+        if(PartyInvites>0)List->AddSlot().AutoHeight()[Btn(FString::Printf(TEXT("새 파티 초대 %d건 · 확인"),PartyInvites),[this]{OpenPartyInvite();})];
         for(auto V:Rows(S->Snapshot,TEXT("invites"))){auto J=V->AsObject();FString Id=Str(J,TEXT("inviteId"));List->AddSlot().AutoHeight()[Btn(Str(J,TEXT("displayName"))+TEXT("님의 방 초대: ")+Str(J,TEXT("roomName")),[this,Id,J]{ShowModal(TEXT("Invite"),Id,Str(J,TEXT("displayName"))+TEXT("님의 방: ")+Str(J,TEXT("roomName")));})];}
         for(auto V:Rows(S->Snapshot,TEXT("notifications")))Add(Str(V->AsObject(),TEXT("body")));
     }
@@ -388,7 +450,6 @@ void UProjectProject01SocialWidget::RefreshView()
         for(auto V:C){auto J=V->AsObject();FString A=Str(J,TEXT("accountId"));List->AddSlot().AutoHeight().Padding(0,5)[SNew(SHorizontalBox)
           +SHorizontalBox::Slot().FillWidth(1)[Btn((Flag(J,TEXT("unread"))?TEXT("● "):TEXT(""))+Str(J,TEXT("displayName"))+TEXT(" [")+A+TEXT("]\n")+Str(J,TEXT("body")).Left(70),[this,A]{OpenThread(A);})]
           +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("대화 삭제"),[this,A]{if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(TEXT("DeleteConversation"),A);})]];}
-        Add(TEXT("삭제는 내 기록에만 적용됩니다. 새 메시지가 오면 대화가 다시 나타납니다."));
     }
     if(Page==TEXT("Thread")&&MessageLog)
     {
@@ -402,9 +463,16 @@ void UProjectProject01SocialWidget::RefreshView()
     {
         const TSharedPtr<FJsonObject>* P=nullptr;if(S->Profile)S->Profile->TryGetObjectField(TEXT("profile"),P);
         if(!P){Add(TEXT("프로필을 불러오는 중입니다."));return;}auto J=*P;
+        const TSharedPtr<FJsonObject>* Progression=nullptr;S->Profile->TryGetObjectField(TEXT("progression"),Progression);
+        if(Progression)
+        {
+            double Level=1;(*Progression)->TryGetNumberField(TEXT("level"),Level);
+            List->AddSlot().AutoHeight().Padding(0,6)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectCasePresentation::FrameColor(*Progression)).Padding(10)
+                [Label(ProjectCasePresentation::Identity(*Progression,Str(J,TEXT("displayName")))+FString::Printf(TEXT(" · 계정 레벨 %d"),int32(Level)))]];
+        }
         List->AddSlot().AutoHeight().Padding(0,8)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).Padding(12).BorderBackgroundColor(AccentColor(Str(J,TEXT("accent"))))[Label(Str(J,TEXT("displayName"))+TEXT(" [")+Str(J,TEXT("accountId"))+TEXT("]\n")+TitleName(Str(J,TEXT("title")))+TEXT("\n")+Str(J,TEXT("statusMessage"))+TEXT("\n")+Str(J,TEXT("bio")))]];
-        for(auto V:Rows(S->Profile,TEXT("statistics"))){auto R=V->AsObject();double Games=0,Wins=0,Captures=0,Rescues=0,Escape=0;R->TryGetNumberField(TEXT("matches"),Games);R->TryGetNumberField(TEXT("wins"),Wins);R->TryGetNumberField(TEXT("captures"),Captures);R->TryGetNumberField(TEXT("rescues"),Rescues);bool HasEscape=R->TryGetNumberField(TEXT("bestEscapeSeconds"),Escape);
-          Add((Str(R,TEXT("role"))==TEXT("Mannequin")?FString(TEXT("마네킹")):FString(TEXT("생존자")))+FString::Printf(TEXT(" — %d경기 / %d승\n붙잡기 %d회 / 구출 %d회"),(int32)Games,(int32)Wins,(int32)Captures,(int32)Rescues)+(HasEscape?FString::Printf(TEXT("\n최단 탈출 %.1f초"),Escape):FString()));}
+        for(auto V:Rows(S->Profile,TEXT("statistics"))){auto Stat=V->AsObject();double Games=0,Wins=0,Captures=0,Rescues=0,Escape=0;Stat->TryGetNumberField(TEXT("matches"),Games);Stat->TryGetNumberField(TEXT("wins"),Wins);Stat->TryGetNumberField(TEXT("captures"),Captures);Stat->TryGetNumberField(TEXT("rescues"),Rescues);bool HasEscape=Stat->TryGetNumberField(TEXT("bestEscapeSeconds"),Escape);
+          Add((Str(Stat,TEXT("role"))==TEXT("Mannequin")?FString(TEXT("마네킹")):FString(TEXT("생존자")))+FString::Printf(TEXT(" — %d경기 / %d승\n붙잡기 %d회 / 구출 %d회"),(int32)Games,(int32)Wins,(int32)Captures,(int32)Rescues)+(HasEscape?FString::Printf(TEXT("\n최단 탈출 %.1f초"),Escape):FString()));}
         if(Rows(S->Profile,TEXT("statistics")).IsEmpty())Add(TEXT("아직 서버가 보관한 경기 기록이 없습니다."));Add(Str(S->Profile,TEXT("statisticsNote")));
     }
 }

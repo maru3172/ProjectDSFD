@@ -45,7 +45,14 @@ internal static class EditorBotNetworkChecks
             while(true)
             {
                 await manager.TickAsync(default);
-                string text="";try{text=await File.ReadAllTextAsync(serverLog);}catch(IOException){}
+                string text="";try
+                {
+                    // Unreal keeps its log writer open. The probe must permit that
+                    // writer or a healthy admission is misreported as a timeout.
+                    await using var file=new FileStream(serverLog,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+                    using var reader=new StreamReader(file);text=await reader.ReadToEndAsync();
+                }
+                catch(IOException){}
                 if(text.Contains("[OpenObserver] Admitted observer")&&text.Contains("started with 3 player(s)"))break;
                 if(client.HasExited||DateTime.UtcNow>deadline)throw new Exception("Actual network observer/bot admission failed; inspect isolated EditorNetwork logs");
                 await human.GetAsync("/api/rooms/current");await Task.Delay(500);

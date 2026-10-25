@@ -6,20 +6,23 @@
 
 void AMultiplayTestPlayerController::ClientBeginLoadingGate_Implementation(const FString& Epoch,const FString& OwnId,const FString& OwnName,int32 Expected,bool Released)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if(!IsLocalController() || (Epoch==LoadingGateEpoch && bLoadingGateRequired))return;
 	LoadingGateEpoch=Epoch;bLoadingGateRequired=true;bLoadingGateReleased=Released;LastReportedLoadingStage=0;
 	if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->BeginMultiplayerGate(Epoch,OwnId,OwnName,Expected,Released);
 }
 void AMultiplayTestPlayerController::ClientUpdateLoadingParticipants_Implementation(const FString& Epoch,const TArray<FProjectLoadingParticipant>& Participants)
-{if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->UpdateParticipants(Epoch,Participants);}
+{if(GetWorld()&&GetWorld()->IsPlayingReplay())return;if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->UpdateParticipants(Epoch,Participants);}
 void AMultiplayTestPlayerController::ClientReleaseLoadingGate_Implementation(const FString& Epoch)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if(Epoch!=LoadingGateEpoch)return;bLoadingGateReleased=true;
 	if(auto* GI=GetGameInstance())if(auto* Loading=GI->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->ReleaseMultiplayerGate(Epoch);
 	TryRevealInitialGameplayFade();TryCompleteClientArrivalView();
 }
 void AMultiplayTestPlayerController::ClientFailLoadingGate_Implementation(const FString& Message)
 {
+	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	bLoadingGateRequired=false;LoadingGateEpoch.Reset();
 	if(auto* GI=GetGameInstance())
 	{

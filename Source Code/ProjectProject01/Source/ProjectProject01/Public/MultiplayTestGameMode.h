@@ -59,6 +59,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
+	friend class FProjectShutterTest;
 	friend class FProjectMannequinViewCommandTest;
 	friend class FProjectMannequinNavigationSafetyTest;
 	friend class FProjectSpectatorFadeTest;
@@ -396,6 +397,10 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
 	int32 MannequinSpawnCount = 10;
+
+	/** 생존자 시작 지점에서 이 거리(cm) 안의 마네킹 후보는 먼 후보가 모자랄 때만 씁니다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
+	float MannequinSurvivorSpawnClearance = 2000.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning")
 	TSubclassOf<class AMannequinAICharacter> MannequinPawnClass;

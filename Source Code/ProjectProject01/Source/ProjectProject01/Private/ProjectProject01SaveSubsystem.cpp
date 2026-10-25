@@ -1,4 +1,5 @@
 #include "ProjectProject01SaveSubsystem.h"
+#include "ProjectCaseRecords.h"
 
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
@@ -520,6 +521,7 @@ void UProjectProject01SaveSubsystem::HandleAsyncSaveComplete(
 		: TEXT("체크포인트 저장에 실패했습니다.");
 	PendingSaveSuccessMessage.Reset();
 	OnSaveOperationCompleted.Broadcast(bCommitted, CompletionMessage);
+    if(bCommitted&&GetGameInstance())if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->RecordCampaignAchievement(TEXT("campaign_checkpoint"));
 }
 
 void UProjectProject01SaveSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)

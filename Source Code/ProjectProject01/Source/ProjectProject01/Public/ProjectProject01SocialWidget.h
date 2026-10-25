@@ -11,8 +11,10 @@ class PROJECTPROJECT01_API UProjectProject01SocialWidget final : public UUserWid
 public:
     void ConfigureBlockList() { bBlocksOnly=true; }
     void OpenFriends() { Open(TEXT("Friends")); }
+    void OpenPartyInvite() { Open(TEXT("PartyInvite")); }
     bool ShowRoomMemberProfile(const FString& UserId);
     bool ShowRoomMemberMenu(const FString& UserId,const FVector2D& Position);
+    bool ShowPartyMemberMenu(const FString& UserId,const FVector2D& Position);
     void CloseRoomMemberProfile();
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -39,7 +41,7 @@ private:
     bool bBlocksOnly=false;
     bool bRoomMemberProfile=false;
     FString Page;
-    FString Filter, ThreadAccount, ModalKind, ModalTarget, DraftAccent=TEXT("Slate"), DraftTitle=TEXT("Rookie"), LastMessageId;
+    FString Filter, PartyInviteDraft, ThreadAccount, ModalKind, ModalTarget, DraftAccent=TEXT("Slate"), DraftTitle=TEXT("Rookie"), LastMessageId;
     TSet<FString> SeenInvites;
     TSet<FString> SeenFriendRequests;
     FString ModalRequestKey;

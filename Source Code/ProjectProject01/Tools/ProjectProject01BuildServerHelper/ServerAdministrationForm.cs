@@ -183,10 +183,12 @@ internal sealed class ServerAdministrationForm : Form
         root.Controls.Add(serviceState);
         root.Controls.Add(maintenanceEnabled);
 
-        var noticeGroup = new GroupBox { Text = "전체 공지", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
-        var noticeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, AutoSize = true };
+        var noticeGroup = new GroupBox { Text = "점검 예약", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
+        var noticeLayout = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, RowCount = 3, AutoSize = true };
         noticeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        noticeLayout.Controls.Add(announcement, 0, 0);
+        noticeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        noticeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        noticeLayout.RowStyles.Add(new RowStyle(SizeType.Absolute,110));
         var schedulePanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
         schedulePanel.Controls.Add(new Label { Text = "새 점검 예약", AutoSize = true, Padding = new Padding(0, 7, 5, 0) });
         schedulePanel.Controls.Add(new Label { Text = "시작", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
@@ -195,15 +197,16 @@ internal sealed class ServerAdministrationForm : Form
         schedulePanel.Controls.Add(maintenanceEndTime);
         schedulePanel.Controls.Add(scheduleAnnouncement);
         schedulePanel.Controls.Add(new Label { Text = "(현재 PC의 로컬 시각)", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
-        noticeLayout.Controls.Add(schedulePanel, 0, 1);
-        noticeLayout.Controls.Add(new Label { Text = "진행 중·예정된 점검 예약 (최대 100개, 선택 후 개별 취소)", AutoSize = true }, 0, 2);
-        noticeLayout.Controls.Add(maintenanceSchedules, 0, 3);
+        noticeLayout.Controls.Add(schedulePanel, 0, 0);
+        noticeLayout.Controls.Add(new Label { Text = "진행 중·예정된 점검 예약 (최대 100개, 선택 후 개별 취소)", AutoSize = true }, 0, 1);
+        noticeLayout.Controls.Add(maintenanceSchedules, 0, 2);
         noticeGroup.Controls.Add(noticeLayout);
         root.Controls.Add(noticeGroup);
 
         var serviceButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
         AddButton(serviceButtons, "상태 새로고침", RefreshStatusAsync);
         AddButton(serviceButtons, "점검·공지 적용", ApplyServiceControlAsync);
+        AddButton(serviceButtons, "안내 공지", OpenAnnouncementEditorAsync);
         AddButton(serviceButtons, "점검 예약 추가", AddMaintenanceScheduleAsync);
         AddButton(serviceButtons, "선택 예약 변경", UpdateSelectedMaintenanceScheduleAsync);
         AddButton(serviceButtons, "점검 예약 취소", CancelMaintenanceScheduleAsync);
@@ -214,6 +217,7 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(serviceButtons, "런처 뉴스·패치노트·문의", () => {using var dialog=new CommunityAdministrationForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "플레이어 신고 확인", () => {using var dialog=new PlayerReportsForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "계정 이용 제한", () => {using var dialog=new AccountRestrictionForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
+        AddButton(serviceButtons, "사건 기록 조사 수량", () => {using var dialog=new CaseInvestigationForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "최대 방 수", () => {using var dialog=new RoomCapacityForm(CreateAdminRequest, value=>CapacityChanged?.Invoke(value));dialog.ShowDialog(this);return Task.CompletedTask;});
         root.Controls.Add(serviceButtons);
 
@@ -344,7 +348,18 @@ internal sealed class ServerAdministrationForm : Form
     private async Task ClearAnnouncementAsync()
     {
         announcement.Clear();
-        await ApplyServiceControlAsync();
+        await SendAnnouncementAsync();
+    }
+    private Task OpenAnnouncementEditorAsync()
+    {
+        using var dialog=new AnnouncementEditorForm(announcement.Text,text=>SendAnnouncementAsync(text));dialog.ShowDialog(this);return Task.CompletedTask;
+    }
+    private async Task SendAnnouncementAsync(string? text=null)
+    {
+        SetOperationStatus("안내 공지 전송 중...");
+        using var request=CreateAdminRequest(HttpMethod.Put,"/api/admin/service/announcement",new{announcement=text??announcement.Text});
+        using var response=await http.SendAsync(request);await ReadResponseAsync<ServiceControlDto>(response);
+        SetOperationStatus("안내 공지 전송 완료");await RefreshStatusAsync();
     }
 
     private async Task AddMaintenanceScheduleAsync()

@@ -19,6 +19,7 @@
 #include "Engine/TriggerBox.h"
 #include "ProjectMatchBots.h"
 #include "ProjectOpenObserver.h"
+#include "ProjectMatchReplay.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -330,6 +331,7 @@ AMultiplayTestGameMode::AMultiplayTestGameMode()
 	}
 
 	PlayerControllerClass = AMultiplayTestPlayerController::StaticClass();
+	ReplaySpectatorPlayerControllerClass = AProjectReplayController::StaticClass();
 	MannequinPawnClass = AMannequinAICharacter::StaticClass();
 	static ConstructorHelpers::FClassFinder<AMannequinAICharacter> MannequinPawnClassFinder(
 		TEXT("/Game/MyProject/BP_MannequinAICharacter"));
@@ -431,6 +433,23 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		{
 			SpawnPoints.Swap(Index, FMath::RandRange(0, Index));
 		}
+		// 생존자 시작 지점 바로 옆 마네킹은 시작 몇 초 만에 잡는 판을 만든다. 먼 후보를 먼저 쓰고
+		// 가까운 후보는 먼 후보가 모자랄 때만 쓴다. 먼 후보끼리의 무작위 순서는 그대로 둔다.
+		TArray<FVector> SurvivorStarts;
+		for (const AProjectProject01RoleSpawnPoint* Start : GetRoleSpawnPoints(EProjectProject01SpawnRole::Survivor)) SurvivorStarts.Add(Start->GetActorLocation());
+		if (const AActor* Arrival = AProjectProject01Elevator::FindArrivalStart(World, OptionsString)) SurvivorStarts.Add(Arrival->GetActorLocation());
+		const auto IsNearSurvivorStart = [&](const AProjectProject01RoleSpawnPoint* Point)
+		{
+			for (const FVector& Start : SurvivorStarts)
+				if (FVector::DistSquared(Start, Point->GetActorLocation()) < FMath::Square(MannequinSurvivorSpawnClearance)) return true;
+			return false;
+		};
+		TArray<AProjectProject01RoleSpawnPoint*> Near;
+		for (int32 Index = SpawnPoints.Num() - 1; Index >= 0; --Index)
+			if (IsNearSurvivorStart(SpawnPoints[Index])) { Near.Insert(SpawnPoints[Index], 0); SpawnPoints.RemoveAt(Index); }
+		SpawnPoints.Append(Near);
+		UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("Mannequin spawn candidates near survivor starts (<%.0fcm): %d of %d."),
+			MannequinSurvivorSpawnClearance, Near.Num(), SpawnPoints.Num());
 	}
 
 	TArray<AMannequinAICharacter*> Mannequins;
@@ -2397,6 +2416,8 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 		*GetNameSafe(Survivor), CaptureSeconds);
 	AMultiplayTestPlayerController* EliminatedController =
 		Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+	if(EliminatedController&&!EliminatedController->IsServerControlledBot())
+		EliminatedController->ClientQueueDeathCamera(Survivor,bCaughtByMannequin?TEXT("마네킹에 붙잡혔습니다."):TEXT("추락으로 사망했습니다."));
 	const TWeakObjectPtr<APlayerCharacter> WeakSurvivor(Survivor);
 	const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(EliminatedController);
 	if (UWorld* World = GetWorld(); IsValid(World))

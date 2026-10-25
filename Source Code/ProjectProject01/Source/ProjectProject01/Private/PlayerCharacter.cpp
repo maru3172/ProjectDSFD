@@ -1490,6 +1490,13 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	}
 	UE_LOG(LogTemp, Warning, TEXT("Player %s reached game over after being caught by mannequin %s."),
 		*GetName(), *CatchingMannequin->GetName());
+	// Balance diagnostics: what the catching body was doing (grep "[CatchBy]").
+	if (const AMannequinAICharacter* Catcher = Cast<AMannequinAICharacter>(CatchingMannequin))
+	{
+		UE_LOG(LogTemp, Display, TEXT("[CatchBy] Activity=%s Command=%s Frozen=%d CatcherSpeed=%.0f VictimSpeed=%.0f"),
+			*UEnum::GetValueAsString(Catcher->GetMultiplayActivity()), *UEnum::GetValueAsString(Catcher->GetMultiplayCommand()),
+			Catcher->IsFrozenBySurvivorVision(), Catcher->GetVelocity().Size2D(), GetVelocity().Size2D());
+	}
 	return true;
 }
 

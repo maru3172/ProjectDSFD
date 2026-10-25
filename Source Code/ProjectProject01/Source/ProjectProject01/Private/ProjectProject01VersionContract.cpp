@@ -49,7 +49,7 @@ FString FProjectProject01VersionContract::GetGameDataVersion()
 
 FString FProjectProject01VersionContract::GetNetworkProtocolVersion()
 {
-	return ProjectProject01VersionContract::Read(TEXT("NetworkProtocolVersion"), TEXT("5"));
+	return ProjectProject01VersionContract::Read(TEXT("NetworkProtocolVersion"), TEXT("6"));
 }
 
 FString FProjectProject01VersionContract::GetUpdateMessage()

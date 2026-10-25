@@ -70,7 +70,7 @@ internal static partial class CommunityEndpoints
             SELECT EXISTS(SELECT 1 FROM social_friends WHERE user_low=@low AND user_high=@high) isFriend,
               EXISTS(SELECT 1 FROM social_blocks WHERE owner_id=@me AND target_id=@id) isBlocked
             """,ct,("low",Math.Min(me,id)),("high",Math.Max(me,id)),("me",me),("id",id));
-        return Results.Ok(new{profile=profiles[0],statistics=stats,isSelf=id==me,
+        return Results.Ok(new{profile=profiles[0],statistics=stats,progression=await CaseRecords.PublicProfileAsync(c,id,ct),isSelf=id==me,
             isFriend=Convert.ToInt32(relation[0]["isFriend"])!=0,isBlocked=Convert.ToInt32(relation[0]["isBlocked"])!=0,
             statisticsNote="서버가 검증해 보관한 경기 기록 기준입니다. 미수집 경기는 포함하지 않습니다."});
     }
@@ -126,9 +126,14 @@ internal static partial class CommunityEndpoints
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room AND user_id=@sender",ct,("room",room),("sender",sender))!=1)return Error("초대한 친구가 방을 나갔습니다.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE user_id=@me",ct,("me",me))>0)return Error("현재 방을 먼저 나간 뒤 초대를 수락하세요.");
         if(await Scalar(c,tx,"SELECT COUNT(*) FROM social_presence WHERE user_id=@me AND context='Lobby' AND last_seen_utc>UTC_TIMESTAMP(6)-INTERVAL 20 SECOND",ct,("me",me))!=1)return Error("로비에서 초대를 수락하세요.");
-        bool asObserver=await Scalar(c,tx,"SELECT (SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=FALSE)+(SELECT COUNT(*) FROM room_bots WHERE room_id=@room)",ct,("room",room))>=3;
+        int partySize=await OpenParties.AdmissionSizeAsync(c,tx,me,"Open",ct);
+        if(partySize<1)return Error("오픈매칭 파티장만 방 초대를 수락할 수 있습니다.");
+        long playing=await Scalar(c,tx,"SELECT (SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=FALSE)+(SELECT COUNT(*) FROM room_bots WHERE room_id=@room)",ct,("room",room));
+        if(partySize>1&&playing+partySize>3)return Error("파티 전원이 플레이할 자리가 부족합니다.");
+        bool asObserver=playing>=3;
         if(asObserver&&(!allowObservers||await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=TRUE",ct,("room",room))>=2))return Error("방 인원이 가득 찼습니다.");
         await Exec(c,tx,"INSERT INTO room_members(room_id,user_id,is_ready,is_observer) VALUES(@room,@me,FALSE,@observer);DELETE FROM social_room_invites WHERE recipient_id=@me",ct,("room",room),("me",me),("observer",asObserver));
+        if(!await OpenParties.AttachToRoomAsync(c,tx,me,room,"Open",ct))return Error("파티원 상태가 바뀌어 전원 입장을 취소했습니다.");
         await Notify(c,tx,sender,"InviteAccepted",name+"님이 방 초대를 수락했습니다.",ct);
         await tx.CommitAsync(ct);return Results.Ok(new{message="친구의 방에 참가했습니다. 준비 상태는 초기화됩니다."});
     }

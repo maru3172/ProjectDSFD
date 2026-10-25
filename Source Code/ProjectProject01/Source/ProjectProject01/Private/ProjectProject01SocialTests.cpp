@@ -6,7 +6,13 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "ProjectProject01SocialWidget.h"
+#include "ProjectCaseRecords.h"
+#include "Widgets/SOverlay.h"
+#include "Widgets/SNullWidget.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Text/STextBlock.h"
+#include "ProjectDFSDUITheme.h"
 #include "Slate/WidgetRenderer.h"
 #include "HAL/FileManager.h"
 #include "RenderingThread.h"
@@ -54,7 +60,8 @@ bool FProjectSocialWidgetLayoutTest::RunTest(const FString&)
         TestEqual(TEXT("Self right-click always has exactly one item"),Self.Num(),1);
         TestEqual(TEXT("Self right-click only allows profile"),Self[0].Value,FString(TEXT("Profile")));
         const auto Other=UProjectProject01SocialWidget::RoomMenuActions(false,Friend,Blocked);
-        TestEqual(TEXT("Other participant has profile, friendship, whisper, block and report"),Other.Num(),5);
+        TestEqual(TEXT("Other participant also permits party invitation"),Other.Num(),6);
+        TestEqual(TEXT("Party invitation is available from the participant context menu"),Other[5].Value,FString(TEXT("PartyInvite")));
         TestEqual(TEXT("Friendship action follows current relationship"),Other[1].Value,FString(Friend?TEXT("Remove"):TEXT("Request")));
         TestEqual(TEXT("Block action follows own block state"),Other[3].Value,FString(Blocked?TEXT("Unblock"):TEXT("Block")));
         TestEqual(TEXT("Other participant report action present"),Other[4].Value,FString(TEXT("Report")));
@@ -65,7 +72,8 @@ bool FProjectSocialWidgetLayoutTest::RunTest(const FString&)
     auto* Auth=Instance->GetSubsystem<UProjectProject01AuthSubsystem>();
     auto* Social=Instance->GetSubsystem<UProjectProject01SocialSubsystem>();
     auto* Widget=NewObject<UProjectProject01SocialWidget>(World);Widget->Initialize();auto Slate=Widget->TakeWidget();
-    ON_SCOPE_EXIT{Auth->ForceClearLocalSession();Widget->ReleaseSlateResources(true);Instance->Shutdown();World->SetGameInstance(nullptr);World->DestroyWorld(false);};
+    UProjectCaseRecordDock* Dock=nullptr;
+    ON_SCOPE_EXIT{Auth->ForceClearLocalSession();if(Dock)Dock->ReleaseSlateResources(true);Widget->ReleaseSlateResources(true);Instance->Shutdown();World->SetGameInstance(nullptr);World->DestroyWorld(false);};
     Auth->AuthState=EProjectProject01AuthState::SignedIn;Auth->AccessToken=TEXT("non-network-layout-fixture");
     Social->ReadRequest=FHttpModule::Get().CreateRequest(); // Reserve read slot, without ProcessRequest.
     Social->bLobbyVisible=true;Social->Snapshot=MakeShared<FJsonObject>();
@@ -76,17 +84,36 @@ bool FProjectSocialWidgetLayoutTest::RunTest(const FString&)
     Social->Snapshot->SetArrayField(TEXT("friends"),{MakeShared<FJsonValueObject>(Person)});
     Social->Snapshot->SetArrayField(TEXT("statusMessages"),{MakeShared<FJsonValueObject>(Person)});
     Social->Snapshot->SetObjectField(TEXT("me"),Person);
+    Auth->AuthState=EProjectProject01AuthState::SignedOut;
+    Dock=NewObject<UProjectCaseRecordDock>(World);Dock->Initialize();auto DockSlate=Dock->TakeWidget();Dock->SetSocialOverlay(Widget);
+    Auth->AuthState=EProjectProject01AuthState::SignedIn;Auth->SignedInDisplayName=TEXT("내 닉네임");
+    auto* Records=Instance->GetSubsystem<UProjectCaseRecords>();Records->Snapshot=MakeShared<FJsonObject>();Records->Snapshot->SetStringField(TEXT("userId"),TEXT("1"));Records->Snapshot->SetNumberField(TEXT("level"),7);Records->Snapshot->SetNumberField(TEXT("credits"),500);Records->Snapshot->SetNumberField(TEXT("levelProgress"),.4);
+    auto Party=MakeShared<FJsonObject>();Party->SetBoolField(TEXT("isLeader"),true);Party->SetNumberField(TEXT("maximum"),3);TArray<TSharedPtr<FJsonValue>> PartyMembers;
+    for(int32 I=0;I<3;++I){auto M=MakeShared<FJsonObject>();M->SetStringField(TEXT("userId"),FString::FromInt(I+1));M->SetStringField(TEXT("accountId"),I==0?TEXT("self_account"):TEXT("friend_account"));M->SetStringField(TEXT("displayName"),I==0?TEXT("내 닉네임"):FString::Printf(TEXT("파티원 %d"),I));M->SetNumberField(TEXT("level"),I+2);PartyMembers.Add(MakeShared<FJsonValueObject>(M));}
+    Party->SetArrayField(TEXT("members"),PartyMembers);auto PartyState=MakeShared<FJsonObject>();PartyState->SetObjectField(TEXT("party"),Party);Records->Snapshot->SetObjectField(TEXT("partyState"),PartyState);
+    Slate=SNew(SOverlay)+SOverlay::Slot()[ProjectDFSDUI::FrameSlate(SNullWidget::NullWidget,1120,128)]+SOverlay::Slot()[DockSlate]+SOverlay::Slot()[Slate];
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("FeatureChecks/SocialUI");IFileManager::Get().MakeDirectory(*Directory,true);
     auto Render=[&](const FString& Name)
     {
-        FWidgetRenderer Renderer(true);auto* Target=Renderer.DrawWidget(Slate,FVector2D(1280,720));
-        Renderer.DrawWidget(Target,Slate,FVector2D(1280,720),0.016f);FlushRenderingCommands();FBufferArchive Image;
-        TestTrue(TEXT("Social panel renders"),FImageUtils::ExportRenderTarget2DAsPNG(Target,Image));
+        FWidgetRenderer Renderer(false);auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(1280,720),TF_Bilinear,false);
+        for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,Slate,FVector2D(1280,720),0.016f);FlushRenderingCommands();TArray<FColor> Pixels;
+        FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);TestTrue(TEXT("Social panel renders"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags));TArray64<uint8> Image;FImageUtils::PNGCompressImageArray(1280,720,Pixels,Image);
         TestTrue(TEXT("UI verification artifact saved"),FFileHelper::SaveArrayToFile(Image,*(Directory/(Name+TEXT(".png")))));
     };
+    Widget->OpenPartyInvite();Render(TEXT("PartyInviteFull"));
+    TestEqual(TEXT("Party invite opens inside the existing social overlay"),Widget->Page,FString(TEXT("PartyInvite")));
+    TestTrue(TEXT("Invite popup owns a visible account input"),Widget->TargetInput.IsValid()&&Widget->Panel->GetChildren()->Num()>0);
+    Widget->TargetInput->SetText(FText::FromString(TEXT("friend_account")));
+    TestEqual(TEXT("Invite input keeps its draft across refreshes"),Widget->PartyInviteDraft,FString(TEXT("friend_account")));
+    TestTrue(TEXT("Opening invite never submits a real party request"),!Records->IsBusy());
+    PartyMembers.RemoveAt(2);Party->SetArrayField(TEXT("members"),PartyMembers);
+    auto Received=MakeShared<FJsonObject>();Received->SetStringField(TEXT("id"),TEXT("offline-invite"));Received->SetStringField(TEXT("leaderName"),TEXT("다른 조사관"));
+    PartyState->SetArrayField(TEXT("invites"),{MakeShared<FJsonValueObject>(Received)});Widget->RefreshView();Render(TEXT("PartyInvite"));
+    TestTrue(TEXT("Received party invitation has a name and acceptance controls in the overlay"),Widget->List->GetChildren()->Num()>=2);
     Widget->Open(TEXT("Friends"));Render(TEXT("Friends"));
+    TestTrue(TEXT("Switching to friends replaces the party input without replacing the screen"),Widget->Page==TEXT("Friends")&&Widget->ModalKind.IsEmpty());
     const auto& G=Widget->Panel->GetCachedGeometry();
-    TestTrue(TEXT("Friends panel is on right-hand side"),G.GetAbsolutePosition().X>700);
+    TestTrue(TEXT("Friends panel is on right-hand side"),G.GetAbsolutePosition().X>640);
     TestTrue(TEXT("Friends panel has readable width"),G.GetLocalSize().X>=400);
     TestTrue(TEXT("Panel bottom remains in viewport"),G.GetAbsolutePosition().Y+G.GetLocalSize().Y<=720);
     Widget->ShowModal(TEXT("Add"));Render(TEXT("AddFriend"));

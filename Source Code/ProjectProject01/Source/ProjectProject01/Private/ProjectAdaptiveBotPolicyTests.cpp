@@ -12,7 +12,7 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         const auto D=Difficulty::For(L);Check(D.Level==L,"Five exact levels");
         Check(D.Skill>Prior,"Monotonically increasing skill");
         if(L>2)Check(D.Skill-Prior>PriorGain,"Convex, increasingly steep difficulty curve");
-        Check(D.Reaction>=.35f&&D.Memory<=8.01f&&D.Adaptation<=.53f,"Hard bounded difficulty profile");
+        Check(D.Reaction>=.35f&&D.Memory<=11.01f&&D.Adaptation<=.53f,"Hard bounded difficulty profile");
         Check(L<=2||D.Opening==0,"Only easy/normal deliberately create openings");PriorGain=D.Skill-Prior;Prior=D.Skill;
         Check(D.AllowsDeception()==(L>=4),"Deception is exclusive to expert/master");
     }
@@ -367,6 +367,8 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
             Persona Waiter;Waiter.Patience=1;
             Check(LurkPatience(Master,Waiter)>LurkPatience(Rookie,Ordinary),"Patient experts wait longer before going anyway");
         }
+        Check(ParkedBodies(Difficulty::For(1),false)>ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)==0&&
+            ParkedBodies(Difficulty::For(1),true)<ParkedBodies(Difficulty::For(1),false),"Beginners leave more bodies parked; masters none; fewer in the endgame");
         Check(StallSeconds(Difficulty::For(5))<StallSeconds(Difficulty::For(1))&&StallSeconds(Difficulty::For(5))>=15.f,"Masters break a stalemate sooner, never instantly");
         // Floor depth: firmer each floor down, full after four, level-scaled, never negative.
         Check(FloorResolve(Difficulty::For(3),0)==0&&FloorResolve(Difficulty::For(3),1)<FloorResolve(Difficulty::For(3),2)&&

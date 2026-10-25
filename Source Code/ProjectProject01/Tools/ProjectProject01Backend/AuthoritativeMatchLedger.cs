@@ -16,6 +16,8 @@ internal static class AuthoritativeMatchLedger
         var rooms=await CommunityEndpoints.Rows(connection,transaction,"SELECT id FROM game_rooms WHERE match_id=@m AND status='Started'",ct,("m",match));
         if(rooms.Count==1)await LobbyEndpoints.SnapshotMatchBotsAsync(connection,transaction,Convert.ToString(rooms[0]["id"])!,match,ct);
         await BotSkillRatings.CaptureAsync(connection,transaction,match,ct);
+        await CaseRecords.CaptureModeAsync(connection,transaction,match,ct);
+        await CaseInvestigation.CaptureServerAsync(connection,transaction,match,ct);
     }
     internal static async Task<bool> EndAsync(MySqlConnection connection,MySqlTransaction transaction,string match,CancellationToken ct)
     {
