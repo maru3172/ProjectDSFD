@@ -88,7 +88,7 @@ struct Difficulty
         D.Sharing=.15f+.75f*D.Skill;
         D.Adaptation=.04f+.48f*D.Skill;
         D.Coordination=.12f+.78f*D.Skill;
-        D.Opening=D.Level==1?.5f:D.Level==2?.35f:0.f;
+        D.Opening=D.Level==1?.65f:D.Level==2?.35f:0.f;
         D.TurnRate=85.f+125.f*D.Skill;
         return D;
     }
@@ -111,6 +111,8 @@ struct Difficulty
     }
 };
 
+// Index into a level table. Balance runs only: -BotSimProbe 5..8 gives a master the expert entry of one table group.
+inline int ProbeIndex(const Difficulty& D,int ProbeId){const int I=std::max(1,std::min(5,D.Level))-1;return I==4&&Difficulty::Probe()==ProbeId?3:I;}
 // How long a survivor keeps one mannequin frozen with a stare before looking away (bot team: 1.45..3.05 s, kept
 // short at the top because a long stare lets the other bodies close in from behind;
 // beside a human the helper's cover stays short), and how long the look-away lasts: the mannequin's window.
@@ -711,7 +713,7 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
-inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.86f,.95f};return L[std::max(1,std::min(5,D.Level))-1];}
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.86f,.95f};return L[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
 inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}
@@ -786,9 +788,9 @@ struct ComboBook
     struct Link { Play From=Play::None,To=Play::None;float Score=0; };
     std::array<Link,4> Links{};
     Play Last=Play::None;double LastEnded=-100;
-    static int Capacity(const Difficulty& D){static constexpr int C[]={1,1,2,3,4};return C[std::max(1,std::min(5,D.Level))-1];}
-    static float Needed(const Difficulty& D){static constexpr float N[]={4,3,3,2,2};return N[std::max(1,std::min(5,D.Level))-1];}
-    static float Bias(const Difficulty& D){static constexpr float B[]={.15f,.25f,.35f,.5f,.65f};return B[std::max(1,std::min(5,D.Level))-1];}
+    static int Capacity(const Difficulty& D){static constexpr int C[]={1,1,2,3,4};return C[ProbeIndex(D,6)];}
+    static float Needed(const Difficulty& D){static constexpr float N[]={4,3,3,2,2};return N[ProbeIndex(D,6)];}
+    static float Bias(const Difficulty& D){static constexpr float B[]={.15f,.25f,.35f,.5f,.65f};return B[ProbeIndex(D,6)];}
     static constexpr float Window=6.f; // Seconds after the opener in which the follow-up counts as one combo.
     // A play ended; Worked = it ended without a setback for this bot.
     void Ended(Play P,bool Worked,double Now,const Difficulty& D)
@@ -842,8 +844,8 @@ struct PlayTuning
 {
     struct Knob { float Duration=1,Reach=1,TrialDuration=1,TrialReach=1;bool Trial=false; };
     std::array<Knob,PlayCount> Knobs{};
-    static float Range(const Difficulty& D){static constexpr float R[]={.08f,.12f,.18f,.24f,.3f};return R[std::max(1,std::min(5,D.Level))-1];}
-    static float Rate(const Difficulty& D){static constexpr float R[]={.2f,.25f,.3f,.35f,.4f};return R[std::max(1,std::min(5,D.Level))-1];}
+    static float Range(const Difficulty& D){static constexpr float R[]={.08f,.12f,.18f,.24f,.3f};return R[ProbeIndex(D,7)];}
+    static float Rate(const Difficulty& D){static constexpr float R[]={.2f,.25f,.3f,.35f,.4f};return R[ProbeIndex(D,7)];}
     static size_t Index(Play P){const auto I=static_cast<size_t>(P);return I>0&&I<PlayCount?I:0;}
     // A play started: try a variant around the current knob (U1/U2 uniform in [0,1)).
     void Begin(Play P,const Difficulty& D,float U1,float U2)
@@ -880,7 +882,7 @@ struct PlayTuning
 // ---------------------------------------------------------------------------------------------
 // Map familiarity: chance a bot already knows an exit when a floor begins. The rest it finds by
 // seeing it, a teammate's word or a ping. Masters know the building; beginners explore.
-inline float MapFamiliarity(const Difficulty& D){static constexpr float F[]={.1f,.25f,.45f,.7f,.9f};return F[std::max(1,std::min(5,D.Level))-1];}
+inline float MapFamiliarity(const Difficulty& D){static constexpr float F[]={.1f,.25f,.45f,.7f,.9f};return F[ProbeIndex(D,8)];}
 inline bool KnowsExitAtStart(const Difficulty& D,uint32_t Hash){return static_cast<float>(Hash%1000u)/1000.f<MapFamiliarity(D);}
 
 // Emotions. Fear jumps on a near miss and fades in seconds; frustration builds on lost or frozen
@@ -889,7 +891,7 @@ struct Mood
 {
     float Fear=0,Frustration=0;double At=-1;
     static float Composure(const Difficulty& D,const Persona& P)
-    {static constexpr float C[]={.1f,.25f,.45f,.65f,.8f};return Clamp(C[std::max(1,std::min(5,D.Level))-1]+.2f*(Clamp(P.Steadiness,0,1)-.5f),0,.95f);}
+    {static constexpr float C[]={.1f,.25f,.45f,.65f,.8f};return Clamp(C[ProbeIndex(D,8)]+.2f*(Clamp(P.Steadiness,0,1)-.5f),0,.95f);}
     void Decay(double Now)
     {
         if(!Finite(Now))return;
@@ -905,7 +907,7 @@ struct Mood
 // Talking with pings. How often a bot remembers to call out what it saw, and how late and how far
 // off the mark the ping lands. Higher levels and curious characters call out more and more precisely.
 inline float PingHabit(const Difficulty& D,const Persona& P)
-{static constexpr float H[]={.35f,.5f,.65f,.8f,.9f};return Clamp(H[std::max(1,std::min(5,D.Level))-1]*(.8f+.4f*Clamp(P.Curiosity,0,1)),0,1);}
+{static constexpr float H[]={.35f,.5f,.65f,.8f,.9f};return Clamp(H[ProbeIndex(D,8)]*(.8f+.4f*Clamp(P.Curiosity,0,1)),0,1);}
 inline float PingDelay(const Difficulty& D,float U){return D.Reaction*(1.f+Clamp(U,0,1))+.3f;}
 inline float PingError(const Difficulty& D){return 300.f*MistakeScale(D);}
 // Answering a teammate's ping: beginners often miss it.
@@ -951,10 +953,10 @@ inline LoneApproach ChooseLoneApproach(const Difficulty& D,const Persona& P,bool
 inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*Clamp(D.Skill,0,1)+6.f*Clamp(P.Patience,0,1);}
 
 // Bodies a mannequin player of this level leaves parked (the existing Hold command): a beginner does not manage
-// all ten bodies. The rest keep their usual AI. A quarter fewer in the endgame.
+// all ten bodies. The rest keep their usual AI. The endgame table frees a few more from level 2 up.
 // Balance runs only: a value >= 0 replaces the count (0 stands in for a human mannequin, who parks nothing).
 inline int& ParkOverride(){static int Value=-1;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,7,5,4,0};if(ParkOverride()>=0)return ParkOverride();const int N=P[std::max(1,std::min(5,D.Level))-1];return Endgame?N-N/4:N;}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,6,5,0},E[]={9,8,5,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the
