@@ -59,7 +59,7 @@ internal static partial class CaseInvestigation
         var end=await SeasonEndAsync(c,tx,ct);bool ended=end is not null&&DateTimeOffset.UtcNow>=end;
         var rows=await CommunityEndpoints.Rows(c,tx,"SELECT record_id recordId,claimed FROM case_investigation_records WHERE user_id=@u AND season=@s",ct,("u",user),("s",CaseRecords.Season));
         var found=rows.Select(r=>(string)r["recordId"]!).ToHashSet(StringComparer.Ordinal);
-        bool StageDone(int stage)=>records.Where(r=>r.Stage==stage).All(r=>found.Contains(r.Id));
+        bool StageDone(int stage)=>records.Count(r=>r.Stage==stage&&found.Contains(r.Id))>=7;
         var claims=await CommunityEndpoints.Rows(c,tx,"SELECT reward_key FROM case_claims WHERE user_id=@u AND reward_key LIKE @prefix",ct,("u",user),("prefix",CaseRecords.Season+":Investigation:%"));
         var claimed=claims.Select(r=>(string)r["reward_key"]!).ToHashSet();
         bool StoryOpen(int stage)=>ended||claimed.Contains(StageKey(stage));
@@ -67,9 +67,9 @@ internal static partial class CaseInvestigation
         int weeklyLimit=await WeeklyLimitAsync(c,tx,ct);string week=CaseRecords.Periods(now).Weekly;
         var usage=await CommunityEndpoints.Rows(c,tx,"SELECT collected FROM case_investigation_weekly WHERE user_id=@u AND season=@s AND week_id=@w",ct,("u",user),("s",CaseRecords.Season),("w",week));
         int used=usage.Count==0?0:Convert.ToInt32(usage[0]["collected"]);
-        return new{enabled=records.Length==117,endsAtUtc=end,ended,todayKst=Day(now),totalParts=13,piecesPerPart=9,totalPieces=117,weeklyLimit,collectedThisWeek=used,remainingThisWeek=Math.Max(0,weeklyLimit-used),carryOver=false,
+        return new{enabled=records.Length==117,endsAtUtc=end,ended,todayKst=Day(now),totalParts=13,piecesPerPart=9,requiredPieces=7,totalPieces=117,weeklyLimit,collectedThisWeek=used,remainingThisWeek=Math.Max(0,weeklyLimit-used),carryOver=false,
             records=records.Select(r=>new{id=r.Id,title=ended||found.Contains(r.Id)?r.Title:$"{r.Part}번 조각",r.Stage,r.Part,availableToday=!ended&&used<weeklyLimit,
-            stageAvailable=records.Where(p=>p.Stage<r.Stage).All(p=>found.Contains(p.Id)),discovered=found.Contains(r.Id),
+            stageAvailable=Enumerable.Range(1,r.Stage-1).All(StageDone),discovered=found.Contains(r.Id),
             description=ended||found.Contains(r.Id)?r.Description:"",points=r.Points,
             claimed=rows.Any(x=>(string)x["recordId"]! ==r.Id&&Convert.ToBoolean(x["claimed"]))}),
             stages=records.Select(r=>r.Stage).Distinct().Order().Select(s=>new{stage=s,parts=records.Count(r=>r.Stage==s),collected=records.Count(r=>r.Stage==s&&found.Contains(r.Id)),
@@ -93,7 +93,7 @@ internal static partial class CaseInvestigation
         if(operation!="ClaimInvestigationStage"||!int.TryParse(id,out int stage))return false;
         var needed=records.Where(r=>r.Stage<=stage).ToArray();if(!needed.Any(r=>r.Stage==stage))return false;
         var collected=await CommunityEndpoints.Rows(c,tx,"SELECT record_id FROM case_investigation_records WHERE user_id=@u AND season=@s",ct,("u",user),("s",CaseRecords.Season));
-        if(needed.Any(r=>!collected.Any(x=>(string)x["record_id"]! ==r.Id)))return false;
+        if(Enumerable.Range(1,stage).Any(s=>needed.Count(r=>r.Stage==s&&collected.Any(x=>(string)x["record_id"]! ==r.Id))<7))return false;
         await CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO case_claims(user_id,reward_key) VALUES(@u,@key);INSERT IGNORE INTO case_inventory(user_id,item_id) VALUES(@u,@id)",ct,("u",user),("key",StageKey(stage)),("id",RareItem(stage)));
         return true;
     }
@@ -146,6 +146,7 @@ internal static partial class CaseInvestigation
             if(!Guid.TryParse(body.MatchId,out var match)||!ulong.TryParse(body.UserId,out ulong user)||body.ServerPort is <1 or >65535)return Results.BadRequest();
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
             var seasonEnd=await SeasonEndAsync(c,tx,ct);
+            if(await CustomRoomRules.IsCustomAsync(c,tx,match.ToString(),ct))return Results.Conflict(new{message="사용자 지정 경기에서는 조사 기록을 수집할 수 없습니다."});
             if(seasonEnd is not null&&DateTimeOffset.UtcNow>=seasonEnd)return Results.Conflict(new{message="시즌이 종료되었습니다. 공개된 이야기는 사건 기록 보관함에서 열람할 수 있습니다."});
             await CommunityEndpoints.Rows(c,tx,"SELECT singleton_id FROM case_investigation_catalogue WHERE singleton_id=1 FOR UPDATE",ct);
             DateTimeOffset now=DateTimeOffset.UtcNow;var all=await DefinitionsAsync(c,tx,app.Configuration,ct);
@@ -161,7 +162,7 @@ internal static partial class CaseInvestigation
             if(admission.Count!=1)return Results.StatusCode(403);
             await CaseRecords.LockAccountAsync(c,tx,user,ct);
             var previous=await CommunityEndpoints.Rows(c,tx,"SELECT record_id FROM case_investigation_records WHERE user_id=@u AND season=@s",ct,("u",user),("s",CaseRecords.Season));
-            var eligible=records.Where(record=>all.Where(r=>r.Stage<record.Stage).All(r=>previous.Any(p=>(string)p["record_id"]! ==r.Id))).ToArray();
+            var eligible=records.Where(record=>Enumerable.Range(1,record.Stage-1).All(s=>all.Count(r=>r.Stage==s&&previous.Any(p=>(string)p["record_id"]! ==r.Id))>=7)).ToArray();
             if(eligible.Length==0)return Results.Conflict(new{message="이전 단계의 조사 파츠를 먼저 완성하세요."});
             var unseen=eligible.Where(r=>!previous.Any(p=>(string)p["record_id"]! ==r.Id)).OrderBy(r=>r.Stage).ThenBy(r=>r.Part).ToArray();
             string week=CaseRecords.Periods(body.ObservedAtUtc).Weekly;

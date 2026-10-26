@@ -1,4 +1,4 @@
-#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
+﻿#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 #include "ProjectCaseRecords.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "Engine/GameInstance.h"
@@ -20,6 +20,9 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/SlateRenderer.h"
+#include "Fonts/FontMeasure.h"
 #include "Widgets/Input/SButton.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCaseUiRenderTest,"ProjectProject01.CaseRecords.RenderPages",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
@@ -38,6 +41,11 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
       "partyState":{"role":"Survivor","invites":[],"party":{"id":"fixture","mode":"Open","leaderId":"1","maximum":3,"isLeader":true,"members":[{"userId":"1","displayName":"테스트 조사관","role":"Survivor"}]}},
       "season":{"incidentTimestamp":"202X-XX-XX 18:24:01","availability":"(~ 정식 출시 전까지)","investigation":{"enabled":true,"weeklyLimit":15,"collectedThisWeek":3,"remainingThisWeek":12,"records":[],"stages":[]}}})json");
     if(!TestTrue(TEXT("Offline render fixture decodes"),FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),R->Snapshot)))return false;
+    R->Local->Earned.Add(TEXT("campaign_checkpoint"));
+    auto Escaped=MakeShared<FJsonObject>();Escaped->SetStringField(TEXT("code"),TEXT("campaign_escape"));R->Snapshot->SetArrayField(TEXT("achievements"),{MakeShared<FJsonValueObject>(Escaped)});
+    R->AchievementRateBase=Auth->GetApiBaseUrlForAuthenticatedRequest();R->AchievementRates=MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> RateRows;for(const FString Code:{FString(TEXT("campaign_checkpoint")),FString(TEXT("campaign_escape")),FString(TEXT("campaign_complete"))})
+    {auto Rate=MakeShared<FJsonObject>();Rate->SetStringField(TEXT("code"),Code);Rate->SetNumberField(TEXT("percentage"),Code==TEXT("campaign_checkpoint")?75:Code==TEXT("campaign_escape")?25:0);RateRows.Add(MakeShared<FJsonValueObject>(Rate));}R->AchievementRates->SetArrayField(TEXT("achievements"),RateRows);
     TArray<TSharedPtr<FJsonValue>> FullMissions;
     for(const FString Mode:{FString(TEXT("Pvp")),FString(TEXT("Bot"))})for(int32 I=0;I<4;++I)
     {
@@ -97,7 +105,7 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     }
     }
     Party->SetArrayField(TEXT("members"),OriginalMembers);PartyState->SetObjectField(TEXT("party"),Party);
-    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("Achievements")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive")),FString(TEXT("Party"))})
+    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("Achievements")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive"))})
     {
         Auth->AuthState=Page==TEXT("Archive")?EProjectProject01AuthState::SignedOut:EProjectProject01AuthState::SignedIn;
         if(Page==TEXT("TrackComplete")||Page==TEXT("TrackUnclaimed")||Page==TEXT("Archive"))
@@ -116,7 +124,8 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         // that page, rather than reusing one frame's cached attributes across cases.
         Widget->ReleaseSlateResources(true);Widget=NewObject<UProjectCaseRecordWidget>(World);static_cast<UUserWidget*>(Widget)->Initialize();
         if(Page==TEXT("ProfileClaimed"))Rewards[0]->AsObject()->SetBoolField(TEXT("claimed"),true);
-        Widget->Page=Page.StartsWith(TEXT("Track"))?TEXT("Track"):Page.StartsWith(TEXT("Profile"))?TEXT("Profile"):Page;R->Status=Page==TEXT("TrackComplete")?TEXT("보상을 수령했습니다."):FString();
+        R->Snapshot->SetNumberField(TEXT("credits"),Page==TEXT("ShopNoFunds")?0:500);
+        Widget->Page=Page.StartsWith(TEXT("Track"))?TEXT("Track"):Page.StartsWith(TEXT("Profile"))?TEXT("Profile"):Page.StartsWith(TEXT("Shop"))?TEXT("Shop"):Page;R->Status=Page==TEXT("TrackComplete")?TEXT("보상을 수령했습니다."):Page==TEXT("ShopNoFunds")?TEXT("포인트가 부족합니다"):FString();
         R->Request=FHttpModule::Get().CreateRequest();Slate=Widget->TakeWidget();R->Request.Reset();Widget->RefreshPanel();
         for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
         {
@@ -146,6 +155,28 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
                     if(auto* Children=Node->GetChildren())for(int32 I=0;I<Children->Num();++I)CountRewards(Children->GetChildAt(I));
                 };CountRewards(Slate);TestEqual(TEXT("Only the next unclaimed level reward is displayed"),RewardRows,1);
                 TestTrue(TEXT("Claiming a milestone advances the displayed reward"),RewardText.StartsWith(Page==TEXT("ProfileClaimed")?TEXT("레벨 10 ·"):TEXT("레벨 5 ·")));
+            }
+            if(Page==TEXT("ShopNoFunds"))
+            {
+                int32 Purchases=0;TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> W){if(W->GetType()==FName(TEXT("SButton"))){auto B=StaticCastSharedRef<SButton>(W);if(B->GetContent()->GetType()==FName(TEXT("STextBlock"))&&StaticCastSharedRef<STextBlock>(B->GetContent())->GetText().ToString()==TEXT("구매")){++Purchases;TestTrue(TEXT("Purchase remains clickable with zero points; server still validates spending"),B->IsEnabled());}}if(auto* C=W->GetChildren())for(int32 I=0;I<C->Num();++I)Inspect(C->GetChildAt(I));};Inspect(Slate);TestEqual(TEXT("All five unowned products offer purchase feedback with zero points"),Purchases,5);
+            }
+            if(Page==TEXT("Achievements"))
+            {
+                TSet<FString> Captions;TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> W){if(W->GetType()==FName(TEXT("STextBlock"))){const auto Text=StaticCastSharedRef<STextBlock>(W);Captions.Add(Text->GetText().ToString());if(Text->GetText().ToString().StartsWith(TEXT("전체 달성률")))TestTrue(TEXT("Global achievement percentage stays on one line"),Text->GetDesiredSize().Y<=FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(Text->GetText(),Text->GetFont()).Y*1.3f+2);}if(auto* C=W->GetChildren())for(int32 I=0;I<C->Num();++I)Inspect(C->GetChildAt(I));};Inspect(Slate);
+                TestTrue(TEXT("Personal overall and area completion counts are visible"),Captions.Contains(TEXT("전체 2/3"))&&Captions.Contains(TEXT("체크포인트 1/1"))&&Captions.Contains(TEXT("탈출 1/1"))&&Captions.Contains(TEXT("완주 0/1")));
+                TestTrue(TEXT("Per-achievement global percentage appears independently of personal state"),Captions.Contains(TEXT("전체 달성률 75.0%"))&&Captions.Contains(TEXT("전체 달성률 25.0%")));
+            }
+            if(Page.StartsWith(TEXT("Track"))||Page==TEXT("Archive"))
+            {
+                TArray<FGeometry> Cells;TSharedPtr<SWidget> Progress;
+                TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> W){if(W->GetType()==FName(TEXT("SCasePuzzleCell")))Cells.Add(W->GetCachedGeometry());if(W->GetType()==FName(TEXT("STextBlock"))&&StaticCastSharedRef<STextBlock>(W)->GetText().ToString().StartsWith(TEXT("파트 완성 "))&&StaticCastSharedRef<STextBlock>(W)->GetText().ToString().Contains(TEXT("/7")))Progress=W;if(auto* C=W->GetChildren())for(int32 I=0;I<C->Num();++I)Inspect(C->GetChildAt(I));};Inspect(Slate);
+                if(TestEqual(TEXT("The puzzle keeps all nine individually collectible pieces"),Cells.Num(),9))
+                {
+                    FVector2D Min(1e9,1e9),Max(-1e9,-1e9);TSet<FIntPoint> Shapes;
+                    for(const auto& Cell:Cells){const auto P=Cell.GetAbsolutePosition(),S=Cell.GetAbsoluteSize();Min.X=FMath::Min(Min.X,P.X);Min.Y=FMath::Min(Min.Y,P.Y);Max.X=FMath::Max(Max.X,P.X+S.X);Max.Y=FMath::Max(Max.Y,P.Y+S.Y);Shapes.Add(FIntPoint(FMath::RoundToInt(S.X),FMath::RoundToInt(S.Y)));}
+                    TestTrue(TEXT("The filled puzzle rectangle is moderately portrait and pieces vary in both dimensions"),(Max.Y-Min.Y)>(Max.X-Min.X)&&(Max.Y-Min.Y)<(Max.X-Min.X)*1.5&&Shapes.Num()>=5);
+                    TestTrue(TEXT("Part completion is above the puzzle rather than inside the story"),Progress.IsValid()&&Progress->GetCachedGeometry().GetAbsolutePosition().Y<Min.Y);
+                }
             }
             Target->ReleaseResource();
         }

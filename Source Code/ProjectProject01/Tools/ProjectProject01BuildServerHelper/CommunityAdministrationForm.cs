@@ -11,8 +11,10 @@ internal sealed class CommunityAdministrationForm : Form
     private readonly ListBox inquiries=new(){Dock=DockStyle.Left,Width=270,DisplayMember="Title"};
     private readonly TextBox title=new(){Dock=DockStyle.Top,MaxLength=120,PlaceholderText="제목"};
     private readonly TextBox body=new(){Dock=DockStyle.Fill,Multiline=true,ScrollBars=ScrollBars.Vertical,MaxLength=16000};
+    private readonly TextBox summary=new(){Name="LauncherPostSummary",Dock=DockStyle.Top,Height=62,Multiline=true,ScrollBars=ScrollBars.Vertical,MaxLength=500,PlaceholderText="요약 내용"};
     private readonly ComboBox kind=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=150};
     private readonly CheckBox published=new(){AutoSize=true,Text="런처에 공개",Checked=true};
+    private readonly CheckBox featured=new(){AutoSize=true,Text="런처 대표 칸에 표시"};
     private readonly ComboBox previewImage=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=220,DisplayMember="Label"};
     private readonly PictureBox previewPhoto=new(){Width=96,Height=54,SizeMode=PictureBoxSizeMode.Zoom,Visible=false};
     private CancellationTokenSource? previewLoading;
@@ -21,7 +23,7 @@ internal sealed class CommunityAdministrationForm : Form
     private readonly Func<HttpMethod,string,object?,HttpRequestMessage> create;
     private string? editingId;
     private bool pending;
-    private sealed record Post(string Id,string Kind,string Title,string Body,bool Published,string? PreviewImageId);
+    private sealed record Post(string Id,string Kind,string Title,string Body,bool Published,string? PreviewImageId,bool Featured,string Summary);
     private sealed record PreviewOption(string? Id,string Label);
     private sealed record Inquiry(string Id,string Title,string Body,string Reply,string Status);
 
@@ -30,8 +32,8 @@ internal sealed class CommunityAdministrationForm : Form
         this.create=create;Text="런처 뉴스·패치노트 / 고객센터 문의";Width=1100;Height=720;MinimumSize=new Size(820,500);StartPosition=FormStartPosition.CenterParent;
         var tabs=new TabControl{Dock=DockStyle.Fill};var news=new TabPage("공지·패치노트");var support=new TabPage("접수 문의·답변");tabs.TabPages.AddRange([news,support]);
         var editor=new Panel{Dock=DockStyle.Fill,Padding=new Padding(8)};var toolbar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
-        kind.Items.AddRange(["뉴스 / 공지","패치노트"]);kind.SelectedIndex=0;toolbar.Controls.AddRange([kind,published]);
-        Add(toolbar,"새 글",()=>{editingId=null;posts.ClearSelected();title.Clear();body.Clear();published.Checked=true;return Task.CompletedTask;});
+        kind.Items.AddRange(["뉴스 / 공지","패치노트","이벤트"]);kind.SelectedIndex=0;toolbar.Controls.AddRange([kind,published,featured]);
+        Add(toolbar,"새 글",()=>{editingId=null;posts.ClearSelected();title.Clear();body.Clear();summary.Clear();published.Checked=true;featured.Checked=false;return Task.CompletedTask;});
         Add(toolbar,"사진 첨부",async()=>
         {
             using var picker=new OpenFileDialog {Filter="PNG / JPG 사진|*.png;*.jpg;*.jpeg",Title="공지에 첨부할 사진 선택"};
@@ -53,18 +55,18 @@ internal sealed class CommunityAdministrationForm : Form
             preview.Shown+=async(_,_)=>{try{await viewer.ShowPostAsync(body.Text,"http://127.0.0.1");}catch(OperationCanceledException){}catch(Exception ex){if(!preview.IsDisposed)label.Text=ex.Message;}};
             preview.ShowDialog(this);return Task.CompletedTask;
         });
-        Add(toolbar,"저장",async()=>{await Send(editingId is null?HttpMethod.Post:HttpMethod.Put,"/api/admin/community/posts"+(editingId is null?"":"/"+editingId),new {kind=kind.SelectedIndex==1?"Patch":"News",title=title.Text,body=body.Text,published=published.Checked,previewImageId=(previewImage.SelectedItem as PreviewOption)?.Id});await LoadData();});
+        Add(toolbar,"저장",async()=>{await Send(editingId is null?HttpMethod.Post:HttpMethod.Put,"/api/admin/community/posts"+(editingId is null?"":"/"+editingId),new {kind=kind.SelectedIndex switch {1=>"Patch",2=>"Event",_=>"News"},title=title.Text,body=body.Text,summary=summary.Text,published=published.Checked,previewImageId=(previewImage.SelectedItem as PreviewOption)?.Id,featured=featured.Checked});await LoadData();});
         Add(toolbar,"선택 글 삭제",async()=>
         {
             if(posts.SelectedItem is not Post selected)throw new InvalidOperationException("삭제할 글을 선택하세요.");
             if(MessageBox.Show(this,"선택한 글을 삭제할까요?","삭제 확인",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
-            await Send(HttpMethod.Delete,"/api/admin/community/posts/"+selected.Id,null);editingId=null;title.Clear();body.Clear();await LoadData();
+            await Send(HttpMethod.Delete,"/api/admin/community/posts/"+selected.Id,null);editingId=null;title.Clear();body.Clear();summary.Clear();await LoadData();
         });
         var instructions=new Label {Dock=DockStyle.Top,Height=36,Text="제목과 본문을 작성하세요. 사진 첨부·표 삽입은 본문에 표시 기호를 넣습니다.\n사진·표는 게시 후 런처에서 읽기 전용으로 보입니다. HTML·스크립트는 실행하지 않습니다."};
-        var previewBar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};previewBar.Controls.AddRange([new Label {Text="목록 미리보기 사진",AutoSize=true},previewImage,previewPhoto]);
-        editor.Controls.Add(body);editor.Controls.Add(instructions);editor.Controls.Add(previewBar);editor.Controls.Add(title);editor.Controls.Add(toolbar);news.Controls.Add(editor);news.Controls.Add(posts);
+        var previewBar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};previewBar.Controls.AddRange([new Label {Text="대표 배너·목록 사진",AutoSize=true},previewImage,previewPhoto]);
+        editor.Controls.Add(body);editor.Controls.Add(instructions);editor.Controls.Add(summary);editor.Controls.Add(new Label {Text="런처 요약",Dock=DockStyle.Top,Height=22});editor.Controls.Add(previewBar);editor.Controls.Add(title);editor.Controls.Add(toolbar);news.Controls.Add(editor);news.Controls.Add(posts);
         body.TextChanged+=(_,_)=>RefreshPreviewOptions();previewImage.SelectedIndexChanged+=async(_,_)=>await RefreshPreviewPhoto();RefreshPreviewOptions();
-        posts.SelectedIndexChanged+=(_,_)=>{if(posts.SelectedItem is Post p){editingId=p.Id;title.Text=p.Title;body.Text=p.Body;kind.SelectedIndex=p.Kind=="Patch"?1:0;published.Checked=p.Published;SelectPreview(p.PreviewImageId);}};
+        posts.SelectedIndexChanged+=(_,_)=>{if(posts.SelectedItem is Post p){editingId=p.Id;title.Text=p.Title;body.Text=p.Body;summary.Text=p.Summary;kind.SelectedIndex=p.Kind switch {"Patch"=>1,"Event"=>2,_=>0};published.Checked=p.Published;featured.Checked=p.Featured;SelectPreview(p.PreviewImageId);}};
         var supportEditor=new Panel{Dock=DockStyle.Fill,Padding=new Padding(8)};
         var replyActions=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true};
         async Task Answer(string state)
@@ -174,7 +176,7 @@ internal sealed class CommunityAdministrationForm : Form
         using var doc=JsonDocument.Parse(await response.Content.ReadAsStringAsync(closing.Token));
         string? selectedInquiry=(inquiries.SelectedItem as Inquiry)?.Id;
         posts.Items.Clear();inquiries.Items.Clear();
-        foreach(var p in doc.RootElement.GetProperty("posts").EnumerateArray())posts.Items.Add(new Post(p.GetProperty("id").GetString()!,p.GetProperty("kind").GetString()!,p.GetProperty("title").GetString()!,p.GetProperty("body").GetString()!,p.GetProperty("published").GetBoolean(),p.TryGetProperty("previewImageId",out var preview)?preview.GetString():null));
+        foreach(var p in doc.RootElement.GetProperty("posts").EnumerateArray())posts.Items.Add(new Post(p.GetProperty("id").GetString()!,p.GetProperty("kind").GetString()!,p.GetProperty("title").GetString()!,p.GetProperty("body").GetString()!,p.GetProperty("published").GetBoolean(),p.TryGetProperty("previewImageId",out var preview)?preview.GetString():null,p.TryGetProperty("featured",out var front)&&front.GetBoolean(),p.TryGetProperty("summary",out var excerpt)?excerpt.GetString()??"":""));
         foreach(var q in doc.RootElement.GetProperty("inquiries").EnumerateArray())
         {
             var row=new Inquiry(q.GetProperty("id").GetString()!,q.GetProperty("subject").GetString()!,q.GetProperty("body").GetString()!,q.GetProperty("reply").GetString()??"",q.GetProperty("status").GetString()!);

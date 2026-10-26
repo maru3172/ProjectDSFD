@@ -64,7 +64,8 @@ internal static partial class CommunityEndpoints
         var stats=await Rows(c,null,"""
             SELECT role,COUNT(*) matches,COALESCE(SUM(success),0) wins,COALESCE(SUM(capture_count),0) captures,
               COALESCE(SUM(rescue_count),0) rescues,MIN(CASE WHEN success=1 THEN escape_seconds END) bestEscapeSeconds
-            FROM verified_match_results WHERE user_id=@id GROUP BY role
+            FROM verified_match_results WHERE user_id=@id
+              AND NOT EXISTS(SELECT 1 FROM match_custom_rules cr WHERE cr.match_id=verified_match_results.match_id AND cr.enabled=TRUE) GROUP BY role
             """,ct,("id",id));
         var relation=await Rows(c,null,"""
             SELECT EXISTS(SELECT 1 FROM social_friends WHERE user_low=@low AND user_high=@high) isFriend,

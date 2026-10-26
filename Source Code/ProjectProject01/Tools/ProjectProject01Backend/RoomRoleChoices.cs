@@ -29,6 +29,7 @@ internal static class RoomRoleChoices
         var botRoom=await CommunityEndpoints.Rows(c,tx,"SELECT r.host_user_id,b.human_role FROM game_rooms r JOIN bot_rooms b ON b.room_id=r.id WHERE r.id=@r",ct,("r",room));
         if(botRoom.Count>0)
         {
+            if(result.Count==2)return result.Select(x=>(x.Item1,"Survivor")).ToList();
             ulong host=Convert.ToUInt64(botRoom[0]["host_user_id"]);int index=result.FindIndex(p=>p.Item1==host);
             if(index>=0)result[index]=(host,Convert.ToString(botRoom[0]["human_role"])!);
         }

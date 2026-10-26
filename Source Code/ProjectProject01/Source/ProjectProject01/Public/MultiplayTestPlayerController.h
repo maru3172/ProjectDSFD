@@ -75,6 +75,7 @@ USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 {
 	GENERATED_BODY()
+    UPROPERTY(BlueprintReadOnly) bool bCustomMatch=false;
 
 	UPROPERTY(BlueprintReadOnly)
 	FString MatchId;

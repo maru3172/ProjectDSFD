@@ -101,6 +101,7 @@ bool FProjectSocialWidgetLayoutTest::RunTest(const FString&)
         TestTrue(TEXT("UI verification artifact saved"),FFileHelper::SaveArrayToFile(Image,*(Directory/(Name+TEXT(".png")))));
     };
     Widget->OpenPartyInvite();Render(TEXT("PartyInviteFull"));
+    TestTrue(TEXT("Party invitation popup is on the left above the party bar"),Widget->Panel->GetCachedGeometry().GetAbsolutePosition().X<300);
     TestEqual(TEXT("Party invite opens inside the existing social overlay"),Widget->Page,FString(TEXT("PartyInvite")));
     TestTrue(TEXT("Invite popup owns a visible account input"),Widget->TargetInput.IsValid()&&Widget->Panel->GetChildren()->Num()>0);
     Widget->TargetInput->SetText(FText::FromString(TEXT("friend_account")));

@@ -46,6 +46,7 @@ internal static class BotExperience
     internal static async Task ApplyAsync(MySqlConnection c,MySqlTransaction tx,string match,IReadOnlyList<BotExperienceUpload>? uploads,CancellationToken ct)
     {
         if(uploads is null||uploads.Count==0)return;
+        if(await CustomRoomRules.IsCustomAsync(c,tx,match,ct))return;
         var bots=await LobbyEndpoints.LoadMatchBotsAsync(c,tx,match,ct);
         foreach(var upload in uploads.Take(3))
         {

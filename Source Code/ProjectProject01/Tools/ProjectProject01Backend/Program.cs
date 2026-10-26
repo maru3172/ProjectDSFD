@@ -819,16 +819,31 @@ internal sealed class AuthDatabase
             await using var addPreview = new MySqlCommand("ALTER TABLE projectproject01.launcher_posts ADD COLUMN preview_image_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL", connection);
             await addPreview.ExecuteNonQueryAsync(cancellationToken);
         }
+        await using var featuredColumn = new MySqlCommand("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='projectproject01' AND table_name='launcher_posts' AND column_name='featured'", connection);
+        if (Convert.ToInt32(await featuredColumn.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addFeatured = new MySqlCommand("ALTER TABLE projectproject01.launcher_posts ADD COLUMN featured BOOLEAN NOT NULL DEFAULT FALSE", connection);
+            await addFeatured.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using var summaryColumn = new MySqlCommand("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='projectproject01' AND table_name='launcher_posts' AND column_name='summary'", connection);
+        if (Convert.ToInt32(await summaryColumn.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            await using var addSummary = new MySqlCommand("ALTER TABLE projectproject01.launcher_posts ADD COLUMN summary VARCHAR(500) NOT NULL DEFAULT ''", connection);
+            await addSummary.ExecuteNonQueryAsync(cancellationToken);
+        }
         await EnsureLobbyJoinCodeSchemaAsync(connection, cancellationToken);
         await EnsureSecuritySchemaAsync(connection, cancellationToken);
         await EnsureGuideProgressSchemaAsync(connection, cancellationToken);
         await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
+        await ServiceAnnouncementDelivery.EnsureAsync(connection,cancellationToken);
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
         await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
         await LobbyEndpoints.EnsureMatchBotSchemaAsync(connection, cancellationToken);
         await CaseRecords.EnsureAsync(connection,cancellationToken);
+        await CustomRoomRules.EnsureAsync(connection,cancellationToken);
         await CaseMissionSlots.EnsureAsync(connection,cancellationToken);
         await CaseInvestigation.EnsureAsync(connection,cancellationToken);
+        await CaseMissionBudget.EnsureAsync(connection,cancellationToken);
         await OpenParties.EnsureAsync(connection,cancellationToken);
     }
 

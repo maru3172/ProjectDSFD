@@ -63,15 +63,8 @@ internal sealed partial class LauncherForm : Form
     private readonly TextBox serverAddress = new() { Dock = DockStyle.Fill };
     private readonly Label currentVersion = new() { AutoSize = true, Text = "설치 버전: 확인 전" };
     private readonly Label latestVersion = new() { AutoSize = true, Text = "서버 버전: 확인 전" };
-    private readonly Label status = new() { AutoSize = true, Text = "서버 PC의 IPv4 주소를 입력하세요." };
+    private readonly Label status = new() { Dock=DockStyle.Fill, AutoEllipsis=true, UseMnemonic=false, TextAlign=ContentAlignment.MiddleLeft, Text = "서버 PC의 IPv4 주소를 입력하세요." };
     private readonly ProgressBar progress = new() { Dock = DockStyle.Fill, Minimum = 0, Maximum = 100 };
-    private readonly RichTextBox log = new()
-    {
-        Dock = DockStyle.Fill,
-        ReadOnly = true,
-        BackColor = Color.FromArgb(24, 24, 24),
-        ForeColor = Color.Gainsboro
-    };
     private readonly Button checkButton = new() { Text = "업데이트 확인", AutoSize = true };
     private readonly Button updateButton = new() { Text = "업데이트 및 실행", AutoSize = true };
     private readonly Button launchButton = new() { Text = "현재 버전 실행", AutoSize = true };
@@ -90,7 +83,7 @@ internal sealed partial class LauncherForm : Form
         Text = "백화점 화재사건 업데이트 런처";
         Width = 760;
         Height = 500;
-        MinimumSize = new Size(640, 420);
+        MinimumSize = new Size(640, 440);
         StartPosition = FormStartPosition.CenterScreen;
         settingsPath = installationRoot is not null?Path.Combine(installRoot,"launcher-test-settings.json"):Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -98,6 +91,7 @@ internal sealed partial class LauncherForm : Form
         BuildUi();
         LoadSettings();
         InitializeAnnouncement();
+        InitializeHome();
         FormClosing += (_, e) =>
         {
             if(busy){e.Cancel=true;closeRequested=true;}
@@ -111,6 +105,7 @@ internal sealed partial class LauncherForm : Form
         {
             if(installationRoot is not null)return;
             announcementTimer.Start();_ = RefreshAnnouncementAsync();
+            homeTimer.Start();_ = RefreshHomeAsync();
             if (HasValidSavedServerAddress())
             {
                 await RunBusyAsync(CheckForUpdatesAsync);
@@ -128,17 +123,11 @@ internal sealed partial class LauncherForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 8,
+            RowCount = 2,
             Padding = new Padding(12)
         };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var title = new Label
         {
@@ -146,30 +135,46 @@ internal sealed partial class LauncherForm : Form
             Font = new Font(Font.FontFamily, 18, FontStyle.Bold),
             Text = "백화점 화재사건"
         };
-        var heading=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=2};
-        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var heading=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=3};
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         heading.Controls.Add(title,0,0);
+        var news=new Button {Text="공지 확인",AutoSize=true};
+        news.Click+=(_,_)=>OpenLauncherNews();heading.Controls.Add(news,1,0);
         var settings=new Button {Text="⚙ 환경설정",AutoSize=true};
-        settings.Click+=(_,_)=>{if(!busy)OpenLauncherSettings();};heading.Controls.Add(settings,1,0);
+        settings.Click+=(_,_)=>{if(!busy)OpenLauncherSettings();};heading.Controls.Add(settings,2,0);
         root.Controls.Add(heading);
-        root.Controls.Add(announcementPanel);
-        root.Controls.Add(new Label {AutoSize=true,Text="서버·설치 관리·공지·패치노트·고객센터는 환경설정에서 확인하세요."});
+
+        launcherContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        launcherContent.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,204));
+        var main=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=1,RowCount=5,Margin=Padding.Empty};
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        main.RowStyles.Add(new RowStyle(SizeType.Absolute,32));
+        main.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+        launcherContent.Controls.Add(main,0,0);
+        launcherSidebar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        launcherSidebar.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+        launcherSidebar.Controls.Add(announcementPanel,0,0);
+        launcherSidebar.Controls.Add(patchPanel,0,1);
+        launcherContent.Controls.Add(launcherSidebar,1,0);
+        root.Controls.Add(launcherContent);
 
         var versionRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
         versionRow.Controls.Add(currentVersion);
         versionRow.Controls.Add(new Label { AutoSize = true, Text = "    " });
         versionRow.Controls.Add(latestVersion);
-        root.Controls.Add(versionRow);
+        main.Controls.Add(versionRow);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
         buttons.Controls.Add(checkButton);
         buttons.Controls.Add(updateButton);
         buttons.Controls.Add(pauseButton);
         buttons.Controls.Add(launchButton);
-        root.Controls.Add(buttons);
-        root.Controls.Add(progress);
-        root.Controls.Add(log);
-        root.Controls.Add(status);
+        main.Controls.Add(buttons);
+        main.Controls.Add(progress);
+        main.Controls.Add(status);
+        main.Controls.Add(featuredPosts);
         Controls.Add(root);
     }
 
@@ -384,7 +389,7 @@ internal sealed partial class LauncherForm : Form
             }
             checkedCount++;
             progress.Value = Math.Clamp((int)((long)checkedCount * 100 / Math.Max(1, manifest.Files.Count)), 0, 100);
-            status.Text = $"설치 파일 검사 중... {checkedCount}/{manifest.Files.Count}";
+            SetStatus($"설치 파일 검사 중... {checkedCount}/{manifest.Files.Count}");
             await Task.Yield();
         }
         return result;
@@ -697,18 +702,17 @@ internal sealed partial class LauncherForm : Form
     private void SetProgress(long completed, long total, string message)
     {
         progress.Value = Math.Clamp((int)(completed * 100 / Math.Max(1, total)), 0, 100);
-        status.Text = $"{message} ({progress.Value}%)";
+        SetStatus($"{message} ({progress.Value}%)");
         Application.DoEvents();
     }
 
     private void Append(string message)
     {
-        log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
-        log.SelectionStart = log.TextLength;
-        log.ScrollToCaret();
+        Trace.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
     }
 
-    private void SetStatus(string message) => status.Text = message;
+    private void SetStatus(string message) => status.Text = message.ReplaceLineEndings(" ");
+    internal void FeatureSetStatus(string message)=>SetStatus(message);
 
     private void TryDeleteDirectory(string path, string description)
     {

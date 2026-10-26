@@ -1,6 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "ProjectCaseRecords.h"
 #include "ProjectCasePresentation.h"
+#include "ProjectCaseAchievementPresentation.h"
 #include "ProjectCaseStoryArchive.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "Misc/AutomationTest.h"
@@ -47,6 +48,20 @@ bool FProjectCaseRecordsTest::RunTest(const FString&)
     TestFalse(TEXT("Offline cannot bind records to an absent account"),R->CanImport());
     auto State=MakeShared<FJsonObject>();auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("slot"),TEXT("Frame"));Item->SetStringField(TEXT("itemId"),TEXT("investigation_seal_1"));State->SetArrayField(TEXT("loadout"),{MakeShared<FJsonValueObject>(Item)});
     TestTrue(TEXT("Rare investigation seal changes the visible profile frame"),ProjectCasePresentation::FrameColor(State)!=ProjectCasePresentation::FrameColor(nullptr));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectAchievementProgressTest,"ProjectProject01.CaseRecords.AchievementCountsAndRates",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectAchievementProgressTest::RunTest(const FString&)
+{
+    auto State=MakeShared<FJsonObject>(),Checkpoint=MakeShared<FJsonObject>(),Escape=MakeShared<FJsonObject>(),Hidden=MakeShared<FJsonObject>();
+    Checkpoint->SetStringField(TEXT("code"),TEXT("campaign_checkpoint"));Escape->SetStringField(TEXT("code"),TEXT("campaign_escape"));Hidden->SetStringField(TEXT("code"),TEXT("pvp_first"));
+    State->SetArrayField(TEXT("achievements"),{MakeShared<FJsonValueObject>(Checkpoint),MakeShared<FJsonValueObject>(Escape),MakeShared<FJsonValueObject>(Hidden)});
+    const auto Earned=ProjectCaseAchievements::Earned({TEXT("campaign_checkpoint")},State);
+    TestEqual(TEXT("Local/account duplicate and hidden achievements do not inflate visible completion"),Earned.Num(),2);
+    TestEqual(TEXT("Offline campaign has the same three visible definitions"),ProjectCaseAchievements::Definitions().Num(),3);
+    auto Rate=MakeShared<FJsonObject>();Rate->SetStringField(TEXT("code"),TEXT("campaign_checkpoint"));Rate->SetNumberField(TEXT("percentage"),12.34);auto Rates=MakeShared<FJsonObject>();Rates->SetArrayField(TEXT("achievements"),{MakeShared<FJsonValueObject>(Rate)});
+    TestEqual(TEXT("Global percentage is distinct from personal completion"),ProjectCaseAchievements::GlobalRate(Rates,TEXT("campaign_checkpoint")),FString(TEXT("전체 달성률 12.3%")));
+    TestEqual(TEXT("Missing network data is not shown as a false zero"),ProjectCaseAchievements::GlobalRate(nullptr,TEXT("campaign_checkpoint")),FString(TEXT("전체 달성률 —")));
     return true;
 }
 #endif

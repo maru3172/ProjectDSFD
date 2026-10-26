@@ -48,6 +48,21 @@ internal static class CaseInvestigationChecks
             for(int i=0;i<9;i++)
             {
                 await Read(server.PostAsJsonAsync("/api/server/case-records/visit",Visit(i)));
+                if(i==5)
+                    await Expect(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimInvestigationStage",id="1"}),HttpStatusCode.Conflict,"6조각에서는 파트 완료 보상 차단");
+                if(i==6)
+                {
+                    var seven=(await State()).GetProperty("season").GetProperty("investigation");
+                    Check(seven.GetProperty("stages")[0].GetProperty("complete").GetBoolean()&&seven.GetProperty("records")[9].GetProperty("stageAvailable").GetBoolean(),"7조각이면 파트 완료와 다음 파트 해금");
+                    await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimInvestigationStage",id="1"}));
+                    Check((await State()).ToString().Contains("full-story-part-1"),"7조각 상태에서 파트 보상 수령으로 이야기 공개");
+                    await Sql("DELETE FROM case_claims WHERE user_id=@u AND reward_key=@k;DELETE FROM case_inventory WHERE user_id=@u AND item_id=@item",("u",player.Id),("k",CaseRecords.Season+":Investigation:1"),("item",CaseInvestigation.RareItem(1)));
+                }
+                if(i>=7)
+                {
+                    await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimRecord",id=records[i].Id}));
+                    Check((await State()).GetProperty("season").GetProperty("investigation").GetProperty("records")[i].GetProperty("claimed").GetBoolean(),"추가 8·9번째 조각도 계속 조사하고 개별 보상 수령");
+                }
                 if(i==0)
                 {
                     var discovered=await State();var pieceRows=discovered.GetProperty("season").GetProperty("investigation").GetProperty("records");
@@ -65,7 +80,7 @@ internal static class CaseInvestigationChecks
             Check(investigation.GetProperty("collectedThisWeek").GetInt32()==9,"같은 조각 중복 방문은 주간 수량을 다시 소모하지 않음");
             Check(investigation.GetProperty("records")[9].GetProperty("stageAvailable").GetBoolean(),"9조각 완성 직후 다음 파트 해금");
             for(int i=0;i<2;i++)await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimRecord",id=records[0].Id}));
-            Check((await State()).GetProperty("credits").GetInt64()==30,"조각 보상 중복 수령 차단");
+            Check((await State()).GetProperty("credits").GetInt64()==90,"추가 두 조각 보상을 포함해 조각당 한 번만 지급");
             Check(!(await State()).ToString().Contains("full-story-part-"),"개별 조각 보상 수령으로 파트 이야기 해금 불가");
             for(int i=0;i<2;i++)await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimInvestigationStage",id="1"}));
             Check((await State()).GetProperty("inventory").GetArrayLength()==1,"파트 완성 희귀 보상은 1회만 지급");

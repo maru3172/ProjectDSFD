@@ -1,17 +1,18 @@
-using MySqlConnector;
+﻿using MySqlConnector;
 
 // Account-scoped social data. No presence, messages or block lists are exposed anonymously.
 internal static partial class CommunityEndpoints
 {
     internal sealed record ActionRequest(string Operation, string? Target = null, string? Text = null,
         string? Presence = null, string? Context = null);
-    internal sealed record PostRequest(string Kind, string Title, string Body, bool Published = true, string? PreviewImageId = null);
+    internal sealed record PostRequest(string Kind, string Title, string Body, bool Published = true, string? PreviewImageId = null, bool Featured = false, string? Summary = null);
     internal sealed record InquiryRequest(string Subject, string Body, string? ReplyCode = null);
     internal sealed record ReplyRequest(string Reply, string Status = "Answered");
 
     internal static bool ValidPresence(string? value) => value is "Online" or "Offline" or "Away" or "DoNotDisturb";
     internal static bool ValidText(string? value, int max) => !string.IsNullOrWhiteSpace(value) && value.Length <= max && !value.Any(c => char.IsControl(c) && c is not '\n' and not '\r' and not '\t');
     internal static bool ValidPostBody(string? value)=>ValidText(value,16000)&&System.Text.RegularExpressions.Regex.Matches(value!,@"!\[[^\]\r\n]*\]\(image:").Count<=8;
+    internal static bool ValidPostSummary(string? value)=>value is null||(value.Length<=500&&!value.Any(c=>char.IsControl(c)&&c is not '\n' and not '\r' and not '\t'));
 
     public static void MapCommunity(this WebApplication app)
     {
@@ -24,7 +25,7 @@ internal static partial class CommunityEndpoints
         app.MapGet("/api/launcher/posts", async (AuthDatabase db, CancellationToken ct) =>
         {
             await using var c = await db.OpenConnectionAsync(ct);
-            return Results.Ok(new { posts = await Rows(c, null, "SELECT CAST(id AS CHAR) id,kind,title,body,preview_image_id previewImageId,updated_at_utc updatedAtUtc FROM launcher_posts WHERE published=1 ORDER BY updated_at_utc DESC,id DESC LIMIT 100", ct) });
+            return Results.Ok(new { posts = await Rows(c, null, "SELECT CAST(id AS CHAR) id,kind,title,body,preview_image_id previewImageId,featured,summary,updated_at_utc updatedAtUtc FROM launcher_posts WHERE published=1 ORDER BY updated_at_utc DESC,id DESC LIMIT 200", ct) });
         }).RequireRateLimiting("survey-read");
         // The launcher works before game login. A random receipt permits only the author to read replies.
         app.MapPost("/api/launcher/inquiries", async (InquiryRequest input, AuthDatabase db, CancellationToken ct) =>
@@ -48,17 +49,17 @@ internal static partial class CommunityEndpoints
             if (!admin.IsAuthorized(req.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
             await using var c = await db.OpenConnectionAsync(ct);
             return Results.Ok(new {
-                posts = await Rows(c, null, "SELECT CAST(id AS CHAR) id,kind,title,body,published,preview_image_id previewImageId FROM launcher_posts ORDER BY id DESC LIMIT 200", ct),
+                posts = await Rows(c, null, "SELECT CAST(id AS CHAR) id,kind,title,body,published,preview_image_id previewImageId,featured,summary FROM launcher_posts ORDER BY id DESC LIMIT 200", ct),
                 inquiries = await Rows(c, null, "SELECT CAST(id AS CHAR) id,subject,body,reply,status,created_at_utc createdAtUtc FROM support_inquiries ORDER BY id DESC LIMIT 300", ct)
             });
         }).RequireRateLimiting("admin");
         app.MapPost("/api/admin/community/posts", async (HttpRequest req, PostRequest input, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>
         {
             if (!admin.IsAuthorized(req.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
-            if (input.Kind is not ("News" or "Patch") || !ValidText(input.Title,120) || !ValidPostBody(input.Body)) return Error("종류·제목·내용을 확인하세요. 사진은 글당 최대 8장입니다.");
+            if (input.Kind is not ("News" or "Patch" or "Event") || !ValidText(input.Title,120) || !ValidPostBody(input.Body) || !ValidPostSummary(input.Summary)) return Error("종류·제목·내용을 확인하세요. 사진은 글당 최대 8장입니다.");
             await using var c = await db.OpenConnectionAsync(ct);
             if(!await ValidatePreview(c,input,ct))return Error("미리보기 사진은 본문에 첨부한 사진 중 한 장만 선택하세요.");
-            await Exec(c,null,"INSERT INTO launcher_posts(kind,title,body,published,preview_image_id) VALUES(@kind,@title,@body,@published,@preview)",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("preview",NormalizePreview(input.PreviewImageId)));
+            await Exec(c,null,"INSERT INTO launcher_posts(kind,title,body,published,preview_image_id,featured,summary) VALUES(@kind,@title,@body,@published,@preview,@featured,COALESCE(@summary,''))",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("preview",NormalizePreview(input.PreviewImageId)),("featured",input.Featured),("summary",input.Summary?.Trim()));
             return Results.Ok(new { message = "게시되었습니다." });
         }).RequireRateLimiting("admin");
         app.MapDelete("/api/admin/community/posts/{id:long}", async (long id, HttpRequest req, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>
@@ -71,10 +72,10 @@ internal static partial class CommunityEndpoints
         app.MapPut("/api/admin/community/posts/{id:long}", async (long id, HttpRequest req, PostRequest input, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>
         {
             if (!admin.IsAuthorized(req.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
-            if(input.Kind is not ("News" or "Patch") || !ValidText(input.Title,120) || !ValidPostBody(input.Body))return Error("종류·제목·내용을 확인하세요. 사진은 글당 최대 8장입니다.");
+            if(input.Kind is not ("News" or "Patch" or "Event") || !ValidText(input.Title,120) || !ValidPostBody(input.Body) || !ValidPostSummary(input.Summary))return Error("종류·제목·내용을 확인하세요. 사진은 글당 최대 8장입니다.");
             await using var c=await db.OpenConnectionAsync(ct);
             if(!await ValidatePreview(c,input,ct))return Error("미리보기 사진은 본문에 첨부한 사진 중 한 장만 선택하세요.");
-            await Exec(c,null,"UPDATE launcher_posts SET kind=@kind,title=@title,body=@body,published=@published,preview_image_id=@preview,updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@id",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("id",id),("preview",NormalizePreview(input.PreviewImageId)));
+            await Exec(c,null,"UPDATE launcher_posts SET kind=@kind,title=@title,body=@body,published=@published,preview_image_id=@preview,featured=@featured,summary=COALESCE(@summary,summary),updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@id",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("id",id),("preview",NormalizePreview(input.PreviewImageId)),("featured",input.Featured),("summary",input.Summary?.Trim()));
             return Results.Ok(new {message="변경되었습니다."});
         }).RequireRateLimiting("admin");
         app.MapPut("/api/admin/community/inquiries/{id:long}", async (long id, HttpRequest req, ReplyRequest input, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>

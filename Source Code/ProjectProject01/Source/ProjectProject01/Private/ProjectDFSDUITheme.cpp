@@ -19,9 +19,23 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SNullWidget.h"
 #include "Widgets/SLeafWidget.h"
+#include "Sound/SoundWave.h"
+#include "ProjectUIClickSound.h"
+#include "UObject/StrongObjectPtr.h"
+#include "ProjectProject01GameInstance.h"
 
 namespace ProjectDFSDUI
 {
+    static FSlateSound ClickSound()
+    {
+        static TStrongObjectPtr<UProjectUIClickSound> Wave;
+        if(!Wave.IsValid())
+        {
+            Wave.Reset(NewObject<UProjectUIClickSound>(GetTransientPackage()));
+        }
+        if(auto* Settings=UProjectProject01GameUserSettings::Get())Wave->SoundClassObject=Settings->GetUISoundClass();
+        FSlateSound Sound;Sound.SetResourceObject(Wave.Get());return Sound;
+    }
 	FLinearColor Canvas(){return FLinearColor(.006f,.008f,.012f,1);}
 	FLinearColor Panel(){return FLinearColor(.018f,.025f,.03f,1);}
 	FLinearColor Text(){return FLinearColor(.86f,.87f,.89f,1);}
@@ -40,7 +54,7 @@ namespace ProjectDFSDUI
 			 .SetDisabled(FSlateColorBrush(FLinearColor(.01f,.014f,.02f,.1f)))
 			 .SetNormalForeground(Text()).SetHoveredForeground(FLinearColor(.98f,.94f,.88f))
 			 .SetPressedForeground(Text()).SetDisabledForeground(Muted())
-			 .SetNormalPadding(FMargin(14,8)).SetPressedPadding(FMargin(15,9));return S;
+             .SetNormalPadding(FMargin(14,8)).SetPressedPadding(FMargin(15,9));S.SetPressedSound(ClickSound());return S;
 		}();
 		return Style;
 	}

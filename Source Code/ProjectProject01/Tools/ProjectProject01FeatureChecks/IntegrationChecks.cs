@@ -63,6 +63,7 @@ internal static class IntegrationChecks
             Microsoft.Extensions.Logging.Abstractions.NullLogger<GameServerDemandManager>.Instance,demandClock);
         builder.Services.AddSingleton(demand);
         await using var app=builder.Build();
+        app.Use(async(context,next)=>{try{await next();}catch(Exception ex){Console.Error.WriteLine("Isolated HTTP failure "+context.Request.Path+": "+ex);throw;}});
         app.Urls.Add("http://127.0.0.1:0");app.UseRateLimiter();
         app.MapProjectProject01Surveys();app.MapProjectProject01CrashArtifacts();
         app.MapProjectProject01Voice();
@@ -205,9 +206,12 @@ internal static class IntegrationChecks
             await OpenObserverChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await CaseRecordChecks.RunAsync(database,admin);
             await CaseMissionRewardChecks.RunAsync(database,admin);
+            await MissionBudgetChecks.RunAsync(database,admin);
+            await BulkRewardChecks.RunAsync(database,admin);
             await CaseInvestigationChecks.RunAsync(database,admin);
             await AnnouncementChecks.RunAsync(admin);
             await PartyRoleChecks.RunAsync(database,admin,app.Configuration);
+            await CustomRoomRulesChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await StartupRecoveryChecks.RunAsync(database,demand,Check);
             await ResultDeliveryChecks.RunAsync(database,admin,output,Check);
             if(!string.IsNullOrWhiteSpace(editorExecutable))await EditorSessionSmokeChecks.RunAsync(database,projectRoot,editorExecutable);

@@ -18,6 +18,7 @@
 #include "Misc/App.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "ProjectAnnouncementSubsystem.h"
 
 namespace
 {
@@ -49,6 +50,7 @@ void UProjectCaseRecords::Initialize(FSubsystemCollectionBase& Collection)
 }
 void UProjectCaseRecords::Deinitialize()
 {
+    if(AchievementRateRequest){AchievementRateRequest->OnProcessRequestComplete().Unbind();AchievementRateRequest->CancelRequest();AchievementRateRequest.Reset();}
     if(ArchiveRequest){ArchiveRequest->OnProcessRequestComplete().Unbind();ArchiveRequest->CancelRequest();ArchiveRequest.Reset();}
     FTSTicker::GetCoreTicker().RemoveTicker(Ticker);if(auto* A=Auth(this))A->OnLocalSessionCleared.RemoveAll(this);ClearSession();Super::Deinitialize();
 }
@@ -56,6 +58,7 @@ void UProjectCaseRecords::ClearSession()
 {
     if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     Snapshot.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
+    AchievementAccount.Reset();SeenOnlineAchievements.Reset();
 }
 bool UProjectCaseRecords::IsAuthenticated()const{const auto* A=Auth(this);return A&&A->IsSignedIn();}
 bool UProjectCaseRecords::Tick(float Delta)
@@ -65,6 +68,30 @@ bool UProjectCaseRecords::Tick(float Delta)
     PollIn-=Delta;if(PollIn<=0){PollIn=15;Refresh();}return true;
 }
 void UProjectCaseRecords::Refresh(){if(IsAuthenticated()&&!Request)Send(TEXT("/api/case-records"));}
+TSharedPtr<FJsonObject> UProjectCaseRecords::GetAchievementRates()const
+{const auto* A=Auth(this);return A&&A->GetApiBaseUrlForAuthenticatedRequest()==AchievementRateBase?AchievementRates:nullptr;}
+void UProjectCaseRecords::RefreshAchievementRates()
+{
+    if(FApp::IsUnattended())return;
+    auto* A=Auth(this);if(!A)return;const FString Base=A->GetApiBaseUrlForAuthenticatedRequest();
+    if(AchievementRateBase!=Base)
+    {
+        if(AchievementRateRequest){AchievementRateRequest->OnProcessRequestComplete().Unbind();AchievementRateRequest->CancelRequest();AchievementRateRequest.Reset();}
+        AchievementRates.Reset();AchievementRateBase=Base;LastAchievementRateFetchAt=-100;
+    }
+    if(AchievementRateRequest||FPlatformTime::Seconds()-LastAchievementRateFetchAt<30)return;
+    LastAchievementRateFetchAt=FPlatformTime::Seconds();auto Pending=FHttpModule::Get().CreateRequest();AchievementRateRequest=Pending;
+    Pending->SetURL(Base+TEXT("/api/case-records/achievement-rates"));Pending->SetVerb(TEXT("GET"));Pending->SetTimeout(5);FProjectProject01VersionContract::ApplyToRequest(Pending);
+    Pending->OnProcessRequestComplete().BindWeakLambda(this,[this,Base](FHttpRequestPtr Completed,FHttpResponsePtr Response,bool Connected)
+    {
+        if(AchievementRateRequest!=Completed)return;AchievementRateRequest.Reset();
+        const auto* Current=Auth(this);if(!Current||Current->GetApiBaseUrlForAuthenticatedRequest()!=Base)return;
+        TSharedPtr<FJsonObject> Json;AchievementRates.Reset();
+        if(Connected&&Response&&EHttpResponseCodes::IsOk(Response->GetResponseCode())&&Response->GetContentLength()<=65536&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json)&&Json&&Json->HasTypedField<EJson::Array>(TEXT("achievements")))AchievementRates=Json;
+        OnChanged.Broadcast();
+    });
+    if(!Pending->ProcessRequest())AchievementRateRequest.Reset();
+}
 void UProjectCaseRecords::RefreshStoryArchives()
 {
     if(FApp::IsUnattended())return;
@@ -158,6 +185,7 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
             {if(Snapshot)Snapshot->TryGetStringField(TEXT("userId"),Local->BoundAccountId);PersistLocal();PollIn=0;}
             else {const TSharedPtr<FJsonObject>* State=nullptr;if(Json->TryGetObjectField(TEXT("snapshot"),State))Snapshot=*State;}
             Status=Path==TEXT("/api/case-records")?FString():TEXT("처리되었습니다.");
+            ObserveAchievements();
         }
         else
         {
@@ -172,7 +200,21 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
 bool UProjectCaseRecords::RecordCampaignAchievement(FName Code)
 {
     if(!Local||!ValidCampaign(Code.ToString())||!GetWorld()||GetWorld()->GetNetMode()!=NM_Standalone||GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>())return false;
-    if(Local->Earned.Contains(Code.ToString()))return true;Local->Earned.Add(Code.ToString());bImportAttempted=false;PersistLocal();OnChanged.Broadcast();return true;
+    if(Local->Earned.Contains(Code.ToString()))return true;Local->Earned.Add(Code.ToString());bImportAttempted=false;PersistLocal();
+    if(auto* Notices=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>())Notices->NotifyAchievement(Code.ToString());
+    OnChanged.Broadcast();return true;
+}
+void UProjectCaseRecords::ObserveAchievements()
+{
+    if(!Snapshot)return;FString Account;Snapshot->TryGetStringField(TEXT("userId"),Account);if(Account.IsEmpty())return;
+    const bool First=AchievementAccount!=Account;if(First){AchievementAccount=Account;SeenOnlineAchievements.Reset();}
+    const TArray<TSharedPtr<FJsonValue>>* Entries=nullptr;if(!Snapshot->TryGetArrayField(TEXT("achievements"),Entries))return;
+    for(const auto& Value:*Entries)
+    {
+        FString Code;const auto Entry=Value->AsObject();if(!Entry||!Entry->TryGetStringField(TEXT("code"),Code)||SeenOnlineAchievements.Contains(Code))continue;
+        SeenOnlineAchievements.Add(Code);
+        if(!First&&!GetLocalAchievements().Contains(Code))if(auto* Notices=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>())Notices->NotifyAchievement(Code);
+    }
 }
 bool UProjectCaseRecords::HasCampaignAchievement(FName Code)const{return Local&&Local->Earned.Contains(Code.ToString());}
 const TSet<FString>& UProjectCaseRecords::GetLocalAchievements()const{static const TSet<FString> Empty;return Local?Local->Earned:Empty;}

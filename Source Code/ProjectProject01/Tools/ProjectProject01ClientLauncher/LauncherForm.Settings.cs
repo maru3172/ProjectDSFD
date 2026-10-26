@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -99,65 +99,6 @@ internal sealed partial class LauncherForm
         Add(layout,"게임 설치 / 다운로드 위치 열기",()=>{Process.Start(new ProcessStartInfo(installRoot){UseShellExecute=true});return Task.CompletedTask;});
         Add(layout,"이어받기 캐시 위치 열기",()=>{string cache=Path.Combine(installRoot,".update-cache");Directory.CreateDirectory(cache);Process.Start(new ProcessStartInfo(cache){UseShellExecute=true});return Task.CompletedTask;});
 
-        var news=Page("공지사항·패치노트");
-        var articles=new ListBox {Dock=DockStyle.Left,Width=250,DisplayMember="Title",DrawMode=DrawMode.OwnerDrawVariable,IntegralHeight=false};
-        var thumbnails=new Dictionary<string,Image>();var attemptedThumbnails=new HashSet<string>();
-        var thumbnailHttp=new HttpClient {Timeout=TimeSpan.FromSeconds(5)};
-        var thumbnailLifetime=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        void ClearThumbnails(){foreach(var image in thumbnails.Values)image.Dispose();thumbnails.Clear();attemptedThumbnails.Clear();}
-        async Task LoadThumbnail(LauncherPost post,CancellationToken ct)
-        {
-            string id=post.PreviewImageId!;
-            try
-            {
-                Image image=await LauncherPostView.DownloadImageAsync(thumbnailHttp,GetBackendBaseUrl()+"/api/launcher/images/"+id,ct,192);
-                if(ct.IsCancellationRequested||dialog.IsDisposed){image.Dispose();return;}
-                thumbnails[id]=image;articles.Invalidate();
-            }
-            catch(OperationCanceledException){}
-            catch(Exception){/* A failed optional thumbnail never prevents reading the post. */}
-        }
-        articles.MeasureItem+=(_,e)=>e.ItemHeight=e.Index>=0&&e.Index<articles.Items.Count&&(articles.Items[e.Index] as LauncherPost)?.PreviewImageId is not null?78:42;
-        articles.DrawItem+=(_,e)=>
-        {
-            if(dialog.IsDisposed||thumbnailLifetime.IsCancellationRequested)return;
-            if(e.Index<0||e.Index>=articles.Items.Count||articles.Items[e.Index] is not LauncherPost post)return;
-            e.DrawBackground();int left=e.Bounds.Left+5;
-            if(post.PreviewImageId is string id)
-            {
-                if(thumbnails.TryGetValue(id,out var image))
-                {
-                    double fit=Math.Min(96d/image.Width,54d/image.Height);int w=Math.Max(1,(int)(image.Width*fit)),h=Math.Max(1,(int)(image.Height*fit));
-                    e.Graphics.DrawImage(image,new Rectangle(left+(96-w)/2,e.Bounds.Top+6+(54-h)/2,w,h));
-                }
-                else if(attemptedThumbnails.Add(id))_ = LoadThumbnail(post,thumbnailLifetime.Token);
-                left+=102;
-            }
-            TextRenderer.DrawText(e.Graphics,post.Title,e.Font,new Rectangle(left,e.Bounds.Top+4,Math.Max(10,e.Bounds.Right-left-4),e.Bounds.Height-8),e.ForeColor,TextFormatFlags.WordBreak|TextFormatFlags.EndEllipsis);
-            e.DrawFocusRectangle();
-        };
-        dialog.FormClosed+=(_,_)=>{thumbnailLifetime.Cancel();thumbnailLifetime.Dispose();thumbnailHttp.Dispose();ClearThumbnails();};
-        var articleBody=new LauncherPostView {Dock=DockStyle.Fill};
-        var reload=new Button {Text="새로고침",Dock=DockStyle.Top};news.Controls.Add(articleBody);news.Controls.Add(articles);news.Controls.Add(reload);
-        articles.SelectedIndexChanged+=async(_,_)=>
-        {
-            if(articles.SelectedItem is not LauncherPost post)return;
-            try{await articleBody.ShowPostAsync(post.Body,GetBackendBaseUrl());}
-            catch(OperationCanceledException){}catch(Exception ex){if(!dialog.IsDisposed)statusLine.Text="표시 실패: "+ex.Message;}
-        };
-        reload.Click+=async(_,_)=>await Run(async()=>
-        {
-            using var http=new HttpClient {Timeout=TimeSpan.FromSeconds(5)};
-            using var response=await http.GetAsync(GetBackendBaseUrl()+"/api/launcher/posts",lifetime.Token);response.EnsureSuccessStatusCode();
-            using var doc=JsonDocument.Parse(await response.Content.ReadAsStringAsync(lifetime.Token));
-            thumbnailLifetime.Cancel();thumbnailLifetime.Dispose();thumbnailLifetime=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);ClearThumbnails();articles.Items.Clear();
-            foreach(var post in doc.RootElement.GetProperty("posts").EnumerateArray())
-            {
-                string? imageId=post.TryGetProperty("previewImageId",out var preview)?preview.GetString():null;
-                articles.Items.Add(new LauncherPost((post.GetProperty("kind").GetString()=="Patch"?"[패치] ":"[뉴스] ")+post.GetProperty("title").GetString(),post.GetProperty("body").GetString()??"",Guid.TryParse(imageId,out var imageGuid)?imageGuid.ToString("D"):null));
-            }
-            if(articles.Items.Count>0)articles.SelectedIndex=0;
-        });
         var support=Page("고객센터·문의");
         var inquiryLayout=new FlowLayoutPanel {Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true};support.Controls.Add(inquiryLayout);
         var subject=new TextBox {Width=650,MaxLength=120,PlaceholderText="문의 제목"};
@@ -186,5 +127,5 @@ internal sealed partial class LauncherForm
         dialog.FormClosing+=(_,e)=>{if(operation){e.Cancel=true;statusLine.Text="작업을 마친 뒤 닫으세요.";}};
         dialog.ShowDialog(this);layout.Controls.Remove(serverAddress);SaveSettings();
     }
-    private sealed record LauncherPost(string Title,string Body,string? PreviewImageId=null);
+    private sealed record LauncherPost(string Title,string Body,string? PreviewImageId=null,string? Id=null);
 }

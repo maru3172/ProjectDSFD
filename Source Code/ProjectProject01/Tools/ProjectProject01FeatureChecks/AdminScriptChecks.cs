@@ -31,7 +31,10 @@ internal static class AdminScriptChecks
             using var child=Process.Start(start)!;using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var stdout=child.StandardOutput.ReadToEndAsync();var stderr=child.StandardError.ReadToEndAsync();
             try{await child.WaitForExitAsync(deadline.Token);}catch(OperationCanceledException){child.Kill(true);throw;}
-            await Task.WhenAll(stdout,stderr);return child.ExitCode;
+            await Task.WhenAll(stdout,stderr);
+            if(child.ExitCode!=0)
+            {string details=((await stdout)+"\n"+(await stderr)).Replace(new string('a',48),"[test-admin-key]");Console.WriteLine("Admin script exit "+child.ExitCode+": "+details[..Math.Min(2400,details.Length)]);}
+            return child.ExitCode;
         }
         static string Iso(DateTime value)=>value.ToString("O",CultureInfo.InvariantCulture);
         string future=Iso(DateTime.UtcNow.AddMinutes(10)),end=Iso(DateTime.UtcNow.AddMinutes(20));

@@ -29,6 +29,7 @@ internal static partial class LobbyEndpoints
         bool CanLaunchOrConnect()=>demand?.Configured==true?demand.AcceptingNewMatches:gameServerPresence.IsAlive(GameServerHeartbeatMaximumAge);
         app.MapRandomMatchmaking(travelUrl,CanLaunchOrConnect,demand);
         app.MapBotMatches(CanLaunchOrConnect);
+        app.MapCustomRoomRules(CanLaunchOrConnect);
 
         app.MapPost("/api/server/heartbeat", async (HttpRequest request,AuthDatabase database,CancellationToken ct) =>
         {
@@ -1071,6 +1072,7 @@ internal static partial class LobbyEndpoints
                 var pools=await BotExperience.LoadAsync(connection,transaction,roster,ct);
                 var bots=roster.Select(b=>new{b.BotId,b.DisplayName,b.Difficulty,b.AssignedRole,
                     experience=pools.TryGetValue($"{b.AssignedRole}:{b.Difficulty}",out var pool)?pool:null}).ToList();
+                var customRules=await CustomRoomRules.MatchAsync(connection,transaction,matchId,ct);
                 await transaction.CommitAsync(ct);
 
                 var encryptionKey = Convert.ToBase64String(securityOptions.DeriveConnectionEncryptionKey(ticket));
@@ -1084,6 +1086,7 @@ internal static partial class LobbyEndpoints
                     matchId,
                     role,
                     bots,
+                    customRules,
                     encryptionKey,
                     clientBuildVersion = versionCompatibility.ClientBuildVersion,
                     dedicatedServerBuildVersion = versionCompatibility.DedicatedServerBuildVersion,
@@ -1424,6 +1427,7 @@ internal static partial class LobbyEndpoints
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
                 int? verifiedCaptureCount = null;
+                if(await CustomRoomRules.IsCustomAsync(connection,null,matchId.ToString("D"),ct))return Results.Conflict(new LobbyFailure("사용자 지정 경기는 공식 리더보드에 등록할 수 없습니다."));
                 double? verifiedFirstCaptureSeconds = null;
                 double? verifiedAllCapturedSeconds = null;
                 int? verifiedRescueCount = null;
@@ -1691,7 +1695,7 @@ internal static partial class LobbyEndpoints
              AND EXISTS (SELECT 1 FROM authoritative_match_players p WHERE p.match_id = {matchColumn} AND p.role = 'Survivor')))
         """;
     private static string BotMatchFilter(string matchColumn, bool botMatches) =>
-        botMatches ? $"NOT {PvPMatchCondition(matchColumn)}" : PvPMatchCondition(matchColumn);
+        $"({CustomRoomRules.OfficialFilter(matchColumn)}) AND ({(botMatches ? $"NOT {PvPMatchCondition(matchColumn)}" : PvPMatchCondition(matchColumn))})";
 
     private static async Task<IReadOnlyList<LeaderboardEntry>> LoadLeaderboardAsync(
         MySqlConnection connection, string role, string sort, bool botMatches, CancellationToken ct)
@@ -2344,7 +2348,7 @@ internal static partial class LobbyEndpoints
             string.Equals(status, "Started", StringComparison.Ordinal),
             returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages,status is "Queued" or "Preparing",
             random.Count>0&&status!="Waiting"&&!string.IsNullOrEmpty(assignedRole),party.Count>0,party.Count>0?Convert.ToString(party[0]["search_id"])??"":"",matchId,
-            status is "Queued" or "Preparing" ? status : string.Empty,sessionWaitElapsedSeconds,bots,botMatch,members.Any(m=>m.UserId==userId.ToString()&&m.IsObserver));
+            status is "Queued" or "Preparing" ? status : string.Empty,sessionWaitElapsedSeconds,bots,botMatch,members.Any(m=>m.UserId==userId.ToString()&&m.IsObserver),await CustomRoomRules.RoomAsync(connection,transaction,roomId,ct));
     }
 
     private static async Task ExecuteAsync(
@@ -2468,7 +2472,8 @@ internal sealed record RoomState(
     int SessionWaitElapsedSeconds=0,
     IReadOnlyList<MatchBot>? Bots=null,
     bool BotMatch=false,
-    bool IsObserver=false);
+    bool IsObserver=false,
+    CustomRuleSet? CustomRules=null);
 internal sealed record RoomPasswordRecord(string RoomId);
 internal sealed record LeaderboardEntry(
     int Rank,

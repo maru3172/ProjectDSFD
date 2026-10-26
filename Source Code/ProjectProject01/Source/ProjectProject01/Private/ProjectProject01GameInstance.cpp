@@ -1697,6 +1697,9 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
             {
                 ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid bot admission roster."));return;
             }
+            const TSharedPtr<FJsonObject>* CustomRules=nullptr;
+            if(JsonResponse->HasField(TEXT("customRules"))&&(!JsonResponse->TryGetObjectField(TEXT("customRules"),CustomRules)||!FProjectCustomMatchRules::Parse(*CustomRules,Claim.CustomRules)))
+            {ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid custom rules."));return;}
 			if (!FProjectProject01VersionContract::Matches(
 				Claim.ClientBuildVersion, Claim.DedicatedServerBuildVersion, Claim.ApiVersion, Claim.GameDataVersion,
 				Claim.NetworkProtocolVersion, VersionError))

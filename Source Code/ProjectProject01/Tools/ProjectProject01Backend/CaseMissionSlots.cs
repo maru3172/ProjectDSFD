@@ -14,6 +14,7 @@ internal static class CaseMissionSlots
           PRIMARY KEY(user_id,mode,period_id,slot_id),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         """,ct);
     private static IEnumerable<CaseRecords.Mission> Pool(bool weekly)=>CaseRecords.Missions.Concat(Alternatives).Where(m=>m.Weekly==weekly);
+    internal static int RewardFor(string id)=>CaseRecords.Missions.Concat(Alternatives).FirstOrDefault(m=>m.Id==id)?.Reward??0;
     internal static Slot FromRows(string mode,CaseRecords.Mission slot,DateTimeOffset now,IReadOnlyList<Dictionary<string,object?>> choices,IReadOnlyList<Dictionary<string,object?>> progress,ISet<string> claimed)
     {
         var periods=CaseRecords.Periods(now);string period=slot.Weekly?periods.Weekly:periods.Daily,key=period+":"+mode+":"+slot.Id;

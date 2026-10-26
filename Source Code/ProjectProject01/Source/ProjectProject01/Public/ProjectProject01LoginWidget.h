@@ -1054,6 +1054,8 @@ private:
     UPROPERTY(Transient) TObjectPtr<class UButton> RoomBotsTabButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> RoomMembersTabButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> RoomSessionTabButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> CustomRulesButton;
+    UFUNCTION() void HandleCustomRulesClicked();
     UFUNCTION() void HandleRoomBotsTabClicked();
     UFUNCTION() void HandleRoomMembersTabClicked();
     UFUNCTION() void HandleRoomSessionTabClicked();

@@ -39,17 +39,28 @@ internal static class FeatureChecks
                     using var bitmap=new Bitmap(stories.Width,stories.Height);stories.DrawToBitmap(bitmap,new Rectangle(Point.Empty,stories.Size));bitmap.Save(Path.Combine(output,"case-part-stories.png"));
                 }
                 int publications=0;string sent="";
-                using(var notice=new AnnouncementEditorForm("",text=>{publications++;sent=text;return Task.CompletedTask;}))
+                string sentTag="";int sentCount=0;
+                DateTimeOffset? sentStart=null,sentEnd=null;
+                using(var notice=new AnnouncementEditorForm("",(content,tag,count,start,end)=>{publications++;sent=content;sentTag=tag;sentCount=count;sentStart=start;sentEnd=end;return Task.CompletedTask;}))
                 {
-                    PrepareRender(notice);var noticeInput=Children(notice).OfType<TextBox>().Single();noticeInput.Text="첫 줄\r\n두  칸 유지";
+                    PrepareRender(notice);var noticeInput=Children(notice).OfType<TextBox>().Single(t=>t.Name=="AnnouncementContent");noticeInput.Text="첫 줄\r\n두  칸 유지";
+                    Children(notice).OfType<TextBox>().Single(t=>t.Name=="AnnouncementTag").Text="-긴급 공지-";Children(notice).OfType<NumericUpDown>().Single().Value=3;
+                    Children(notice).OfType<CheckBox>().Single(t=>t.Name=="UseAnnouncementWindow").Checked=true;
+                    Children(notice).OfType<DateTimePicker>().Single(t=>t.Name=="AnnouncementStart").Value=DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(9)).DateTime.AddMinutes(5);
+                    Children(notice).OfType<DateTimePicker>().Single(t=>t.Name=="AnnouncementEnd").Value=DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(9)).DateTime.AddMinutes(15);
                     Check(publications==0,"공지 작성 창 열기와 입력만으로는 전송하지 않음");
                     Check(noticeInput.Multiline&&noticeInput.Height>=90,"공지 작성란은 여러 줄과 충분한 높이를 제공");
                     using var bitmap=new Bitmap(notice.Width,notice.Height);notice.DrawToBitmap(bitmap,new Rectangle(Point.Empty,notice.Size));bitmap.Save(Path.Combine(output,"announcement-editor.png"));
                     Children(notice).OfType<Button>().Single(b=>b.Text=="띄우기").PerformClick();
                     Check(publications==1&&sent=="첫 줄\r\n두  칸 유지","띄우기를 눌러야 한 번 전송하고 원문 보존");
+                    Check(sentTag=="-긴급 공지-"&&sentCount==3,"작성한 태그와 선택 횟수를 함께 전송");
+                    Check(sentStart>DateTimeOffset.UtcNow&&sentEnd>sentStart,"한국 시간 입력을 UTC 시작·종료 시각으로 전송");
                 }
-                using(var notice=new AnnouncementEditorForm("닫을 때는 미전송",_=>{publications++;return Task.CompletedTask;}))
+                using(var notice=new AnnouncementEditorForm("닫을 때는 미전송",(_,_,_,_,_)=>{publications++;return Task.CompletedTask;}))
                 {PrepareRender(notice);Children(notice).OfType<Button>().Single(b=>b.Text=="닫기").PerformClick();Check(publications==1,"공지 작성 취소는 서버 상태를 변경하지 않음");}
+                int removals=0;
+                using(var notice=new AnnouncementEditorForm("제거 대상",(_,_,_,_,_)=>throw new Exception("제거로 전송하면 안 됨"),remove:()=>{removals++;return Task.CompletedTask;}))
+                {PrepareRender(notice);Children(notice).OfType<Button>().Single(b=>b.Text=="제거").PerformClick();Check(removals==1,"작성 창의 제거 버튼은 공지 삭제만 호출");}
                 Console.WriteLine($"PASS: {checks} case helper UI checks (offline, no publishing)");return 0;
             }
             if(args.Length==1&&args[0]=="--diagnostics-checks")
@@ -100,18 +111,18 @@ internal static class FeatureChecks
             }
             var compatibility=VersionCompatibilityOptions.FromConfiguration(
                 new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
-            Check(compatibility.NetworkProtocolVersion=="6","조사 기록 발견 알림 통신 프로토콜 기본값 6");
+            Check(compatibility.NetworkProtocolVersion=="7","커스텀 경기 규칙·결과 통신 프로토콜 기본값 7");
             var versionHeaders=new Microsoft.AspNetCore.Http.HeaderDictionary
             {
                 [VersionCompatibilityOptions.ClientBuildHeader]=compatibility.ClientBuildVersion,
                 [VersionCompatibilityOptions.DedicatedServerBuildHeader]=compatibility.DedicatedServerBuildVersion,
                 [VersionCompatibilityOptions.ApiVersionHeader]=compatibility.ApiVersion,
                 [VersionCompatibilityOptions.GameDataVersionHeader]=compatibility.GameDataVersion,
-                [VersionCompatibilityOptions.NetworkProtocolHeader]="6"
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="7"
             };
-            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 6 클라이언트 허용");
-            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 6 데디 서버 허용");
-            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="5";
+            Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 7 클라이언트 허용");
+            Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 7 데디 서버 허용");
+            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="6";
             Check(compatibility.GetMismatches(versionHeaders,false).SequenceEqual(new[]{"NetworkProtocol"}),"구형 클라이언트 프로토콜 혼용 차단");
             Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");
@@ -212,10 +223,44 @@ internal static class FeatureChecks
         using(var launcher=new ProjectProject01ClientLauncher.LauncherForm(Path.Combine(output,"LauncherUiFixture")))
         {
             PrepareRender(launcher);
-            launcher.FeatureSetAnnouncement("첫 줄\n둘째 줄\n마지막 줄");Application.DoEvents();
+            launcher.FeatureSetHomePosts([
+                new("notice","News","백화점 화재사건 안내","새로운 사건 기록을 확인하세요.",null,true),
+                new("event","Event","조사 기록 수집 이벤트","지정된 장소에서 사건의 단서를 모아보세요.",null,true),
+                new("hidden","News","대표 칸에 선택하지 않은 글","목록에서만 표시됩니다.",null,false),
+                new("patch","Patch","최신 업데이트","전체 패치 내용 본문",null,false,"관전 카메라 조정\nUI 가독성 개선\n안정성 수정\n음성 상태 표시 개선\n업데이트 안정화\n서버 연결 안내 개선\n튜토리얼 목표 정리")
+            ]);
+            launcher.FeatureSetAnnouncement("첫 줄\n둘째 줄\n마지막 줄","-점검 공지-");Application.DoEvents();
             Check(launcher.FeatureAnnouncementVisible&&launcher.FeatureAnnouncementText.Replace("\r\n","\n")=="첫 줄\n둘째 줄\n마지막 줄","런처 상시 공지의 줄바꿈 보존");
+            Check(launcher.FeatureAnnouncementTag=="-점검 공지-","런처 공지 본문 위에 작성한 태그 표시");
+            var notice=Children(launcher).OfType<RichTextBox>().Single(t=>t.Text=="첫 줄\n둘째 줄\n마지막 줄"||t.Text=="첫 줄\r\n둘째 줄\r\n마지막 줄").Parent!;
+            var main=Children(launcher).OfType<Button>().Single(b=>b.Text=="업데이트 확인").Parent!.Parent!;
+            Check(notice.Width<=204&&notice.Height<=150&&notice.PointToScreen(Point.Empty).X>=main.PointToScreen(new Point(main.Width,0)).X,"상시 공지를 본문 오른쪽의 작은 칸으로 배치");
+            Check(Children(launcher).OfType<RichTextBox>().All(t=>t.Parent==notice),"런처에 누적 상세 로그 창을 표시하지 않음");
+            launcher.FeatureSetStatus("업데이트 정보를 확인하는 중...");
+            launcher.FeatureSetStatus("다운로드 중\n45%");
+            Check(Children(launcher).OfType<Label>().Any(t=>t.Text=="다운로드 중 45%"&&t.AutoEllipsis)&&!Children(launcher).OfType<Label>().Any(t=>t.Text=="업데이트 정보를 확인하는 중..."),"진행 상태는 최신 한 줄로 교체하고 줄바꿈을 정리");
+            launcher.FeatureSetStatus("다운로드 중 (45%)");
+            Children(launcher).OfType<ProgressBar>().Single().Value=45;
+            var carousel=Children(launcher).OfType<ProjectProject01ClientLauncher.LauncherFeaturedCarousel>().Single();
+            Check(carousel.PostCount==2&&carousel.CurrentId=="notice","서버에서 대표 칸으로 선택한 글만 순환 목록에 포함");
+            Check(Children(launcher).OfType<Label>().Any(l=>l.Text.Contains("최신 업데이트")&&l.Text.Contains("관전 카메라 조정")),"최신 패치노트 요약을 별도로 표시");
+            var patchText=Children(launcher).OfType<Label>().Single(l=>l.Text.Contains("최신 업데이트"));
+            var patchBox=patchText.Parent!;int compactPatchHeight=patchBox.Height;
+            Check(!patchText.Text.Contains("전체 패치 내용 본문")&&!patchText.Text.Contains("튜토리얼 목표 정리"),"직접 작성한 요약을 본문 대신 사용하고 공지 표시 중에는 짧게 표시");
             using(var noticeImage=new Bitmap(launcher.Width,launcher.Height)){launcher.DrawToBitmap(noticeImage,new Rectangle(Point.Empty,launcher.Size));noticeImage.Save(Path.Combine(output,"launcher-persistent-announcement.png"));}
+            carousel.FeatureSetTransition(.5f);
+            Check(carousel.SlideOffsets.Current<0&&carousel.SlideOffsets.Next>0,"기존 글은 왼쪽으로 나가고 다음 글은 오른쪽에서 들어오는 방향");
+            using(var slide=new Bitmap(launcher.Width,launcher.Height)){launcher.DrawToBitmap(slide,new Rectangle(Point.Empty,launcher.Size));slide.Save(Path.Combine(output,"launcher-news-slide.png"));}
+            carousel.FeatureSetTransition(0);
+            carousel.FeatureAdvance(9999);Check(carousel.CurrentId=="notice","대표 게시글은 10초가 되기 전 전환하지 않음");
+            carousel.FeatureAdvance(10550);Check(carousel.CurrentId=="event","10초 유지와 슬라이드 전환 후 다음 게시글 표시");
+            carousel.FeatureAdvance(9999);Check(carousel.CurrentId=="event","전환이 끝난 새 게시글에도 온전한 10초 유지 시간 부여");
+            carousel.FeatureAdvance(10550);Check(carousel.CurrentId=="notice","마지막 대표 게시글 다음에는 첫 게시글로 순환");
+            launcher.FeatureSetAnnouncement("태그 없는 본문");Check(launcher.FeatureAnnouncementTag==""&&launcher.FeatureAnnouncementVisible,"태그 없이 전송하면 런처도 본문만 표시");
             launcher.FeatureSetAnnouncement(string.Empty);Check(!launcher.FeatureAnnouncementVisible,"빈 공지는 런처에서 영역까지 숨김");
+            launcher.PerformLayout();Application.DoEvents();
+            Check(patchBox.Height>compactPatchHeight&&patchText.Text.Contains("튜토리얼 목표 정리"),"안내 공지를 내리면 패치노트 칸이 길어지고 더 많은 요약 표시");
+            using(var noNotice=new Bitmap(launcher.Width,launcher.Height)){launcher.DrawToBitmap(noNotice,new Rectangle(Point.Empty,launcher.Size));noNotice.Save(Path.Combine(output,"launcher-without-announcement.png"));}
             var pause=Children(launcher).OfType<Button>().Single(b=>b.Text=="다운로드 중단");
             Check(!pause.Enabled&&!pause.Visible,"런처 다운로드 중단은 작업 중에만 표시·유휴 중 숨김");
             using var bitmap=new Bitmap(launcher.Width,launcher.Height);launcher.DrawToBitmap(bitmap,new Rectangle(Point.Empty,launcher.Size));bitmap.Save(Path.Combine(output,"resumable-launcher.png"));
@@ -229,7 +274,7 @@ internal static class FeatureChecks
                 try
                 {
                     var tabs=Children(dialog).OfType<TabControl>().Single();
-                    Check(tabs.TabPages.Count==3,"런처 서버·설치 / 공지·패치노트 / 고객센터 탭");
+                    Check(tabs.TabPages.Count==2&&!tabs.TabPages.Cast<TabPage>().Any(p=>p.Text.Contains("공지")),"런처 환경설정은 서버·설치 / 고객센터만 표시");
                     foreach(TabPage page in tabs.TabPages)
                     {
                         tabs.SelectedTab=page;dialog.PerformLayout();
@@ -239,10 +284,25 @@ internal static class FeatureChecks
                 }catch(Exception ex){settingsError=ex;}finally{dialog.Close();}
             };
             closeSettings.Start();settings.PerformClick();if(settingsError is not null)throw settingsError;
+            Exception? newsError=null;
+            using var closeNews=new System.Windows.Forms.Timer {Interval=150};
+            closeNews.Tick+=(_,_)=>
+            {
+                var dialog=Application.OpenForms.Cast<Form>().FirstOrDefault(f=>f.Text=="공지사항·패치노트");if(dialog is null)return;closeNews.Stop();
+                try
+                {
+                    Check(Children(dialog).OfType<ListBox>().Any()&&Children(dialog).OfType<ProjectProject01ClientLauncher.LauncherPostView>().Any(),"공지 확인 버튼으로 읽기 전용 공지사항·패치노트 전용 창 열기");
+                    Check(!Children(dialog).OfType<TextBox>().Any(),"공지 창에 서버·설치·문의 입력 없이 게시글 열람만 제공");
+                    using var image=new Bitmap(dialog.Width,dialog.Height);dialog.DrawToBitmap(image,new Rectangle(Point.Empty,dialog.Size));image.Save(Path.Combine(output,"launcher-news-dialog.png"));
+                }catch(Exception ex){newsError=ex;}finally{dialog.Close();}
+            };
+            closeNews.Start();Children(launcher).OfType<Button>().Single(b=>b.Text=="공지 확인").PerformClick();if(newsError is not null)throw newsError;
         }
         using(var community=new CommunityAdministrationForm(MockRequest))
         {
             PrepareRender(community);
+            Check(Children(community).OfType<TextBox>().Any(t=>t.Name=="LauncherPostSummary"&&t.Multiline&&t.MaxLength==500),"운영자가 런처 요약을 별도 입력 가능");
+            Check(Children(community).OfType<CheckBox>().Any(c=>c.Text=="런처 대표 칸에 표시"&&!c.Checked)&&Children(community).OfType<ComboBox>().Any(c=>c.Items.Contains("이벤트")),"운영자가 공지·이벤트와 대표 칸 표시 여부를 선택");
             Check(Children(community).OfType<TabControl>().Single().TabPages.Count==2,"운영 뉴스·패치노트 / 문의 답변 분리");
             using var image=new Bitmap(community.Width,community.Height);community.DrawToBitmap(image,new Rectangle(Point.Empty,community.Size));image.Save(Path.Combine(output,"community-administration.png"));
             Exception? tableError=null;
@@ -278,6 +338,15 @@ internal static class FeatureChecks
         {
             drawing.Clear(Color.SteelBlue);drawing.DrawString("Photo / 사진 미리보기",SystemFonts.DefaultFont,Brushes.White,new PointF(12,12));
             photo.Save(bytes,System.Drawing.Imaging.ImageFormat.Png);fixtureImage=bytes.ToArray();
+        }
+        using(var carousel=new ProjectProject01ClientLauncher.LauncherFeaturedCarousel(new ArticleImageFixture(fixtureImage)){Width=510,Height=250})
+        {
+            carousel.SetPosts([new("photo","News","사진이 있는 공지","선택한 대표 사진과 안내 내용", "11111111-1111-1111-1111-111111111111",true)],"http://127.0.0.1:1");
+            Application.DoEvents();
+            Check(carousel.LoadedImageCount==1,"대표 칸에서 서버 사진을 내려받아 비율을 유지하며 표시");
+            using var image=new Bitmap(carousel.Width,carousel.Height);carousel.DrawToBitmap(image,new Rectangle(Point.Empty,carousel.Size));image.Save(Path.Combine(output,"launcher-featured-photo.png"));
+            carousel.SetPosts([],"http://127.0.0.1:1");
+            Check(carousel.PostCount==0&&carousel.LoadedImageCount==0,"대표 칸 해제·서버 변경 시 이전 사진과 게시글 정리");
         }
         using(var article=new ProjectProject01ClientLauncher.LauncherPostView(new ArticleImageFixture(fixtureImage)){Dock=DockStyle.Fill})
         using(var preview=new Form {Text="읽기 전용 뉴스 표시 검사",Width=760,Height=650})

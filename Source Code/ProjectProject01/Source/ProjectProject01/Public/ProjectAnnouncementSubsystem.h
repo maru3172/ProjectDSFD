@@ -13,13 +13,15 @@ public:
     virtual bool ShouldCreateSubsystem(UObject* Outer)const override;
     virtual void Initialize(FSubsystemCollectionBase& Collection)override;
     virtual void Deinitialize()override;
+    void NotifyAchievement(const FString& Code);
 private:
     bool Poll(float Delta);
     UFUNCTION() void ServiceChanged(bool Maintenance,const FString& Notice,const FString& ShutdownAt,const FString& Message);
     FTSTicker::FDelegateHandle PollHandle;
     TWeakObjectPtr<class UGameViewportClient> Viewport;
     TSharedPtr<class SProjectAnnouncementTicker> Overlay;
-    FString SeenBase,SeenText;
-    int64 SeenRevision=-1;
+    TSharedPtr<class SWidget> AchievementOverlay;
+    FString SeenBase,SeenBroadcast;
+    bool bAwaitBroadcastBaseline=true;
     double NextPoll=0;
 };

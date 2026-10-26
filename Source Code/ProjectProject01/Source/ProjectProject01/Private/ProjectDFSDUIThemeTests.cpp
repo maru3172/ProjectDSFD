@@ -22,6 +22,9 @@
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#include "Sound/SoundWave.h"
+#include "ProjectUIClickSound.h"
+#include "Sound/SoundGenerator.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectDFSDUIThemeContractTest,"ProjectProject01.UITheme.Contracts",
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -34,6 +37,15 @@ bool FProjectDFSDUIThemeContractTest::RunTest(const FString&)
 	TestTrue(TEXT("Input focus is visibly different from its resting border"),Input.BackgroundImageNormal.OutlineSettings.Color!=Input.BackgroundImageFocused.OutlineSettings.Color);
 	TestTrue(TEXT("Selected tabs have a persistent style, not only a hover color"),ProjectDFSDUI::ButtonStyle().Normal.TintColor!=ProjectDFSDUI::ButtonStyle(true).Normal.TintColor);
 	TestTrue(TEXT("Title buttons retain their original translucent surface"),ProjectDFSDUI::TitleButtonStyle().Normal.TintColor.GetSpecifiedColor()==FLinearColor(.01f,.014f,.02f,.25f));
+    auto* Click=Cast<UProjectUIClickSound>(ProjectDFSDUI::ButtonStyle().PressedSlateSound.GetResourceObject());
+    if(TestTrue(TEXT("Common buttons have a short generated click sound"),Click&&Click->Duration>0&&Click->Duration<.1f))
+    {
+        FSoundGeneratorInitParams Params;Params.SampleRate=24000;Params.NumChannels=1;
+        auto First=Click->CreateSoundGenerator(Params),Second=Click->CreateSoundGenerator(Params);float Buffer[2048];First->OnGenerateAudio(Buffer,2048);
+        float Peak=0;for(float Sample:Buffer)Peak=FMath::Max(Peak,FMath::Abs(Sample));
+        TestTrue(TEXT("Click waveform is audible, bounded and finishes"),Peak>.01f&&Peak<.3f&&First->IsFinished());
+        TestFalse(TEXT("Rapid repeated clicks have independent playback cursors"),Second->IsFinished());
+    }
 	const auto Normal=ProjectDFSDUI::ButtonStyle().Normal.TintColor.GetSpecifiedColor();
 	TestTrue(TEXT("Other windows have a slightly brighter surface and a visible outline"),Normal.R>.02f&&Normal.R<.04f&&Normal.A>.9f&&ProjectDFSDUI::ButtonStyle().Normal.OutlineSettings.Width==1.f);
 	TestTrue(TEXT("Body text stays comfortably readable on brighter buttons"),(L(ProjectDFSDUI::Text())+.05f)/(L(Normal)+.05f)>4.5f);

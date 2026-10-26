@@ -345,6 +345,8 @@ void AMultiplayTestGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();Instance&&Instance->ServerMatchCarryover)
+    {FString Error;AcceptCustomRules(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->CustomRules,Error);}
 	InitializeRoleSpawnPoints();
 	if (!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) BindEscapeTriggers();
 	if (UWorld* World = GetWorld(); IsValid(World))
@@ -513,7 +515,7 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		{
 			continue;
 		}
-		if (bHasCompleteSpawnPointSet && Index >= MannequinSpawnCount)
+        if ((bHasCompleteSpawnPointSet||CustomMatchRules.bEnabled) && Index >= MannequinSpawnCount)
 		{
 			Mannequin->Destroy();
 			continue;
@@ -558,6 +560,28 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		TEXT("Initialized %d multiplayer mannequins (%s spawn placement; %d candidates)."),
 		FMath::Min(Mannequins.Num(), MannequinSpawnCount),
 		bHasCompleteSpawnPointSet ? TEXT("random") : TEXT("legacy"), SpawnPoints.Num());
+}
+
+bool AMultiplayTestGameMode::AcceptCustomRules(const FString& Match,const FProjectCustomMatchRules& Rules,FString& Error)
+{
+    FGuid Id;
+    if(!FGuid::Parse(Match,Id)||!Id.IsValid()||!Rules.IsValid())
+    {Error=TEXT("Invalid match rules.");return false;}
+    if(CustomRulesMatchId==Match)
+    {
+        if(CustomMatchRules==Rules)return true;
+        Error=TEXT("Match rules changed after admission.");return false;
+    }
+    if(AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::Waiting||!CustomRulesMatchId.IsEmpty())
+    {Error=TEXT("Another match already owns these rules.");return false;}
+    if(!bCustomDefaultsCaptured)
+    {StandardMannequinCount=MannequinSpawnCount;StandardTimeLimit=MatchTimeLimitSeconds;bCustomDefaultsCaptured=true;}
+    CustomRulesMatchId=Match;CustomMatchRules=Rules;
+    MannequinSpawnCount=Rules.bEnabled?Rules.MannequinCount:StandardMannequinCount;
+    MatchTimeLimitSeconds=Rules.bEnabled?float(Rules.TimeLimitSeconds):StandardTimeLimit;
+    // Tickets arrive after BeginPlay; configure the world before admitting the first pawn.
+    if(bServerWorldInitialized&&Rules.bEnabled)InitializeMannequinSpawns();
+    return true;
 }
 
 void AMultiplayTestGameMode::ApplyMannequinTuning(const FMannequinAITuningRow& Tuning)
@@ -1468,6 +1492,7 @@ void AMultiplayTestGameMode::PreLogin(
 		return;
 	}
 
+    if(!AcceptCustomRules(Claim.MatchId,Claim.CustomRules,ErrorMessage))return;
     if(MatchBots&&!MatchBots->AcceptRoster(Claim.RoomId,Claim.MatchId,Claim.Bots,ErrorMessage))return;
 	PendingValidatedJoinClaims.Add(Ticket, MoveTemp(Claim));
 }
@@ -2680,6 +2705,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
     {
         auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
+        Carry->CustomRules=CustomMatchRules;
         if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();Carry->BotLearning=MatchBots->ExportLearning();}
         Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
         Carry->Disconnected=DisconnectedMatchRecords;
@@ -2881,6 +2907,7 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 	const FMultiplayTestServerPlayerRecord& Record) const
 {
 	FMultiplayTestMatchResult Result;
+	Result.bCustomMatch=CustomMatchRules.bEnabled;
 	Result.MatchId = AuthoritativeMatchId;
 	Result.Role = Record.Role;
 	Result.MatchDurationSeconds = GetElapsedMatchSeconds();
@@ -2917,7 +2944,7 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 	{
 		if (const bool* Verification = ResultVerificationStatus.Find(Controller))
 		{
-			Result.bLeaderboardVerificationReady = *Verification;
+			Result.bLeaderboardVerificationReady = *Verification&&!CustomMatchRules.bEnabled;
 		}
 	}
 	return Result;

@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "ProjectCustomMatchRules.h"
 #include "ProjectProject01LobbySubsystem.generated.h"
 
 UENUM(BlueprintType)
@@ -215,6 +216,7 @@ USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FProjectProject01RoomState
 {
 	GENERATED_BODY()
+    FProjectCustomMatchRules CustomRules;
 	UPROPERTY(BlueprintReadOnly) FString MatchId;
     UPROPERTY(BlueprintReadOnly) bool bRandomMatch=false;
     UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;
@@ -447,6 +449,7 @@ private:
     bool ParseMatchmaking(const TSharedPtr<class FJsonObject>& Json,FString& Error);
 	friend class FProjectRoomPreparationStateTest;
 	friend class FProjectLobbySessionPresentationTest;
+    friend class FProjectCustomRulesRenderTest;
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
 		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0);
 	void HandleRequestComplete(

@@ -356,6 +356,9 @@ void UProjectProject01AuthSubsystem::HandleServiceStatusRequestComplete(
 	Json->TryGetStringField(TEXT("announcement"), ServiceAnnouncement);
     Json->TryGetNumberField(TEXT("revision"), ServiceRevision);
     if(!Json->TryGetStringField(TEXT("baseAnnouncement"),OperatorAnnouncement))OperatorAnnouncement=ServiceAnnouncement;
+    AnnouncementBroadcastId.Reset();AnnouncementTag.Reset();AnnouncementRepeatCount=1;
+    Json->TryGetStringField(TEXT("announcementBroadcastId"),AnnouncementBroadcastId);Json->TryGetStringField(TEXT("announcementTag"),AnnouncementTag);Json->TryGetNumberField(TEXT("announcementRepeatCount"),AnnouncementRepeatCount);AnnouncementRepeatCount=FMath::Clamp(AnnouncementRepeatCount,1,100);
+    bOperatorAnnouncementActive=!OperatorAnnouncement.IsEmpty();Json->TryGetBoolField(TEXT("announcementActive"),bOperatorAnnouncementActive);AnnouncementRemainingSeconds=-1;Json->TryGetNumberField(TEXT("announcementRemainingSeconds"),AnnouncementRemainingSeconds);
 	Json->TryGetStringField(TEXT("shutdownAtUtc"), ServiceShutdownAtUtc);
 	FString Message;
 	Json->TryGetStringField(TEXT("message"), Message);

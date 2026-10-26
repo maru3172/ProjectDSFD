@@ -95,6 +95,11 @@ public:
 	FString GetServiceAnnouncement() const { return ServiceAnnouncement; }
     int64 GetServiceRevision() const { return ServiceRevision; }
     const FString& GetOperatorAnnouncement()const{return OperatorAnnouncement;}
+    const FString& GetAnnouncementBroadcastId()const{return AnnouncementBroadcastId;}
+    const FString& GetAnnouncementTag()const{return AnnouncementTag;}
+    int32 GetAnnouncementRepeatCount()const{return AnnouncementRepeatCount;}
+    bool IsOperatorAnnouncementActive()const{return bOperatorAnnouncementActive;}
+    double GetAnnouncementRemainingSeconds()const{return AnnouncementRemainingSeconds;}
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Authentication")
 	bool IsSignedIn() const { return AuthState == EProjectProject01AuthState::SignedIn && !AccessToken.IsEmpty(); }
@@ -209,6 +214,10 @@ private:
 	FString ServiceAnnouncement;
     int64 ServiceRevision=0;
     FString OperatorAnnouncement;
+    FString AnnouncementBroadcastId,AnnouncementTag;
+    int32 AnnouncementRepeatCount=1;
+    bool bOperatorAnnouncementActive=false;
+    double AnnouncementRemainingSeconds=-1;
 
 	UPROPERTY(Transient)
 	FString ServiceShutdownAtUtc;

@@ -23,6 +23,7 @@ internal static class BotSkillRatings
     }
     internal static async Task CaptureAsync(MySqlConnection c,MySqlTransaction tx,string match,CancellationToken ct)
     {
+        if(await CustomRoomRules.IsCustomAsync(c,tx,match,ct))return;
         var humans=await CommunityEndpoints.Rows(c,tx,"SELECT user_id,role FROM authoritative_match_players WHERE match_id=@m",ct,("m",match));
         var bots=await LobbyEndpoints.LoadMatchBotsAsync(c,tx,match,ct);
         List<(ulong User,string Role,double Rating)> players=[];
@@ -42,6 +43,7 @@ internal static class BotSkillRatings
     }
     internal static async Task ApplyAsync(MySqlConnection c,MySqlTransaction tx,string match,ulong user,bool won,CancellationToken ct)
     {
+        if(await CustomRoomRules.IsCustomAsync(c,tx,match,ct))return;
         var rows=await CommunityEndpoints.Rows(c,tx,"SELECT role,own_rating,opponent_rating FROM bot_rating_receipts WHERE match_id=@m AND user_id=@u AND applied=FALSE FOR UPDATE",ct,("m",match),("u",user));
         if(rows.Count==0)return;
         var row=rows[0];double expected=1/(1+Math.Pow(10,(Convert.ToDouble(row["opponent_rating"])-Convert.ToDouble(row["own_rating"]))/400));

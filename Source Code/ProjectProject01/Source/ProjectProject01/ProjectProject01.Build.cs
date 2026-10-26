@@ -12,7 +12,8 @@ public class ProjectProject01 : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore", "HTTP", "Json", "JsonUtilities", "RenderCore", "RHI", "Slate", "SlateCore", "EOSVoiceChat", "EOSShared", "EOSSDK", "AudioCaptureCore", "AudioCapture" });
 
-		PrivateDependencyModuleNames.Add("ImageWrapper");
+        PrivateDependencyModuleNames.Add("ImageWrapper");
+        PrivateDependencyModuleNames.Add("AudioExtensions");
 		PrivateDependencyModuleNames.Add("NetworkReplayStreaming");
 		DynamicallyLoadedModuleNames.Add("LocalFileNetworkReplayStreaming");
 		if (Target.Platform == UnrealTargetPlatform.Win64) PublicSystemLibraries.Add("iphlpapi.lib");

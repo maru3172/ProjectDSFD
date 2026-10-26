@@ -6,6 +6,7 @@
 #include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectDFSDUITheme.h"
+#include "ProjectCustomRoomRulesWidget.h"
 #include "ProjectProject01SocialSubsystem.h"
 #include "ProjectProject01SocialWidget.h"
 
@@ -3480,14 +3481,14 @@ bool UProjectProject01MatchResultWidget::Initialize()
 	}
 	SetIsFocusable(true);
 	BuildWidgetTree();
-	ProjectDFSDUI::ApplyTree(WidgetTree);
-	ProjectDFSDUI::FramePage(WidgetTree,1120);
+	// Results keep their dedicated presentation; case-file framing belongs to menus and leaderboards.
 	return true;
 }
 
 void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMatchResult& InResult)
 {
 	Result = InResult;
+    if(Result.bCustomMatch)if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->ClearPendingLeaderboardRecord();
 	bSinglePlayer = false;
 	bConfigured = true;
 	if (!IsInViewport()) InitializeResultPresentation();
@@ -3509,6 +3510,8 @@ void UProjectProject01MatchResultWidget::ConfigureResult(const FMultiplayTestMat
 			}
 		}
 	}
+	if(Result.bLeaderboardVerificationReady)
+        if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this))Records->Refresh();
 	RefreshResultText();
 }
 
@@ -4046,7 +4049,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 		Result.bSuccess && Result.bLeaderboardVerificationReady;
 	if (IsValid(RegisterButton))
 	{
-		RegisterButton->SetVisibility(!bSinglePlayer && Result.bSuccess
+		RegisterButton->SetVisibility(!bSinglePlayer && !Result.bCustomMatch && Result.bSuccess
 			? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		RegisterButton->SetIsEnabled(bCanRegister && !bBusy);
 	}
@@ -4083,7 +4086,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 				? TEXT("리더보드를 열어 이번 경기 기록을 확인하고 등록할 수 있습니다.")
 				: TEXT("서버의 리더보드 검증 기록에 실패했습니다. 방 복귀만 가능합니다.");
 		StatusText->SetText(FProjectProject01Localization::Text(Status));
-		StatusText->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		StatusText->SetVisibility(bSinglePlayer||Result.bCustomMatch ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 		StatusText->SetColorAndOpacity(!Result.bLeaderboardVerificationPending &&
 			Result.bSuccess && !Result.bLeaderboardVerificationReady
 			? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(FLinearColor::White));
@@ -5469,7 +5472,7 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
             if(Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight())Lobby->RefreshCurrentRoom();
         }
     }
-    bool CanEnterBot=!Lobby->HasCurrentRoom()&&Editable;
+    bool CanEnterBot=!Lobby->HasCurrentRoom()&&Editable,TwoPlayerParty=false;
     if(Records&&Records->Snapshot)
     {
         const TSharedPtr<FJsonObject>* PartyState=nullptr,*Party=nullptr;
@@ -5477,10 +5480,12 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
         {
             bool Leader=false;const TArray<TSharedPtr<FJsonValue>>* Members=nullptr;
             CanEnterBot=CanEnterBot&&(*Party)->TryGetBoolField(TEXT("isLeader"),Leader)&&Leader&&(*Party)->TryGetArrayField(TEXT("members"),Members)&&Members->Num()<=2;
+            const TArray<TSharedPtr<FJsonValue>>* PartyMembers=nullptr;TwoPlayerParty=(*Party)->TryGetArrayField(TEXT("members"),PartyMembers)&&PartyMembers->Num()==2;
         }
     }
     if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(CanEnterBot);
-    if(BotMatchRole)BotMatchRole->SetIsEnabled(!Lobby->HasCurrentRoom()&&Editable);
+    if(BotMatchRole){BotMatchRole->SetIsEnabled(!Lobby->HasCurrentRoom()&&Editable&&!TwoPlayerParty);if(TwoPlayerParty)BotMatchRole->SetSelectedOption(TEXT("생존자"));}
+    if(RoomMatchRole&&Room.bBotMatch&&Room.Members.Num()==2){RoomMatchRole->SetSelectedOption(TEXT("생존자"));RoomMatchRole->SetIsEnabled(false);}
     if(Busy)
         for(auto* Button:{MatchStartButton.Get(),ReadyButton.Get(),StartRoomButton.Get()})if(Button)Button->SetIsEnabled(false);
 }
@@ -6336,6 +6341,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     int32 Observers=0;for(const auto& Member:Room.Members)Observers+=Member.bIsObserver?1:0;
     const int32 Playing=Room.Members.Num()-Observers+Room.Bots.Num();
     const bool OpenWaiting=!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted;
+    if(CustomRulesButton){CustomRulesButton->SetVisibility(!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty?ESlateVisibility::Visible:ESlateVisibility::Collapsed);CustomRulesButton->SetIsEnabled(OpenWaiting&&Room.bIsHost&&!Lobby->IsRequestInFlight());}
     if(SwitchObserverButton)
     {
         SwitchObserverButton->SetVisibility(OpenWaiting?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
@@ -6345,10 +6351,12 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     if(ParticipantManagement){ParticipantManagement->SetVisibility(OpenWaiting&&Room.bIsHost?ESlateVisibility::Visible:ESlateVisibility::Collapsed);ParticipantManagement->SetIsEnabled(!Lobby->IsRequestInFlight()&&!SelectedHostTransferUserId.IsEmpty());}
 	if (IsValid(CurrentRoomText))
 	{
-		CurrentRoomText->SetText(FText::FromString(FString::Printf(
+        FString Summary=FString::Printf(
 			TEXT("방: %s · 참가 코드: %s\n플레이 %d/3 · 관전 %d/2 · 경기 세션: %s"),
 			*Room.Name, *Room.JoinCode, Playing,Observers,
-			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"))));
+			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"));
+        if(Room.CustomRules.bEnabled)Summary+=FString::Printf(TEXT("\n사용자 지정 · 데스카운트 %d · 마네킹 %d · %s"),Room.CustomRules.DeathCount,Room.CustomRules.MannequinCount,*(Room.CustomRules.TimeLimitSeconds==0?FString(TEXT("시간 무제한")):FString::Printf(TEXT("제한 %d분"),Room.CustomRules.TimeLimitSeconds/60)));
+        CurrentRoomText->SetText(FText::FromString(Summary));
 	}
     auto DisplayMembers=Room.Members;
     for(const auto& Bot:Room.Bots)
@@ -6804,6 +6812,12 @@ void UProjectProject01LobbyWidget::HandleRoomSessionTabClicked()
 	ProjectDFSDUI::Apply(RoomBotsTabButton,false);ProjectDFSDUI::Apply(RoomMembersTabButton,false);ProjectDFSDUI::Apply(RoomSessionTabButton,true);
 	for(UButton* Tab:{RoomBotsTabButton.Get(),RoomMembersTabButton.Get(),RoomSessionTabButton.Get()})ProjectProject01LoginUI::CompactControls(Tab);
 }
+
+void UProjectProject01LobbyWidget::HandleCustomRulesClicked()
+{
+    if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())
+    {const auto& R=Lobby->GetCurrentRoom();if(R.bIsHost&&!R.bBotMatch&&!R.bRandomMatch&&!R.bRandomParty&&!R.bStarted&&!R.bStarting&&!R.bServerPreparing)UProjectCustomRoomRulesWidget::OpenFor(GetOwningPlayer(),this);}
+}
 void UProjectProject01LobbyWidget::BuildWidgetTree()
 {
 	if (!IsValid(WidgetTree) || IsValid(WidgetTree->RootWidget))
@@ -7009,6 +7023,8 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	auto* Play=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("플레이 참가자로 변경"));Play->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMoveToPlayer);
 	auto* Kick=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원 강퇴"));Kick->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleKickParticipant);
 	auto* SessionTools=WidgetTree->ConstructWidget<UVerticalBox>();RoomToolsSwitcher->AddChild(SessionTools);
+    CustomRulesButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("커스텀 규칙"));
+    CustomRulesButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCustomRulesClicked);
 	DeleteRoomButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("방 삭제 · 모두 로비로"));
 	RoomToolsFrame->SetVisibility(ESlateVisibility::Collapsed);
 

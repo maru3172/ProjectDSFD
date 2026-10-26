@@ -20,7 +20,7 @@ internal sealed record VersionCompatibilityOptions(
         Normalize(configuration["Compatibility:DedicatedServerBuildVersion"], "1.0.0"),
         Normalize(configuration["Compatibility:ApiVersion"], "1"),
         Normalize(configuration["Compatibility:GameDataVersion"], "1"),
-        Normalize(configuration["Compatibility:NetworkProtocolVersion"], "6"),
+        Normalize(configuration["Compatibility:NetworkProtocolVersion"], "7"),
         Normalize(configuration["Compatibility:UpdateMessage"],
             "게임 버전이 서버와 맞지 않습니다. 최신 빌드로 업데이트하세요."));
 

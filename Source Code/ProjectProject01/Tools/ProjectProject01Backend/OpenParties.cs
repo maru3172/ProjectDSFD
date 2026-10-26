@@ -79,6 +79,11 @@ internal static class OpenParties
         foreach(var member in members)await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_role_preferences(user_id,role) VALUES(@u,'Any') ON DUPLICATE KEY UPDATE role='Any'",ct,("u",member["user_id"]));
         if(mode=="Bot")
         {
+            if(members.Count==2)
+            {
+                foreach(var member in members)await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_role_preferences(user_id,role) VALUES(@u,'Survivor') ON DUPLICATE KEY UPDATE role='Survivor'",ct,("u",member["user_id"]));
+                await CommunityEndpoints.Exec(c,tx,"UPDATE bot_rooms SET human_role='Survivor' WHERE room_id=@r",ct,("r",room));
+            }
             var bots=await CommunityEndpoints.Rows(c,tx,"SELECT bot_id FROM room_bots WHERE room_id=@r ORDER BY bot_id",ct,("r",room));
             foreach(var bot in bots.Take(Math.Max(0,members.Count-1)))await CommunityEndpoints.Exec(c,tx,"DELETE FROM room_bots WHERE bot_id=@b",ct,("b",bot["bot_id"]));
         }
@@ -105,6 +110,8 @@ internal static class OpenParties
             if(body.Action=="Role")
             {
                 if(body.Role is not ("Any" or "Survivor" or "Mannequin"))return Results.BadRequest();
+                var duo=await CommunityEndpoints.Rows(c,tx,"SELECT b.room_id FROM bot_rooms b JOIN room_members m ON m.room_id=b.room_id WHERE m.user_id=@u AND (SELECT COUNT(*) FROM room_members p WHERE p.room_id=b.room_id AND p.is_observer=FALSE)=2",ct,("u",user.Id));
+                if(duo.Count>0&&body.Role!="Survivor")return Results.Conflict(new{message="2인 봇전에서는 두 플레이어 모두 생존자입니다."});
                 if(body.Role!="Any"&&(await CommunityEndpoints.Rows(c,tx,"SELECT p.room_id FROM random_match_parties p JOIN room_members m ON m.room_id=p.room_id WHERE m.user_id=@u",ct,("u",user.Id))).Count==0)
                 {
                     var others=await CommunityEndpoints.Rows(c,tx,"SELECT m.user_id FROM room_members m JOIN game_rooms g ON g.id=m.room_id LEFT JOIN bot_rooms b ON b.room_id=g.id LEFT JOIN case_role_preferences p ON p.user_id=m.user_id WHERE m.room_id=(SELECT room_id FROM room_members WHERE user_id=@u) AND m.user_id<>@u AND m.is_observer=FALSE AND COALESCE(IF(m.user_id=g.host_user_id,b.human_role,NULL),p.role,'Any')=@role",ct,("u",user.Id),("role",body.Role));

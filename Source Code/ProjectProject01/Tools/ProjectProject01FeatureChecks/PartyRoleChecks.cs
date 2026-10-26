@@ -95,8 +95,16 @@ internal static class PartyRoleChecks
             room=(await Read(host.PostAsJsonAsync("/api/bot-matches",new{role="Mannequin",difficulty=3}))).GetProperty("room");
             Check(room.GetProperty("members").GetArrayLength()==2&&room.GetProperty("bots").GetArrayLength()==1,"봇전 파티 인원만큼 봇 자리 대체");
             await Expect(people[1].Client.PostAsJsonAsync("/api/parties/action",new{action="Role",role="Mannequin"}),HttpStatusCode.Conflict,"봇전에서 방장의 선택 역할도 마네킹 정원에 포함");
-            await Act(host,"Role",role:"Any");await Act(people[1].Client,"Role",role:"Mannequin");
-            Check((await Read(host.GetAsync("/api/case-records"))).GetProperty("partyState").GetProperty("role").GetString()=="Any","봇전 방 안에서 방장이 무작위로 변경 가능");
+            await Expect(host.PostAsJsonAsync("/api/parties/action",new{action="Role",role="Any"}),HttpStatusCode.Conflict,"2인 봇전은 무작위 역할로 변경 불가");
+            Check((await Read(host.GetAsync("/api/case-records"))).GetProperty("partyState").GetProperty("role").GetString()=="Survivor"&&(await Read(people[1].Client.GetAsync("/api/case-records"))).GetProperty("partyState").GetProperty("role").GetString()=="Survivor","2인 봇전은 두 사람의 역할을 생존자로 고정");
+            await using(var c=await db.OpenConnectionAsync(default))await using(var tx=await c.BeginTransactionAsync())
+            {
+                string duoRoom=room.GetProperty("roomId").GetString()!;
+                await LobbyEndpoints.AssignPlayingRolesAsync(c,tx,duoRoom,people.Take(2).Select(p=>p.Id).ToArray(),default);
+                var humanRoles=await CommunityEndpoints.Rows(c,tx,"SELECT assigned_role FROM room_members WHERE room_id=@r",default,("r",duoRoom));
+                var botRoles=await LobbyEndpoints.LoadRoomBotsAsync(c,tx,duoRoom,default);
+                Check(humanRoles.All(r=>(string)r["assigned_role"]! =="Survivor")&&botRoles.Single().AssignedRole=="Mannequin","2인 봇전 실제 확정 역할은 생존자 두 명과 마네킹 봇 한 명");await tx.RollbackAsync();
+            }
             foreach(var p in people.Take(2))await Read(p.Client.PostAsJsonAsync("/api/rooms/current/leave",new{}));
             room=(await Read(host.PostAsJsonAsync("/api/rooms",new{name="같은 공통 파티로 오픈매칭",isPublic=false}))).GetProperty("room");
             Check(room.GetProperty("members").GetArrayLength()==2,"봇전에 들어갔던 같은 공통 파티로 오픈매칭 입장");

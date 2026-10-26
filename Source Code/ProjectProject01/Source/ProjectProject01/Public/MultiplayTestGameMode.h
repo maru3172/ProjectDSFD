@@ -40,6 +40,7 @@ struct FMultiplayTestServerPlayerRecord
 
 struct FMultiplayTestMatchCarryover
 {
+    FProjectCustomMatchRules CustomRules;
     FString MatchId;
     FString BotRoomId;
     TArray<FProjectMatchBotSpec> Bots;
@@ -67,6 +68,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class AProjectProject01TutorialGameMode;
     friend class UProjectMatchBots;
     friend class FProjectMatchBotsRuntimeTest;
+    friend class FProjectCustomRulesTest;
     friend class FProjectActualBotMatchEditorTest;
     friend class FProjectBotSimulationTest;
     friend class AProjectOpenObserverController;
@@ -83,6 +85,8 @@ public:
 
 	/** 서버가 DataTable의 검증된 생존자 시야 수치를 적용한다. */
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
+    bool AcceptCustomRules(const FString& Match,const FProjectCustomMatchRules& Rules,FString& Error);
+    const FProjectCustomMatchRules& GetCustomMatchRules()const{return CustomMatchRules;}
 	void GetDiagnosticSurvivorVisionTuning(float& OutIntervalSeconds, float& OutHalfAngleDegrees) const
 	{
 		OutIntervalSeconds = SurvivorVisionCheckIntervalSeconds;
@@ -396,7 +400,12 @@ private:
 	int32 SurvivorSpawnCount = 2;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
-	int32 MannequinSpawnCount = 10;
+    int32 MannequinSpawnCount = 10;
+    FProjectCustomMatchRules CustomMatchRules;
+    FString CustomRulesMatchId;
+    int32 StandardMannequinCount=10;
+    float StandardTimeLimit=1800;
+    bool bCustomDefaultsCaptured=false;
 
 	/** 생존자 시작 지점에서 이 거리(cm) 안의 마네킹 후보는 먼 후보가 모자랄 때만 씁니다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "cm"))

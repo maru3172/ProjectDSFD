@@ -33,6 +33,8 @@ public:
     virtual void Deinitialize() override;
     void Refresh();
     void RefreshStoryArchives();
+    void RefreshAchievementRates();
+    TSharedPtr<class FJsonObject> GetAchievementRates()const;
     TSharedPtr<class FJsonObject> GetStoryArchives()const{return StoryArchives;}
     void Action(const FString& Action,const FString& Id,const FString& Mode=FString(),int32 ExpectedRerolls=-1);
     void PartyAction(const FString& Action,const FString& Target=FString(),const FString& Mode=FString(),const FString& Role=FString());
@@ -55,6 +57,10 @@ private:
     UPROPERTY() TObjectPtr<UProjectCampaignAchievementSave> Local;
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> Request;
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> ArchiveRequest;
+    TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> AchievementRateRequest;
+    TSharedPtr<class FJsonObject> AchievementRates;
+    FString AchievementRateBase;
+    double LastAchievementRateFetchAt=-100;
     TSharedPtr<class FJsonObject> StoryArchives;
     double LastArchiveFetchAt=-100;
     FTSTicker::FDelegateHandle Ticker;
@@ -62,6 +68,9 @@ private:
     FString CurrentLocalSlot;
     bool bPersistence=true,bSaving=false,bSaveDirty=false;
     bool bImportAttempted=false;
+    FString AchievementAccount;
+    TSet<FString> SeenOnlineAchievements;
+    void ObserveAchievements();
 };
 
 UCLASS()
@@ -82,9 +91,10 @@ private:
     void Close();
     FString Page=TEXT("Achievements");
     FString RenderedFingerprint;
-    FString InviteDraft;
     int32 InvestigationStage=1,InvestigationPiece=1,ArchiveIndex=0;
     bool bOpenedOnline=false;
+    bool bShopFundsMessageHandled=false;
+    TSharedPtr<class SProjectShopFundsNotice> ShopFundsNotice;
     TSharedPtr<class SVerticalBox> Body;
     TSharedPtr<class SScrollBox> RecordsScroll;
     TWeakObjectPtr<UUserWidget> ReturnWidget;

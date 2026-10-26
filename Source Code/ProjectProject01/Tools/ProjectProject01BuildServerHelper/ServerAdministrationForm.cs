@@ -34,6 +34,9 @@ internal sealed class ServerAdministrationForm : Form
         ScrollBars = ScrollBars.Vertical,
         MaxLength = 512
     };
+    private string announcementTag="";
+    private int announcementRepeatCount=1;
+    private DateTimeOffset? announcementStartsAtUtc,announcementEndsAtUtc;
     private readonly DateTimePicker maintenanceStartTime = new()
     {
         Width = 190,
@@ -78,6 +81,10 @@ internal sealed class ServerAdministrationForm : Form
         public bool ManualMaintenanceEnabled { get; set; }
         public string Announcement { get; set; } = string.Empty;
         public string BaseAnnouncement { get; set; } = string.Empty;
+        public string AnnouncementTag {get;set;}="";
+        public int AnnouncementRepeatCount {get;set;}=1;
+        public DateTimeOffset? AnnouncementStartsAtUtc {get;set;}
+        public DateTimeOffset? AnnouncementEndsAtUtc {get;set;}
         public DateTime? MaintenanceStartAtUtc { get; set; }
         public DateTime? ShutdownAtUtc { get; set; }
         public ulong Revision { get; set; }
@@ -218,6 +225,7 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(serviceButtons, "플레이어 신고 확인", () => {using var dialog=new PlayerReportsForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "계정 이용 제한", () => {using var dialog=new AccountRestrictionForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "사건 기록 조사 수량", () => {using var dialog=new CaseInvestigationForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
+        AddButton(serviceButtons, "주간 미션 재화 상한", () => {using var dialog=new MissionBudgetForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
         AddButton(serviceButtons, "최대 방 수", () => {using var dialog=new RoomCapacityForm(CreateAdminRequest, value=>CapacityChanged?.Invoke(value));dialog.ShowDialog(this);return Task.CompletedTask;});
         root.Controls.Add(serviceButtons);
 
@@ -276,6 +284,8 @@ internal sealed class ServerAdministrationForm : Form
             ServiceControlDto dto = await ReadResponseAsync<ServiceControlDto>(response);
             maintenanceEnabled.Checked = dto.ManualMaintenanceEnabled;
             announcement.Text = dto.BaseAnnouncement;
+            announcementTag=dto.AnnouncementTag;announcementRepeatCount=dto.AnnouncementRepeatCount;
+            announcementStartsAtUtc=dto.AnnouncementStartsAtUtc;announcementEndsAtUtc=dto.AnnouncementEndsAtUtc;
             if (dto.MaintenanceStartAtUtc.HasValue)
                 maintenanceStartTime.Value = dto.MaintenanceStartAtUtc.Value.ToLocalTime();
             if (dto.ShutdownAtUtc.HasValue)
@@ -352,12 +362,12 @@ internal sealed class ServerAdministrationForm : Form
     }
     private Task OpenAnnouncementEditorAsync()
     {
-        using var dialog=new AnnouncementEditorForm(announcement.Text,text=>SendAnnouncementAsync(text));dialog.ShowDialog(this);return Task.CompletedTask;
+        using var dialog=new AnnouncementEditorForm(announcement.Text,(text,tag,count,start,end)=>SendAnnouncementAsync(text,tag,count,start,end),announcementTag,announcementRepeatCount,announcementStartsAtUtc,announcementEndsAtUtc,ClearAnnouncementAsync);dialog.ShowDialog(this);return Task.CompletedTask;
     }
-    private async Task SendAnnouncementAsync(string? text=null)
+    private async Task SendAnnouncementAsync(string? text=null,string tag="",int repeatCount=1,DateTimeOffset? startsAtUtc=null,DateTimeOffset? endsAtUtc=null)
     {
         SetOperationStatus("안내 공지 전송 중...");
-        using var request=CreateAdminRequest(HttpMethod.Put,"/api/admin/service/announcement",new{announcement=text??announcement.Text});
+        using var request=CreateAdminRequest(HttpMethod.Put,"/api/admin/service/announcement",new{announcement=text??announcement.Text,tag,repeatCount,startsAtUtc,endsAtUtc});
         using var response=await http.SendAsync(request);await ReadResponseAsync<ServiceControlDto>(response);
         SetOperationStatus("안내 공지 전송 완료");await RefreshStatusAsync();
     }

@@ -88,7 +88,7 @@ TSharedRef<SWidget> UProjectProject01SocialWidget::RebuildWidget()
         Root->AddSlot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(12)[SNew(SBox).WidthOverride(440)[SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[Popup]+SVerticalBox::Slot().AutoHeight()[Bar]]];
     else
     {
-        Root->AddSlot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(TAttribute<FMargin>::CreateLambda([this]{const auto M=ProjectDFSDUI::FooterMetrics(GetCachedGeometry());return FMargin(0,0,GetCachedGeometry().GetLocalSize().X-M.Left-M.Width*M.Scale+12*M.Scale,122*M.Scale); }))[SNew(SBox).WidthOverride(440)[Popup]];
+        Root->AddSlot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(TAttribute<FMargin>::CreateLambda([this]{const auto M=ProjectDFSDUI::FooterMetrics(GetCachedGeometry());const float ScreenWidth=GetCachedGeometry().GetLocalSize().X;return FMargin(0,0,Page==TEXT("PartyInvite")?FMath::Max(12.f,ScreenWidth-M.Left-12*M.Scale-440):ScreenWidth-M.Left-M.Width*M.Scale+12*M.Scale,122*M.Scale); }))[SNew(SBox).WidthOverride(440)[Popup]];
         Root->AddSlot()[ProjectDFSDUI::FooterSlate(SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1)[SNullWidget::NullWidget]+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,12,0)[Bar])];
     }
     return Root;

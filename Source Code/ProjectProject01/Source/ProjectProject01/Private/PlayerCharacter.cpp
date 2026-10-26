@@ -366,6 +366,10 @@ void APlayerCharacter::BeginPlay()
 		}
 	}
 
+    if(HasAuthority())
+        if(auto* Mode=GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();Mode&&Mode->GetCustomMatchRules().bEnabled)
+            SetRemainingDeathCountForGameMode(Mode->GetCustomMatchRules().DeathCount);
+
 	InitializeLocalPlayerInput();
 
     // 카메라 B 키 디버깅 관련

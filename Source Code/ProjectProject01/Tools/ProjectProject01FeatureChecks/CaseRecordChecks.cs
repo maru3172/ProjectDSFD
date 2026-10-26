@@ -29,6 +29,12 @@ internal static class CaseRecordChecks
             await Expect(client.PostAsJsonAsync("/api/case-records/import-campaign",new{saveId=save,codes=new[]{"mannequin_victory"},confirmed=true}),HttpStatusCode.BadRequest,"로컬 파일로 경쟁 업적 위조 차단");
             for(int i=0;i<2;i++)await Read(client.PostAsJsonAsync("/api/case-records/import-campaign",new{saveId=save,codes=new[]{"campaign_checkpoint"},confirmed=true}));
             var imported=await Read(client.GetAsync("/api/case-records"));Check(imported.GetProperty("achievements").GetArrayLength()==1&&imported.GetProperty("credits").GetInt64()==0&&imported.GetProperty("xp").GetInt64()==0,"업적 병합은 중복되지 않고 재화/경쟁 XP를 지급하지 않음");
+            CaseAchievementRates.Invalidate(db);
+            var global=await Read(anonymous.GetAsync("/api/case-records/achievement-rates"));
+            long total=global.GetProperty("totalPlayers").GetInt64();var checkpointRate=global.GetProperty("achievements").EnumerateArray().Single(a=>a.GetProperty("code").GetString()=="campaign_checkpoint");
+            Check(total>0&&Math.Abs(checkpointRate.GetProperty("percentage").GetDouble()-100.0*checkpointRate.GetProperty("achieved").GetInt64()/total)<.00001,"전체 계정 대비 업적별 달성률 계산");
+            Check(!global.ToString().Contains("userId")&&!global.ToString().Contains("accountId"),"공개 업적 달성률에 개별 계정 정보 없음");
+            Check(ReferenceEquals(await CaseAchievementRates.GetAsync(db,default),await CaseAchievementRates.GetAsync(db,default)),"동시 열람은 30초 집계 캐시 사용");
             var another=await OperationsIntegration.Player(db);
             try
             {
@@ -49,9 +55,9 @@ internal static class CaseRecordChecks
             foreach(var mission in CaseRecords.Missions)await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimMission",id=mission.Id,mode="Pvp"}));
             var attempts=await Task.WhenAll(Enumerable.Range(0,8).Select(_=>client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimMission",id="daily_play",mode="Pvp"})));
             foreach(var response in attempts){Check(response.IsSuccessStatusCode,"동시 중복 보상 요청은 멱등 처리");response.Dispose();}
-            var claimed=await Read(client.GetAsync("/api/case-records"));Check(claimed.GetProperty("credits").GetInt64()==430,"일일·주간 재화는 각 1회만 지급");
+            var claimed=await Read(client.GetAsync("/api/case-records"));Check(claimed.GetProperty("credits").GetInt64()==545,"경기 성과 보상과 일일·주간 재화는 각 1회만 지급");
             for(int i=0;i<2;i++)await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="Buy",id="frame_silver"}));
-            var purchased=await Read(client.GetAsync("/api/case-records"));Check(purchased.GetProperty("credits").GetInt64()==310&&purchased.GetProperty("inventory").GetArrayLength()==1,"중복 구매 재과금 방지·가격은 서버 기준");
+            var purchased=await Read(client.GetAsync("/api/case-records"));Check(purchased.GetProperty("credits").GetInt64()==425&&purchased.GetProperty("inventory").GetArrayLength()==1,"중복 구매 재과금 방지·가격은 서버 기준");
             await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="Equip",id="frame_silver"}));
             var equipped=await Read(client.GetAsync("/api/case-records"));Check(equipped.GetProperty("loadout")[0].GetProperty("itemId").GetString()=="frame_silver","보유 꾸미기 실제 장착 저장");
             Check(!(await Read(client.GetAsync("/api/case-records"))).GetProperty("season").TryGetProperty("requiredXp",out _),"조사 기록 트랙에 경험치 해금 조건 없음");

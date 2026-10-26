@@ -778,6 +778,9 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	}
 	const TSharedPtr<FJsonObject>& StateJson = *StateJsonPointer;
 	FProjectProject01RoomState Parsed;
+    const TSharedPtr<FJsonObject>* Rules=nullptr;
+    if(StateJson->HasField(TEXT("customRules"))&&(!StateJson->TryGetObjectField(TEXT("customRules"),Rules)||!FProjectCustomMatchRules::Parse(*Rules,Parsed.CustomRules)))
+    {OutError=TEXT("방 규칙 응답이 올바르지 않습니다.");return false;}
 	if (!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("roomId"), Parsed.RoomId) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("joinCode"), Parsed.JoinCode) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("name"), Parsed.Name) ||

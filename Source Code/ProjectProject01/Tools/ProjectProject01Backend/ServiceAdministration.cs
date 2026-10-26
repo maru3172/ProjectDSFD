@@ -13,28 +13,38 @@ internal sealed record ServiceControlSnapshot(
     DateTime? MaintenanceStartAtUtc,
     DateTime? ShutdownAtUtc,
     ulong Revision,
-    DateTime UpdatedAtUtc)
+    DateTime UpdatedAtUtc,
+    string AnnouncementTag="",int AnnouncementRepeatCount=1,string AnnouncementBroadcastId="",
+    DateTime? AnnouncementStartsAtUtc=null,DateTime? AnnouncementEndsAtUtc=null)
 {
-    public object ToResponse() => new
+    public bool AnnouncementActive=>!string.IsNullOrWhiteSpace(BaseAnnouncement)&&(!AnnouncementStartsAtUtc.HasValue||DateTime.UtcNow>=AnnouncementStartsAtUtc)&&(!AnnouncementEndsAtUtc.HasValue||DateTime.UtcNow<AnnouncementEndsAtUtc);
+    public object ToResponse(bool publicView=false)
     {
+        var visibleAnnouncement=publicView&&!AnnouncementActive&&Announcement==BaseAnnouncement?string.Empty:Announcement;
+        return new
+        {
         maintenanceEnabled = MaintenanceEnabled,
         manualMaintenanceEnabled = ManualMaintenanceEnabled,
-        announcement = Announcement,
-        baseAnnouncement = BaseAnnouncement,
+        announcement = visibleAnnouncement,
+        baseAnnouncement = publicView&&!AnnouncementActive?string.Empty:BaseAnnouncement,
+        announcementTag=AnnouncementTag,announcementRepeatCount=AnnouncementRepeatCount,announcementBroadcastId=AnnouncementBroadcastId,
+        announcementActive=AnnouncementActive,announcementStartsAtUtc=AnnouncementStartsAtUtc,announcementEndsAtUtc=AnnouncementEndsAtUtc,
+        announcementRemainingSeconds=AnnouncementEndsAtUtc.HasValue?Math.Max(0,(AnnouncementEndsAtUtc.Value-DateTime.UtcNow).TotalSeconds):(double?)null,
         maintenanceStartAtUtc = MaintenanceStartAtUtc,
         shutdownAtUtc = ShutdownAtUtc,
         revision = Revision,
         updatedAtUtc = UpdatedAtUtc,
         message = MaintenanceEnabled
-            ? string.IsNullOrWhiteSpace(Announcement)
+            ? string.IsNullOrWhiteSpace(visibleAnnouncement)
                 ? "현재 멀티플레이 서버를 점검 중입니다. 싱글플레이는 정상 이용할 수 있습니다."
-                : Announcement
+                : visibleAnnouncement
             : MaintenanceStartAtUtc is DateTime scheduledStart && scheduledStart > DateTime.UtcNow
-                ? string.IsNullOrWhiteSpace(Announcement)
+                ? string.IsNullOrWhiteSpace(visibleAnnouncement)
                     ? $"멀티플레이 서버 점검이 {scheduledStart:O}에 시작될 예정입니다."
-                    : Announcement
-                : Announcement
-    };
+                    : visibleAnnouncement
+                : visibleAnnouncement
+        };
+    }
 }
 
 internal sealed class ServiceControlState
@@ -119,7 +129,7 @@ internal sealed record UpdateServiceControlRequest(
     string? Announcement,
     DateTime? MaintenanceStartAtUtc,
     DateTime? ShutdownAtUtc);
-internal sealed record UpdateAnnouncementRequest(string? Announcement);
+internal sealed record UpdateAnnouncementRequest(string? Announcement,string? Tag=null,int RepeatCount=1,DateTimeOffset? StartsAtUtc=null,DateTimeOffset? EndsAtUtc=null);
 
 internal sealed record CreateMaintenanceScheduleRequest(
     DateTime StartsAtUtc,
@@ -187,6 +197,9 @@ internal static class ServiceControlStore
         var effectiveAnnouncement = scheduledMaintenance && !string.IsNullOrWhiteSpace(currentWindow!.Announcement)
             ? currentWindow.Announcement
             : baseAnnouncement;
+        // Older test/upgrade tables may use CHAR(36), which MySqlConnector decodes as Guid, including an invalid empty default.
+        var delivery=await CommunityEndpoints.Rows(connection,null,"SELECT d.tag,d.repeat_count,CAST(d.broadcast_id AS CHAR(64)) broadcast_id,w.starts_at_utc,w.ends_at_utc FROM service_announcement_delivery d JOIN service_announcement_windows w ON w.id=d.id WHERE d.id=1",ct);
+        DateTime? WindowDate(string key)=>delivery.Count==0||delivery[0][key] is null or DBNull?null:DateTime.SpecifyKind(Convert.ToDateTime(delivery[0][key]),DateTimeKind.Utc);
         return new ServiceControlSnapshot(
             manualMaintenance || scheduledMaintenance,
             manualMaintenance,
@@ -195,7 +208,7 @@ internal static class ServiceControlStore
             currentWindow?.StartsAtUtc,
             currentWindow?.EndsAtUtc,
             revision,
-            updatedAtUtc);
+            updatedAtUtc,delivery.Count>0?(string)delivery[0]["tag"]!:"",delivery.Count>0?Convert.ToInt32(delivery[0]["repeat_count"]):1,delivery.Count>0?(string)delivery[0]["broadcast_id"]!:"",WindowDate("starts_at_utc"),WindowDate("ends_at_utc"));
     }
 
     public static async Task<ServiceControlSnapshot> UpdateAsync(
@@ -358,7 +371,7 @@ internal static class ServiceAdministration
 
     public static void MapProjectProject01ServiceAdministration(this WebApplication app)
     {
-        app.MapGet("/api/service/status", (ServiceControlState state) => Results.Ok(state.Get().ToResponse()));
+        app.MapGet("/api/service/status", (ServiceControlState state) => Results.Ok(state.Get().ToResponse(true)));
 
         app.MapGet("/api/admin/service", (HttpRequest request, ServiceControlState state, AdministratorOptions admin) =>
             IsAuthorized(request, admin) ? Results.Ok(state.Get().ToResponse()) : Results.Unauthorized());
@@ -367,9 +380,15 @@ internal static class ServiceAdministration
         {
             if(!IsAuthorized(request,admin))return Results.Unauthorized();
             string text=body.Announcement??string.Empty;if(text.Length>512)return Results.BadRequest(new{message="공지는 512자 이내로 입력하세요."});
+            string tag=(body.Tag??"").Trim();if(tag.Length>64||body.RepeatCount is <1 or >100)return Results.BadRequest(new{message="태그는 64자, 공지 횟수는 1~100회로 입력하세요."});
+            if(body.StartsAtUtc.HasValue!=body.EndsAtUtc.HasValue||(body.EndsAtUtc.HasValue&&(body.EndsAtUtc<=body.StartsAtUtc||body.EndsAtUtc<=DateTimeOffset.UtcNow)))return Results.BadRequest(new{message="공지 시작·종료 시각을 올바르게 지정하세요."});
             await using(var c=await database.OpenConnectionAsync(ct))
-            await using(var command=new MySqlCommand("UPDATE service_control SET announcement=@text,revision=revision+1 WHERE id=1",c){CommandTimeout=5})
-            {command.Parameters.AddWithValue("@text",text);await command.ExecuteNonQueryAsync(ct);}
+            await using(var tx=await c.BeginTransactionAsync(ct))
+            {
+                await CommunityEndpoints.Exec(c,tx,"UPDATE service_control SET announcement=@text,revision=revision+1 WHERE id=1;UPDATE service_announcement_delivery SET tag=@tag,repeat_count=@count,broadcast_id=@event WHERE id=1",ct,("text",text),("tag",tag),("count",body.RepeatCount),("event",Guid.NewGuid().ToString()));
+                await CommunityEndpoints.Exec(c,tx,"UPDATE service_announcement_windows SET starts_at_utc=@start,ends_at_utc=@end WHERE id=1",ct,("start",string.IsNullOrWhiteSpace(text)?null:body.StartsAtUtc?.UtcDateTime),("end",string.IsNullOrWhiteSpace(text)?null:body.EndsAtUtc?.UtcDateTime));
+                await tx.CommitAsync(ct);
+            }
             var updated=await ServiceControlStore.LoadAsync(database,ct);state.Set(updated);
             await SecurityAudit.WriteAsync(database,request,"AdminAnnouncement","Updated",null,$"Length={text.Length}; Revision={updated.Revision}",ct);
             return Results.Ok(updated.ToResponse());
