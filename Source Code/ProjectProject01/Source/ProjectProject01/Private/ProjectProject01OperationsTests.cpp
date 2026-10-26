@@ -141,6 +141,17 @@ bool FProjectLobbySessionPresentationTest::RunTest(const FString&)
 	Loading->CancelLoading();
 	TestTrue(TEXT("Cancel clears every start/search message"),Lobby->StartCountdownText->GetText().IsEmpty());
 	TestTrue(TEXT("Cancel hides overlay"),Lobby->StartCountdownPanel->GetVisibility()==ESlateVisibility::Collapsed);
+	State->CurrentRoom=Room;State->CurrentRoom.bBotMatch=true;
+	FProjectProject01RoomMember BotHost,BotPeer;BotHost.UserId=TEXT("1");BotPeer.UserId=TEXT("2");
+	State->CurrentRoom.Members={BotHost,BotPeer};Lobby->RefreshCurrentRoomView();
+	TestEqual(TEXT("Duo bot countdown remains on its bot UI"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
+	TestEqual(TEXT("Duo bot countdown exposes cancellation inside the bot UI"),Lobby->BotMatchCancelButton->GetVisibility(),ESlateVisibility::Visible);
+	TestEqual(TEXT("Duo bot cannot ready again during countdown"),Lobby->BotMatchCreateButton->GetVisibility(),ESlateVisibility::Collapsed);
+	Requests.Reset();Lobby->HandleStartRoomClicked();
+	TestTrue(TEXT("Duo bot countdown cancellation uses the existing cancel operation"),Requests.Num()==1&&Requests[0]==TEXT("/api/rooms/current/cancel-start"));
+	State->CurrentRoom.bStarting=false;Lobby->RefreshCurrentRoomView();
+	TestEqual(TEXT("Cancelled duo bot returns to its bot UI"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
+	TestEqual(TEXT("Cancelled duo bot offers readiness again"),Lobby->BotMatchCreateButton->GetVisibility(),ESlateVisibility::Visible);
 	return true;
 }
 
@@ -246,6 +257,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     TestEqual(TEXT("Random role choice uses requested label"),Lobby->RandomMatchRole->GetOptionAtIndex(0),FString(TEXT("무작위")));
     TestEqual(TEXT("Open room role choice uses requested label"),Lobby->RoomMatchRole->GetOptionAtIndex(0),FString(TEXT("무작위")));
     TestEqual(TEXT("Bot setup offers exactly five difficulty levels"),Lobby->BotMatchDifficulty->GetOptionCount(),5);
+    TestEqual(TEXT("Solo bot entry keeps its original one-click start"),CastChecked<UTextBlock>(Lobby->BotMatchCreateButton->GetContent())->GetText().ToString(),FString(TEXT("게임 시작")));
     Lobby->RefreshCurrentRoomView();TestEqual(TEXT("Polling preserves bot match configuration"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
     Render(Lobby,TEXT("BotMatchSetup"));
     Lobby->HandleLobbyModesClicked();TestEqual(TEXT("Bot match back returns to matching selection"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),4);
@@ -456,12 +468,24 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     State->CurrentRoom.bIsObserver=false;
     State->CurrentRoom.bIsHost=true;State->CurrentRoom.bBotMatch=true;State->CurrentRoom.bIsReady=false;State->CurrentRoom.bCanStart=false;
     State->CurrentRoom.Members={M1,M2};State->CurrentRoom.Bots={BotA};Lobby->RefreshCurrentRoomView();
-    TestEqual(TEXT("Duo bot host gets its own ready button"),Lobby->ReadyButton->GetVisibility(),ESlateVisibility::Visible);
-    TestFalse(TEXT("Duo bot host cannot start while the server reports a missing ready"),Lobby->StartRoomButton->GetIsEnabled());
-    RenderLayout(TEXT("DuoBotHostNotReady"),{Lobby->ReadyButton,Lobby->StartRoomButton,Lobby->LeaveRoomButton});
-    State->CurrentRoom.bIsReady=true;State->CurrentRoom.bCanStart=true;Lobby->RefreshCurrentRoomView();
-    TestTrue(TEXT("Duo bot start activates after both players are ready"),Lobby->StartRoomButton->GetIsEnabled());
-    RenderLayout(TEXT("DuoBotHostReady"),{Lobby->ReadyButton,Lobby->StartRoomButton,Lobby->LeaveRoomButton});
+    TestEqual(TEXT("Duo bot host remains on bot match UI, never the open room"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
+    TestEqual(TEXT("Duo bot action is ready on the bot match UI"),CastChecked<UTextBlock>(Lobby->BotMatchCreateButton->GetContent())->GetText().ToString(),FString(TEXT("준비")));
+    TestEqual(TEXT("Duo bot match has no room management UI"),Lobby->RoomToolsToggleButton->GetVisibility(),ESlateVisibility::Collapsed);
+    TestEqual(TEXT("Duo bot waiting room has no separate start button"),Lobby->StartRoomButton->GetVisibility(),ESlateVisibility::Collapsed);
+    RenderLayout(TEXT("DuoBotHostNotReady"),{Lobby->BotMatchCreateButton,Lobby->BotMatchParticipantsText,Lobby->BotMatchBackButton});
+    State->CurrentRoom.bIsReady=true;State->CurrentRoom.Members[0].bIsReady=true;State->CurrentRoom.bCanStart=true;Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Duo bot ready state never asks for a second start click"),Lobby->StartRoomButton->GetVisibility(),ESlateVisibility::Collapsed);
+    TestEqual(TEXT("Bot UI offers ready cancellation"),CastChecked<UTextBlock>(Lobby->BotMatchCreateButton->GetContent())->GetText().ToString(),FString(TEXT("준비 취소")));
+    RenderLayout(TEXT("DuoBotHostReady"),{Lobby->BotMatchCreateButton,Lobby->BotMatchParticipantsText,Lobby->BotMatchBackButton});
+    State->CurrentRoom.bIsHost=false;State->CurrentRoom.bIsReady=false;Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Duo bot guest also remains on bot match UI"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
+    RenderLayout(TEXT("DuoBotGuestNotReady"),{Lobby->BotMatchCreateButton,Lobby->BotMatchParticipantsText,Lobby->BotMatchBackButton,CastChecked<UPanelWidget>(Lobby->BotMatchBackButton->GetParent())->GetAllChildren().Last()});
+    TArray<FString> BotRequests;State->ReviewRequestSink=[&BotRequests](const FString& Endpoint){BotRequests.Add(Endpoint);};
+    Lobby->HandleBotMatchCreateClicked();
+    TestTrue(TEXT("Bot UI ready sends only readiness, never room create or manual start"),BotRequests.Num()==1&&BotRequests[0]==TEXT("/api/rooms/current/ready"));
+    BotRequests.Reset();Lobby->HandleBotMatchBackClicked();
+    TestTrue(TEXT("Bot UI back releases only its pending match"),BotRequests.Num()==1&&BotRequests[0]==TEXT("/api/rooms/current/leave"));
+    State->ReviewRequestSink=nullptr;
 	return true;
 }
 #endif

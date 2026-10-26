@@ -74,7 +74,7 @@ struct Difficulty
         if(D.Level==5&&Probe()>0)
         {
             const float E=BaseSkill(4);
-            switch(Probe()){case 1:D.Reaction=1.65f-1.25f*E;break;case 2:D.Sharing=.15f+.75f*E;break;case 3:D.Coordination=.12f+.78f*E;break;case 4:D.Skill=E;break;default:break;}
+            switch(Probe()){case 1:D.Reaction=1.65f-1.25f*E;break;case 2:D.Sharing=.15f+.75f*E;break;case 3:D.Coordination=.12f+.78f*E;break;case 4:D.Skill=E;break;case 9:D.Memory=2.5f+8.5f*E;break;default:break;}
         }
         return D;
     }
@@ -610,7 +610,7 @@ inline const PlayInfo& Info(Play P)
         {5,true ,true ,.9f, 5, 25},  // FeintFlank
         {5,true ,true ,3.f, 6, 40},  // ExitFeint: the visible run toward the first exit is the tell.
         {2,false,true ,.6f, 8, 20},  // StepApproach
-        {2,false,true ,.5f, 5, 15},  // HideStill
+        {2,false,true ,.5f, 4, 20},  // HideStill
         {3,false,true ,.5f, 4, 12},  // WatchRetreat
         {3,false,true ,.6f, 6, 18},  // CoverRun
         {4,true ,true ,2.f, 6, 35},  // FalseRetreat: the visible run away is the tell.
@@ -713,6 +713,10 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
+// Detour (experts and masters): how long a survivor keeps where it last saw each mannequin after the threat itself
+// is forgotten, and routes around those spots. Tell: a wide way round instead of the straight line. Weak spot: the
+// spots go stale, so a mannequin that moved can be waiting on the detour, and the long way costs time.
+inline float DetourMemory(const Difficulty& D){return D.Level>=4?20.f+20.f*D.Skill:0.f;}
 inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.86f,.95f};return L[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
@@ -956,7 +960,7 @@ inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*
 // all ten bodies. The rest keep their usual AI. The endgame table frees a few more from level 2 up.
 // Balance runs only: a value >= 0 replaces the count (0 stands in for a human mannequin, who parks nothing).
 inline int& ParkOverride(){static int Value=-1;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,8,6,6,0},E[]={9,7,5,5,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,8,6,5,0},E[]={9,7,5,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the

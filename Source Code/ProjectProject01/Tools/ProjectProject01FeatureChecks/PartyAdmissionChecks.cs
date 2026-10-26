@@ -78,19 +78,28 @@ internal static class PartyAdmissionChecks
             string fixture=Path.Combine(output,"PartyReadinessFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);string executable=Path.Combine(fixture,"ProjectDFSDServer.exe");await File.WriteAllTextAsync(executable,"FakeFactory only");
             await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new{enabled=true,executable,arguments="MultiplayTest -log",firstPort=25177,maximumConcurrent=1,projectRoot=fixture}));
             await Expect(host.PostAsJsonAsync("/api/rooms/current/start",new{}),HttpStatusCode.Conflict,"2인 봇전 미준비 상태 시작 차단");
-            state=await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));Check(state.GetProperty("room").GetProperty("isReady").GetBoolean(),"2인 봇전 방장도 준비를 눌러야 함");
+            state=await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));Check(state.GetProperty("room").GetProperty("isReady").GetBoolean()&&!state.GetProperty("room").GetProperty("starting").GetBoolean(),"2인 봇전 방장만 준비하면 대기 유지");
             await Expect(host.PostAsJsonAsync("/api/rooms/current/start",new{}),HttpStatusCode.Conflict,"방장만 준비한 상태 시작 차단");
-            await Read(people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));Check((await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("canStart").GetBoolean(),"2인 봇전 두 명 모두 준비해야 시작 활성화");
-            await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=false}));Check(!(await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("canStart").GetBoolean(),"방장 준비 취소도 즉시 시작 비활성화");
-            await Expect(host.PostAsJsonAsync("/api/rooms/current/start",new{}),HttpStatusCode.Conflict,"다른 파티원만 준비한 상태 시작 차단");
-            await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));state=await Read(host.PostAsJsonAsync("/api/rooms/current/start",new{}));Check(state.GetProperty("room").GetProperty("starting").GetBoolean(),"전원 준비 후에만 카운트다운 시작");
+            state=await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=false}));Check(!state.GetProperty("room").GetProperty("isReady").GetBoolean(),"두 명 준비 전에는 준비 취소 가능");
+            state=await Read(people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));Check(!state.GetProperty("room").GetProperty("starting").GetBoolean(),"동료만 준비한 상태도 대기 유지");
+            state=await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));Check(state.GetProperty("room").GetProperty("starting").GetBoolean(),"방장이 마지막 준비를 누르면 별도 시작 요청 없이 카운트다운 시작");
+            Check((await Read(people[1].Client.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("starting").GetBoolean(),"자동 시작은 상대방에게도 동일하게 제공");
             await Expect(people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=false}),HttpStatusCode.Conflict,"시작 확정 후 늦은 준비 응답으로 상태 오염 차단");
+            await Expect(host.PostAsJsonAsync("/api/rooms/current/start",new{}),HttpStatusCode.Conflict,"자동 시작 이후 수동 시작 중복 차단");
             await Read(host.PostAsJsonAsync("/api/rooms/current/cancel-start",new{}));
-            await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));await Read(people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));
-            async Task<HttpStatusCode> StartRace(){using var response=await host.PostAsJsonAsync("/api/rooms/current/start",new{});return response.StatusCode;}
-            async Task<HttpStatusCode> UnreadyRace(){using var response=await people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=false});return response.StatusCode;}
-            var readinessRace=await Task.WhenAll(StartRace(),UnreadyRace());Check((readinessRace[0]==HttpStatusCode.OK&&readinessRace[1]==HttpStatusCode.Conflict)||(readinessRace[0]==HttpStatusCode.Conflict&&readinessRace[1]==HttpStatusCode.OK),"시작과 준비 취소 동시 요청도 한 상태만 확정");
-            if(readinessRace[0]==HttpStatusCode.OK)await Read(host.PostAsJsonAsync("/api/rooms/current/cancel-start",new{}));
+            await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));
+            state=await Read(people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));Check(state.GetProperty("room").GetProperty("starting").GetBoolean()&&!state.GetProperty("room").GetProperty("isHost").GetBoolean(),"동료가 마지막 준비여도 서버가 자동 시작");
+            await Read(host.PostAsJsonAsync("/api/rooms/current/cancel-start",new{}));
+            var simultaneous=await Task.WhenAll(Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true})),Read(people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true})));
+            Check((await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("starting").GetBoolean(),"두 명이 동시에 준비해도 카운트다운 진입");
+            await using(var c=await db.OpenConnectionAsync(default)){var rows=await CommunityEndpoints.Rows(c,null,"SELECT match_id FROM game_rooms WHERE id=@r",default,("r",entered.GetProperty("room").GetProperty("roomId").GetString()));Check(rows[0]["match_id"] is null or DBNull,"자동 준비 시작 단계에는 경기나 역할을 미리 만들지 않음");}
+            await Read(host.PostAsJsonAsync("/api/rooms/current/cancel-start",new{}));
+            await Read(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));
+            async Task<HttpStatusCode> ReadyRace(){using var response=await people[1].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true});return response.StatusCode;}
+            async Task<HttpStatusCode> UnreadyRace(){using var response=await host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=false});return response.StatusCode;}
+            var readinessRace=await Task.WhenAll(ReadyRace(),UnreadyRace());state=(await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room");
+            bool started=state.GetProperty("starting").GetBoolean();Check(readinessRace[0]==HttpStatusCode.OK&&(started?readinessRace[1]==HttpStatusCode.Conflict:readinessRace[1]==HttpStatusCode.OK&&!state.GetProperty("isReady").GetBoolean()),"마지막 준비와 준비 취소 경쟁도 하나의 일관된 상태로 확정");
+            if(started)await Read(host.PostAsJsonAsync("/api/rooms/current/cancel-start",new{}));
             foreach(var p in people.Take(2))await Read(p.Client.PostAsJsonAsync("/api/rooms/current/leave",new{}));
             // Capacity is checked again at commit: no partial group entry when a seat is taken.
             target=(await Read(people[3].Client.PostAsJsonAsync("/api/rooms",new{name="정원 변경",isPublic=false}))).GetProperty("room");code=target.GetProperty("joinCode").GetString()!;

@@ -5416,6 +5416,7 @@ void UProjectProject01LobbyWidget::HandleBotMatchClicked()
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
     if(!Lobby||Lobby->HasCurrentRoom()||Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||bTravelRequested||bGameStartFadeActive)return;
     HandleCloseCodeJoinClicked();bShowingBotMatch=true;bShowingTutorial=false;bShowingOpenMatching=false;bShowingMatchmaking=false;bShowingCreateRoom=false;
+    SetStatus(FString(),false);
     ShowLobbyView(7);RefreshCurrentRoomView();
 }
 void UProjectProject01LobbyWidget::HandleBotMatchCreateClicked()
@@ -5424,11 +5425,74 @@ void UProjectProject01LobbyWidget::HandleBotMatchCreateClicked()
     if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsBusy())return;
     if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))
     {
+        if(Lobby->HasCurrentRoom())
+        {
+            const auto& Room=Lobby->GetCurrentRoom();
+            if(Room.bBotMatch&&Room.Members.Num()==2&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted&&!Lobby->IsRequestInFlight())HandleReadyClicked();
+            return;
+        }
         bAutoStartBotMatch=true;
         const FString Choice=BotMatchRole->GetSelectedOption();
         Lobby->CreateBotMatch(Choice==TEXT("마네킹")?TEXT("Mannequin"):Choice==TEXT("생존자")?TEXT("Survivor"):TEXT("Any"),BotMatchDifficulty->GetSelectedIndex()+1);
     }
     RefreshLobbyState();
+}
+void UProjectProject01LobbyWidget::HandleBotMatchBackClicked()
+{
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    if(!Lobby||Lobby->IsRequestInFlight()||bTravelRequested||bGameStartFadeActive)return;
+    if(Lobby->HasCurrentRoom())
+    {
+        const auto& Room=Lobby->GetCurrentRoom();
+        if(Room.bBotMatch&&Room.Members.Num()==1){HandleLobbyModesClicked();return;}
+        if(!Room.bBotMatch||Room.bStarting||Room.bServerPreparing||Room.bStarted)return;
+        bShowingBotMatch=false;Lobby->LeaveRoom();
+    }
+    else HandleLobbyModesClicked();
+}
+void UProjectProject01LobbyWidget::RefreshBotMatchView()
+{
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);if(!Lobby)return;
+    const auto& Room=Lobby->GetCurrentRoom();
+    const bool Bot=Lobby->HasCurrentRoom()&&Room.bBotMatch;
+    const bool Duo=Bot&&Room.Members.Num()==2;
+    const bool Active=Bot&&(Room.bStarting||Room.bServerPreparing||Room.bStarted);
+    const bool Busy=Lobby->IsRequestInFlight()||bTravelRequested||bGameStartFadeActive;
+    if(BotMatchParticipantsText)
+    {
+        FString Text;
+        if(Duo)for(const auto& Member:Room.Members)
+        {
+            if(!Text.IsEmpty())Text+=TEXT("\n");
+            Text+=FString::Printf(TEXT("%s · %s"),*Member.DisplayName,Member.bIsReady?TEXT("준비 완료"):TEXT("대기"));
+        }
+        BotMatchParticipantsText->SetText(FText::FromString(Text));
+        BotMatchParticipantsText->SetVisibility(Duo?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+    }
+    if(BotMatchCreateButton)
+    {
+        BotMatchCreateButton->SetVisibility(!Active?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        if(Duo)BotMatchCreateButton->SetIsEnabled(!Busy);
+        if(auto* Caption=Cast<UTextBlock>(BotMatchCreateButton->GetContent()))
+            Caption->SetText(FText::FromString(Duo?(Room.bIsReady?TEXT("준비 취소"):TEXT("준비")):TEXT("게임 시작")));
+    }
+    if(BotMatchRole)
+    {
+        if(auto* RoleGroup=BotMatchRole->GetParent())RoleGroup->SetVisibility(Duo?ESlateVisibility::Collapsed:ESlateVisibility::Visible);
+        if(Duo){BotMatchRole->SetSelectedOption(TEXT("생존자"));BotMatchRole->SetIsEnabled(false);}
+    }
+    if(BotMatchDifficulty)
+    {
+        BotMatchDifficulty->SetIsEnabled(!Bot&&!Busy);
+        if(Bot&&!Room.Bots.IsEmpty())BotMatchDifficulty->SetSelectedIndex(FMath::Clamp(Room.Bots[0].Difficulty-1,0,4));
+    }
+    if(BotMatchCancelButton)
+    {
+        const bool Cancel=Duo&&Room.bIsHost&&(Room.bServerPreparing||(Room.bStarting&&bGameStartCountdownActive&&!bGameStartCountdownComplete&&!bStartConfirmationRequested));
+        BotMatchCancelButton->SetVisibility(Cancel?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        BotMatchCancelButton->SetIsEnabled(Cancel&&!Busy);
+    }
+    if(BotMatchBackButton)BotMatchBackButton->SetIsEnabled(!Active&&!Busy);
 }
 void UProjectProject01LobbyWidget::HandleMatchRoleChanged(FString Item,ESelectInfo::Type SelectionType)
 {
@@ -5488,6 +5552,7 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
     if(RoomMatchRole&&Room.bBotMatch&&Room.Members.Num()==2){RoomMatchRole->SetSelectedOption(TEXT("생존자"));RoomMatchRole->SetIsEnabled(false);}
     if(Busy)
         for(auto* Button:{MatchStartButton.Get(),ReadyButton.Get(),StartRoomButton.Get()})if(Button)Button->SetIsEnabled(false);
+    RefreshBotMatchView();
 }
 namespace
 {
@@ -6298,8 +6363,9 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     const bool RandomStart=bInRoom&&Lobby->GetCurrentRoom().bRandomMatch;
 	const bool bCodeJoinOpen=CodeJoinPanel&&CodeJoinPanel->GetVisibility()!=ESlateVisibility::Collapsed;
 	// Bot match starts like random matching: stay on the bot panel under the countdown, no room screen.
-	// Only a bot room that failed to start falls back to the room view (leave / start manually).
 	const auto& ShownRoom=Lobby->GetCurrentRoom();
+	const bool BotRoom=bInRoom&&ShownRoom.bBotMatch;
+	if(BotRoom&&LobbyViewSwitcher&&LobbyViewSwitcher->GetActiveWidgetIndex()!=7)SetStatus(FString(),false);
 	const bool SoloBotRoom=bInRoom&&ShownRoom.bBotMatch&&ShownRoom.Members.Num()==1;
 	const bool BotStarting=SoloBotRoom&&(ShownRoom.bStarting||ShownRoom.bServerPreparing||(ShownRoom.bStarted&&!ShownRoom.bReturnedToRoom)||bAutoStartBotMatch);
 	// A bot room exists only for its one match: back from that match (or after a failed auto start) the
@@ -6310,17 +6376,19 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		bShowingBotMatch=true;
 		Lobby->LeaveRoom();
 	}
-	ShowLobbyView(BotStarting||BotRoomIdle?7:bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
+	ShowLobbyView(BotRoom?7:bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
     if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&!bTravelRequested&&!bGameStartFadeActive);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
     if(OpenCodeJoinButton)OpenCodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
     if(CodeJoinButton)CodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
 	if (IsValid(ReadyButton)) ReadyButton->SetVisibility(bInRoom && (!ShownRoom.bIsHost||(ShownRoom.bBotMatch&&ShownRoom.Members.Num()==2)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (IsValid(StartRoomButton)) StartRoomButton->SetVisibility(bInRoom && !RandomStart && Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	const bool bDuoBotWaiting = bInRoom && ShownRoom.bBotMatch && ShownRoom.Members.Num()==2 &&
+		!ShownRoom.bStarting && !ShownRoom.bServerPreparing && !ShownRoom.bStarted;
+	if (IsValid(StartRoomButton)) StartRoomButton->SetVisibility(bInRoom && !RandomStart && ShownRoom.bIsHost && !bDuoBotWaiting ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(LeaveRoomButton)) LeaveRoomButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(CopyJoinCodeButton)) CopyJoinCodeButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	const bool bCanManageRoom = bInRoom && Lobby->GetCurrentRoom().bIsHost;
+	const bool bCanManageRoom = bInRoom && !BotRoom && Lobby->GetCurrentRoom().bIsHost;
 	if(!bInRoom)bRoomToolsExpanded=false;
 	if(RoomToolsFrame)RoomToolsFrame->SetVisibility(bCanManageRoom&&bRoomToolsExpanded?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
 	if(RoomToolsToggleButton)
@@ -7098,8 +7166,9 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     auto* BotSetup=MakeScrollablePanel(); // 7: authenticated dedicated-server match, not local practice.
     ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇전"),26);
     ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("기존 멀티플레이 맵에서 봇과 실제 경기를 진행합니다."),20);
-    ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("플레이할 역할"),20);
-    BotMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();BotMatchRole->AddOption(TEXT("생존자"));BotMatchRole->AddOption(TEXT("마네킹"));BotMatchRole->AddOption(TEXT("무작위"));BotMatchRole->SetSelectedIndex(2);BotSetup->AddChildToVerticalBox(BotMatchRole);
+    auto* BotRoleGroup=WidgetTree->ConstructWidget<UVerticalBox>();BotSetup->AddChildToVerticalBox(BotRoleGroup);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotRoleGroup,TEXT("플레이할 역할"),20);
+    BotMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();BotMatchRole->AddOption(TEXT("생존자"));BotMatchRole->AddOption(TEXT("마네킹"));BotMatchRole->AddOption(TEXT("무작위"));BotMatchRole->SetSelectedIndex(2);BotRoleGroup->AddChildToVerticalBox(BotMatchRole);
     ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇 난이도"),20);
     BotMatchDifficulty=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();
     // Hover help: each option in the open list explains its level; the closed box explains the current pick.
@@ -7108,8 +7177,12 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     for(int32 Level=1;Level<=5;++Level)BotMatchDifficulty->AddOption(UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Level)));
     BotMatchDifficulty->SetSelectedIndex(1);BotSetup->AddChildToVerticalBox(BotMatchDifficulty);
     HandleBotDifficultyChanged(BotMatchDifficulty->GetSelectedOption(),ESelectInfo::Direct);
+    BotMatchParticipantsText=ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT(""),20);
+    BotMatchParticipantsText->SetVisibility(ESlateVisibility::Collapsed);
     BotMatchCreateButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("게임 시작"));BotMatchCreateButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchCreateClicked);
-    auto* BotBack=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("뒤로가기"));BotBack->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
+    BotMatchCancelButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("시작 취소"));BotMatchCancelButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleStartRoomClicked);
+    BotMatchCancelButton->SetVisibility(ESlateVisibility::Collapsed);
+    BotMatchBackButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("뒤로가기"));BotMatchBackButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchBackClicked);
     auto* BotLogout=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("로그아웃 / 로그인 화면으로"));BotLogout->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
 
     // Compact only the matching panels; social overlays and other game menus retain their layout.

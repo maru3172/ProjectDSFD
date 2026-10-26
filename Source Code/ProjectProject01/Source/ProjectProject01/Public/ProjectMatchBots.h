@@ -75,6 +75,9 @@ struct FProjectMatchBotBrain
     // teammate is currently freezing it; discipline is re-rolled every few seconds by level.
     struct FSeenThreat{TWeakObjectPtr<AActor> Actor;FVector Position=FVector::ZeroVector;double At=-100;bool Covered=false;};
     TArray<FSeenThreat> Threats;
+    // Where each mannequin was last seen, kept past the threat memory so experts can route around that area.
+    struct FSighting{TWeakObjectPtr<AActor> Actor;FVector Position=FVector::ZeroVector;double At=-100;};
+    TArray<FSighting> Sightings;
     double DisciplineUntil=0,SoloCheckAt=0;
     bool Disciplined=false;
     // Emotion edges (near miss -> shaken -> "phew"), fidgeting while waiting, per-match condition refresh.
@@ -89,6 +92,8 @@ struct FProjectMatchBotBrain
     double LongFreezeAt=-100; // Mannequin body: last moment it had been held frozen for a while (FakeRetreat).
     FVector FidgetLook=FVector::ZeroVector,ShuffleTo=FVector::ZeroVector;
     bool WasPeeking=false;
+    // Look back while stopped (see TickSurvivor).
+    bool WasHolding=false;double BackCheckAt=0,BackCheckUntil=0;FVector BackDirection=FVector::ZeroVector;
     float PreviousYaw=0;
     bool Initialized=false,Visible=false,Recovering=false,TacticFound=false,HadKnowledge=false;
 };

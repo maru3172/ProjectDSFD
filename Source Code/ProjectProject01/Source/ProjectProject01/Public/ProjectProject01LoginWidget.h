@@ -1028,6 +1028,8 @@ private:
     UFUNCTION() void HandleOpenMatchClicked();
     UFUNCTION() void HandleBotMatchClicked();
     UFUNCTION() void HandleBotMatchCreateClicked();
+    UFUNCTION() void HandleBotMatchBackClicked();
+    void RefreshBotMatchView();
     /** Difficulty hover help: per-option tooltip in the list, and the selected level on the closed box. */
     UFUNCTION() class UWidget* GenerateBotDifficultyItem(FString Item);
     UFUNCTION() void HandleBotDifficultyChanged(FString Item, ESelectInfo::Type SelectionType);
@@ -1040,6 +1042,9 @@ private:
     bool bRoleWritePending=false;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
     UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCreateButton;
+    UPROPERTY(Transient) TObjectPtr<class UTextBlock> BotMatchParticipantsText;
+    UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCancelButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchBackButton;
     bool bShowingBotMatch=false;
     bool bAutoStartBotMatch=false; // One-click bot match: start the room as soon as it is created.
     UFUNCTION() void HandleAddRoomBot();
