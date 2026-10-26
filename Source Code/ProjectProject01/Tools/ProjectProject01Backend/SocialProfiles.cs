@@ -102,7 +102,7 @@ internal static partial class CommunityEndpoints
         await Exec(c,tx,"DELETE FROM social_room_invites WHERE expires_at_utc<=UTC_TIMESTAMP(6);INSERT INTO social_room_invites(id,room_id,sender_id,recipient_id,expires_at_utc) VALUES(@id,@room,@me,@other,UTC_TIMESTAMP(6)+INTERVAL 2 MINUTE) ON DUPLICATE KEY UPDATE id=@id,sender_id=@me,expires_at_utc=UTC_TIMESTAMP(6)+INTERVAL 2 MINUTE,created_at_utc=UTC_TIMESTAMP(6)",ct,("id",Guid.NewGuid().ToString("D")),("room",room),("me",me),("other",other));
         await Notify(c,tx,other,"RoomInvite",name+"님이 '"+rooms[0]["name"]+"' 방에 초대했습니다.",ct);return null;
     }
-    private static async Task<IResult> RespondToRoomInvite(MySqlConnection c,ulong me,string name,ActionRequest input,bool allowObservers,CancellationToken ct)
+    private static async Task<IResult> RespondToRoomInvite(MySqlConnection c,ulong me,string name,ActionRequest input,bool allowObservers,HttpRequest request,CancellationToken ct)
     {
         if(!Guid.TryParse(input.Target,out var id))return Error("초대 정보를 확인하세요.");
         await using var tx=await c.BeginTransactionAsync(ct);
@@ -133,6 +133,8 @@ internal static partial class CommunityEndpoints
         if(partySize>1&&playing+partySize>3)return Error("파티 전원이 플레이할 자리가 부족합니다.");
         bool asObserver=playing>=3;
         if(asObserver&&(!allowObservers||await Scalar(c,tx,"SELECT COUNT(*) FROM room_members WHERE room_id=@room AND is_observer=TRUE",ct,("room",room))>=2))return Error("방 인원이 가득 찼습니다.");
+        var consent=await OpenParties.RequireAdmissionAsync(c,tx,me,request,"Invite","오픈매칭 · 친구 초대",System.Text.Json.JsonSerializer.Serialize(new{kind="Invite",invite=id.ToString("D"),room}),room,ct);
+        if(consent is not null)return consent;
         await Exec(c,tx,"INSERT INTO room_members(room_id,user_id,is_ready,is_observer) VALUES(@room,@me,FALSE,@observer);DELETE FROM social_room_invites WHERE recipient_id=@me",ct,("room",room),("me",me),("observer",asObserver));
         if(!await OpenParties.AttachToRoomAsync(c,tx,me,room,"Open",ct))return Error("파티원 상태가 바뀌어 전원 입장을 취소했습니다.");
         await Notify(c,tx,sender,"InviteAccepted",name+"님이 방 초대를 수락했습니다.",ct);

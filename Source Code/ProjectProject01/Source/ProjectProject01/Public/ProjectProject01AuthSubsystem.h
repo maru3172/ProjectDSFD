@@ -132,6 +132,7 @@ private:
 	friend class FProjectLoginRegistrationTest;
 	friend class FProjectSocialWidgetLayoutTest;
 	friend class FProjectCaseUiRenderTest;
+    friend class FProjectPartyAdmissionWidgetTest;
 	enum class EAuthOperation : uint8
 	{
 		Register,

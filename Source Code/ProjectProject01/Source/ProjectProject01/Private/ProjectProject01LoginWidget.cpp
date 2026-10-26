@@ -5936,6 +5936,8 @@ void UProjectProject01LobbyWidget::HandleLobbyRequestResult(
 	const FString& Message)
 {
 	if (bLobbyLogoutInProgress && Operation != EProjectProject01LobbyOperation::LeaveRoom) return;
+    if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);L&&L->IsAwaitingPartyAdmission())
+    {SetStatus(Message,false);RefreshLobbyState();return;}
 	// One-click bot match: the room is solo (host + bots), so start it right away instead of showing a setup step.
 	if (Operation == EProjectProject01LobbyOperation::CreateBotMatch && bAutoStartBotMatch)
 	{
@@ -6240,12 +6242,15 @@ void UProjectProject01LobbyWidget::OpenRoomMemberProfile(const FString& UserId)
 void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProjectProject01RoomMember>& Members,bool bRevealRoles)
 {
 	if(!IsValid(MemberProfilePanel))return;
+    auto* RoomLobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    const bool DuoBot=RoomLobby&&RoomLobby->GetCurrentRoom().bBotMatch&&Members.FilterByPredicate([](const auto& M){return !M.bIsObserver&&!M.bIsBot;}).Num()==2;
 	TArray<FString> Keys;
     FString SelfId;
     if(auto* R=GameInstanceSubsystemOf<UProjectCaseRecords>(this);R&&R->Snapshot)R->Snapshot->TryGetStringField(TEXT("userId"),SelfId);
     if(SelfId.IsEmpty())if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);L&&L->GetCurrentRoom().bIsHost)
         for(const auto& M:Members)if(M.bIsHost)SelfId=M.UserId;
     Keys.Add(TEXT("self:")+SelfId);
+    Keys.Add(DuoBot?TEXT("duo-bot"):TEXT("open-or-solo"));
 	for(const auto& M:Members)Keys.Add(FString::Printf(TEXT("%s:%d:%s:%d%d%d%d:%d:%s"),*M.UserId,M.DisplayName.Len(),*M.DisplayName,
 		M.bIsHost,M.bIsReady,M.bReturnedToRoom,M.bIsObserver,bRevealRoles,*M.AssignedRole));
 	// Keep live buttons stable across the room's periodic refresh (including mouse-down/up).
@@ -6256,8 +6261,9 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
 		auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
 		const FString Role=bRevealRoles&&!M.AssignedRole.IsEmpty()?TEXT(" [")+M.AssignedRole+TEXT("]"):FString();
+        const FString ReadyStatus=M.bIsBot?FString(TEXT("준비")):M.bIsHost&&!DuoBot?FString(TEXT("시작 대기")):M.bIsReady?FString(TEXT("준비")):FString(TEXT("대기"));
 		Label->SetText(FText::FromString(M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+
-			(M.bIsObserver?TEXT("관전"):M.bIsHost?TEXT("시작 대기"):M.bIsReady?TEXT("준비"):TEXT("대기"))+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
+			(M.bIsObserver?FString(TEXT("관전 · "))+ReadyStatus:ReadyStatus)+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
 		FSlateFontInfo Font=Label->GetFont();Font.Size=16;Label->SetFont(Font);Label->SetAutoWrapText(false);Label->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);Label->SetToolTipText(Label->GetText());Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		auto* LabelSlot=Row->AddChildToHorizontalBox(Label);LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));LabelSlot->SetVerticalAlignment(VAlign_Center);
         if(M.UserId==SelfId&&!M.bIsObserver&&RoomRoleRow)Row->AddChildToHorizontalBox(RoomRoleRow)->SetVerticalAlignment(VAlign_Center);
@@ -6310,7 +6316,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
     if(OpenCodeJoinButton)OpenCodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
     if(CodeJoinButton)CodeJoinButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight());
-	if (IsValid(ReadyButton)) ReadyButton->SetVisibility(bInRoom && !Lobby->GetCurrentRoom().bIsHost && !Lobby->GetCurrentRoom().bIsObserver ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (IsValid(ReadyButton)) ReadyButton->SetVisibility(bInRoom && (!ShownRoom.bIsHost||(ShownRoom.bBotMatch&&ShownRoom.Members.Num()==2)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(StartRoomButton)) StartRoomButton->SetVisibility(bInRoom && !RandomStart && Lobby->GetCurrentRoom().bIsHost ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(LeaveRoomButton)) LeaveRoomButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(CopyJoinCodeButton)) CopyJoinCodeButton->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);

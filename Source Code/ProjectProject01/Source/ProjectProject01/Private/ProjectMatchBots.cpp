@@ -900,10 +900,11 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Lost sight: look back once at where the threat vanished, like a person double-checking.
     if(B.HadKnowledge&&!Knows){B.GlanceDirection=(B.Known-Pawn->GetActorLocation()).GetSafeNormal2D();B.GlanceUntil=Now+.6f+.6f*Quirks.Curiosity;}
     B.HadKnowledge=Knows;
-    // Nervous shoulder checks while nothing is known. Beginners check far more often than experts.
+    // Nervous shoulder checks while nothing is known. Beginners check more often than experts, but experts still
+    // check every few seconds: with ten bodies on the map a long gap lets one walk up from behind.
     // A scared person checks over the shoulder far more often.
     // Near the exit the eyes stay ahead: fewer shoulder checks (tunnel vision).
-    auto ScheduleGlance=[&](){B.NextGlanceAt=Now+(1.8f+3.5f*Skill)*(1.4f-.8f*Quirks.Curiosity)*(.7f+.6f*B.Policy.Random())*(1.f-.6f*Panic)*(1.f+ExitPull);};
+    auto ScheduleGlance=[&](){B.NextGlanceAt=Now+(1.8f+1.f*Skill)*(1.4f-.8f*Quirks.Curiosity)*(.7f+.6f*B.Policy.Random())*(1.f-.6f*Panic)*(1.f+ExitPull);};
     if(B.NextGlanceAt<=0)ScheduleGlance();
     else if(!Knows&&Now>=B.NextGlanceAt&&Now>=B.GlanceUntil)
     {

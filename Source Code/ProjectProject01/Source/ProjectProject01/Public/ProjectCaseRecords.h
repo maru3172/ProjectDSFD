@@ -27,6 +27,8 @@ class PROJECTPROJECT01_API UProjectCaseRecords final : public UGameInstanceSubsy
     GENERATED_BODY()
     friend class FProjectCaseRecordsTest;
     friend class FProjectCaseUiRenderTest;
+    friend class FProjectPartyAdmissionStateTest;
+    friend class FProjectPartyAdmissionWidgetTest;
 public:
     virtual bool ShouldCreateSubsystem(UObject* Outer)const override;
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
@@ -38,6 +40,13 @@ public:
     TSharedPtr<class FJsonObject> GetStoryArchives()const{return StoryArchives;}
     void Action(const FString& Action,const FString& Id,const FString& Mode=FString(),int32 ExpectedRerolls=-1);
     void PartyAction(const FString& Action,const FString& Target=FString(),const FString& Mode=FString(),const FString& Role=FString());
+    void TrackPartyAdmission(const TSharedPtr<class FJsonObject>& View,TFunction<bool(const FString&)> Resume,TFunction<void()> Cancel);
+    void AnswerPartyAdmission(const FString& Action,const FString& Id);
+    bool HasPendingPartyAdmission()const;
+    bool IsPartyAdmissionBusy()const{return AdmissionRequest.IsValid();}
+    int32 PartyAdmissionSecondsLeft()const;
+    void DismissPartyAdmission(const FString& Id);
+    TSharedPtr<class FJsonObject> PartyAdmission;
     void ImportCampaign();
     UFUNCTION(BlueprintCallable,Category="Case Records|Campaign") bool RecordCampaignAchievement(FName Code);
     UFUNCTION(BlueprintPure,Category="Case Records|Campaign") bool HasCampaignAchievement(FName Code) const;
@@ -71,6 +80,17 @@ private:
     FString AchievementAccount;
     TSet<FString> SeenOnlineAchievements;
     void ObserveAchievements();
+    void TickPartyAdmission(float Delta);
+    void ReadPartyAdmission(const TSharedPtr<class FJsonObject>& Json);
+    void SendPartyAdmission(const FString& Body=FString());
+    void ClearPartyAdmission();
+    TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> AdmissionRequest;
+    TFunction<bool(const FString&)> AdmissionResume;
+    TFunction<void()> AdmissionCancel;
+    FString TrackedAdmissionId,DismissedAdmissionId,CompletedAdmissionId;
+    double AdmissionDeadline=0;
+    float AdmissionPollIn=0;
+    UPROPERTY(Transient) TObjectPtr<class UProjectPartyAdmissionWidget> AdmissionWidget;
 };
 
 UCLASS()

@@ -415,6 +415,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	auto ObserverMember=M2;ObserverMember.UserId=TEXT("303");ObserverMember.DisplayName=TEXT("관전자");ObserverMember.bIsObserver=true;
 	State->CurrentRoom.Members={M1,M2,ObserverMember};State->CurrentRoom.Bots={BotA};Lobby->RefreshCurrentRoomView();
 	TestEqual(TEXT("Host administration starts folded, leaving room for chat"),Lobby->RoomToolsFrame->GetVisibility(),ESlateVisibility::Collapsed);
+    TestEqual(TEXT("An open-room host with bots keeps the original start-only behavior"),Lobby->ReadyButton->GetVisibility(),ESlateVisibility::Collapsed);
 	RenderLayout(TEXT("FixedHostDefault"),{Lobby->StartRoomButton,Lobby->LeaveRoomButton,Lobby->ChatInput,Lobby->RoomToolsToggleButton});
     auto Third=M2;Third.UserId=TEXT("304");Third.DisplayName=TEXT("세 번째 참가자");
     auto SecondObserver=ObserverMember;SecondObserver.UserId=TEXT("305");SecondObserver.DisplayName=TEXT("두 번째 관전자");
@@ -444,6 +445,23 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	State->CurrentRoom.bIsHost=false;Lobby->RefreshCurrentRoomView();
 	TestEqual(TEXT("Guest does not reserve a host administration column"),Lobby->RoomToolsFrame->GetVisibility(),ESlateVisibility::Collapsed);
 	RenderLayout(TEXT("FixedGuestRoom"),{Lobby->ReadyButton,Lobby->LeaveRoomButton,Lobby->SwitchObserverButton,Lobby->ChatInput});
+    State->CurrentRoom.bIsObserver=true;State->CurrentRoom.bCanStart=false;Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Human observers receive a ready button"),Lobby->ReadyButton->GetVisibility(),ESlateVisibility::Visible);
+    RenderLayout(TEXT("ObserverGuestReady"),{Lobby->ReadyButton,Lobby->LeaveRoomButton});
+    State->CurrentRoom.bIsHost=true;Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Observing host does not receive a ready button"),Lobby->ReadyButton->GetVisibility(),ESlateVisibility::Collapsed);
+    TestFalse(TEXT("Observing host start stays disabled while others are not ready"),Lobby->StartRoomButton->GetIsEnabled());
+    State->CurrentRoom.bCanStart=true;Lobby->RefreshCurrentRoomView();TestTrue(TEXT("Observing host can start after all human participants and observers are ready"),Lobby->StartRoomButton->GetIsEnabled());
+    RenderLayout(TEXT("ObserverHostReady"),{Lobby->StartRoomButton,Lobby->LeaveRoomButton});
+    State->CurrentRoom.bIsObserver=false;
+    State->CurrentRoom.bIsHost=true;State->CurrentRoom.bBotMatch=true;State->CurrentRoom.bIsReady=false;State->CurrentRoom.bCanStart=false;
+    State->CurrentRoom.Members={M1,M2};State->CurrentRoom.Bots={BotA};Lobby->RefreshCurrentRoomView();
+    TestEqual(TEXT("Duo bot host gets its own ready button"),Lobby->ReadyButton->GetVisibility(),ESlateVisibility::Visible);
+    TestFalse(TEXT("Duo bot host cannot start while the server reports a missing ready"),Lobby->StartRoomButton->GetIsEnabled());
+    RenderLayout(TEXT("DuoBotHostNotReady"),{Lobby->ReadyButton,Lobby->StartRoomButton,Lobby->LeaveRoomButton});
+    State->CurrentRoom.bIsReady=true;State->CurrentRoom.bCanStart=true;Lobby->RefreshCurrentRoomView();
+    TestTrue(TEXT("Duo bot start activates after both players are ready"),Lobby->StartRoomButton->GetIsEnabled());
+    RenderLayout(TEXT("DuoBotHostReady"),{Lobby->ReadyButton,Lobby->StartRoomButton,Lobby->LeaveRoomButton});
 	return true;
 }
 #endif

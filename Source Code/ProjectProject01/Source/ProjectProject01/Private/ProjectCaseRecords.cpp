@@ -56,6 +56,7 @@ void UProjectCaseRecords::Deinitialize()
 }
 void UProjectCaseRecords::ClearSession()
 {
+    ClearPartyAdmission();
     if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     Snapshot.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
     AchievementAccount.Reset();SeenOnlineAchievements.Reset();
@@ -64,6 +65,7 @@ bool UProjectCaseRecords::IsAuthenticated()const{const auto* A=Auth(this);return
 bool UProjectCaseRecords::Tick(float Delta)
 {
     if(!IsAuthenticated()){if(Snapshot)ClearSession();return true;}
+    TickPartyAdmission(Delta);
     if(!Request&&!bImportAttempted&&CanImport()){bImportAttempted=true;ImportCampaign();return true;}
     PollIn-=Delta;if(PollIn<=0){PollIn=15;Refresh();}return true;
 }

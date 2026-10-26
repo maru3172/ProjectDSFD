@@ -5,6 +5,7 @@
 #include "ProjectProject01VersionContract.h"
 #include "ProjectHttpDiagnostics.h"
 #include "ProjectRequestProtection.h"
+#include "ProjectCaseRecords.h"
 
 #include "Dom/JsonObject.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
@@ -106,6 +107,7 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 
 void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 {
+    bAwaitingPartyAdmission=false;
 	++RequestGeneration;
 	bEditorServerPreparationPending=false;
 	bEditorServerPrepared=false;
@@ -471,7 +473,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	const FString& Verb,
 	const FString& Endpoint,
 	const FString& JsonBody,
-	const int32 RetryIndex)
+	const int32 RetryIndex,const FString& PartyProof)
 {
 #if WITH_DEV_AUTOMATION_TESTS
     if(ReviewRequestSink){ReviewRequestSink(Endpoint);return;}
@@ -535,6 +537,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	Request->SetVerb(Verb);
 	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
 	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Auth->GetAccessTokenForAuthenticatedRequest());
+    if(!PartyProof.IsEmpty())Request->SetHeader(TEXT("X-ProjectProject01-Party-Admission"),PartyProof);
 	FProjectProject01VersionContract::ApplyToRequest(Request);
 #if WITH_EDITOR
 	// Editor builds only: a loopback backend may then run bot/observer matches on an editor dedicated
@@ -596,13 +599,14 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 		{
 			const TWeakObjectPtr<UProjectProject01LobbySubsystem> WeakThis(this);
 			const uint64 Generation=RequestGeneration;
-			Auth->RefreshSession([WeakThis, Operation, Verb, Endpoint, JsonBody, Generation](const bool bRefreshed)
+            const FString Proof=Request->GetHeader(TEXT("X-ProjectProject01-Party-Admission"));
+			Auth->RefreshSession([WeakThis, Operation, Verb, Endpoint, JsonBody, Generation,Proof](const bool bRefreshed)
 			{
 				if (UProjectProject01LobbySubsystem* Self = WeakThis.Get(); IsValid(Self) && Self->RequestGeneration==Generation)
 				{
 					if (bRefreshed)
 					{
-						Self->SendRequest(Operation, Verb, Endpoint, JsonBody, 1);
+						Self->SendRequest(Operation, Verb, Endpoint, JsonBody, 1,Proof);
 					}
 					else
 					{
@@ -653,6 +657,8 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	}
 	if (StatusCode < 200 || StatusCode >= 300 || !bJsonValid)
 	{
+        if(!Request->GetHeader(TEXT("X-ProjectProject01-Party-Admission")).IsEmpty())
+            if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->AnswerPartyAdmission(TEXT("Cancel"),Request->GetHeader(TEXT("X-ProjectProject01-Party-Admission")));
 		if (StatusCode == 404 && Operation == EProjectProject01LobbyOperation::RefreshCurrentRoom)
 		{
 			CurrentRoom = FProjectProject01RoomState();
@@ -694,6 +700,16 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
 	}
 
 	FString ParseError;
+    const TSharedPtr<FJsonObject>* Admission=nullptr;
+    if(StatusCode==202&&Json->TryGetObjectField(TEXT("partyAdmission"),Admission))
+    {
+        auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();if(!Records){Complete(Operation,false,TEXT("파티 입장을 준비하지 못했습니다."));return;}
+        bAwaitingPartyAdmission=true;const TWeakObjectPtr<UProjectProject01LobbySubsystem> Weak(this);
+        Records->TrackPartyAdmission(*Admission,[Weak,Operation,Verb,Endpoint,JsonBody](const FString& Proof)
+        {auto* Self=Weak.Get();if(!Self)return false;if(Self->ActiveRequest||Self->bEditorServerPreparationPending)return false;Self->bAwaitingPartyAdmission=false;Self->SendRequest(Operation,Verb,Endpoint,JsonBody,0,Proof);return true;},
+        [Weak,Operation]{if(auto* Self=Weak.Get();Self&&Self->bAwaitingPartyAdmission){Self->bAwaitingPartyAdmission=false;Self->Complete(Operation,false,TEXT("파티 입장이 취소되었습니다."));}});
+        Complete(Operation,true,Message);return;
+    }
 	bool bParsed = true;
 	if (Operation==EProjectProject01LobbyOperation::JoinMatchmaking||Operation==EProjectProject01LobbyOperation::PollMatchmaking||Operation==EProjectProject01LobbyOperation::CancelMatchmaking)
     {

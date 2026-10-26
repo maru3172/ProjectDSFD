@@ -8,10 +8,10 @@ internal static class PartyRoleChecks
     internal static async Task RunAsync(AuthDatabase db,HttpClient admin,IConfiguration configuration)
     {
         int checks=0;void Check(bool ok,string name){if(!ok)throw new Exception(name);checks++;Console.WriteLine("PASS "+name);}
-        async Task<JsonElement> Read(Task<HttpResponseMessage> pending){using var r=await pending;string body=await r.Content.ReadAsStringAsync();if(!r.IsSuccessStatusCode)throw new Exception($"Party API {(int)r.StatusCode}: {body}");return JsonDocument.Parse(body).RootElement.Clone();}
+        var people=new List<(ulong Id,HttpClient Client,string Account)>();
+        Task<JsonElement> Read(Task<HttpResponseMessage> pending)=>PartyAdmissionChecks.ReadWithConsent(pending,db,people);
         async Task Expect(Task<HttpResponseMessage> pending,HttpStatusCode expected,string name){using var r=await pending;Check(r.StatusCode==expected,name+" "+r.StatusCode);}
         async Task Sql(string sql,params(string,object?)[] p){await using var c=await db.OpenConnectionAsync(default);await CommunityEndpoints.Exec(c,null,sql,default,p);}
-        var people=new List<(ulong Id,HttpClient Client,string Account)>();
         for(int i=0;i<4;i++)
         {
             var p=await OperationsIntegration.Player(db);var client=new HttpClient{BaseAddress=admin.BaseAddress};client.DefaultRequestHeaders.Authorization=new("Bearer",p.Token);

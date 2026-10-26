@@ -3,6 +3,7 @@
 #include "ProjectProject01LobbySubsystem.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
 #include "ProjectProject01VersionContract.h"
+#include "ProjectCaseRecords.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -103,15 +104,16 @@ void UProjectProject01SocialSubsystem::Act(const FString& Operation,const FStrin
     Json->SetStringField(TEXT("presence"),Presence);Json->SetStringField(TEXT("context"),bLobbyVisible?TEXT("Lobby"):TEXT("Other"));
     FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));Send(false,Body,bPresence);
 }
-void UProjectProject01SocialSubsystem::Send(bool bRead,const FString& Body,bool bPresence,const FString& Path,const FString& Verb)
+void UProjectProject01SocialSubsystem::Send(bool bRead,const FString& Body,bool bPresence,const FString& Path,const FString& Verb,const FString& PartyProof)
 {
     auto* Auth=AuthOf(this);if(!Auth||!Auth->IsSignedIn())return;
     const FString Token=Auth->GetAccessTokenForAuthenticatedRequest();
     auto Request=FHttpModule::Get().CreateRequest();(bRead?ReadRequest:bPresence?PresenceRequest:WriteRequest)=Request;
     Request->SetURL(Auth->GetApiBaseUrlForAuthenticatedRequest()+(Path.IsEmpty()?(bRead?TEXT("/api/social"):TEXT("/api/social/action")):Path));
     Request->SetVerb(Verb.IsEmpty()?(bRead?TEXT("GET"):TEXT("POST")):Verb);Request->SetTimeout(5);Request->SetHeader(TEXT("Authorization"),TEXT("Bearer ")+Token);
+    if(!PartyProof.IsEmpty())Request->SetHeader(TEXT("X-ProjectProject01-Party-Admission"),PartyProof);
     FProjectProject01VersionContract::ApplyToRequest(Request);Request->SetHeader(TEXT("Content-Type"),TEXT("application/json; charset=utf-8"));if(!bRead)Request->SetContentAsString(Body);
-    Request->OnProcessRequestComplete().BindWeakLambda(this,[this,bRead,bPresence,Token,Body](FHttpRequestPtr Req,FHttpResponsePtr Response,bool Connected)
+    Request->OnProcessRequestComplete().BindWeakLambda(this,[this,bRead,bPresence,Token,Body,Path,Verb](FHttpRequestPtr Req,FHttpResponsePtr Response,bool Connected)
     {
         auto& Pending=bRead?ReadRequest:bPresence?PresenceRequest:WriteRequest;if(Pending!=Req)return;Pending.Reset();
         auto* CurrentAuth=AuthOf(this);
@@ -119,6 +121,16 @@ void UProjectProject01SocialSubsystem::Send(bool bRead,const FString& Body,bool 
         TSharedPtr<FJsonObject> Json;
         if(Response.IsValid())FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json);
         bool Ok=Connected&&Response.IsValid()&&EHttpResponseCodes::IsOk(Response->GetResponseCode())&&Json.IsValid();
+        const TSharedPtr<FJsonObject>* Admission=nullptr;
+        if(Ok&&!bRead&&!bPresence&&Response->GetResponseCode()==202&&Json->TryGetObjectField(TEXT("partyAdmission"),Admission))
+        {
+            const TWeakObjectPtr<UProjectProject01SocialSubsystem> Weak(this);
+            if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->TrackPartyAdmission(*Admission,[Weak,Body,Path,Verb](const FString& Proof)
+            {auto* Self=Weak.Get();if(!Self||Self->WriteRequest)return false;Self->Send(false,Body,false,Path,Verb,Proof);return true;},[Weak]{if(auto* Self=Weak.Get()){Self->Status=TEXT("파티 입장이 취소되었습니다.");Self->OnChanged.Broadcast();}});
+            OnActionCompleted.Broadcast(TEXT("AcceptInvite"),true);OnChanged.Broadcast();return;
+        }
+        if(!Ok&&!Req->GetHeader(TEXT("X-ProjectProject01-Party-Admission")).IsEmpty())
+            if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->AnswerPartyAdmission(TEXT("Cancel"),Req->GetHeader(TEXT("X-ProjectProject01-Party-Admission")));
         if(Ok&&bRead)Snapshot=Json;
         if(!bPresence&&(!bRead||!Ok)){Status=Ok?TEXT("처리되었습니다."):TEXT("서버 요청에 실패했습니다.");if(Json.IsValid())Json->TryGetStringField(TEXT("message"),Status);}
         if(Ok&&!bRead&&!bPresence)

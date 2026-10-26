@@ -30,7 +30,7 @@ internal static class OpenObserverChecks
             await Expect(people[1].Client.PostAsJsonAsync("/api/rooms/current/participants",new{action="observe",userId=people[2].Id.ToString()}),HttpStatusCode.Forbidden,"비방장이 타인의 참가 유형 변경 불가");
             await Expect(host.PostAsJsonAsync("/api/rooms/current/participants",new{action="observe"}),HttpStatusCode.Conflict,"관전 2명 상한 유지");
             await Expect(people[3].Client.PostAsJsonAsync("/api/rooms/current/participants",new{action="play"}),HttpStatusCode.Conflict,"관전자도 플레이 자리가 있어야 변경 가능");
-            await Expect(people[3].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}),HttpStatusCode.BadRequest,"관전자는 준비 상태를 조작하지 않음");
+            Check((await Read(people[3].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}))).GetProperty("room").GetProperty("isReady").GetBoolean(),"사람 관전자도 준비 완료 가능");
             await Read(host.PostAsJsonAsync("/api/rooms/current/participants",new{action="kick",userId=people[2].Id.ToString()}));
             await Expect(people[2].Client.GetAsync("/api/rooms/current"),HttpStatusCode.NotFound,"방장이 강퇴하면 해당 방 참가 정보 제거");
             await Read(people[3].Client.PostAsJsonAsync("/api/rooms/current/participants",new{action="play"}));
@@ -56,7 +56,15 @@ internal static class OpenObserverChecks
             await Read(host.PostAsJsonAsync("/api/rooms/current/bots",new{action="add",difficulty=5}));
             string fixture=Path.Combine(output,"ObserverFixture",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);string executable=Path.Combine(fixture,"ProjectDFSDServer.exe");await File.WriteAllTextAsync(executable,"FakeFactory only");
             await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new{enabled=true,executable,arguments="MultiplayTest -log",firstPort=24977,maximumConcurrent=1,projectRoot=fixture}));
-            room=(await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room");Check(room.GetProperty("canStart").GetBoolean(),"관전 방장 1명과 봇 3명만 있어도 준비 인원과 분리해 시작 가능");
+            room=(await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room");Check(room.GetProperty("canStart").GetBoolean(),"관전 방장은 준비 면제이며 봇은 자동 준비로 시작 가능");
+            await Expect(host.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}),HttpStatusCode.BadRequest,"관전 중인 방장도 준비 대신 시작 버튼 사용");
+            await Read(people[5].Client.PostAsJsonAsync("/api/rooms/"+code+"/join",new{}));
+            Check(!(await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("canStart").GetBoolean(),"다른 관전자가 미준비면 관전 방장 시작 비활성화");
+            await Expect(host.PostAsJsonAsync("/api/rooms/current/start",new{}),HttpStatusCode.Conflict,"미준비 관전자를 무시하고 직접 시작 요청 차단");
+            await Read(people[5].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));
+            Check((await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("canStart").GetBoolean(),"관전자 포함 전원 준비 후 관전 방장의 시작 활성화");
+            await Read(people[5].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=false}));Check(!(await Read(host.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("canStart").GetBoolean(),"관전자의 준비 취소도 시작 비활성화");
+            await Read(people[5].Client.PostAsJsonAsync("/api/rooms/current/ready",new{ready=true}));
             string id=room.GetProperty("roomId").GetString()!;await Read(host.PostAsJsonAsync("/api/rooms/current/start",new{}));await Sql("UPDATE game_rooms SET started_at_utc=UTC_TIMESTAMP(6)-INTERVAL 6 SECOND WHERE id=@r",("r",id));
             await Read(host.PostAsJsonAsync("/api/rooms/current/confirm-start",new{}));await manager.TickAsync(default);var process=factory.Started.Last();server.DefaultRequestHeaders.Add("X-ProjectProject01-Server-Port",process.Port.ToString());
             await Read(server.PostAsJsonAsync("/api/server/heartbeat",new{port=process.Port,bootId="obs-"+process.Instance,managedId=process.Instance,ready=true}));await manager.TickAsync(default);

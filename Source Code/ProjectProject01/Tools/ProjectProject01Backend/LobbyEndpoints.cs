@@ -181,6 +181,8 @@ internal static partial class LobbyEndpoints
                 }
 
                 var roomId = Guid.NewGuid().ToString("D");
+                var consent=await OpenParties.RequireAdmissionAsync(connection,transaction,user.Id,request,"Create","오픈매칭 · "+name,System.Text.Json.JsonSerializer.Serialize(new{kind="Create",name,body.IsPublic,password}),null,ct);
+                if(consent is not null)return consent;
                 var joinCode = await GenerateUniqueJoinCodeAsync(connection, transaction, ct);
                 var passwordHash = password.Length == 0
                     ? null
@@ -313,6 +315,8 @@ internal static partial class LobbyEndpoints
                         joinAsObserver=true;
                     }
                 }
+                var consent=await OpenParties.RequireAdmissionAsync(connection,transaction,user.Id,request,"Join","오픈매칭 · "+normalizedRoomCode,System.Text.Json.JsonSerializer.Serialize(new{kind="Join",room=resolvedRoomId,code=normalizedRoomCode,password=body.Password?.Trim()??""}),resolvedRoomId,ct);
+                if(consent is not null)return consent;
                 await using (var insert = new MySqlCommand(
                     "INSERT INTO room_members (room_id, user_id, is_ready,is_observer) VALUES (@roomId, @userId, FALSE,@observer);",
                     connection, transaction) { CommandTimeout = 5 })
@@ -535,23 +539,26 @@ internal static partial class LobbyEndpoints
             try
             {
                 await using var connection = await database.OpenConnectionAsync(ct);
-                var membership = await LoadMembershipAsync(connection, null, user.Id, false, ct);
+                await using var transaction=await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
                 if (membership is null)
                 {
                     return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
                 }
-                if (membership.IsHost)
+                bool duoBot=await IsBotRoomAsync(connection,transaction,membership.RoomId,ct)&&
+                    (await CommunityEndpoints.Rows(connection,transaction,"SELECT user_id FROM room_members WHERE room_id=@r AND is_observer=FALSE",ct,("r",membership.RoomId))).Count==2;
+                if (membership.IsHost&&!duoBot)
                 {
                     return Results.BadRequest(new LobbyFailure("방장은 준비 대신 시작 버튼을 사용합니다."));
                 }
-                if(membership.IsObserver)return Results.BadRequest(new LobbyFailure("관전자는 준비 인원에 포함되지 않습니다."));
                 if (!string.Equals(membership.Status, "Waiting", StringComparison.Ordinal))
                 {
                     return Results.Conflict(new LobbyFailure("이미 시작된 방의 준비 상태는 바꿀 수 없습니다."));
                 }
-                await ExecuteAsync(connection, null,
+                await ExecuteAsync(connection, transaction,
                     "UPDATE room_members SET is_ready = @ready, last_seen_at_utc = UTC_TIMESTAMP(6) WHERE room_id = @roomId AND user_id = @userId;",
                     ("@ready", body.Ready), ("@roomId", membership.RoomId), ("@userId", user.Id), ct);
+                await transaction.CommitAsync(ct);
                 var room = await LoadCurrentRoomAsync(
                     connection, null, user.Id,
                     CanLaunchOrConnect(), ct);
@@ -652,7 +659,9 @@ internal static partial class LobbyEndpoints
                     await transaction.RollbackAsync(ct);
                     return Results.Conflict(new LobbyFailure("정확히 3명이 모여야 시작할 수 있습니다."));
                 }
-                if (members.Any(member => member.UserId != user.Id && !member.Ready))
+                bool hostRequiresReady=members.Count==2&&await IsBotRoomAsync(connection,transaction,membership.RoomId,ct);
+                var notReady=await CommunityEndpoints.Rows(connection,transaction,"SELECT user_id FROM room_members WHERE room_id=@r AND is_ready=FALSE AND (user_id<>@u OR @hostReady=TRUE) FOR UPDATE",ct,("r",membership.RoomId),("u",user.Id),("hostReady",hostRequiresReady));
+                if (notReady.Count>0)
                 {
                     await transaction.RollbackAsync(ct);
                     return Results.Conflict(new LobbyFailure("방장을 제외한 모든 플레이어가 준비해야 합니다."));
@@ -2335,8 +2344,9 @@ internal static partial class LobbyEndpoints
 
         var bots=await LoadRoomBotsAsync(connection,transaction,roomId,ct);
         var botMatch=await IsBotRoomAsync(connection,transaction,roomId,ct);
+        bool hostRequiresReady=botMatch&&members.Count(m=>!m.IsObserver)==2;
         var canStart = isHost && members.Count>0 && members.Count(m=>!m.IsObserver)+bots.Count == MaximumPlayers &&
-            members.Where(member => !member.IsHost&&!member.IsObserver).All(member => member.Ready) &&
+            members.Where(member => !member.IsHost||hostRequiresReady).All(member => member.Ready) &&
             string.Equals(status, "Waiting", StringComparison.Ordinal) &&
             gameServerOnline;
         var random=await CommunityEndpoints.Rows(connection,transaction,"SELECT room_id FROM random_match_rooms WHERE room_id=@r",ct,("r",roomId));

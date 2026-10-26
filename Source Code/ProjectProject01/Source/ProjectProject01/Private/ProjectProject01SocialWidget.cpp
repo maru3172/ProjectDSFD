@@ -284,6 +284,12 @@ TArray<TPair<FString,FString>> UProjectProject01SocialWidget::RoomMenuActions(bo
     Actions.Emplace(bBlocked?TEXT("메시지 차단 해제"):TEXT("메시지 차단"),bBlocked?TEXT("Unblock"):TEXT("Block"));
     Actions.Emplace(TEXT("신고"),TEXT("Report"));Actions.Emplace(TEXT("파티 초대"),TEXT("PartyInvite"));return Actions;
 }
+TArray<TPair<FString,FString>> UProjectProject01SocialWidget::PartyMenuActions(bool Self,bool Leader)
+{
+    TArray<TPair<FString,FString>> Actions{{TEXT("프로필 확인"),TEXT("Profile")}};if(Self)return Actions;
+    Actions.Emplace(TEXT("귓속말"),TEXT("Whisper"));Actions.Emplace(TEXT("신고"),TEXT("Report"));
+    if(Leader){Actions.Emplace(TEXT("파티장 위임"),TEXT("Transfer"));Actions.Emplace(TEXT("파티 강퇴"),TEXT("Kick"));}return Actions;
+}
 bool UProjectProject01SocialWidget::ShowPartyMemberMenu(const FString& UserId,const FVector2D& Position)
 {
     auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;
@@ -295,12 +301,15 @@ bool UProjectProject01SocialWidget::ShowPartyMemberMenu(const FString& UserId,co
     const FString Account=Str(Person,TEXT("accountId"));const bool Self=UserId==Str(R->Snapshot,TEXT("userId"));
     FMenuBuilder Menu(true,nullptr);
     auto Add=[&](const FString& Title,TFunction<void()> Click){Menu.AddMenuEntry(Txt(Title),FText::GetEmpty(),FSlateIcon(),FUIAction(FExecuteAction::CreateWeakLambda(this,[Click]{Click();})));};
-    Add(TEXT("프로필 확인"),[this,Account]{ShowProfile(Account);});
-    if(!Self)
+    for(const auto& Entry:PartyMenuActions(Self,Flag(*Party,TEXT("isLeader"))))
     {
-        Add(TEXT("귓속말"),[this,Account]{OpenThread(Account);});
-        Add(TEXT("신고"),[this,Account]{Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"),Account);});
-        if(Flag(*Party,TEXT("isLeader")))Add(TEXT("파티 강퇴"),[R,UserId]{R->PartyAction(TEXT("Kick"),UserId);});
+        const FString Op=Entry.Value;Add(Entry.Key,[this,R,UserId,Account,Op]
+        {
+            if(Op==TEXT("Profile"))ShowProfile(Account);
+            else if(Op==TEXT("Whisper"))OpenThread(Account);
+            else if(Op==TEXT("Report")){Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"),Account);}
+            else R->PartyAction(Op,UserId);
+        });
     }
     FSlateApplication::Get().PushMenu(TakeWidget(),FWidgetPath(),Menu.MakeWidget(),Position,FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));return true;
 }

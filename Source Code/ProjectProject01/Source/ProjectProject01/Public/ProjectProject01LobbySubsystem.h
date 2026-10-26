@@ -414,7 +414,8 @@ public:
 	bool HasCurrentRoom() const { return CurrentRoom.IsValid(); }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
-	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending; }
+	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending || bAwaitingPartyAdmission; }
+    bool IsAwaitingPartyAdmission()const{return bAwaitingPartyAdmission;}
 
 	const TArray<FProjectProject01RoomSummary>& GetRooms() const { return Rooms; }
 	const FProjectProject01RoomState& GetCurrentRoom() const { return CurrentRoom; }
@@ -451,7 +452,8 @@ private:
 	friend class FProjectLobbySessionPresentationTest;
     friend class FProjectCustomRulesRenderTest;
 	void SendRequest(EProjectProject01LobbyOperation Operation, const FString& Verb,
-		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0);
+		const FString& Endpoint, const FString& JsonBody, int32 RetryIndex = 0,const FString& PartyProof=FString());
+    bool bAwaitingPartyAdmission=false;
 	void HandleRequestComplete(
 		TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> Request,
 		TSharedPtr<class IHttpResponse, ESPMode::ThreadSafe> Response,

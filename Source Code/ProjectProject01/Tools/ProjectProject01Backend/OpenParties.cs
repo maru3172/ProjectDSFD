@@ -1,9 +1,10 @@
 using MySqlConnector;
 
-internal static class OpenParties
+internal static partial class OpenParties
 {
     internal sealed record ActionRequest(string? Action,string? Target=null,string? Mode=null,string? Role=null);
-    internal static Task EnsureAsync(MySqlConnection c,CancellationToken ct)=>CommunityEndpoints.Exec(c,null,"""
+    internal static async Task EnsureAsync(MySqlConnection c,CancellationToken ct)
+    {await CommunityEndpoints.Exec(c,null,"""
         CREATE TABLE IF NOT EXISTS case_parties(id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,leader_id BIGINT UNSIGNED NOT NULL,mode VARCHAR(8) NOT NULL,
           FOREIGN KEY(leader_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS case_party_members(user_id BIGINT UNSIGNED PRIMARY KEY,party_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -14,7 +15,7 @@ internal static class OpenParties
           FOREIGN KEY(party_id) REFERENCES case_parties(id) ON DELETE CASCADE,FOREIGN KEY(recipient_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS case_role_preferences(user_id BIGINT UNSIGNED PRIMARY KEY,role VARCHAR(16) NOT NULL DEFAULT 'Any',
           FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
-        """,ct);
+        """,ct);await EnsureAdmissionsAsync(c,ct);}
     private static async Task<bool> Busy(MySqlConnection c,MySqlTransaction tx,ulong user,CancellationToken ct)=>
         (await CommunityEndpoints.Rows(c,tx,"SELECT m.user_id FROM room_members m JOIN game_rooms r ON r.id=m.room_id WHERE m.user_id=@u AND (r.status<>'Waiting' OR EXISTS(SELECT 1 FROM random_match_searches q WHERE q.user_id=@u AND q.state='Waiting'))",ct,("u",user))).Count>0;
     private static async Task<string?> PartyOf(MySqlConnection c,MySqlTransaction tx,ulong user,CancellationToken ct)=>
@@ -55,6 +56,7 @@ internal static class OpenParties
         await CommunityEndpoints.Rows(c,tx,"SELECT id FROM case_parties WHERE id=@p FOR UPDATE",ct,("p",id));
         var current=await CommunityEndpoints.Rows(c,tx,"SELECT CAST(party_id AS CHAR) id FROM case_party_members WHERE user_id=@u FOR UPDATE",ct,("u",user));
         if(current.Count==0||Convert.ToString(current[0]["id"])!=id)return;
+        await CancelAdmissionAsync(c,tx,id,"파티원이 이탈하여 입장을 취소했습니다.",ct);
         await CommunityEndpoints.Exec(c,tx,"DELETE FROM case_party_members WHERE user_id=@u",ct,("u",user));
         var remaining=await CommunityEndpoints.Rows(c,tx,"SELECT user_id FROM case_party_members WHERE party_id=@p ORDER BY joined_at_utc,user_id FOR UPDATE",ct,("p",id));
         if(remaining.Count==0)await CommunityEndpoints.Exec(c,tx,"DELETE FROM case_parties WHERE id=@p",ct,("p",id));
@@ -97,10 +99,11 @@ internal static class OpenParties
             """,ct,("u",user))).Count>0;
     internal static void MapOpenParties(this WebApplication app)
     {
+        app.MapPartyAdmissions();
         app.MapPost("/api/parties/action",async(ActionRequest body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await LobbyEndpoints.AuthenticateAsync(request,db,ct);if(user is null)return Results.Unauthorized();
-            if(body.Action is not ("Create" or "Leave" or "Invite" or "Accept" or "Decline" or "Kick" or "Role"))return Results.BadRequest();
+            if(body.Action is not ("Create" or "Leave" or "Invite" or "Accept" or "Decline" or "Kick" or "Role" or "Transfer"))return Results.BadRequest();
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
             await LobbyEndpoints.LockLobbyStateAsync(c,tx,ct);
             await CommunityEndpoints.Exec(c,tx,"DELETE FROM case_party_invites WHERE expires_at_utc<=UTC_TIMESTAMP(6)",ct);
@@ -150,6 +153,7 @@ internal static class OpenParties
                     var mine=await PartyLocation(c,tx,user.Id,ct);var theirs=await PartyLocation(c,tx,Convert.ToUInt64(leader[0]["leader_id"]),ct);
                     if(!mine.Allowed||!theirs.Allowed||(mine.Room is not null&&theirs.Room is not null&&mine.Room!=theirs.Room))return Results.Conflict(new{message="로비 또는 같은 대기 중인 오픈매칭 방에서 수락하세요."});
                     await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_party_members(user_id,party_id) VALUES(@u,@p)",ct,("u",user.Id),("p",targetParty));
+                    await CancelAdmissionAsync(c,tx,targetParty,"파티 구성이 변경되어 입장을 취소했습니다.",ct);
                     // A new member starts with no hard role reservation, avoiding an impossible party roster.
                     if(mine.Room is null)await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_role_preferences(user_id,role) VALUES(@u,'Any') ON DUPLICATE KEY UPDATE role='Any'",ct,("u",user.Id));
                 }
@@ -165,7 +169,15 @@ internal static class OpenParties
                 }
                 var party=await CommunityEndpoints.Rows(c,tx,"SELECT leader_id,mode FROM case_parties WHERE id=@p",ct,("p",id));
                 if(party.Count==0||Convert.ToUInt64(party[0]["leader_id"])!=user.Id)return Results.StatusCode(403);
-                if(body.Action=="Kick")
+                if(body.Action=="Transfer")
+                {
+                    if(!ulong.TryParse(body.Target,out ulong target)||target==user.Id)return Results.BadRequest();
+                    if(await PartyOf(c,tx,target,ct)!=id)return Results.NotFound();
+                    if(!await CanEnter(c,tx,target,ct)||await Busy(c,tx,target,ct))return Results.Conflict(new{message="파티장을 위임할 수 없는 상태입니다."});
+                    await CancelAdmissionAsync(c,tx,id!,"파티장이 변경되어 입장을 취소했습니다.",ct);
+                    await CommunityEndpoints.Exec(c,tx,"UPDATE case_parties SET leader_id=@t WHERE id=@p AND leader_id=@u;DELETE FROM case_party_invites WHERE party_id=@p",ct,("t",target),("p",id),("u",user.Id));
+                }
+                else if(body.Action=="Kick")
                 {
                     if(!ulong.TryParse(body.Target,out ulong target)||target==user.Id)return Results.BadRequest();
                     if(await PartyOf(c,tx,target,ct)!=id)return Results.NotFound();if(await Busy(c,tx,target,ct))return Results.Conflict();

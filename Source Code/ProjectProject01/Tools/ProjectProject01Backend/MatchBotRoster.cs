@@ -62,6 +62,8 @@ internal static partial class LobbyEndpoints
                 if(await CountRoomsAsync(c,tx,ct)>=limit)
                     return Results.Conflict(new LobbyFailure("생성 가능한 방이 모두 사용 중입니다."));
                 string room=Guid.NewGuid().ToString("D"),code=await GenerateUniqueJoinCodeAsync(c,tx,ct);
+                var consent=await OpenParties.RequireAdmissionAsync(c,tx,user.Id,request,"Bot",$"봇전 · 난이도 {body.Difficulty}",System.Text.Json.JsonSerializer.Serialize(new{kind="Bot",body.Role,body.Difficulty}),null,ct);
+                if(consent is not null)return consent;
                 await CommunityEndpoints.Exec(c,tx,"""
                     INSERT INTO game_rooms(id,join_code,name,host_user_id,is_public) VALUES(@r,@code,@name,@u,FALSE);
                     INSERT INTO room_members(room_id,user_id,is_ready) VALUES(@r,@u,FALSE);

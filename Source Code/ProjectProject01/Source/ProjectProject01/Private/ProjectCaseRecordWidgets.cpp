@@ -464,8 +464,7 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(185)[SelfColumn]];
     for(int32 Index=0;Index<2;++Index)
     {
-        auto Member=SNew(SButton).ButtonStyle(&DockStyle).ContentPadding(6)
-          .OnClicked_Lambda([this,Other,Index]{auto M=Other(Index);if(M&&SocialOverlay.IsValid())SocialOverlay->ShowPartyMemberMenu(Str(M,TEXT("userId")),FSlateApplication::Get().GetCursorPos());return FReply::Handled();})
+        auto Member=SNew(SBorder).BorderImage(&DockStyle.Normal).Padding(6)
           [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)[ProjectDFSDUI::Icon(ProjectDFSDUI::EIcon::Profile,28)]
            +SHorizontalBox::Slot().FillWidth(1)[SNew(SVerticalBox)
              +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).OverflowPolicy(ETextOverflowPolicy::Ellipsis).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Text()).Text_Lambda([Other,Index]{return FText::FromString(Str(Other(Index),TEXT("displayName")));})]

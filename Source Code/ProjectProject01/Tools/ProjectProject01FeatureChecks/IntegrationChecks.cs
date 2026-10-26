@@ -211,6 +211,7 @@ internal static class IntegrationChecks
             await CaseInvestigationChecks.RunAsync(database,admin);
             await AnnouncementChecks.RunAsync(admin);
             await PartyRoleChecks.RunAsync(database,admin,app.Configuration);
+            await PartyAdmissionChecks.RunAsync(database,admin,app.Configuration,demand,output);
             await CustomRoomRulesChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await StartupRecoveryChecks.RunAsync(database,demand,Check);
             await ResultDeliveryChecks.RunAsync(database,admin,output,Check);

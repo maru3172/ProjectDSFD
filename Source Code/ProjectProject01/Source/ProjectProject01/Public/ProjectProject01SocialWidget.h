@@ -23,6 +23,7 @@ protected:
     virtual void ReleaseSlateResources(bool bReleaseChildren) override;
 private:
     friend class FProjectSocialWidgetLayoutTest;
+    friend class FProjectPartyAdmissionMenuTest;
     /** Null while the widget has no owning GameInstance (teardown, design-time preview). */
     class UProjectProject01SocialSubsystem* SocialSubsystem() const;
     void RefreshView();
@@ -36,6 +37,7 @@ private:
     void RoomContextReady(const FString& UserId,bool Ok);
     bool IsRoomMember(const FString& UserId) const;
     static TArray<TPair<FString,FString>> RoomMenuActions(bool bSelf,bool bFriend,bool bBlocked);
+    static TArray<TPair<FString,FString>> PartyMenuActions(bool bSelf,bool bLeader);
     FString PendingRoomMenu, ReportReason;
     FVector2D RoomMenuPosition=FVector2D::ZeroVector;
     bool bBlocksOnly=false;

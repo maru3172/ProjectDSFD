@@ -158,7 +158,7 @@ internal static partial class CommunityEndpoints
         if(user is null)return Results.Unauthorized();
         await using var c=await db.OpenConnectionAsync(ct);
         bool allowObservers=LocalEditorTesting.ObserversEnabled(req);
-        if(input.Operation is "AcceptInvite" or "DeclineInvite")return await RespondToRoomInvite(c,user.Id,user.DisplayName,input,allowObservers,ct);
+        if(input.Operation is "AcceptInvite" or "DeclineInvite")return await RespondToRoomInvite(c,user.Id,user.DisplayName,input,allowObservers,req,ct);
         if(input.Operation=="Presence")
         {
             if(!ValidPresence(input.Presence)|| input.Context is not ("Lobby" or "Game" or "Other"))return Error("접속 상태가 올바르지 않습니다.");

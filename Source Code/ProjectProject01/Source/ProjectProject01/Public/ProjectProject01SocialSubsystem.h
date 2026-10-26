@@ -46,7 +46,7 @@ public:
 private:
     friend class FProjectSocialWidgetLayoutTest;
     bool Tick(float);
-    void Send(bool bRead, const FString& Body, bool bPresence=false,const FString& Path=FString(),const FString& Verb=FString());
+    void Send(bool bRead, const FString& Body, bool bPresence=false,const FString& Path=FString(),const FString& Verb=FString(),const FString& PartyProof=FString());
     void Detail(int32 Kind,const FString& Path);
     FTSTicker::FDelegateHandle Ticker;
     TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ReadRequest;
