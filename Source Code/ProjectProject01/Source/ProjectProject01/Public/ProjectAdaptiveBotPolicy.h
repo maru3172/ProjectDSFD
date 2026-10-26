@@ -960,7 +960,7 @@ inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*
 // all ten bodies. The rest keep their usual AI. The endgame table frees a few more from level 2 up.
 // Balance runs only: a value >= 0 replaces the count (0 stands in for a human mannequin, who parks nothing).
 inline int& ParkOverride(){static int Value=-1;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,8,6,5,0},E[]={9,7,5,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,5,0},E[]={9,8,6,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the

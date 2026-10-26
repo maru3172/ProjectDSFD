@@ -134,17 +134,17 @@ internal sealed class ServerAdministrationForm : Form
         public int Count { get; set; }
     }
 
-    public ServerAdministrationForm(string projectRoot, Action<string> mainLog)
+    public ServerAdministrationForm(string projectRoot, Action<string> mainLog, bool refreshOnShow = true)
     {
         this.projectRoot = projectRoot;
         this.mainLog = mainLog;
         Text = "ProjectDFSD 서버 운영";
-        Width = 840;
-        Height = 850;
+        Width = 940;
+        Height = 760;
         MinimumSize = new Size(740, 590);
         StartPosition = FormStartPosition.CenterParent;
         BuildUi();
-        Shown += async (_, _) => await RefreshStatusAsync();
+        if (refreshOnShow) Shown += async (_, _) => await RefreshStatusAsync();
         maintenanceSchedules.SelectedIndexChanged += (_, _) => LoadSelectedScheduleIntoEditor();
     }
 
@@ -158,112 +158,149 @@ internal sealed class ServerAdministrationForm : Form
     {
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 9,
-            Padding = new Padding(12),
-            AutoScroll = true
+            Name = "AdministrationLayout", Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
+            Padding = new Padding(12)
         };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 132));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var address = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
-        address.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        var address = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true };
+        address.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
         address.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        address.Controls.Add(new Label
-        {
-            Text = "백엔드 주소",
-            AutoSize = true,
-            Padding = new Padding(0, 7, 0, 0)
-        }, 0, 0);
+        address.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        address.Controls.Add(new Label { Text = "백엔드 주소", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, 0, 0);
+        baseUrl.Name = "AdministrationBaseUrl";
         address.Controls.Add(baseUrl, 1, 0);
-        root.Controls.Add(address);
+        var refresh = ActionRow();
+        AddButton(refresh, "상태 새로고침", RefreshStatusAsync);
+        address.Controls.Add(refresh, 2, 0);
+        root.Controls.Add(address, 0, 0);
+        root.Controls.Add(serviceState, 0, 1);
 
-        root.Controls.Add(serviceState);
-        root.Controls.Add(maintenanceEnabled);
-
-        var noticeGroup = new GroupBox { Text = "점검 예약", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
-        var noticeLayout = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, RowCount = 3, AutoSize = true };
-        noticeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        noticeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        noticeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        noticeLayout.RowStyles.Add(new RowStyle(SizeType.Absolute,110));
-        var schedulePanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
-        schedulePanel.Controls.Add(new Label { Text = "새 점검 예약", AutoSize = true, Padding = new Padding(0, 7, 5, 0) });
-        schedulePanel.Controls.Add(new Label { Text = "시작", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
-        schedulePanel.Controls.Add(maintenanceStartTime);
-        schedulePanel.Controls.Add(new Label { Text = "종료", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
-        schedulePanel.Controls.Add(maintenanceEndTime);
-        schedulePanel.Controls.Add(scheduleAnnouncement);
-        schedulePanel.Controls.Add(new Label { Text = "(현재 PC의 로컬 시각)", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
-        noticeLayout.Controls.Add(schedulePanel, 0, 0);
-        noticeLayout.Controls.Add(new Label { Text = "진행 중·예정된 점검 예약 (최대 100개, 선택 후 개별 취소)", AutoSize = true }, 0, 1);
-        noticeLayout.Controls.Add(maintenanceSchedules, 0, 2);
-        noticeGroup.Controls.Add(noticeLayout);
-        root.Controls.Add(noticeGroup);
-
-        var serviceButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
-        AddButton(serviceButtons, "상태 새로고침", RefreshStatusAsync);
-        AddButton(serviceButtons, "점검·공지 적용", ApplyServiceControlAsync);
-        AddButton(serviceButtons, "안내 공지", OpenAnnouncementEditorAsync);
-        AddButton(serviceButtons, "점검 예약 추가", AddMaintenanceScheduleAsync);
-        AddButton(serviceButtons, "선택 예약 변경", UpdateSelectedMaintenanceScheduleAsync);
-        AddButton(serviceButtons, "점검 예약 취소", CancelMaintenanceScheduleAsync);
-        AddButton(serviceButtons, "공지 지우기", ClearAnnouncementAsync);
-        AddButton(serviceButtons, "크래시 보고서 보기", LoadCrashReportsAsync);
-        AddButton(serviceButtons, "크래시 보관 정책", () => {using var dialog=new CrashArtifactPolicyForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
-        AddButton(serviceButtons, "피드백/설문조사 관리", OpenSurveyAdministrationAsync);
-        AddButton(serviceButtons, "런처 뉴스·패치노트·문의", () => {using var dialog=new CommunityAdministrationForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
-        AddButton(serviceButtons, "플레이어 신고 확인", () => {using var dialog=new PlayerReportsForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
-        AddButton(serviceButtons, "계정 이용 제한", () => {using var dialog=new AccountRestrictionForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
-        AddButton(serviceButtons, "사건 기록 조사 수량", () => {using var dialog=new CaseInvestigationForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
-        AddButton(serviceButtons, "주간 미션 재화 상한", () => {using var dialog=new MissionBudgetForm(CreateAdminRequest);dialog.ShowDialog(this);return Task.CompletedTask;});
-        AddButton(serviceButtons, "최대 방 수", () => {using var dialog=new RoomCapacityForm(CreateAdminRequest, value=>CapacityChanged?.Invoke(value));dialog.ShowDialog(this);return Task.CompletedTask;});
-        root.Controls.Add(serviceButtons);
-
-        var explanation = new Label
+        var tabs = new TabControl { Name = "ServerAdministrationTabs", Dock = DockStyle.Fill, Padding = new Point(14, 7) };
+        root.Controls.Add(tabs, 0, 2);
+        TableLayoutPanel Category(string title)
         {
-            AutoSize = true,
-            ForeColor = Color.DarkRed,
-            Text = "점검 모드는 신규 로그인·회원가입·방 생성만 막습니다. 각 예약은 종료 시각에 자동 해제되며, 시간이 겹친 다른 예약이 있으면 점검을 유지합니다. 예약 공지는 해당 시간에만 표시되고 전체 공지는 별도로 유지됩니다.",
-            Padding = new Padding(0, 4, 0, 8)
-        };
-        root.Controls.Add(explanation);
-
-        var logoutGroup = new GroupBox { Text = "로그인 세션 관리", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
-        var logoutPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-        logoutPanel.Controls.Add(accountId);
-        AddButton(logoutPanel, "선택 계정 로그아웃", ForceLogoutAccountAsync);
-        AddButton(logoutPanel, "접속자 전원 로그아웃", ForceLogoutAllAsync);
-        logoutGroup.Controls.Add(logoutPanel);
-        root.Controls.Add(logoutGroup);
-
-        root.Controls.Add(operationLog);
-        root.Controls.Add(operationStatus);
-        Controls.Add(root);
-        void ConstrainWidths()
-        {
-            int width=Math.Max(250,root.ClientSize.Width-root.Padding.Horizontal-SystemInformation.VerticalScrollBarWidth);
-            foreach(Control control in root.Controls)control.MaximumSize=new Size(width,0);
-            schedulePanel.MaximumSize=new Size(Math.Max(200,width-20),0);
-            logoutPanel.MaximumSize=new Size(Math.Max(200,width-20),0);
-            operationLog.MinimumSize=new Size(0,70);
+            var page = new TabPage(title) { Padding = new Padding(10) };
+            var content = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true, GrowStyle = TableLayoutPanelGrowStyle.AddRows };
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            page.Controls.Add(content); tabs.TabPages.Add(page);
+            return content;
         }
-        root.SizeChanged+=(_,_)=>ConstrainWidths();
-        ConstrainWidths();
+        void Group(TableLayoutPanel page, string title, params Control[] controls)
+        {
+            var group = new GroupBox { Text = title, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10), Margin = new Padding(0, 0, 0, 10) };
+            var content = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true };
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            foreach (var control in controls)
+            {
+                content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                content.Controls.Add(control, 0, content.RowCount++);
+            }
+            group.Controls.Add(content);
+            page.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            page.Controls.Add(group, 0, page.RowCount++);
+        }
+
+        var service = Category("점검·공지");
+        var maintenanceActions = ActionRow();
+        AddButton(maintenanceActions, "점검·공지 적용", ApplyServiceControlAsync);
+        Group(service, "점검 모드", maintenanceEnabled, maintenanceActions);
+        var notices = ActionRow();
+        AddButton(notices, "안내 공지", OpenAnnouncementEditorAsync);
+        AddButton(notices, "공지 지우기", ClearAnnouncementAsync);
+        Group(service, "안내 공지", notices);
+        var help = new ToolTip { AutoPopDelay = 20000 };
+        help.SetToolTip(maintenanceEnabled, "점검 모드는 신규 로그인·회원가입·방 생성만 막습니다. 각 예약은 종료 시각에 자동 해제되며, 시간이 겹친 다른 예약이 있으면 점검을 유지합니다. 예약 공지는 해당 시간에만 표시되고 전체 공지는 별도로 유지됩니다.");
+        Disposed += (_, _) => help.Dispose();
+
+        var schedulePage = new TabPage("점검 예약") { Padding = new Padding(10) };
+        tabs.TabPages.Add(schedulePage);
+        var schedules = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5 };
+        schedules.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        schedules.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        schedules.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        schedules.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        schedules.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        schedules.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var times = ActionRow();
+        times.Controls.Add(new Label { Text = "시작", AutoSize = true, Padding = new Padding(0, 7, 4, 0) });
+        times.Controls.Add(maintenanceStartTime);
+        times.Controls.Add(new Label { Text = "종료", AutoSize = true, Padding = new Padding(10, 7, 4, 0) });
+        times.Controls.Add(maintenanceEndTime);
+        times.Controls.Add(new Label { Text = "(현재 PC의 로컬 시각)", AutoSize = true, Padding = new Padding(5, 7, 0, 0) });
+        schedules.Controls.Add(times, 0, 0);
+        scheduleAnnouncement.Dock = DockStyle.Fill;
+        scheduleAnnouncement.Name = "MaintenanceScheduleAnnouncement";
+        schedules.Controls.Add(scheduleAnnouncement, 0, 1);
+        schedules.Controls.Add(new Label { Text = "진행 중·예정된 점검 예약 (최대 100개)", AutoSize = true, Margin = new Padding(0, 8, 0, 6) }, 0, 2);
+        maintenanceSchedules.Name = "MaintenanceSchedules";
+        schedules.Controls.Add(maintenanceSchedules, 0, 3);
+        var scheduleActions = ActionRow();
+        AddButton(scheduleActions, "점검 예약 추가", AddMaintenanceScheduleAsync);
+        AddButton(scheduleActions, "선택 예약 변경", UpdateSelectedMaintenanceScheduleAsync);
+        AddButton(scheduleActions, "점검 예약 취소", CancelMaintenanceScheduleAsync);
+        schedules.Controls.Add(scheduleActions, 0, 4);
+        schedulePage.Controls.Add(schedules);
+
+        var accounts = Category("계정·신고");
+        var safety = ActionRow();
+        AddButton(safety, "계정 이용 제한", () => { using var dialog = new AccountRestrictionForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(safety, "플레이어 신고 확인", () => { using var dialog = new PlayerReportsForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        Group(accounts, "계정·신고 관리", safety);
+        var logout = ActionRow();
+        accountId.Name = "ForceLogoutAccountId";
+        logout.Controls.Add(accountId);
+        AddButton(logout, "선택 계정 로그아웃", ForceLogoutAccountAsync);
+        AddButton(logout, "접속자 전원 로그아웃", ForceLogoutAllAsync);
+        Group(accounts, "로그인 세션 관리", logout);
+
+        var contentPage = Category("콘텐츠·소통");
+        var community = ActionRow();
+        AddButton(community, "런처 뉴스·패치노트·문의", () => { using var dialog = new CommunityAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(community, "피드백/설문조사 관리", OpenSurveyAdministrationAsync);
+        Group(contentPage, "공지·문의·설문", community);
+        var rewards = ActionRow();
+        AddButton(rewards, "사건 기록 조사 수량", () => { using var dialog = new CaseInvestigationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(rewards, "주간 미션 재화 상한", () => { using var dialog = new MissionBudgetForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        Group(contentPage, "사건 기록·보상", rewards);
+
+        var operations = Category("진단·운영");
+        var crashes = ActionRow();
+        AddButton(crashes, "크래시 보고서 보기", LoadCrashReportsAsync);
+        AddButton(crashes, "크래시 보관 정책", () => { using var dialog = new CrashArtifactPolicyForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        Group(operations, "크래시 보고서", crashes);
+        var capacity = ActionRow();
+        AddButton(capacity, "최대 방 수", () => { using var dialog = new RoomCapacityForm(CreateAdminRequest, value => CapacityChanged?.Invoke(value)); dialog.ShowDialog(this); return Task.CompletedTask; });
+        Group(operations, "운영 한도", capacity);
+
+        foreach (var page in new[] { service, accounts, contentPage, operations })
+        {
+            page.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            page.RowCount++;
+        }
+        var log = new GroupBox { Text = "작업 로그", Dock = DockStyle.Fill, Padding = new Padding(8) };
+        operationLog.Name = "AdministrationOperationLog";
+        log.Controls.Add(operationLog);
+        root.Controls.Add(log, 0, 3);
+        root.Controls.Add(operationStatus, 0, 4);
+        Controls.Add(root);
+        root.SizeChanged += (_, _) => serviceState.MaximumSize = new Size(Math.Max(250, root.ClientSize.Width - root.Padding.Horizontal), 0);
     }
+
+    private static FlowLayoutPanel ActionRow() => new()
+    {
+        Dock = DockStyle.Top, AutoSize = true, WrapContents = true,
+        Margin = Padding.Empty, Padding = Padding.Empty
+    };
 
     private static void AddButton(FlowLayoutPanel panel, string text, Func<Task> action)
     {
-        var button = new Button { Text = text, AutoSize = true, Height = 34 };
+        var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(150, 34), Margin = new Padding(0, 0, 8, 6) };
         button.Click += async (_, _) =>
         {
             button.Enabled = false;

@@ -11,6 +11,11 @@ internal static class FeatureChecks
         try
         {
             Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+            if(args.Length==2&&args[0]=="--server-administration-ui-checks")
+            {
+                ServerAdministrationUiChecks.Run(Path.GetFullPath(args[1]),Check);
+                Console.WriteLine($"PASS: {checks} server administration UI checks (offline; no backend requests)");return 0;
+            }
             if(args.Length==2&&args[0]=="--case-ui-checks")
             {
                 string output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);
@@ -357,14 +362,19 @@ internal static class FeatureChecks
             Check(Children(article).OfType<PictureBox>().Single().Image?.Width==320,"클라이언트가 공지 사진을 실제 PNG로 해석·표시");
             using var image=new Bitmap(preview.Width,preview.Height);preview.DrawToBitmap(image,new Rectangle(Point.Empty,preview.Size));image.Save(Path.Combine(output,"launcher-news-photo-table.png"));
         }
-        using(var administration=new ServerAdministrationForm(Path.GetFullPath(Path.Combine(output,"empty-fixture")),_=>{}))
+        using(var administration=new ServerAdministrationForm(Path.GetFullPath(Path.Combine(output,"empty-fixture")),_=>{},refreshOnShow:false))
         {
             PrepareRender(administration);
             using var bitmap=new Bitmap(administration.Width,administration.Height);administration.DrawToBitmap(bitmap,new Rectangle(Point.Empty,administration.Size));bitmap.Save(Path.Combine(output,"server-administration.png"));
             Check(Children(administration).OfType<Button>().Any(b=>b.Text=="최대 방 수")&&Children(administration).OfType<Button>().Any(b=>b.Text=="계정 이용 제한"),"서버 운영에서 방 한도·계정 제한 접근");
             Check(Children(administration).OfType<Button>().Any(b=>b.Text=="플레이어 신고 확인"),"서버 운영에서 플레이어 신고 확인 접근");
             foreach(var button in Children(administration).OfType<Button>().Where(b=>b.Text is "최대 방 수" or "계정 이용 제한" or "플레이어 신고 확인"))
+            {
+                for(Control? ancestor=button.Parent;ancestor is not null;ancestor=ancestor.Parent)
+                    if(ancestor is TabPage page&&page.Parent is TabControl tabs){tabs.SelectedTab=page;break;}
+                administration.PerformLayout();Application.DoEvents();
                 Check(administration.ClientRectangle.Contains(administration.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))),button.Text+" 버튼이 창 밖으로 잘리지 않음");
+            }
         }
         using(var capacity=new RoomCapacityForm(MockRequest,_=>{}))
         {
