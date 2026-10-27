@@ -49,6 +49,13 @@
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
 #include "UObject/Package.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "RenderingThread.h"
+#include "EngineModule.h"
+#include "RendererInterface.h"
+#include "SceneInterface.h"
+#endif
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "ProjectProject01Editor"
@@ -855,18 +862,61 @@ public:
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FProjectProject01EditorModule::RegisterMenus));
 		ProjectEditorLocalMatchServer::Startup();
 		FGameDelegates::Get().GetModifyCookDelegate().AddRaw(this, &FProjectProject01EditorModule::ModifyHeartbeatCook);
+#if WITH_DEV_AUTOMATION_TESTS
+		FWorldDelegates::OnPostWorldCleanup.AddRaw(this, &FProjectProject01EditorModule::QueueAutomationScene);
+		FAutomationTestFramework::Get().OnTestEndEvent.AddRaw(this, &FProjectProject01EditorModule::ReleaseAutomationScenes);
+#endif
 	}
 
 	virtual void ShutdownModule() override
 	{
 		UProjectProject01TutorialEditorLibrary::ShutdownPractice();
 		ProjectEditorLocalMatchServer::Shutdown();
+#if WITH_DEV_AUTOMATION_TESTS
+		FWorldDelegates::OnPostWorldCleanup.RemoveAll(this);
+		FAutomationTestFramework::Get().OnTestEndEvent.RemoveAll(this);
+		RetiredAutomationWorlds.Reset();
+#endif
 		FGameDelegates::Get().GetModifyCookDelegate().RemoveAll(this);
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 	}
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	TArray<TWeakObjectPtr<UWorld>> RetiredAutomationWorlds;
+	void QueueAutomationScene(UWorld* World, bool bSessionEnded, bool bCleanupResources)
+	{
+		// DestroyWorld clears components but normally leaves Scene until UObject GC.
+		// Synthetic automation worlds can therefore retain GPUScene reservations
+		// across many tests. PostWorldCleanup is still INSIDE CleanupWorld: FX and
+		// subsystems can still reference Scene, so only queue it here.
+		// PIE/editor worlds retain the engine's own travel and viewport lifecycle.
+		if (GIsAutomationTesting && World && World->WorldType == EWorldType::Game &&
+			bSessionEnded && bCleanupResources)
+		{
+			RetiredAutomationWorlds.AddUnique(World);
+		}
+	}
+	void ReleaseAutomationScenes(FAutomationTestBase*)
+	{
+		for (const TWeakObjectPtr<UWorld>& WeakWorld : RetiredAutomationWorlds)
+		{
+			UWorld* World = WeakWorld.Get();
+			if (!World || World->IsRooted() || World->IsBeingCleanedUp()) continue;
+			// CleanupWorld and fixture scope destructors have now finished. Use the
+			// same release sequence as UWorld::ReleaseScene, through public APIs.
+			if (FSceneInterface* RetiredScene = World->Scene)
+			{
+				RetiredScene->Release();
+				GetRendererModule().RemoveScene(RetiredScene);
+				World->Scene = nullptr;
+			}
+		}
+		if (!RetiredAutomationWorlds.IsEmpty()) FlushRenderingCommands();
+		RetiredAutomationWorlds.Reset();
+	}
+#endif
 	void RegisterMenus()
 	{
 		FToolMenuOwnerScoped OwnerScoped(this);

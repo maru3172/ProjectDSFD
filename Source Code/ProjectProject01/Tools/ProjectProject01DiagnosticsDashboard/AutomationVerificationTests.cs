@@ -15,8 +15,53 @@ internal static class AutomationVerificationTests
         string[] arguments=AutomationVerification.Arguments("ProjectDFSD.uproject",first);
         Check(!arguments.Contains("-nullrhi")&&arguments.Contains("-RenderOffscreen"),"default suite uses real rendering, not null RHI");
         Check(arguments.Any(a=>a.StartsWith("-ReportExportPath="))&&!arguments.Any(a=>a.StartsWith("-ReportOutputPath=")),"current engine report export option");
-        Check(arguments.Single(a=>a.StartsWith("-ExecCmds=")).EndsWith("ProjectProject01.")&&!arguments.Any(a=>a.Contains(";Quit")),"queue completes via TestExit, never premature Quit");
+        Check(arguments.Single(a=>a.StartsWith("-ExecCmds=")).EndsWith("Group:ProjectDFSDGeneral")&&!arguments.Any(a=>a.Contains(";Quit")),"queue completes via TestExit, never premature Quit");
         Check(arguments.Contains("-abslog="+first.EngineLog),"each attempt keeps its full Unreal log");
+        Check(arguments.Single(a=>a.StartsWith("-ExecCmds=")).Contains("Automation RunTests Group:ProjectDFSDGeneral"),"general regression uses the project group with explicit simulation exclusions");
+        int selectable=0;
+        foreach(string scenario in AutomationRunPlan.Scenarios)
+        {
+            int count=scenario.StartsWith("Level",StringComparison.Ordinal)?20:30;
+            var plan=AutomationRunPlan.Bot(scenario,1,count);selectable+=count;
+            Check(plan.Filter.Split('+').Length==count&&plan.Filter.Split('+').All(f=>f.StartsWith("^ProjectProject01.Simulation.BotMatch.")&&f.EndsWith('$')),"all repetitions have exact isolated simulation selectors");
+            Check(plan.Timeout>TimeSpan.FromMinutes(30),"long batches have a finite repetition-based deadline, not the general 30-minute cap");
+        }
+        Check(selectable==400,"all original 400 balance runs remain selectable");
+        using(var options=new BotSimulationOptionsForm())
+        {
+            var layout=(TableLayoutPanel)options.Controls[0];
+            var scenario=(ComboBox)layout.GetControlFromPosition(1,0)!;
+            var begin=(NumericUpDown)layout.GetControlFromPosition(1,1)!;
+            var repeats=(NumericUpDown)layout.GetControlFromPosition(1,2)!;
+            Check(scenario.Items.Count==15&&repeats.Value==5,"UI exposes all combinations with a small default batch");
+            scenario.SelectedIndex=14;begin.Value=29;
+            Check(repeats.Maximum==2,"UI cannot select past the last ladder repetition");
+            begin.Value=30;Check(repeats.Maximum==1,"last repetition remains selectable alone");
+            scenario.SelectedIndex=0;
+            Check(begin.Value==20&&repeats.Maximum==1,"switching to a shorter scenario safely clamps the range");
+            begin.Value=1;repeats.Value=5;
+            options.StartPosition=FormStartPosition.Manual;options.Location=new Point(-3000,-3000);
+            options.Show();layout.PerformLayout();options.Refresh();
+            foreach(float scale in new[]{1f,1.25f,1.6f})
+            {
+                if(scale!=1f)options.Scale(new SizeF(scale,scale));
+                options.PerformLayout();layout.PerformLayout();
+                var action=(Button)options.AcceptButton!;
+                Rectangle bounds=options.RectangleToClient(action.RectangleToScreen(action.ClientRectangle));
+                Check(action.Visible&&options.ClientRectangle.Contains(bounds),"start button remains fully visible at 100/125/200 percent scaling");
+            }
+            using var image=new Bitmap(options.Width,options.Height);
+            options.DrawToBitmap(image,new Rectangle(Point.Empty,image.Size));
+            image.Save(Path.Combine(root,"SimulationOptions.png"));
+            options.Hide();
+        }
+        var bot=AutomationRunPlan.Bot("Ladder.H3S5",29,2);
+        var botArgs=AutomationVerification.Arguments("ProjectDFSD.uproject",first,bot.Filter);
+        Check(botArgs.Single(a=>a.StartsWith("-ExecCmds=")).Contains(bot.Filter)&&!bot.Filter.Contains("Run28"),"simulation uses only requested exact repetitions");
+        try{AutomationRunPlan.Bot("Level1",20,2);throw new InvalidOperationException("range accepted");}catch(ArgumentOutOfRangeException){Check(true,"invalid repetition range rejected");}
+        var simulationAttempt=AutomationVerification.CreateAttempt(Path.Combine(root,"BotSimulation"));
+        AutomationVerification.Save(simulationAttempt,"fixture","Succeeded",0,new("Succeeded","simulation only"),true);
+        Check(!File.Exists(Path.Combine(root,"Verification.xml"))&&File.Exists(Path.Combine(root,"BotSimulation","Verification.xml")),"simulation cannot overwrite general verification verdict");
         object Report(int pass=1,int warning=0,int fail=0,int notRun=0,int pending=0,string? date=null)=>new
         {
             reportCreatedOn=date??DateTimeOffset.UtcNow.ToString("yyyy.MM.dd-HH.mm.ss"),succeeded=pass,succeededWithWarnings=warning,failed=fail,notRun,inProcess=pending,

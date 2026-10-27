@@ -8,6 +8,7 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformProperties.h"
 #include "Misc/Paths.h"
+#include "HAL/IConsoleManager.h"
 
 class FProjectProject01Module final : public FDefaultGameModuleImpl
 {
@@ -15,6 +16,13 @@ public:
 	virtual void StartupModule() override
 	{
 		FDefaultGameModuleImpl::StartupModule();
+		// UE 5.8 TSR reads this engine reference CVar on the render thread. Enabling
+		// its supported shadow-value path also orders future writes on that thread.
+		// Preserve both the current value and all existing priority/config flags.
+		if (IConsoleVariable* MotionVectors = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionVectorSimulation")))
+		{
+			MotionVectors->SetFlags(static_cast<EConsoleVariableFlags>(MotionVectors->GetFlags() | ECVF_RenderThreadSafe));
+		}
 		if (FPlatformProperties::RequiresCookedData() && !IsRunningDedicatedServer())
 		{
 			const FString Legacy = FString(FPlatformProcess::UserSettingsDir()) / TEXT("ProjectProject01/Saved");

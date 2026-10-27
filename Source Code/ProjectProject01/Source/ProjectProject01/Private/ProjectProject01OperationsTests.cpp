@@ -23,6 +23,7 @@
 #include "Engine/UserInterfaceSettings.h"
 #include "Slate/WidgetRenderer.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "ProjectUIRenderCapture.h"
 #include "ImageUtils.h"
 #include "Serialization/BufferArchive.h"
 #include "Misc/FileHelper.h"
@@ -373,8 +374,8 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	TestTrue(TEXT("Same names bind to distinct stable user IDs"),Lobby->MemberProfileBindings[0]->UserId!=Lobby->MemberProfileBindings[1]->UserId);
 	auto* FirstBinding=Lobby->MemberProfileBindings[0].Get();Lobby->PopulateRoomMemberProfiles({M1,M2},false);
 	TestTrue(TEXT("Polling does not recreate buttons under mouse press"),Lobby->MemberProfileBindings[0]==FirstBinding);
-	auto* MemberContents=CastChecked<UVerticalBox>(CastChecked<UBorder>(Lobby->MemberProfilePanel->GetChildAt(0))->GetContent());
-	auto* MemberRow=CastChecked<UHorizontalBox>(MemberContents->GetChildAt(0));
+	auto* MemberContents=CastChecked<USizeBox>(CastChecked<UBorder>(Lobby->MemberProfilePanel->GetChildAt(0))->GetContent());
+	auto* MemberRow=CastChecked<UHorizontalBox>(MemberContents->GetContent());
 	TestFalse(TEXT("Profile buttons do not expose roles before reveal"),CastChecked<UTextBlock>(MemberRow->GetChildAt(0))->GetText().ToString().Contains(TEXT("Mannequin")));
 	TestEqual(TEXT("Profile button is not always shown; right-click only"),MemberRow->GetChildrenCount(),1);
 	FPointerEvent LeftClick(0,FVector2D::ZeroVector,FVector2D::ZeroVector,TSet<FKey>{EKeys::LeftMouseButton},EKeys::LeftMouseButton,0,FModifierKeysState());
@@ -404,12 +405,12 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	{
 		for(const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
 		{
-			FWidgetRenderer Renderer(false);auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);
+			FWidgetRenderer Renderer(false);auto* Target=ProjectUIRenderCapture::Create(Size);
 			if(!TestNotNull(TEXT("Fixed layout render target"),Target))continue;
 			const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
 			for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,LobbySlate,Dpi,FVector2D(Size),.016f);
-			FReadSurfaceDataFlags PixelFlags(RCM_UNorm);PixelFlags.SetLinearToGamma(true);
-			TArray<FColor> Pixels;TestTrue(TEXT("Fixed layout readback"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,PixelFlags));
+
+			TArray<FColor> Pixels;TestTrue(TEXT("Fixed layout readback"),ProjectUIRenderCapture::Read(Target,Pixels));
 			for(UWidget* Control:Required)
 			{
 				if(!TestNotNull(TEXT("Required room/browser control exists"),Control))continue;
@@ -417,7 +418,23 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 				TestTrue(FString::Printf(TEXT("%s: %s is visible without page scrolling at %dx%d"),*Name,*Control->GetName(),Size.X,Size.Y),
 					Control->GetVisibility()!=ESlateVisibility::Collapsed&&Extent.X>1&&Extent.Y>1&&Position.X>=-1&&Position.Y>=-1&&Position.X+Extent.X<=Size.X+1&&Position.Y+Extent.Y<=Size.Y+1);
 			}
-			TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,Png);
+            if(Name.StartsWith(TEXT("FixedHost"))||Name==TEXT("FixedFullRoster"))
+            {
+                const double CardHeight=Lobby->MemberProfilePanel->GetChildAt(0)->GetCachedGeometry().GetAbsoluteSize().Y;
+                for(auto* Roster:{Lobby->MemberProfilePanel.Get(),Lobby->ObserverProfilePanel.Get()})
+                    for(auto* Card:Roster->GetAllChildren())
+                        TestTrue(TEXT("Players and observers have matching compact card heights"),FMath::Abs(Card->GetCachedGeometry().GetAbsoluteSize().Y-CardHeight)<.5);
+                if(Lobby->RoomRoleRow->GetVisibility()==ESlateVisibility::Visible)
+                {
+                    auto* Row=CastChecked<UHorizontalBox>(Lobby->RoomRoleRow->GetParent());
+                    auto* NameText=CastChecked<UTextBlock>(Row->GetChildAt(0));
+                    const auto LabelGeometry=NameText->GetCachedGeometry(),RoleGeometry=Lobby->RoomRoleRow->GetCachedGeometry(),RowGeometry=Row->GetCachedGeometry();
+                    TestTrue(TEXT("Own role chooser sits at the right edge of the participant card"),FMath::Abs(RoleGeometry.GetAbsolutePosition().X+RoleGeometry.GetAbsoluteSize().X-RowGeometry.GetAbsolutePosition().X-RowGeometry.GetAbsoluteSize().X)<1);
+                    TestTrue(TEXT("Name retains space and cannot paint over the role chooser"),LabelGeometry.GetAbsoluteSize().X>24&&LabelGeometry.GetAbsolutePosition().X+LabelGeometry.GetAbsoluteSize().X<=RoleGeometry.GetAbsolutePosition().X+1&&NameText->GetClipping()==EWidgetClipping::ClipToBounds);
+                }
+            }
+
+            TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,Png);
 			TestTrue(TEXT("Fixed layout screenshot written"),FFileHelper::SaveArrayToFile(Png,*(Directory/FString::Printf(TEXT("%s-%dx%d.png"),*Name,Size.X,Size.Y))));
 		}
 	};

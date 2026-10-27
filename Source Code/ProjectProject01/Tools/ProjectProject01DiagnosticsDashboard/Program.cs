@@ -16,8 +16,8 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase)) return DashboardSelfTest.Run();
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase)) return DashboardSelfTest.Run();
         Application.Run(new DashboardForm(args.Length==2&&args[0]=="--diagnostics-root"?args[1]:null));
         return 0;
     }
@@ -102,6 +102,12 @@ internal static class DashboardSelfTest
         File.WriteAllText(batchPath, "@echo off\r\nif \"%~1\"==\"argument with spaces\" exit /b 0\r\nexit /b 9\r\n", Encoding.ASCII);
         var batchResult = DashboardForm.RunProcessAsync(batchPath, ["argument with spaces"]).GetAwaiter().GetResult();
         if (batchResult.ExitCode != 0) return 4;
+        var streamedLog=Path.Combine(batchDirectory,"Streamed.log");var observed=new List<string>();
+        var live=Path.Combine(batchDirectory,"live.cmd");
+        File.WriteAllText(live,"@echo off\r\necho progress-marker\r\npowershell.exe -NoProfile -Command \"Start-Sleep -Seconds 20\"\r\n",Encoding.ASCII);
+        try{DashboardForm.RunProcessAsync(live,[],timeout:TimeSpan.FromSeconds(2),outputFile:streamedLog,onLine:line=>observed.Add(line)).GetAwaiter().GetResult();return 23;}
+        catch(OperationCanceledException){}
+        if(!File.ReadAllText(streamedLog).Contains("progress-marker")||!observed.Contains("progress-marker"))return 24;
         var streams=Path.Combine(batchDirectory,"streams.cmd");
         File.WriteAllText(streams,"@echo off\r\nfor /l %%i in (1,1,6000) do @echo stderr-%%i-012345678901234567890123456789012345678901234567890123456789 1>&2\r\nfor /l %%i in (1,1,6000) do @echo stdout-%%i-012345678901234567890123456789012345678901234567890123456789\r\n",Encoding.ASCII);
         using(var limit=new CancellationTokenSource(TimeSpan.FromSeconds(15)))
@@ -320,7 +326,13 @@ internal sealed class DashboardForm : Form
         var insights = new Button { Text = "추적 파일 열기", AutoSize = true };
         insights.Click += (_, _) => OpenSelectedTrace();
         var verify = new Button { Text = "빌드·자동 검사", AutoSize = true };
-        verify.Click += async (_, _) => await VerifySelectedRunAsync(verify);
+        verify.Click += async (_, _) => await VerifySelectedRunAsync(verify, AutomationRunPlan.General);
+        var simulate = new Button { Text = "봇 경기 시뮬레이션", AutoSize = true };
+        simulate.Click += async (_, _) =>
+        {
+            using var options = new BotSimulationOptionsForm();
+            if (options.ShowDialog(this) == DialogResult.OK && options.Plan is { } plan) await VerifySelectedRunAsync(simulate, plan);
+        };
 
         mapFilter.Items.Add("All maps");
         outcomeFilter.Items.AddRange(["All outcomes", "Pass", "ReviewRequired", "TimedOut", "Inconclusive"]);
@@ -342,7 +354,10 @@ internal sealed class DashboardForm : Form
         foreach(var grid in new[]{reportsGrid,timelineGrid,riskBreakdownGrid,overheadBreakdownGrid,cacheMemoryGrid,runtimeMetricsGrid}) DiagnosticUiText.Localize(grid);
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, WrapContents = false, Padding = new Padding(3) };
-        toolbar.Controls.AddRange([browse, rootPath, refresh, searchBox, mapFilter, outcomeFilter, insights, verify]);
+        toolbar.AutoScroll = true;
+        toolbar.Controls.AddRange([browse, rootPath, refresh, searchBox, mapFilter, outcomeFilter, insights]);
+        var verificationBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 38, WrapContents = false, Padding = new Padding(3) };
+        verificationBar.Controls.AddRange([verify, simulate]);
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel1 };
         Shown += (_, _) => { if(split.Height>400) split.SplitterDistance=Math.Min(240,split.Height-300); };
         split.Panel1.Controls.Add(reportsGrid);
@@ -384,6 +399,7 @@ internal sealed class DashboardForm : Form
         tabs.TabPages.Add(new TabPage("엔진 프로파일러 기록") { Controls = { engineCsvProfile } });
         split.Panel2.Controls.Add(tabs);
         Controls.Add(split);
+        Controls.Add(verificationBar);
         Controls.Add(toolbar);
 
         reportsGrid.SelectionChanged += (_, _) => ShowSelectedRun();
@@ -958,18 +974,34 @@ internal sealed class DashboardForm : Form
         Process.Start(new ProcessStartInfo { FileName = insights, Arguments = $"\"{trace}\"", UseShellExecute = true });
     }
 
-    private async Task VerifySelectedRunAsync(Button button)
+    private Task VerifySelectedRunAsync(Button button, AutomationRunPlan plan)
     {
         var summary = SelectedRun();
-        if (summary is null) return;
+        if (summary is null) return Task.CompletedTask;
         var projectRoot = FindProjectRoot(rootPath.Text);
         var projectFile = projectRoot is null ? null : Path.Combine(projectRoot, "ProjectDFSD.uproject");
         if (projectFile is null || !File.Exists(projectFile))
         {
             MessageBox.Show(this, "진단 폴더의 상위 경로에서 게임 프로젝트 파일을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            return Task.CompletedTask;
         }
         button.Enabled = false;
+        try
+        {
+            var notices = new List<(string Text, MessageBoxIcon Icon)>();
+            using var dialog = new AutomationProgressForm(plan.Name, windowLifetime.Token,
+                (token, progress) => ExecuteVerificationAsync(summary, projectFile, plan, token, progress, (text, icon) => notices.Add((text, icon))));
+            dialog.ShowDialog(this);
+            if (!IsDisposed && !Disposing)
+                foreach (var notice in notices) MessageBox.Show(this, notice.Text, Text, MessageBoxButtons.OK, notice.Icon);
+        }
+        finally { if (!button.IsDisposed) button.Enabled = true; }
+        return Task.CompletedTask;
+    }
+
+    private async Task ExecuteVerificationAsync(RunSummary summary, string projectFile, AutomationRunPlan plan,
+        CancellationToken cancellationToken, IProgress<string> progress, Action<string, MessageBoxIcon> notify)
+    {
         VerificationAttempt? attempt=null;
         string buildStatus="NotRun";
         int? buildExitCode=null;
@@ -979,46 +1011,57 @@ internal sealed class DashboardForm : Form
             if(attempt is null)return;
             try{AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,verdict,roleOutcomesPass);}
             catch(Exception recordError)when(recordError is IOException or UnauthorizedAccessException)
-            {if(!IsDisposed&&!Disposing)MessageBox.Show(this,"검사 상태 파일도 저장하지 못했습니다. 실행 폴더 권한을 확인하세요.\n"+attempt.Directory+"\n"+recordError.Message,Text,MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+            {notify("검사 상태 파일도 저장하지 못했습니다. 실행 폴더 권한을 확인하세요.\n"+attempt.Directory+"\n"+recordError.Message,MessageBoxIcon.Warning);}
         }
         try
         {
-            attempt=AutomationVerification.CreateAttempt(summary.RunDirectory);
+            attempt=AutomationVerification.CreateAttempt(plan.Simulation ? Path.Combine(summary.RunDirectory, "BotSimulation") : summary.RunDirectory);
             AutomationVerification.Save(attempt,summary.TestRunId,"Running",null,new("Running","이번 실행의 빌드를 진행 중입니다."),roleOutcomesPass);
             const string buildTool = @"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat";
             const string editorCmd = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe";
-            var build = await RunProcessAsync(buildTool, ["ProjectDFSDEditor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReloadFromIDE"],windowLifetime.Token);
+            progress.Report("에디터 빌드 중…");
+            File.WriteAllText(Path.Combine(attempt.Directory, "Selection.txt"), $"{plan.Name}\n{plan.Filter}\n제한 시간: {plan.Timeout.TotalMinutes:0}분", Encoding.UTF8);
+            var build = await RunProcessAsync(buildTool, ["ProjectDFSDEditor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReloadFromIDE"],cancellationToken,
+                outputFile: Path.Combine(attempt.Directory, "Build.log"));
             buildExitCode=build.ExitCode; buildStatus=build.ExitCode==0?"Succeeded":"Failed";
-            File.WriteAllText(Path.Combine(attempt.Directory, "Build.log"), build.Output, Encoding.UTF8);
             AutomationVerdict verdict=new("NotRun","빌드 실패로 자동 검사를 실행하지 않았습니다.");
             if (build.ExitCode == 0)
             {
-                AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,new("Running","실제 렌더링을 사용하여 전체 자동 검사를 실행 중입니다."),roleOutcomesPass);
-                var automation = await RunProcessAsync(editorCmd, AutomationVerification.Arguments(projectFile,attempt),windowLifetime.Token);
-                File.WriteAllText(Path.Combine(attempt.Directory, "Automation.log"), automation.Output, Encoding.UTF8);
+                AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,new("Running",plan.Name+" 실행 중입니다."),roleOutcomesPass);
+                progress.Report(plan.Name + " 시작 중…");
+                int completed = 0, failures = 0;
+                var automation = await RunProcessAsync(editorCmd, AutomationVerification.Arguments(projectFile,attempt,plan.Filter),cancellationToken,
+                    timeout: plan.Timeout, outputFile: Path.Combine(attempt.Directory, "Automation.log"), onLine: line =>
+                    {
+                        if (line.Contains("Test Completed.", StringComparison.Ordinal))
+                        { Interlocked.Increment(ref completed); if (line.Contains("Result={Fail}", StringComparison.Ordinal)) Interlocked.Increment(ref failures); }
+                        int start = line.IndexOf("Path={", StringComparison.Ordinal);
+                        if (start >= 0 && (line.Contains("Test Started.", StringComparison.Ordinal) || line.Contains("Test Completed.", StringComparison.Ordinal)))
+                            progress.Report($"완료 {completed}개 · 실패 {failures}개\n{line[(start+6)..].TrimEnd('}')}\n{(line.Contains("Test Started.",StringComparison.Ordinal)?"실행 중":"완료")}");
+                    });
                 verdict=AutomationVerification.Evaluate(attempt,automation.ExitCode);
             }
             AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,verdict,roleOutcomesPass);
             LoadReports(rootPath.Text);
-            MessageBox.Show(this, $"빌드={(buildStatus=="Succeeded"?"성공":"실패")}\n자동 검사：{verdict.Description}\n"+
+            notify($"빌드={(buildStatus=="Succeeded"?"성공":"실패")}\n자동 검사：{verdict.Description}\n"+
                 (verdict.Passed&&!roleOutcomesPass?"자동 검사는 통과했지만 선택한 게임 진단에는 검토할 항목이 남아 있습니다.\n":"")+
-                $"이번 실행 기록：{attempt.Directory}",Text,MessageBoxButtons.OK,verdict.Passed?MessageBoxIcon.Information:MessageBoxIcon.Warning);
+                $"이번 실행 기록：{attempt.Directory}",verdict.Passed?MessageBoxIcon.Information:MessageBoxIcon.Warning);
         }
         catch(OperationCanceledException)
         {
-            var verdict=new AutomationVerdict(windowLifetime.IsCancellationRequested?"Cancelled":"TimedOut",windowLifetime.IsCancellationRequested?"창이 닫혀 이번 검사를 취소했습니다.":"30분 실행 제한에 도달해 이번 검사 프로세스를 종료했습니다.");
+            var verdict=new AutomationVerdict(cancellationToken.IsCancellationRequested?"Cancelled":"TimedOut",cancellationToken.IsCancellationRequested?"이번 검사를 취소했습니다.":"단계별 실행 제한에 도달해 이번 검사 프로세스를 종료했습니다. 이번 실행의 로그를 확인하세요.");
             RecordFailure(verdict);
-            if(!IsDisposed&&!Disposing)MessageBox.Show(this,verdict.Description,Text,MessageBoxButtons.OK,MessageBoxIcon.Warning);
+            notify(verdict.Description,MessageBoxIcon.Warning);
         }
         catch (Exception exception)
         {
             RecordFailure(new("ProcessFailed","검사 실행·결과 기록 오류: "+exception.GetType().Name));
-            if(!IsDisposed&&!Disposing)MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            notify(exception.Message,MessageBoxIcon.Error);
         }
-        finally { if(!button.IsDisposed)button.Enabled = true; }
     }
 
-    internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments,CancellationToken cancellationToken=default)
+    internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments,CancellationToken cancellationToken=default,
+        TimeSpan? timeout=null, string? outputFile=null, Action<string>? onLine=null)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         if (Path.GetExtension(fileName).Equals(".bat", StringComparison.OrdinalIgnoreCase)||Path.GetExtension(fileName).Equals(".cmd",StringComparison.OrdinalIgnoreCase))
@@ -1036,9 +1079,23 @@ internal sealed class DashboardForm : Form
             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         }
         using var process = new Process { StartInfo = startInfo };
-        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);deadline.CancelAfter(TimeSpan.FromMinutes(30));
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);deadline.CancelAfter(timeout ?? TimeSpan.FromMinutes(30));
+        using var output = outputFile is null ? null : new StreamWriter(outputFile, false, new UTF8Encoding(true)) { AutoFlush = true };
+        deadline.Token.ThrowIfCancellationRequested();
         if (!process.Start()) return new ProcessResult(-1, "Process could not be started.");
-        var stdout=process.StandardOutput.ReadToEndAsync(deadline.Token);var stderr=process.StandardError.ReadToEndAsync(deadline.Token);
+        var gate = new object();
+        async Task<string> ReadAsync(StreamReader reader)
+        {
+            var text = new StringBuilder();
+            while (await reader.ReadLineAsync(deadline.Token).ConfigureAwait(false) is { } line)
+            {
+                lock (gate) { output?.WriteLine(line); onLine?.Invoke(line); }
+                text.AppendLine(line);
+                if (text.Length > 8 * 1024 * 1024) text.Remove(0, 1024 * 1024); // Full output stays on disk.
+            }
+            return text.ToString();
+        }
+        var stdout=ReadAsync(process.StandardOutput);var stderr=ReadAsync(process.StandardError);
         try{await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);}
         catch(OperationCanceledException)
         {

@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "Engine/SceneCapture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "ProjectUIRenderCapture.h"
 #include "Camera/CameraComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -123,10 +124,10 @@ bool FProjectDFSDTitleSceneRenderTest::RunTest(const FString&)
 	auto* SceneTarget=NewObject<UTextureRenderTarget2D>();SceneTarget->ClearColor=FLinearColor::Black;
 	SceneTarget->InitCustomFormat(1280,720,PF_B8G8R8A8,false);SceneTarget->UpdateResourceImmediate(true);Capture->TextureTarget=SceneTarget;
 	const FString Directory=FPaths::ProjectSavedDir()/TEXT("TitleSceneQA");IFileManager::Get().MakeDirectory(*Directory,true);
-	const auto Read=[&](UTextureRenderTarget2D* Target,int32 Width,int32 Height,const TCHAR* Name)
+	const auto Read=[&](UTextureRenderTarget2D* Target,int32 Width,int32 Height,const TCHAR* Name,bool LinearUI=false)
 	{
 		FlushRenderingCommands();TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(false);
-		Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags);
+		if(LinearUI)ProjectUIRenderCapture::Read(Target,Pixels);else Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags);
 		if(Pixels.Num()==Width*Height)
 		{
 			TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(Width,Height,Pixels,Png);
@@ -146,12 +147,12 @@ bool FProjectDFSDTitleSceneRenderTest::RunTest(const FString&)
 		+SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor::Black)]
 		+SOverlay::Slot()[SNew(SScaleBox).Stretch(EStretch::ScaleToFit)[SNew(SImage).Image(&Brush)]]
 		+SOverlay::Slot()[Title->TakeWidget()];
-	FWidgetRenderer Renderer(true);
+	FWidgetRenderer Renderer(false);
 	for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600),FIntPoint(1920,800)})
 	{
-		auto* UI=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,true);
+		auto* UI=ProjectUIRenderCapture::Create(Size);
 		Renderer.DrawWidget(UI,Slate,FVector2D(Size),0);Renderer.DrawWidget(UI,Slate,FVector2D(Size),0);
-		const auto Pixels=Read(UI,Size.X,Size.Y,TEXT("Title"));
+		const auto Pixels=Read(UI,Size.X,Size.Y,TEXT("Title"),true);
 		const auto& First=Title->SinglePlayerButton->GetCachedGeometry();const auto& Last=Title->QuitButton->GetCachedGeometry();
 		TestTrue(TEXT("Menu stays left and does not overlap mannequin across aspect ratios"),First.GetAbsolutePosition().X>0&&First.GetAbsolutePosition().X+First.GetAbsoluteSize().X<Size.X*.52);
 		TestTrue(TEXT("All title buttons stay within the safe frame"),Last.GetAbsolutePosition().Y+Last.GetAbsoluteSize().Y<Size.Y);

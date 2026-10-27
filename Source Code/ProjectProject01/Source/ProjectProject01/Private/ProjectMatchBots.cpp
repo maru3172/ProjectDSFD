@@ -964,7 +964,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     }
     const bool LookingAway=Now<B.LookAwayUntil;
     const FVector ObjectiveAt=Mine.Objective.IsValid()?Mine.Objective->GetActorLocation():Pawn->GetActorLocation();
-    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+150.f*Level.Skill;
+    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+50.f*Level.Skill;
     // Experts (4+) know a frozen mannequin cannot chase: it only counts as danger within touching distance, so they
     // walk past one they keep in view (an exit guard included) instead of backing off until cornered. Weak spot: the
     // moment the stare breaks, that mannequin is already close.
@@ -985,7 +985,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Run headings never lead into another known mannequin; only a disciplined moment checks (level-scaled).
     // A panicked run drifts off the chosen line.
     const float PanicDrift=50.f*Panic*FMath::Sin(static_cast<float>(Now)*.7f+Quirks.Phase);
-    auto SafeHeading=[&](const FVector& Wanted){return (B.Disciplined?U(ClearHeading(V(Here),V(Wanted),Views.GetData(),Views.Num(),1500.f+700.f*Level.Skill)):Wanted.GetSafeNormal2D()).RotateAngleAxis(PanicDrift,FVector::UpVector);};
+    auto SafeHeading=[&](const FVector& Wanted){return (B.Disciplined?U(ClearHeading(V(Here),V(Wanted),Views.GetData(),Views.Num(),1500.f+300.f*Level.Skill)):Wanted.GetSafeNormal2D()).RotateAngleAxis(PanicDrift,FVector::UpVector);};
     auto ThreatOf=[&](const AActor* Actor)->const FProjectMatchBotBrain::FSeenThreat*{return Actor?B.Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==Actor;}):nullptr;};
 
     // Self-tuned main distance of a play; starts this run's trial variant if it has not begun yet.
@@ -1799,7 +1799,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* Target=Cast<APlayerCharacter>(B.Target.Get());
     if(Target&&B.Visible&&!Target->IsGameOver()&&Tactic!=Action::Lure&&!Decoy&&Now>=B.AttackAt)
     {
-        B.AttackAt=Now+FMath::Lerp(2.1f,.32f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
+        B.AttackAt=Now+FMath::Lerp(1.6f,.32f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
         bool Watched=false;for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.IsValid()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)Watched|=GM->CanSurvivorSeeMannequin(Pair.Key.Get(),Body);
         if(!Watched&&!Body->IsFrozenBySurvivorVision()&&Offset.SizeSquared()<=FMath::Square(GM->MultiplayerManualAttackRange)&&FVector::DotProduct(Body->GetActorForwardVector(),Offset.GetSafeNormal())>=.25f&&AI->LineOfSightTo(Target)&&Target->HandleMannequinCatch(Body))
         {

@@ -88,7 +88,7 @@ struct Difficulty
         D.Sharing=.15f+.75f*D.Skill;
         D.Adaptation=.04f+.48f*D.Skill;
         D.Coordination=.12f+.78f*D.Skill;
-        D.Opening=D.Level==1?.65f:D.Level==2?.35f:0.f;
+        D.Opening=D.Level==1?.4f:D.Level==2?.35f:0.f;
         D.TurnRate=85.f+125.f*D.Skill;
         return D;
     }
@@ -713,7 +713,7 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
-inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.82f,.95f};return L[ProbeIndex(D,5)];}
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.82f,.9f};return L[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
 inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}
@@ -956,7 +956,7 @@ inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*
 // all ten bodies. The rest keep their usual AI. The endgame table frees a few more from level 2 up.
 // Balance runs only: a value >= 0 replaces the count (0 stands in for a human mannequin, who parks nothing).
 inline int& ParkOverride(){static int Value=-1;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,5,0},E[]={9,8,6,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,5,0},E[]={8,8,6,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the

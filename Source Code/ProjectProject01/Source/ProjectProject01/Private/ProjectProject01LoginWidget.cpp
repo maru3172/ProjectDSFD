@@ -73,6 +73,7 @@
 #include "HAL/FileManager.h"
 #include "Slate/WidgetRenderer.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "ProjectUIRenderCapture.h"
 #include "Engine/UserInterfaceSettings.h"
 #include "ImageUtils.h"
 #endif
@@ -223,12 +224,12 @@ namespace ProjectProject01LoginUI
 		CoverSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));CoverSlot->SetPadding(FMargin(8,0));
 		auto* Content=Tree->ConstructWidget<UVerticalBox>();Cover->SetContent(Content);
 		auto* Number=AddLabel(Tree,Content,FString::Printf(TEXT("사건 파일 %02d"),Index),22);
-		Number->SetColorAndOpacity(FSlateColor(FLinearColor(.83f,.80f,.73f)));
+		Number->SetColorAndOpacity(FSlateColor(ProjectDFSDUI::Text()));
 		auto* PreviewHeight=Tree->ConstructWidget<USizeBox>();PreviewHeight->SetHeightOverride(170);
 		Content->AddChildToVerticalBox(PreviewHeight)->SetPadding(FMargin(0,10,0,14));
 		auto* Fit=Tree->ConstructWidget<UScaleBox>();Fit->SetStretch(EStretch::ScaleToFit);PreviewHeight->AddChild(Fit);
 		auto* ImageSize=Tree->ConstructWidget<USizeBox>();ImageSize->SetWidthOverride(320);ImageSize->SetHeightOverride(180);Fit->AddChild(ImageSize);
-		auto* Background=Tree->ConstructWidget<UBorder>();Background->SetPadding(FMargin(0));Background->SetBrushColor(FLinearColor(.014f,.017f,.022f));ImageSize->AddChild(Background);
+		auto* Background=Tree->ConstructWidget<UBorder>();Background->SetPadding(FMargin(0));Background->SetBrushColor(ProjectDFSDUI::Panel());ImageSize->AddChild(Background);
 		auto* Layers=Tree->ConstructWidget<UOverlay>();Background->AddChild(Layers);
 		auto* Missing=Tree->ConstructWidget<UTextBlock>();Missing->SetText(FProjectProject01Localization::Text(TEXT("미리보기 없음")));Missing->SetColorAndOpacity(FSlateColor(ProjectDFSDUI::Muted()));
 		auto Font=Missing->GetFont();Font.Size=18;Missing->SetFont(Font);Missing->SetJustification(ETextJustify::Center);
@@ -1916,7 +1917,7 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 	StatusText = TitleLabel(TEXT(""), FVector2D(112, 785), FVector2D(560, 80), 14, FLinearColor(.65f, .68f, .72f));
 
 	UOverlay* SavesPage = WidgetTree->ConstructWidget<UOverlay>(); TitlePageSwitcher->AddChild(SavesPage);
-	auto* SavesDim = WidgetTree->ConstructWidget<UBorder>(); SavesDim->SetBrushColor(FLinearColor(.006f, .008f, .012f, .98f));
+	auto* SavesDim = WidgetTree->ConstructWidget<UBorder>(); SavesDim->SetBrushColor(ProjectDFSDUI::Canvas().CopyWithNewOpacity(.98f));
 	auto* SavesDimSlot = SavesPage->AddChildToOverlay(SavesDim);
 	SavesDimSlot->SetHorizontalAlignment(HAlign_Fill); SavesDimSlot->SetVerticalAlignment(VAlign_Fill);
 	auto* SavesFit = WidgetTree->ConstructWidget<UScaleBox>(); SavesFit->SetStretch(EStretch::ScaleToFit);
@@ -6331,14 +6332,19 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
 		Label->SetText(FText::FromString(M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+
 			(M.bIsObserver?FString(TEXT("관전 · "))+ReadyStatus:ReadyStatus)+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
 		FSlateFontInfo Font=Label->GetFont();Font.Size=18;Label->SetFont(Font);Label->SetAutoWrapText(false);Label->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);Label->SetToolTipText(Label->GetText());Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		Label->SetClipping(EWidgetClipping::ClipToBounds);
 		auto* LabelSlot=Row->AddChildToHorizontalBox(Label);LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));LabelSlot->SetVerticalAlignment(VAlign_Center);
-        auto* Contents=WidgetTree->ConstructWidget<UVerticalBox>();Contents->AddChildToVerticalBox(Row);
         if(M.UserId==SelfId&&!M.bIsObserver&&RoomRoleRow)
-            Contents->AddChildToVerticalBox(RoomRoleRow)->SetPadding(FMargin(0,2,0,0));
+        {
+            LabelSlot->SetPadding(FMargin(0,0,6,0));
+            auto* RoleSlot=Row->AddChildToHorizontalBox(RoomRoleRow);
+            RoleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));RoleSlot->SetVerticalAlignment(VAlign_Center);
+        }
+        auto* Contents=WidgetTree->ConstructWidget<USizeBox>();Contents->SetHeightOverride(28);Contents->AddChild(Row);
 		auto* Binding=NewObject<UProjectProject01RoomProfileBinding>(this);Binding->Owner=this;Binding->UserId=M.UserId;
 		MemberProfileBindings.Add(Binding);
 		auto* Background=WidgetTree->ConstructWidget<UBorder>();
-        Background->SetBrush(FSlateRoundedBoxBrush(FLinearColor(.065f,.07f,.075f),2.f,FLinearColor(.20f,.21f,.22f),1.f));
+        Background->SetBrush(FSlateRoundedBoxBrush(FLinearColor(.070f,.070f,.070f),2.f,FLinearColor(.21f,.21f,.21f),1.f));
         Background->SetBrushColor(FLinearColor::White);Background->SetPadding(FMargin(7,3));Background->AddChild(Contents);
 		Background->SetToolTipText(FProjectProject01Localization::Text(TEXT("우클릭하여 프로필·친구·귓속말·차단·신고")));
 		if(!M.bIsBot)Background->OnMouseButtonDownEvent.BindDynamic(Binding,&UProjectProject01RoomProfileBinding::HandleMouseButtonDown);
@@ -7811,6 +7817,14 @@ bool FProjectCheckpointSlotPreviewWidgetTest::RunTest(const FString&)
 	const FString Description=ProjectProject01LoginUI::SaveSlotDescription(Info,TEXT(" (현재)"));
 	TestTrue(TEXT("Slot description contains map and Korean save time"),Description.Contains(TEXT("TestMap")) && Description.Contains(TEXT("2026-10-16 10:02")));
 	TestTrue(TEXT("Slot description retains current marker and death count"),Description.Contains(TEXT("(현재)")) && Description.Contains(TEXT("데스카운트 3")));
+    Title->WidgetTree->ForEachWidget([this](UWidget* Widget)
+    {
+        if(auto* Caption=Cast<UTextBlock>(Widget);Caption&&Caption->GetText().ToString().StartsWith(TEXT("사건 파일 ")))
+        {
+            const auto Color=Caption->GetColorAndOpacity().GetSpecifiedColor();
+            TestTrue(TEXT("Save-file captions do not retain a separate cream/yellow tint"),FMath::IsNearlyEqual(Color.R,Color.G)&&FMath::IsNearlyEqual(Color.G,Color.B));
+        }
+    });
 	if (FApp::CanEverRender())
 	{
 		// Exercise real Slate layout and paint, not only UWidget properties.
@@ -7834,15 +7848,15 @@ bool FProjectCheckpointSlotPreviewWidgetTest::RunTest(const FString&)
 		IFileManager::Get().MakeDirectory(*Directory,true);
 		for (const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
 		{
-			UTextureRenderTarget2D* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);
+			UTextureRenderTarget2D* Target=ProjectUIRenderCapture::Create(Size);
 			TArray<FColor> Pixels;
 			if (!TestNotNull(TEXT("Slot UI render target"),Target)) continue;
 			const float DpiScale=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
 			// Match viewport DPI and allow auto-wrapped labels a second layout pass.
 			Renderer.DrawWidget(Target,Slate,DpiScale,FVector2D(Size),0.016f);
 			Renderer.DrawWidget(Target,Slate,DpiScale,FVector2D(Size),0.016f);
-			FReadSurfaceDataFlags PixelFlags(RCM_UNorm);PixelFlags.SetLinearToGamma(true);
-			TestTrue(TEXT("Slot UI readback"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,PixelFlags));
+
+			TestTrue(TEXT("Slot UI readback"),ProjectUIRenderCapture::Read(Target,Pixels));
 			const FVector2D Actual=Preview->GetCachedGeometry().GetLocalSize();
 			TestTrue(TEXT("Case-file image retains a 320x180 design frame and 16:9 aspect"),FMath::IsNearlyEqual(Actual.X,320.0,0.1)&&FMath::IsNearlyEqual(Actual.Y,180.0,0.1));
 			double PreviousX=-1,FirstY=-1;

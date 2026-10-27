@@ -9,6 +9,9 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/Csv/CsvParser.h"
+#include "HAL/IConsoleManager.h"
+#include "RenderingThread.h"
+#include "RHIGlobals.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectDiagnosticCacheCountersTest,"ProjectProject01.Diagnostics.CacheMemoryCounters",
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -81,6 +84,55 @@ bool FProjectRequestCircuitTest::RunTest(const FString&)
     TestTrue(TEXT("Changing backend origin immediately resets protection"),Circuit.TryAcquire(TEXT("B"),29,5,Ticket));
     TestTrue(TEXT("Origin B starts closed"),Circuit.Snapshot(29).State==EProjectRequestCircuitState::Closed);
     FProjectRequestCircuit Independent;TestTrue(TEXT("Another client instance has independent protection"),Independent.TryAcquire(TEXT("A"),29,5,Ticket));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectAutomationSceneCleanupTest,"ProjectProject01.Diagnostics.RetiredSceneRelease",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectAutomationSceneCleanupTest::RunTest(const FString&)
+{
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    if(!TestNotNull(TEXT("Synthetic world"),World))return false;
+    TestNotNull(TEXT("A live fixture keeps its rendering scene"),World->Scene);
+    World->DestroyWorld(false);
+    TestNotNull(TEXT("Engine teardown keeps its scene until the safe end-of-test boundary"),World->Scene);
+    FlushRenderingCommands();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMotionVectorThreadSafetyTest,"ProjectProject01.Diagnostics.MotionVectorThreadSafety",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectMotionVectorThreadSafetyTest::RunTest(const FString&)
+{
+    auto* CVar=IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionVectorSimulation"));
+    if(!TestNotNull(TEXT("Engine motion-vector CVar exists"),CVar))return false;
+    TestTrue(TEXT("TSR reads the render-thread shadow value"),CVar->TestFlags(ECVF_RenderThreadSafe));
+    const int32 Previous=CVar->GetInt();
+    for(int32 Value:{0,1,Previous})
+    {
+        CVar->SetWithCurrentPriority(Value);
+        int32 RenderValue=-1;
+        ENQUEUE_RENDER_COMMAND(ProjectMotionVectorRead)([&](FRHICommandListImmediate&){RenderValue=CVar->GetInt();});
+        FlushRenderingCommands();
+        TestEqual(TEXT("Writes arrive in order before render-thread reads"),RenderValue,Value);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectRenderingResourceBudgetTest,"ProjectProject01.Verification.RenderingResourceBudget",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectRenderingResourceBudgetTest::RunTest(const FString&)
+{
+    // Runs after UI/rendering tests in the ordinary queue. Validate actual resource
+    // lifetime against the engine's unchanged limit, rather than raising that limit.
+    int64 Reserved=0;
+    ENQUEUE_RENDER_COMMAND(ProjectReadReservedBudget)([&](FRHICommandListImmediate&){Reserved=GRHIGlobals.ReservedResources.VirtualSize;});
+    FlushRenderingCommands();
+    const auto* Budget=IConsoleManager::Get().FindConsoleVariable(TEXT("rhi.ReservedResources.VirtualSizeWarningGB"));
+    AddInfo(FString::Printf(TEXT("GPU reserved virtual address space after rendering suite: %.2f GiB; engine warning threshold: %d GiB"),Reserved/1073741824.,Budget?Budget->GetInt():-1));
+    if(GRHIGlobals.ReservedResources.Supported&&Budget&&Budget->GetInt()>0)
+        TestTrue(TEXT("Retired test scenes do not exceed the unchanged reserved-resource budget"),Reserved<=int64(Budget->GetInt())*1073741824ll);
     return true;
 }
 #endif

@@ -53,7 +53,13 @@ Opening or refreshing a run produces these derived artifacts without modifying g
 
 `CombinedReport.xml` also stores `RiskBreakdown`, `PerformanceSummary`, `MemorySummary`, `NetworkSummary`, `DiagnosticsOverheadSummary`, and `ServerClientTimeAlignment`, so the reason and raw evidence behind the aggregate risk count remain available without opening the dashboard.
 
-**빌드·자동 검사**는 `ProjectDFSDEditor`를 빌드하고 `UnrealEditor-Cmd`에서 `ProjectProject01.*` 검사를 실행한다. 그래픽 검사를 포함하므로 `-nullrhi` 대신 화면 밖 렌더링(`-RenderOffscreen`)을 사용한다. 실행마다 `Verification/Attempts/<시각_고유번호>/`를 새로 만들고 `Build.log`, `Automation.log`, 엔진 원본 `Unreal.log`, `AutomationReport/index.json`, 해당 시도의 `Verification.xml`을 보관한다. 캡처 루트의 `Verification.xml`은 최신 시도를 가리킨다. 기존 시도나 과거 보고서는 삭제하거나 재사용하지 않는다.
+**빌드·자동 검사**는 `ProjectDFSDEditor`를 빌드하고 `UnrealEditor-Cmd`에서 프로젝트의 일반 검사를 실행한다. `DefaultEngine.ini`의 `ProjectDFSDGeneral` 그룹으로 `ProjectProject01.Simulation.*`만 제외하며, 일반 검사와 장시간 봇 경기를 분리한다. 그래픽 검사는 화면 밖 렌더링(`-RenderOffscreen`)을 사용한다. 일반 검사의 단계별 제한 시간은 30분이다.
+
+**봇 경기 시뮬레이션**에서는 양쪽 동일 난이도 1~5 또는 마네킹/생존자 난이도 조합을 선택하고 시작 회차·반복 횟수를 지정한다. 기존 400회 모두 선택 가능하며 선택한 회차만 정확히 실행한다. 기본 반복은 5회, 최대는 동일 난이도 20회·비대칭 조합 30회다. 실행 상한은 선택 횟수 × 5분 + 준비 5분이며 무한 대기는 허용하지 않는다. AI 로직·경기 규칙·난이도는 변경하지 않는다.
+
+두 실행 모두 진행 창에 완료·실패 수, 현재 항목, 경과 시간을 표시하고 취소를 지원한다. 빌드와 검사 출력은 실행 중에도 로그에 기록하여 취소·시간 초과 시 이미 나온 출력이 남는다. 메모리에 보관하는 출력은 스트림당 최근 약 8 MiB로 제한하며 파일에는 전체 출력을 기록한다. 종료 시 결과 팝업을 표시한다.
+
+일반 실행마다 `Verification/Attempts/<시각_고유번호>/`를 새로 만들고 `Build.log`, `Automation.log`, 엔진 원본 `Unreal.log`, `AutomationReport/index.json`, 선택 범위 `Selection.txt`, `Verification.xml`을 보관한다. 캡처 루트의 `Verification.xml`은 최신 일반 시도를 가리킨다. 시뮬레이션은 같은 캡처의 `BotSimulation/Verification/Attempts/`와 `BotSimulation/Verification.xml`에 별도 기록하여 일반 검사 판정을 덮어쓰지 않는다. 기존 시도나 과거 보고서는 삭제하거나 재사용하지 않는다.
 
 프로세스 중단·보고서 누락·검사 실패·미완료·취소·시간 초과를 구분한다. 이번 보고서의 생성 시각·검사별 완료 상태·집계가 일치해야 성공이다. 종료 코드 0만으로 성공 처리하지 않으며, 보고서가 없을 때 과거의 성공 횟수나 가짜 0개를 표시하지 않는다. 경고 포함 성공 횟수는 따로 보존한다. 종합 `Pass`는 원래 역할 보고서/실패 조건, 빌드, 이번 자동 검사 모두 통과해야 한다. 기존 캡처의 위험 후보는 새 검사가 통과해도 지워지지 않는다. 새 진단 캡처를 만들지 않아도 자동 검사는 실행할 수 있다.
 

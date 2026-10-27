@@ -12,6 +12,7 @@
 #include "NavigationPath.h"
 #include "NavMesh/NavMeshBoundsVolume.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "ProjectNavigationCrowdManager.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMannequinNavigationSafetyTest,
     "ProjectProject01.Multiplayer.MannequinNavigationSafety",
@@ -74,6 +75,7 @@ bool FProjectMannequinNavigationSafetyTest::RunTest(const FString&)
         Nav->RemoveNavigationBuildLock(0xff,UNavigationSystemV1::ELockRemovalRebuildAction::NoRebuild);
         Nav->Build();
         if (auto* Data=Nav->GetDefaultNavDataInstance(FNavigationSystem::DontCreate)) Data->EnsureBuildCompletion();
+        TestTrue(TEXT("Project crowd manager retains Detour but handles world teardown"),Nav->GetCrowdManager()&&Nav->GetCrowdManager()->IsA<UProjectNavigationCrowdManager>());
         const bool bRoute=Mode->FindReachableMannequinGoal(Pawn,FVector(800,0,0),150,Goal);
         TestTrue(TEXT("A reachable goal behind a wall resolves using a complete A* detour"),bRoute);
         if (bRoute)

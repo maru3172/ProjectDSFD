@@ -46,6 +46,15 @@ namespace
             const int32 I=Vertex(A,Color);Vertex(B,Color);Vertex(C,Color);
             Indices.Append({SlateIndex(I),SlateIndex(I+1),SlateIndex(I+2)});
         }
+        void Surface(FVector2D Origin,FVector2D Size)
+        {
+            // A soft, static light falloff gives the paper depth without adding objects behind it.
+            const int32 I=Vertex(Origin,FLinearColor(.115f,.115f,.115f,.10f));
+            Vertex(Origin+FVector2D(Size.X,0),FLinearColor(.085f,.085f,.085f,.025f));
+            Vertex(Origin+Size,FLinearColor(0,0,0,.18f));
+            Vertex(Origin+FVector2D(0,Size.Y),FLinearColor(0,0,0,.04f));
+            Indices.Append({SlateIndex(I),SlateIndex(I+1),SlateIndex(I+2),SlateIndex(I),SlateIndex(I+2),SlateIndex(I+3)});
+        }
         void Stain(FVector2D Center,FVector2D Radius,FLinearColor Color,int32 Seed)
         {
             FRandomStream Random(Seed);constexpr int32 Steps=18;
@@ -70,6 +79,9 @@ namespace
     {
         if(Size.X<40||Size.Y<60)return;
         FDocumentWear Wear{G,{}, {},Tint};FRandomStream Random(Seed);
+        const float Top=(Folder?22.f:20.f)*Scale;
+        if(Size.Y>Top+2*Scale)
+            Wear.Surface(Origin+FVector2D(Scale,Top),FVector2D(Size.X-2*Scale,Size.Y-Top-Scale));
         const FLinearColor Soot(.003f,.003f,.003f,.72f),Water(.125f,.125f,.125f,.14f);
         // Marks live in the binding, header and outer margins, below all text and controls.
         const int32 Marks=Random.RandRange(12,19);
@@ -85,7 +97,7 @@ namespace
         const auto* White=FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
         auto Lines=[&](TArray<FVector2D> Points,FLinearColor Color,float Width=1.f)
         {for(auto& P:Points)P=Origin+P;FSlateDrawElement::MakeLines(Out,Layer+1,G.ToPaintGeometry(),Points,ESlateDrawEffect::None,Color*Tint,true,Width*Scale);};
-        const FLinearColor Fiber(.25f,.25f,.25f,.55f),Cut=ProjectDFSDUI::Canvas();
+        const FLinearColor Fiber(.23f,.23f,.23f,.38f),Cut=ProjectDFSDUI::Canvas();
         // Small irregular missing sections, rather than decorative sheets beside the menu.
         TArray<float> LeftCuts,RightCuts;
         const int32 Tears=Random.RandRange(3,6);
@@ -97,11 +109,12 @@ namespace
             Cuts.Add(Fraction);
             const float Y=Size.Y*Fraction,Depth=Random.FRandRange(4.f,Folder?11.f:8.f)*Scale;
             const FVector2D A(X,Y-Random.FRandRange(5,10)*Scale),B(X+Sign*Depth,Y-2*Scale),C(X+Sign*Depth*Random.FRandRange(.2f,.6f),Y+3*Scale),D(X,Y+Random.FRandRange(5,13)*Scale);
+            Wear.Stain(Origin+FVector2D(X,Y),FVector2D(Depth*1.6f,17*Scale),FLinearColor(0,0,0,.48f),Seed+530+I);
             Wear.Triangle(Origin+A,Origin+B,Origin+C,Cut);Wear.Triangle(Origin+A,Origin+C,Origin+D,Cut);
             Lines({A,B,C,D},Fiber,.65f);
         }
         const FVector2D Corner(Size.X,Folder?22*Scale:0);
-        Wear.Triangle(Origin+Corner+FVector2D(-18*Scale,0),Origin+Corner,Origin+Corner+FVector2D(0,17*Scale),FLinearColor(0.0912f,0.0912f,0.0912f,.9f));
+        Wear.Triangle(Origin+Corner+FVector2D(-18*Scale,0),Origin+Corner,Origin+Corner+FVector2D(0,17*Scale),FLinearColor(.066f,.066f,.066f,.7f));
         Lines({Corner+FVector2D(-18*Scale,0),Corner+FVector2D(0,17*Scale)},Fiber,.8f);
         // Worn paper fibres and short water trails are deterministic and deliberately sparse.
         const int32 Fibers=Random.RandRange(16,25);
@@ -129,10 +142,12 @@ namespace ProjectDFSDUI
         if(auto* Settings=UProjectProject01GameUserSettings::Get())Wave->SoundClassObject=Settings->GetUISoundClass();
         FSlateSound Sound;Sound.SetResourceObject(Wave.Get());return Sound;
     }
-	FLinearColor Canvas(){return FLinearColor(.006f,.008f,.012f,1);}
-	FLinearColor Panel(){return FLinearColor(0.0230f,0.0230f,0.0230f,1);}
-	FLinearColor Text(){return FLinearColor(.86f,.87f,.89f,1);}
-	FLinearColor Muted(){return FLinearColor(.48f,.51f,.56f,1);}
+	FLinearColor Canvas(){return FLinearColor(.008f,.008f,.008f,1);}
+	FLinearColor Panel(){return FLinearColor(.024f,.024f,.024f,1);}
+    static FLinearColor Paper(){return FLinearColor(.030f,.030f,.030f,1);}
+    static FLinearColor PaperEdge(){return FLinearColor(.15f,.15f,.15f,.65f);}
+	FLinearColor Text(){return FLinearColor(.90f,.90f,.90f,1);}
+	FLinearColor Muted(){return FLinearColor(.50f,.50f,.50f,1);}
 	FLinearColor Accent(){return FLinearColor(.45f,.12f,.08f,1);}
 	FLinearColor Danger(){return FLinearColor(1,.32f,.22f,1);}
 	const FButtonStyle& TitleButtonStyle()
@@ -141,11 +156,11 @@ namespace ProjectDFSDUI
 		{
 			auto S=FCoreStyle::Get().GetWidgetStyle<FButtonStyle>(TEXT("Button"));
 			// The title's original quiet translucent controls are the reference, not gray boxed buttons.
-			S.SetNormal(FSlateColorBrush(FLinearColor(.01f,.014f,.02f,.25f)))
-			 .SetHovered(FSlateColorBrush(FLinearColor(.18f,.12f,.10f,.85f)))
-			 .SetPressed(FSlateColorBrush(FLinearColor(.27f,.08f,.05f,.92f)))
-			 .SetDisabled(FSlateColorBrush(FLinearColor(.01f,.014f,.02f,.1f)))
-			 .SetNormalForeground(Text()).SetHoveredForeground(FLinearColor(.98f,.94f,.88f))
+			S.SetNormal(FSlateColorBrush(FLinearColor(.014f,.014f,.014f,.25f)))
+			 .SetHovered(FSlateColorBrush(FLinearColor(.10f,.10f,.10f,.85f)))
+			 .SetPressed(FSlateColorBrush(FLinearColor(.065f,.065f,.065f,.92f)))
+			 .SetDisabled(FSlateColorBrush(FLinearColor(.014f,.014f,.014f,.1f)))
+			 .SetNormalForeground(Text()).SetHoveredForeground(Text())
 			 .SetPressedForeground(Text()).SetDisabledForeground(Muted())
              .SetNormalPadding(FMargin(14,8)).SetPressedPadding(FMargin(15,9));S.SetPressedSound(ClickSound());return S;
 		}();
@@ -156,17 +171,17 @@ namespace ProjectDFSDUI
 		static const FButtonStyle Normal=[]
 		{
 			auto S=TitleButtonStyle();
-			// Neutral graphite controls remain lighter than the aged file and footer surfaces.
-			S.SetNormal(FSlateRoundedBoxBrush(FLinearColor(0.0553f,0.0553f,0.0553f,.98f),2.f,FLinearColor(0.2027f,0.2027f,0.2027f,.85f),1.f))
-             .SetHovered(FSlateRoundedBoxBrush(FLinearColor(0.1039f,0.1039f,0.1039f),2.f,FLinearColor(0.2784f,0.2784f,0.2784f),1.f))
-             .SetPressed(FSlateRoundedBoxBrush(FLinearColor(0.0694f,0.0694f,0.0694f),2.f,Accent(),1.f))
+			// Echo the title's charcoal surfaces and warm red response, with a readable resting edge.
+			S.SetNormal(FSlateRoundedBoxBrush(FLinearColor(.054f,.054f,.054f,.98f),2.f,FLinearColor(.145f,.145f,.145f,.8f),1.f))
+             .SetHovered(FSlateRoundedBoxBrush(FLinearColor(.09f,.09f,.09f),2.f,FLinearColor(.23f,.23f,.23f),1.f))
+             .SetPressed(FSlateRoundedBoxBrush(FLinearColor(.065f,.065f,.065f),2.f,Accent(),1.f))
 			 .SetDisabled(FSlateRoundedBoxBrush(FLinearColor(0.0202f,0.0202f,0.0202f,.85f),2.f,FLinearColor(0.0560f,0.0560f,0.0560f,.6f),1.f));
 			return S;
 		}();
 		static const FButtonStyle Selected=[]
 		{
 			auto S=Normal;
-			S.SetNormal(FSlateRoundedBoxBrush(FLinearColor(.11f,.04f,.03f),2.f,Accent(),1.5f));return S;
+			S.SetNormal(FSlateRoundedBoxBrush(FLinearColor(.075f,.075f,.075f),2.f,Accent(),1.5f));return S;
 		}();
 		return bSelected?Selected:Normal;
 	}
@@ -176,7 +191,7 @@ namespace ProjectDFSDUI
 		{
 			auto S=FCoreStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(TEXT("NormalEditableTextBox"));
 			S.SetBackgroundImageNormal(FSlateRoundedBoxBrush(FLinearColor(0.0110f,0.0110f,0.0110f),2.f,FLinearColor(0.1221f,0.1221f,0.1221f),1.f))
-			 .SetBackgroundImageHovered(FSlateRoundedBoxBrush(Panel(),2.f,FLinearColor(.15f,.12f,.11f),1.f))
+			 .SetBackgroundImageHovered(FSlateRoundedBoxBrush(Panel(),2.f,FLinearColor(.15f,.15f,.15f),1.f))
 			 .SetBackgroundImageFocused(FSlateRoundedBoxBrush(Panel(),2.f,Accent(),1.5f))
 			 .SetBackgroundImageReadOnly(FSlateRoundedBoxBrush(FLinearColor(0.0142f,0.0142f,0.0142f),2.f,FLinearColor(0.0660f,0.0660f,0.0660f),1.f))
 			 .SetForegroundColor(Text()).SetFocusedForegroundColor(Text()).SetReadOnlyForegroundColor(Text())
@@ -203,7 +218,7 @@ namespace ProjectDFSDUI
 			 .SetEvenRowBackgroundHoveredBrush(FSlateColorBrush(FLinearColor(.10f,.055f,.045f)))
 			 .SetOddRowBackgroundHoveredBrush(FSlateColorBrush(FLinearColor(.10f,.055f,.045f)))
 			 .SetActiveBrush(FSlateColorBrush(FLinearColor(.15f,.045f,.035f)))
-			 .SetInactiveBrush(FSlateColorBrush(FLinearColor(.11f,.04f,.03f)))
+			 .SetInactiveBrush(FSlateColorBrush(FLinearColor(.075f,.075f,.075f)))
 			 .SetActiveHoveredBrush(FSlateColorBrush(FLinearColor(.18f,.06f,.04f)))
 			 .SetInactiveHoveredBrush(FSlateColorBrush(FLinearColor(.15f,.05f,.035f)))
 			 .SetTextColor(Text()).SetSelectedTextColor(Text());return S;
@@ -240,7 +255,8 @@ namespace ProjectDFSDUI
 	}
 	void ApplyTree(UWidgetTree* Tree)
 	{
-		if(!Tree)return;Tree->ForEachWidget([](UWidget* W)
+		if(!Tree)return;
+        Tree->ForEachWidget([](UWidget* W)
 		{
 			if(auto* B=Cast<UButton>(W)){if(!Cast<UBorder>(B->GetContent()))Apply(B);}
 			else if(auto* E=Cast<UEditableTextBox>(W))Apply(E);
@@ -254,7 +270,7 @@ namespace ProjectDFSDUI
 				const auto C=T->GetColorAndOpacity().GetSpecifiedColor();
 				const float Max=FMath::Max3(C.R,C.G,C.B),Min=FMath::Min3(C.R,C.G,C.B);
 				if(Max<.01f||(Max>.8f&&Max-Min<.08f))T->SetColorAndOpacity(
-					(T->GetFont().Size>=28?FLinearColor(.94f,.92f,.87f):Text()).CopyWithNewOpacity(C.A));
+					Text().CopyWithNewOpacity(C.A));
 				else if(C.R>.9f&&C.G<.01f&&C.B<.01f)T->SetColorAndOpacity(Danger().CopyWithNewOpacity(C.A));
 			}
 			else if(auto* Border=Cast<UBorder>(W))
@@ -293,8 +309,8 @@ namespace ProjectDFSDUI
 class SProjectDFSDPage final : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SProjectDFSDPage):_Width(1120),_Bottom(32){} SLATE_ARGUMENT(float,Width) SLATE_ARGUMENT(float,Bottom) SLATE_DEFAULT_SLOT(FArguments,Content) SLATE_END_ARGS()
-	void Construct(const FArguments& Args){Width=Args._Width*1.20f;Bottom=Args._Bottom;ChildSlot[Args._Content.Widget];}
+	SLATE_BEGIN_ARGS(SProjectDFSDPage):_Width(1120),_Bottom(32),_WearSeed(419),_Dossier(false){} SLATE_ARGUMENT(float,Width) SLATE_ARGUMENT(float,Bottom) SLATE_ARGUMENT(int32,WearSeed) SLATE_ARGUMENT(bool,Dossier) SLATE_DEFAULT_SLOT(FArguments,Content) SLATE_END_ARGS()
+	void Construct(const FArguments& Args){Width=Args._Width*1.20f;Bottom=Args._Bottom;WearSeed=Args._WearSeed;Dossier=Args._Dossier;ChildSlot[Args._Content.Widget];}
 	virtual FVector2D ComputeDesiredSize(float)const override{return FVector2D(Width+64,720);}
 	virtual void OnArrangeChildren(const FGeometry& G,FArrangedChildren& Children)const override
 	{
@@ -318,18 +334,21 @@ public:
         const float Right=FMath::Min(float(Size.X)-16.f/Dpi,Left+Width*Fit);
         const float FrameLeft=FMath::Max(8.f/Dpi,Left-10*Fit),FrameRight=FMath::Min(float(Size.X)-8.f/Dpi,Right+10*Fit);
         const float FrameBottom=FMath::Max(60.f*Fit,float(Size.Y)-Bottom*Fit);
-        // A quiet folder tab, clipped corner and filing rules communicate the case-file
-        // theme without replacing page headings or adding a literal document slogan.
-        const TArray<FVector2D> Folder{{FrameLeft,42*Fit},{FrameLeft,FrameBottom},{FrameRight,FrameBottom},{FrameRight,16*Fit},{FrameLeft+150*Fit,16*Fit},{FrameLeft+125*Fit,36*Fit},{FrameLeft,36*Fit},{FrameLeft,42*Fit}};
-        FSlateDrawElement::MakeBox(Out,Layer+3,G.ToPaintGeometry(FVector2D(FrameRight-FrameLeft,FrameBottom-36*Fit),FSlateLayoutTransform(FVector2D(FrameLeft,36*Fit))),White,ESlateDrawEffect::None,ProjectDFSDUI::Panel()*Tint);
-        FSlateDrawElement::MakeBox(Out,Layer+3,G.ToPaintGeometry(FVector2D(125*Fit,20*Fit),FSlateLayoutTransform(FVector2D(FrameLeft,16*Fit))),White,ESlateDrawEffect::None,ProjectDFSDUI::Panel()*Tint);
-        FSlateDrawElement::MakeLines(Out,Layer+4,G.ToPaintGeometry(),Folder,ESlateDrawEffect::None,FLinearColor(0.1596f,0.1596f,0.1596f,.72f)*Tint,true,1.f/Dpi);
+        // Dossiers share the save covers' raised left tab; settings/login use a simpler sheet.
+        const float Top=16*Fit,BodyTop=Dossier?38*Fit:Top;
+        const TArray<FVector2D> Folder=Dossier
+            ?TArray<FVector2D>{{FrameLeft,Top},{FrameLeft+125*Fit,Top},{FrameLeft+143*Fit,BodyTop},{FrameRight,BodyTop},{FrameRight,FrameBottom},{FrameLeft,FrameBottom},{FrameLeft,Top}}
+            :TArray<FVector2D>{{FrameLeft,Top},{FrameRight-16*Fit,Top},{FrameRight,Top+16*Fit},{FrameRight,FrameBottom},{FrameLeft,FrameBottom},{FrameLeft,Top}};
+        const FLinearColor Paper=ProjectDFSDUI::Paper();
+        FSlateDrawElement::MakeBox(Out,Layer+3,G.ToPaintGeometry(FVector2D(FrameRight-FrameLeft,FrameBottom-BodyTop),FSlateLayoutTransform(FVector2D(FrameLeft,BodyTop))),White,ESlateDrawEffect::None,Paper*Tint);
+        if(Dossier)FSlateDrawElement::MakeBox(Out,Layer+3,G.ToPaintGeometry(FVector2D(125*Fit,22*Fit),FSlateLayoutTransform(FVector2D(FrameLeft,Top))),White,ESlateDrawEffect::None,Paper*Tint);
+        FSlateDrawElement::MakeLines(Out,Layer+4,G.ToPaintGeometry(),Folder,ESlateDrawEffect::None,ProjectDFSDUI::PaperEdge()*Tint,true,1.f/Dpi);
         FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(2*Fit,FMath::Max(1.f,FrameBottom-60*Fit)),FSlateLayoutTransform(FVector2D(FrameLeft+5*Fit,60*Fit))),White,ESlateDrawEffect::None,FLinearColor(.12f,.045f,.035f,.6f)*Tint);
         FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(FMath::Max(1.f,Right-Left),1.f/Dpi),FSlateLayoutTransform(FVector2D(Left,47*Fit))),White,ESlateDrawEffect::None,FLinearColor(.10f,.105f,.11f,.8f)*Tint);
-        PaintPaperWear(Out,G,Layer+5,FVector2D(FrameLeft,16*Fit),FVector2D(FrameRight-FrameLeft,FrameBottom-16*Fit),Fit,Tint,false);
+        PaintPaperWear(Out,G,Layer+5,FVector2D(FrameLeft,16*Fit),FVector2D(FrameRight-FrameLeft,FrameBottom-16*Fit),Fit,Tint,Dossier,WearSeed);
 		return SCompoundWidget::OnPaint(Args,G,Rect,Out,Layer+7,Style,bEnabled);
 	}
-private:float Width=1120,Bottom=32;
+private:float Width=1120,Bottom=32;int32 WearSeed=419;bool Dossier=false;
 };
 
 ProjectDFSDUI::FPageMetrics ProjectDFSDUI::PageMetrics(const FGeometry& G,float Width)
@@ -397,11 +416,13 @@ TSharedRef<SWidget> ProjectDFSDUI::Icon(EIcon Kind,float Size){return SNew(SProj
 
 TSharedRef<SWidget> UProjectDFSDPageFrame::RebuildWidget()
 {
-	return SNew(SProjectDFSDPage).Width(ContentWidth).Bottom(BottomClearance)[GetContent()?GetContent()->TakeWidget():SNullWidget::NullWidget];
+    const auto* Owner=GetTypedOuter<UUserWidget>();
+    const int32 Seed=Owner?int32(FCrc::StrCrc32(*Owner->GetClass()->GetPathName())):419;
+	return SNew(SProjectDFSDPage).Width(ContentWidth).Bottom(BottomClearance).WearSeed(Seed).Dossier(Owner&&Owner->IsA<UProjectProject01LobbyWidget>())[GetContent()?GetContent()->TakeWidget():SNullWidget::NullWidget];
 }
 TSharedRef<SWidget> ProjectDFSDUI::FrameSlate(TSharedRef<SWidget> Content,float Width,float Bottom)
 {
-    return SNew(SProjectDFSDPage).Width(Width).Bottom(Bottom)[Content];
+    return SNew(SProjectDFSDPage).Width(Width).Bottom(Bottom).Dossier(true)[Content];
 }
 
 UProjectDFSDComboBox::UProjectDFSDComboBox(){InitForegroundColor(ProjectDFSDUI::Text());}
@@ -415,7 +436,7 @@ public:
 	{
 		const auto Size=G.GetLocalSize();const auto Tint=Style.GetColorAndOpacityTint();const auto* White=FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
 		const float Width=float(Size.X),Height=float(Size.Y),Tab=FMath::Min(135.f,Width*.45f);
-		const FLinearColor Paper(.038f,.038f,.038f,1),Edge(.22f,.22f,.22f,.85f);
+		const FLinearColor Paper=ProjectDFSDUI::Paper(),Edge=ProjectDFSDUI::PaperEdge();
 		FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(FVector2D(Width,FMath::Max(0.f,Height-22)),FSlateLayoutTransform(FVector2D(0,22))),White,ESlateDrawEffect::None,Paper*Tint);
 		FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(FVector2D(Tab,24),FSlateLayoutTransform()),White,ESlateDrawEffect::None,Paper*Tint);
 		const TArray<FVector2D> Outline{{0,0},{Tab,0},{Tab+18,22},{Width,22},{Width,Height},{0,Height},{0,0}};

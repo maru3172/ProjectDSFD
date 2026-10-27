@@ -107,7 +107,12 @@ bool FProjectMatchTimelineWidgetTest::RunTest(const FString&)
     TestTrue(TEXT("History row contains real timestamp"),Row&&Row->GetText().ToString().Contains(TEXT("01:10")));
     TestEqual(TEXT("Repeated verification refresh does not duplicate rows"),Widget->TimelineRows->GetChildrenCount(),1);
     Widget->ConfigureResult(Result);TestEqual(TEXT("Server verification update replaces history"),Widget->TimelineRows->GetChildrenCount(),1);
+    // This fixture is not attached to a viewport: ConfigureResult prepares a fresh reveal.
+    // Verify the fade guard, then advance real widget time before testing the next user click.
+    Widget->HandleTimelineClicked();TestTrue(TEXT("Timeline stays open while the result reveal blocks input"),Widget->bShowingTimeline);
+    Widget->NativeTick(FGeometry(),Widget->FadeDurationSeconds);
     Widget->HandleTimelineClicked();TestFalse(TEXT("Summary can be restored"),Widget->bShowingTimeline);
+    TestTrue(TEXT("Summary content is visible again"),Widget->ResultText->GetVisibility()==ESlateVisibility::Visible&&Widget->TimelineFrame->GetVisibility()==ESlateVisibility::Collapsed);
     Widget->ConfigureSinglePlayerResult(false);
     TestTrue(TEXT("Single player result does not show multiplayer history"),Widget->TimelineButton->GetVisibility()==ESlateVisibility::Collapsed);
     return true;

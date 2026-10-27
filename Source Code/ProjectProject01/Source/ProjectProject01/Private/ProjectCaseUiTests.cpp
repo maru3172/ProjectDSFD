@@ -1,9 +1,10 @@
-﻿#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 #include "ProjectCaseRecords.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "ProjectUIRenderCapture.h"
 #include "Engine/UserInterfaceSettings.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/ScopeExit.h"
@@ -82,10 +83,10 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         if(Count==0)PartyState->SetField(TEXT("party"),MakeShared<FJsonValueNull>());else PartyState->SetObjectField(TEXT("party"),Party);
     for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
     {
-        auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+        auto* Target=ProjectUIRenderCapture::Create(Size);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
         for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,DockSlate,Dpi,FVector2D(Size),0);
-        FlushRenderingCommands();TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
-        if(TestTrue(TEXT("Persistent account/party dock renders"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)))
+        FlushRenderingCommands();TArray<FColor> Pixels;
+        if(TestTrue(TEXT("Persistent account/party dock renders"),ProjectUIRenderCapture::Read(Target,Pixels)))
         {TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("Dock%d_%dx%d.png"),Count,Size.X,Size.Y)));}
         TSharedPtr<SButton> Invite;TSharedPtr<SWidget> Experience;bool InviteShown=false,InviteEnabled=false;
         TFunction<void(TSharedRef<SWidget>,bool,bool)> FindInvite=[&](TSharedRef<SWidget> Node,bool ParentShown,bool ParentEnabled)
@@ -129,10 +130,10 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         R->Request=FHttpModule::Get().CreateRequest();Slate=Widget->TakeWidget();R->Request.Reset();Widget->RefreshPanel();
         for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
         {
-            auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+            auto* Target=ProjectUIRenderCapture::Create(Size);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
             for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),0);
-            FlushRenderingCommands();TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
-            if(TestTrue(TEXT("Record page renders pixels"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)&&Pixels.Num()==Size.X*Size.Y))
+            FlushRenderingCommands();TArray<FColor> Pixels;
+            if(TestTrue(TEXT("Record page renders pixels"),ProjectUIRenderCapture::Read(Target,Pixels)&&Pixels.Num()==Size.X*Size.Y))
             {TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);TestTrue(TEXT("Record page QA image saved"),FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("%s_%dx%d.png"),*Page,Size.X,Size.Y))));}
             // A scroll body's content is intentionally taller than the screen (117 records).
             // Its viewport, rather than the full content extent, must fit on screen.

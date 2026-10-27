@@ -28,9 +28,10 @@ internal static class AutomationVerification
         System.IO.Directory.CreateDirectory(directory);
         return new(id, Path.GetFullPath(runDirectory), directory, DateTimeOffset.UtcNow);
     }
-    internal static string[] Arguments(string projectFile, VerificationAttempt attempt, string filter = "ProjectProject01.") =>
+    internal static string[] Arguments(string projectFile, VerificationAttempt attempt, string filter = "Group:ProjectDFSDGeneral") =>
         [projectFile, "-unattended", "-nop4", "-nosplash", "-RenderOffscreen", "-TestExit=Automation Test Queue Empty",
-         "-ExecCmds=Automation RunTests " + filter, "-ReportExportPath=" + attempt.ReportDirectory, "-abslog=" + attempt.EngineLog,
+         "-ExecCmds=Automation RunTests " + filter,
+         "-ReportExportPath=" + attempt.ReportDirectory, "-abslog=" + attempt.EngineLog,
          "-stdout", "-FullStdOutLogOutput"];
 
     internal static AutomationVerdict Evaluate(VerificationAttempt attempt, int exitCode)

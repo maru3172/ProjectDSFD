@@ -15,6 +15,7 @@
 #include "Components/WidgetSwitcher.h"
 #include "Components/VerticalBox.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "ProjectUIRenderCapture.h"
 #include "Engine/UserInterfaceSettings.h"
 #include "Slate/WidgetRenderer.h"
 #include "RenderingThread.h"
@@ -36,7 +37,10 @@ bool FProjectDFSDUIThemeContractTest::RunTest(const FString&)
 	TestTrue(TEXT("Normal/focused/read-only input captions remain bright"),Input.ForegroundColor.GetSpecifiedColor().R>.8f&&Input.FocusedForegroundColor.GetSpecifiedColor().R>.8f&&Input.ReadOnlyForegroundColor.GetSpecifiedColor().R>.8f);
 	TestTrue(TEXT("Input focus is visibly different from its resting border"),Input.BackgroundImageNormal.OutlineSettings.Color!=Input.BackgroundImageFocused.OutlineSettings.Color);
 	TestTrue(TEXT("Selected tabs have a persistent style, not only a hover color"),ProjectDFSDUI::ButtonStyle().Normal.TintColor!=ProjectDFSDUI::ButtonStyle(true).Normal.TintColor);
-	TestTrue(TEXT("Title buttons retain their original translucent surface"),ProjectDFSDUI::TitleButtonStyle().Normal.TintColor.GetSpecifiedColor()==FLinearColor(.01f,.014f,.02f,.25f));
+	TestTrue(TEXT("Title buttons retain a translucent neutral surface"),ProjectDFSDUI::TitleButtonStyle().Normal.TintColor.GetSpecifiedColor()==FLinearColor(.014f,.014f,.014f,.25f));
+    for(const auto Color:{ProjectDFSDUI::Canvas(),ProjectDFSDUI::Panel(),ProjectDFSDUI::Text(),ProjectDFSDUI::Muted(),
+        ProjectDFSDUI::ButtonStyle().Normal.TintColor.GetSpecifiedColor(),ProjectDFSDUI::TitleButtonStyle().HoveredForeground.GetSpecifiedColor()})
+        TestTrue(TEXT("Base surfaces and captions are neutral grey without yellow/blue tint"),FMath::IsNearlyEqual(Color.R,Color.G)&&FMath::IsNearlyEqual(Color.G,Color.B));
     auto* Click=Cast<UProjectUIClickSound>(ProjectDFSDUI::ButtonStyle().PressedSlateSound.GetResourceObject());
     if(TestTrue(TEXT("Common buttons have a short generated click sound"),Click&&Click->Duration>0&&Click->Duration<.1f))
     {
@@ -78,11 +82,11 @@ bool FProjectDFSDUIThemeRenderTest::RunTest(const FString&)
 		auto Slate=W->GetRootWidget()->TakeWidget();
 		for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
 		{
-			auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);
+			auto* Target=ProjectUIRenderCapture::Create(Size);
 			const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
 			for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),0);
-			FlushRenderingCommands();TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
-			if(!TestTrue(TEXT("Read initialized game UI pixels"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)&&Pixels.Num()==Size.X*Size.Y))continue;
+			FlushRenderingCommands();TArray<FColor> Pixels;
+			if(!TestTrue(TEXT("Read initialized game UI pixels"),ProjectUIRenderCapture::Read(Target,Pixels)&&Pixels.Num()==Size.X*Size.Y))continue;
 			TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);
 			TestTrue(TEXT("Save visual QA page"),FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("%s_%dx%d.png"),*Name,Size.X,Size.Y))));
 			W->WidgetTree->ForEachWidget([&](UWidget* Widget)
