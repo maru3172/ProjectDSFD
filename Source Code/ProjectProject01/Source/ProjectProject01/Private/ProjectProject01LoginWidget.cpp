@@ -59,6 +59,7 @@
 #include "TimerManager.h"
 #include "Misc/PackageName.h"
 #include "Brushes/SlateColorBrush.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 #include "Framework/Application/SlateApplication.h"
@@ -6329,16 +6330,20 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
         const FString ReadyStatus=M.bIsBot?FString(TEXT("준비")):M.bIsHost&&!DuoBot?FString(TEXT("시작 대기")):M.bIsReady?FString(TEXT("준비")):FString(TEXT("대기"));
 		Label->SetText(FText::FromString(M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+
 			(M.bIsObserver?FString(TEXT("관전 · "))+ReadyStatus:ReadyStatus)+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
-		FSlateFontInfo Font=Label->GetFont();Font.Size=16;Label->SetFont(Font);Label->SetAutoWrapText(false);Label->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);Label->SetToolTipText(Label->GetText());Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		FSlateFontInfo Font=Label->GetFont();Font.Size=18;Label->SetFont(Font);Label->SetAutoWrapText(false);Label->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);Label->SetToolTipText(Label->GetText());Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		auto* LabelSlot=Row->AddChildToHorizontalBox(Label);LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));LabelSlot->SetVerticalAlignment(VAlign_Center);
-        if(M.UserId==SelfId&&!M.bIsObserver&&RoomRoleRow)Row->AddChildToHorizontalBox(RoomRoleRow)->SetVerticalAlignment(VAlign_Center);
+        auto* Contents=WidgetTree->ConstructWidget<UVerticalBox>();Contents->AddChildToVerticalBox(Row);
+        if(M.UserId==SelfId&&!M.bIsObserver&&RoomRoleRow)
+            Contents->AddChildToVerticalBox(RoomRoleRow)->SetPadding(FMargin(0,2,0,0));
 		auto* Binding=NewObject<UProjectProject01RoomProfileBinding>(this);Binding->Owner=this;Binding->UserId=M.UserId;
 		MemberProfileBindings.Add(Binding);
-		auto* Background=WidgetTree->ConstructWidget<UBorder>();Background->SetBrushColor(ProjectDFSDUI::Panel());Background->SetPadding(FMargin(8,6));Background->AddChild(Row);
+		auto* Background=WidgetTree->ConstructWidget<UBorder>();
+        Background->SetBrush(FSlateRoundedBoxBrush(FLinearColor(.065f,.07f,.075f),2.f,FLinearColor(.20f,.21f,.22f),1.f));
+        Background->SetBrushColor(FLinearColor::White);Background->SetPadding(FMargin(7,3));Background->AddChild(Contents);
 		Background->SetToolTipText(FProjectProject01Localization::Text(TEXT("우클릭하여 프로필·친구·귓속말·차단·신고")));
 		if(!M.bIsBot)Background->OnMouseButtonDownEvent.BindDynamic(Binding,&UProjectProject01RoomProfileBinding::HandleMouseButtonDown);
 		else Background->SetToolTipText(FProjectProject01Localization::Text(TEXT("게임 서버가 조종하는 봇입니다.")));
-		(M.bIsObserver&&ObserverProfilePanel?ObserverProfilePanel.Get():MemberProfilePanel.Get())->AddChildToVerticalBox(Background)->SetPadding(FMargin(6,3));
+		(M.bIsObserver&&ObserverProfilePanel?ObserverProfilePanel.Get():MemberProfilePanel.Get())->AddChildToVerticalBox(Background)->SetPadding(FMargin(6,2));
 	}
 }
 
@@ -7027,7 +7032,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     RoomMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();for(const FString& Role:{FString(TEXT("무작위")),FString(TEXT("생존자")),FString(TEXT("마네킹"))})RoomMatchRole->AddOption(Role);RoomMatchRole->SetSelectedIndex(0);
     ProjectDFSDUI::Apply(RoomMatchRole);
     RoomMatchRole->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchRoleChanged);
-    auto* RoleBox=WidgetTree->ConstructWidget<USizeBox>();RoleBox->SetWidthOverride(130);RoleBox->SetHeightOverride(32);RoleBox->AddChild(RoomMatchRole);RoomRoleRow->AddChildToHorizontalBox(RoleBox)->SetPadding(FMargin(6,0));
+    auto* RoleBox=WidgetTree->ConstructWidget<USizeBox>();RoleBox->SetWidthOverride(112);RoleBox->SetHeightOverride(26);RoleBox->AddChild(RoomMatchRole);RoomRoleRow->AddChildToHorizontalBox(RoleBox)->SetPadding(FMargin(0));
 	CopyJoinCodeButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomHeader,TEXT("참가 코드 복사"));
 	CastChecked<UHorizontalBoxSlot>(CopyJoinCodeButton->Slot)->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
 	RoomToolsToggleButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomHeader,TEXT("방 관리"));

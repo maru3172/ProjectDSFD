@@ -661,7 +661,7 @@ struct Director
     struct Slot { Play Kind=Play::None;double SignalEnds=-1,Ends=-1; };
     std::array<Slot,3> Slots{};
     std::array<double,PlayCount> ReadyAt{};
-    static int Concurrency(const Difficulty& D){static constexpr int L[]={1,1,2,2,2};return L[std::max(1,std::min(5,D.Level))-1];}
+    static int Concurrency(const Difficulty& D){static constexpr int L[]={1,1,2,2,3};return L[std::max(1,std::min(5,D.Level))-1];}
     static bool Unlocked(Play P,const Difficulty& D){const auto& I=Info(P);return P!=Play::None&&D.Level>=I.MinLevel&&(!I.Psych||D.AllowsDeception());}
     static int UnlockedCount(const Difficulty& D){int N=0;for(size_t I=1;I<PlayCount;++I)N+=Unlocked(static_cast<Play>(I),D);return N;}
     static int UnlockedCount(const Difficulty& D,uint8_t Side){int N=0;for(size_t I=1;I<PlayCount;++I)N+=(SideOf(static_cast<Play>(I))&Side)&&Unlocked(static_cast<Play>(I),D);return N;}
@@ -713,11 +713,7 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
-// Detour (experts and masters): how long a survivor keeps where it last saw each mannequin after the threat itself
-// is forgotten, and routes around those spots. Tell: a wide way round instead of the straight line. Weak spot: the
-// spots go stale, so a mannequin that moved can be waiting on the detour, and the long way costs time.
-inline float DetourMemory(const Difficulty& D){return D.Level>=4?20.f+20.f*D.Skill:0.f;}
-inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.86f,.95f};return L[ProbeIndex(D,5)];}
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.82f,.95f};return L[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
 inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}

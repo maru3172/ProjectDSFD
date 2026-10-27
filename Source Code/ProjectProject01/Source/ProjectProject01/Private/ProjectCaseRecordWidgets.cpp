@@ -54,7 +54,7 @@ namespace
     }
     const FProgressBarStyle& ExperienceStyle()
     {
-        static const FProgressBarStyle Style=[] {auto S=FCoreStyle::Get().GetWidgetStyle<FProgressBarStyle>(TEXT("ProgressBar"));S.SetBackgroundImage(FSlateColorBrush(FLinearColor(.025f,.03f,.035f))).SetFillImage(FSlateColorBrush(FLinearColor::White));return S;}();return Style;
+        static const FProgressBarStyle Style=[] {auto S=FCoreStyle::Get().GetWidgetStyle<FProgressBarStyle>(TEXT("ProgressBar"));S.SetBackgroundImage(FSlateColorBrush(FLinearColor(.0165f,.0165f,.0165f))).SetFillImage(FSlateColorBrush(FLinearColor::White));return S;}();return Style;
     }
     FString AchievementName(const FString& Code)
     {
@@ -78,10 +78,19 @@ namespace
             const auto* White=FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
             auto Box=[&](FVector2D P,FVector2D Extent,FLinearColor Color){FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(Extent,FSlateLayoutTransform(P)),White,ESlateDrawEffect::None,Color*Tint);};
             auto Line=[&](const TArray<FVector2D>& P,FLinearColor Color,float Width=1.f){FSlateDrawElement::MakeLines(Out,Layer+1,G.ToPaintGeometry(),P,ESlateDrawEffect::None,Color*Tint,true,Width);};
-            Box({0,0},S,FLinearColor(.025f,.045f,.052f));
-            Box({S.X*.15,4},{S.X*.7,2},FLinearColor(.28f,.32f,.29f,.65f));
-            Box({0,S.Y-7},{S.X,7},FLinearColor(.12f,.16f,.17f));
-            Line({{0,S.Y-7},{S.X,S.Y-7}},FLinearColor(.38f,.43f,.4f));
+            Box({0,0},S,ProjectDFSDUI::Panel());
+            Box({S.X*.15,4},{S.X*.7,2},FLinearColor(.21f,.21f,.21f,.5f));
+            Box({0,S.Y-7},{S.X,7},FLinearColor(.072f,.072f,.072f));
+            Line({{0,S.Y-7},{S.X,S.Y-7}},FLinearColor(.25f,.25f,.25f));
+            // Rust and scratched glass belong to the shelf, never the item label or purchase control.
+            FRandomStream Wear(int32(FCrc::StrCrc32(*Id)));
+            const int32 Marks=Wear.RandRange(3,7);
+            for(int32 I=0;I<Marks;++I)
+            {
+                const float X=S.X*Wear.FRandRange(.025f,.9f);
+                Box({X,S.Y-Wear.FRandRange(3,6)},{Wear.FRandRange(4,16),Wear.FRandRange(.6f,2.f)},FLinearColor(.095f,.095f,.095f,Wear.FRandRange(.25f,.5f)));
+                Line({{X,7},{X+Wear.FRandRange(-5,6),10},{X+Wear.FRandRange(-5,6),Wear.FRandRange(12,18)}},FLinearColor(.26f,.26f,.26f,Wear.FRandRange(.08f,.2f)),.7f);
+            }
             const FVector2D C(S.X*.5,S.Y*.46);
             const FLinearColor Product=Id.Contains(TEXT("crimson"))?FLinearColor(.6f,.14f,.12f):FLinearColor(.58f,.67f,.65f);
             if(Id.StartsWith(TEXT("frame_")))
@@ -248,7 +257,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
         {
             const bool Achieved=Earned.Contains(Entry.Code);
             int32 AreaTotal=0,AreaEarned=0;for(const auto& Def:Definitions)if(Def.Area==Entry.Area){++AreaTotal;if(Earned.Contains(Def.Code))++AreaEarned;}
-            Areas->AddSlot().AutoHeight().Padding(4,4)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.03f,.043f,.048f)).Padding(14,12)
+            Areas->AddSlot().AutoHeight().Padding(4,4)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.038f,.038f,.038f)).Padding(14,12)
                 [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(170)[FixedLabel(FString::Printf(TEXT("%s %d/%d"),*Entry.Area,AreaEarned,AreaTotal),18)]]
                  +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(12,0)[Label(AchievementName(Entry.Code),16)]
                  +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10,0)[SNew(SBox).WidthOverride(170)[FixedLabel(ProjectCaseAchievements::GlobalRate(R->GetAchievementRates(),Entry.Code),14)]]
@@ -335,7 +344,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
             for(auto Control:{Claim,Change})Compact(Control,14);
             Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(6,0)[SNew(SBox).WidthOverride(92)[Claim]];
             Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(118)[Change]];
-            Body->AddSlot().AutoHeight().Padding(4,3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.025f,.036f,.041f)).Padding(8,4)[Row]];
+            Body->AddSlot().AutoHeight().Padding(4,3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(8,4)[Row]];
         }return;
     }
     if(Page==TEXT("Shop"))
@@ -358,7 +367,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
             Compact(Buy,16);
             auto Name=Label(Str(I,TEXT("name")),16);Name->SetLineHeightPercentage(1.f);Name->SetAutoWrapText(false);Name->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);Name->SetToolTipText(Name->GetText());
             auto Price=Label(Owned.Contains(Id)?FString(TEXT("보유 중")):FString::Printf(TEXT("%.0f 포인트"),Num(I,TEXT("price"))),14);Price->SetLineHeightPercentage(1.f);
-            Shelves->AddSlot(Product%3,Product/3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.04f,.055f,.06f)).Padding(6)
+            Shelves->AddSlot(Product%3,Product/3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(6)
                 [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[SNew(SCaseShopDisplay).ItemId(Id)]
                  +SVerticalBox::Slot().AutoHeight().Padding(0,3,0,0)[Name]
                  +SVerticalBox::Slot().AutoHeight()[Price]
@@ -420,7 +429,7 @@ void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Inv
        [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,6).HAlign(HAlign_Center)[FixedLabel(FString::Printf(TEXT("파트 완성 %d/7"),Archived?7:FMath::Min(Found,7)),18)]
         +SVerticalBox::Slot().AutoHeight()[SNew(SBox).HeightOverride_Lambda([BoardHeight]{return FOptionalSize(BoardHeight());})[Board]]]];
     Spread->AddSlot().FillWidth(1).Padding(12,0,0,0)
-       [SNew(SBox).HeightOverride_Lambda([BoardHeight]{return FOptionalSize(BoardHeight()+30.f);})[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.016f,.02f,.025f)).Padding(18)
+       [SNew(SBox).HeightOverride_Lambda([BoardHeight]{return FOptionalSize(BoardHeight()+30.f);})[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(18)
          [SNew(SVerticalBox)
           +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,8)[Label(Str(Stage,TEXT("title")),18)]
           +SVerticalBox::Slot().FillHeight(1)[SNew(SScrollBox)+SScrollBox::Slot()[Label(Available?Str(Stage,TEXT("story")):TEXT("이야기 잠김"),18)]]]]];

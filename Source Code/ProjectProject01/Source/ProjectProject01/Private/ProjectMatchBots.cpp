@@ -817,14 +817,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             auto* Slot=B.Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==*It;});
             if(!Slot&&B.Threats.Num()<6)Slot=&B.Threats.AddDefaulted_GetRef();
             if(Slot){Slot->Actor=*It;Slot->Position=It->GetActorLocation();Slot->At=Now;}
-            if(DetourMemory(Level)>0)
-            {
-                auto* Seen=B.Sightings.FindByPredicate([&](const FProjectMatchBotBrain::FSighting& S){return S.Actor.Get()==*It;});
-                if(!Seen&&B.Sightings.Num()<10)Seen=&B.Sightings.AddDefaulted_GetRef();
-                if(Seen){Seen->Actor=*It;Seen->Position=It->GetActorLocation();Seen->At=Now;}
-            }
         }
-        B.Sightings.RemoveAll([&](const FProjectMatchBotBrain::FSighting& S){return !S.Actor.IsValid()||Now-S.At>DetourMemory(Level);});
         // Forget threats past this level's memory; note which ones a teammate is freezing right now.
         B.Threats.RemoveAll([&](const FProjectMatchBotBrain::FSeenThreat& T){return !T.Actor.IsValid()||Now-T.At>B.Policy.Profile.Memory;});
         for(auto& Threat:B.Threats)
@@ -958,11 +951,6 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     TArray<ThreatView,TInlineAllocator<6>> Views;
     for(const auto& Threat:B.Threats)Views.Add({V(Threat.Position),static_cast<float>(FVector::Dist2D(Pawn->GetActorLocation(),Threat.Position)),Threat.Covered});
     const int32 WatchIndex=PickWatchTarget(Views.GetData(),Views.Num(),2000.f);
-    // Detour (4+): routes also keep clear of where forgotten mannequins were last seen (see DetourMemory).
-    TArray<ThreatView,TInlineAllocator<16>> RouteViews(Views);
-    for(const auto& Seen:B.Sightings)
-        if(!B.Threats.ContainsByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor==Seen.Actor;}))
-            RouteViews.Add({V(Seen.Position),static_cast<float>(FVector::Dist2D(Pawn->GetActorLocation(),Seen.Position)),false});
     // Same gaze budget as the policy's cover limit: hold the stare, then look away for a beat. Without it a
     // disciplined pair keeps the mannequin frozen for good and the match stalls at every level.
     bool Watching=WatchIndex>=0&&B.Disciplined&&!InWatchLapse(Now,Quirks.Phase,Level)&&Now>=B.LookAwayUntil;
@@ -976,8 +964,16 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     }
     const bool LookingAway=Now<B.LookAwayUntil;
     const FVector ObjectiveAt=Mine.Objective.IsValid()?Mine.Objective->GetActorLocation():Pawn->GetActorLocation();
-    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+350.f*Level.Skill;
-    const Vec Retreat=B.Disciplined?RetreatDirection(V(Pawn->GetActorLocation()),Views.GetData(),Views.Num(),DangerRadius,V(ObjectiveAt)):Vec{};
+    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+150.f*Level.Skill;
+    // Experts (4+) know a frozen mannequin cannot chase: it only counts as danger within touching distance, so they
+    // walk past one they keep in view (an exit guard included) instead of backing off until cornered. Weak spot: the
+    // moment the stare breaks, that mannequin is already close.
+    TArray<ThreatView,TInlineAllocator<6>> DangerViews(Views);
+    if(Level.Level>=4)
+        for(int32 I=0;I<DangerViews.Num()&&I<B.Threats.Num();++I)
+            if(const auto* Body=Cast<AMannequinAICharacter>(B.Threats[I].Actor.Get());Body&&Body->IsFrozenBySurvivorVision())
+                DangerViews[I].Distance+=FMath::Max(0.f,DangerRadius-350.f);
+    const Vec Retreat=B.Disciplined?RetreatDirection(V(Pawn->GetActorLocation()),DangerViews.GetData(),DangerViews.Num(),DangerRadius,V(ObjectiveAt)):Vec{};
     const bool Danger=Retreat.Length()>.5f;
     // Partner relay: every nearby threat is being frozen by the teammate, so this one makes ground.
     const bool Relay=!Danger&&!Views.IsEmpty()&&WatchIndex<0&&Buddy;
@@ -989,7 +985,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Run headings never lead into another known mannequin; only a disciplined moment checks (level-scaled).
     // A panicked run drifts off the chosen line.
     const float PanicDrift=50.f*Panic*FMath::Sin(static_cast<float>(Now)*.7f+Quirks.Phase);
-    auto SafeHeading=[&](const FVector& Wanted){return (B.Disciplined?U(ClearHeading(V(Here),V(Wanted),RouteViews.GetData(),RouteViews.Num(),1500.f+700.f*Level.Skill)):Wanted.GetSafeNormal2D()).RotateAngleAxis(PanicDrift,FVector::UpVector);};
+    auto SafeHeading=[&](const FVector& Wanted){return (B.Disciplined?U(ClearHeading(V(Here),V(Wanted),Views.GetData(),Views.Num(),1500.f+700.f*Level.Skill)):Wanted.GetSafeNormal2D()).RotateAngleAxis(PanicDrift,FVector::UpVector);};
     auto ThreatOf=[&](const AActor* Actor)->const FProjectMatchBotBrain::FSeenThreat*{return Actor?B.Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==Actor;}):nullptr;};
 
     // Self-tuned main distance of a play; starts this run's trial variant if it has not begun yet.
@@ -1185,10 +1181,10 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(!Danger&&!PlayMove&&HasGoal&&B.Disciplined&&Level.Level>=2)
     {
         const FVector ToGoal=(Goal-Here).GetSafeNormal2D();const float GoalDistance=FVector::Dist2D(Goal,Here);
-        for(const auto& Threat:RouteViews)
+        for(const auto& Threat:B.Threats)
         {
-            const FVector ToThreat=U(Threat.Position)-Here;const float D=ToThreat.Size2D();
-            if(Threat.CoveredByPartner||D>1300.f||D>GoalDistance||FVector::DotProduct(ToGoal,ToThreat.GetSafeNormal2D())<.75f)continue;
+            const FVector ToThreat=Threat.Position-Here;const float D=ToThreat.Size2D();
+            if(Threat.Covered||D>1300.f||D>GoalDistance||FVector::DotProduct(ToGoal,ToThreat.GetSafeNormal2D())<.75f)continue;
             // Pass on the side the goal already leans to, keeping clear of the mannequin's reach.
             const float Lean=ToThreat.X*ToGoal.Y-ToThreat.Y*ToGoal.X;
             const FVector Around=(ToThreat.GetSafeNormal2D().RotateAngleAxis(Lean>=0?90.f:-90.f,FVector::UpVector)*.7f+ToGoal*.3f).GetSafeNormal2D();
@@ -1803,7 +1799,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* Target=Cast<APlayerCharacter>(B.Target.Get());
     if(Target&&B.Visible&&!Target->IsGameOver()&&Tactic!=Action::Lure&&!Decoy&&Now>=B.AttackAt)
     {
-        B.AttackAt=Now+FMath::Lerp(2.1f,.38f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
+        B.AttackAt=Now+FMath::Lerp(2.1f,.32f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
         bool Watched=false;for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.IsValid()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)Watched|=GM->CanSurvivorSeeMannequin(Pair.Key.Get(),Body);
         if(!Watched&&!Body->IsFrozenBySurvivorVision()&&Offset.SizeSquared()<=FMath::Square(GM->MultiplayerManualAttackRange)&&FVector::DotProduct(Body->GetActorForwardVector(),Offset.GetSafeNormal())>=.25f&&AI->LineOfSightTo(Target)&&Target->HandleMannequinCatch(Body))
         {

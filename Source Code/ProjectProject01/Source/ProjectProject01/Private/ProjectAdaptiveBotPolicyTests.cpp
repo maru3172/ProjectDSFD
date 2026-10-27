@@ -369,8 +369,6 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         }
         Check(ParkedBodies(Difficulty::For(1),false)>ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)==0&&
             ParkedBodies(Difficulty::For(1),true)<=ParkedBodies(Difficulty::For(1),false)&&ParkedBodies(Difficulty::For(3),true)<ParkedBodies(Difficulty::For(3),false),"Beginners leave more bodies parked; masters none; fewer in the endgame");
-        Check(DetourMemory(Difficulty::For(3))==0.f&&DetourMemory(Difficulty::For(4))>0.f&&DetourMemory(Difficulty::For(5))>DetourMemory(Difficulty::For(4)),
-            "Only experts and masters route around old sightings, masters for longer");
         Check(StallSeconds(Difficulty::For(5))<StallSeconds(Difficulty::For(1))&&StallSeconds(Difficulty::For(5))>=15.f,"Masters break a stalemate sooner, never instantly");
         // Floor depth: firmer each floor down, full after four, level-scaled, never negative.
         Check(FloorResolve(Difficulty::For(3),0)==0&&FloorResolve(Difficulty::For(3),1)<FloorResolve(Difficulty::For(3),2)&&

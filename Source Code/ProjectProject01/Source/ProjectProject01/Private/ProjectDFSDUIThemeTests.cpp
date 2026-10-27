@@ -47,7 +47,7 @@ bool FProjectDFSDUIThemeContractTest::RunTest(const FString&)
         TestFalse(TEXT("Rapid repeated clicks have independent playback cursors"),Second->IsFinished());
     }
 	const auto Normal=ProjectDFSDUI::ButtonStyle().Normal.TintColor.GetSpecifiedColor();
-	TestTrue(TEXT("Other windows have a slightly brighter surface and a visible outline"),Normal.R>.02f&&Normal.R<.04f&&Normal.A>.9f&&ProjectDFSDUI::ButtonStyle().Normal.OutlineSettings.Width==1.f);
+	TestTrue(TEXT("Other windows have a visibly brighter surface than panels and an outline"),L(Normal)>L(ProjectDFSDUI::Panel())*1.5f&&L(Normal)<.12f&&Normal.A>.9f&&ProjectDFSDUI::ButtonStyle().Normal.OutlineSettings.Width==1.f);
 	TestTrue(TEXT("Body text stays comfortably readable on brighter buttons"),(L(ProjectDFSDUI::Text())+.05f)/(L(Normal)+.05f)>4.5f);
 	UUserWidget* Lobby=NewObject<UProjectProject01LobbyWidget>();Lobby->Initialize();
 	TestTrue(TEXT("Lobby supports keyboard focus when returning from settings or surveys"),Lobby->IsFocusable());

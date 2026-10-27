@@ -373,7 +373,8 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	TestTrue(TEXT("Same names bind to distinct stable user IDs"),Lobby->MemberProfileBindings[0]->UserId!=Lobby->MemberProfileBindings[1]->UserId);
 	auto* FirstBinding=Lobby->MemberProfileBindings[0].Get();Lobby->PopulateRoomMemberProfiles({M1,M2},false);
 	TestTrue(TEXT("Polling does not recreate buttons under mouse press"),Lobby->MemberProfileBindings[0]==FirstBinding);
-	auto* MemberRow=CastChecked<UHorizontalBox>(CastChecked<UBorder>(Lobby->MemberProfilePanel->GetChildAt(0))->GetContent());
+	auto* MemberContents=CastChecked<UVerticalBox>(CastChecked<UBorder>(Lobby->MemberProfilePanel->GetChildAt(0))->GetContent());
+	auto* MemberRow=CastChecked<UHorizontalBox>(MemberContents->GetChildAt(0));
 	TestFalse(TEXT("Profile buttons do not expose roles before reveal"),CastChecked<UTextBlock>(MemberRow->GetChildAt(0))->GetText().ToString().Contains(TEXT("Mannequin")));
 	TestEqual(TEXT("Profile button is not always shown; right-click only"),MemberRow->GetChildrenCount(),1);
 	FPointerEvent LeftClick(0,FVector2D::ZeroVector,FVector2D::ZeroVector,TSet<FKey>{EKeys::LeftMouseButton},EKeys::LeftMouseButton,0,FModifierKeysState());
