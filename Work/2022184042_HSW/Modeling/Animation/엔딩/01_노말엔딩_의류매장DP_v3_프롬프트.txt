@@ -1,0 +1,20 @@
+노말엔딩 의류매장 DP 수정 v3
+생성 방식: 내장 이미지 생성 도구
+마네킹을 매장 전시 단상 위로 배치하고 주변에 의류 행거와 접힌 상품을 구성하여 의류 매장의 상품 디스플레이임을 명확히 했다.
+기존 측면 구도, 주인공, 파트너의 복장, 뒤로 지나가는 행인 실루엣은 유지하는 편집.
+
+Use case: precise-object-edit.
+Edit the attached NORMAL ENDING image so the partner-clothed mannequin unmistakably reads as a professionally dressed FASHION RETAIL DISPLAY inside a department-store clothing shop, NOT an isolated mannequin placed in the middle of a public walkway.
+
+Preserve the male player on the LEFT in strict right-facing side profile, his exact black half-zip short-sleeve outfit, shorts, white socks/shoes, bangs concealing eyes, still melancholy posture. Preserve the mannequin on the RIGHT facing LEFT toward him, blank artificial ivory head, gray newsboy cap, dark white-cat cardigan, white shirt, burgundy plaid skirt, pale tights, black legwarmers and black/white shoes. Preserve the strict side-on full-body two-shot, player/mannequin facing one another, warm department-store lighting, cinematic anime-influenced style and blurred pedestrian silhouettes passing BEHIND them.
+
+RETAIL DISPLAY CHANGES:
+- Place the mannequin at the front edge of an actual clothing-store display bay on the RIGHT, with its back clearly adjacent to a neatly arranged retail interior, rather than surrounded by open walkway.
+- It stands on a LOW WIDE RECTANGULAR RETAIL DISPLAY PLINTH, approximately 10–15 cm high, matte warm-white or light wood finish. The plinth extends to the right and rear and visually anchors the display zone. A small discreet mounting plate/support can remain at its shoes but should not be the only evidence of display.
+- Behind and beside it, integrate matching neatly hung knitwear/shirts and plaid garments on a short orderly clothing rack, a small nested display cube with folded sweaters, and restrained shelf lighting. These fixtures are clearly part of one coordinated clothing merchandising arrangement, not random props on the public floor.
+- Give the mannequin a subtle fixed retail pose: one knee slightly relaxed, one elbow gently bent, its blank head still in exact left-facing profile toward the male. Rigid artificial plastic hands, no human expression, no wig or living partner. Outfit remains tidy and fully worn.
+- Small discreet merchandise cards may be visible near the plinth but have NO readable writing, logos or price numerals.
+- The male remains OUTSIDE the display platform in the customer aisle, stopped in front of it. He is NOT on the plinth. Keep their facing profiles unobstructed and a quiet gap between them.
+- Pedestrians continue walking through the background customer circulation aisle, never on the display plinth or through the clothing fixtures.
+
+A convincing ordinary department-store apparel display and moving background shoppers should contrast with his private grief. Keep composition clean and not overcrowded; main story remains player staring at the lifeless substitute wearing the partner's clothes. No outdoor setting, no fire, no horror attack, no captions or UI. One landscape image.

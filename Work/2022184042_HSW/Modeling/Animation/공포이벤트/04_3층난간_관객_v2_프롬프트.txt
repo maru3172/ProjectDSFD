@@ -1,0 +1,15 @@
+3층 난간에서 1층을 내려다보는 관객 v2
+생성 방식: 내장 이미지 생성 도구 / 기존 이미지 시점 수정
+
+Use case: precise-object-edit.
+Recompose the attached department-store mannequin horror image to CORRECT THE FLOOR HEIGHT AND CAMERA POSITION. Preserve the same mannequin crowds, abandoned department-store atmosphere and realistic cinematic materials, but rebuild the spatial perspective.
+
+The viewer is STANDING AT THE THIRD FLOOR RAILING and looking DOWN to the FIRST FLOOR. This must NOT look like a second-floor balcony view.
+THREE DISTINCT HEIGHT DATUMS:
+- THIRD FLOOR: camera and a small worn railing corner extremely close in the bottom foreground; this is the viewer's own upper-level balcony.
+- SECOND FLOOR: a complete intermediate balcony ONE FULL STORY BELOW camera, clearly seen from ABOVE. Show a substantial strip of its horizontal WALKWAY FLOOR SURFACE behind its railing, including the feet of the mannequins standing there. This floor wraps along the side and far walls. Its mannequins have upturned faces toward us, but their entire balcony is visibly below eye level, NOT level with our foreground rail. Show the top of the second-floor slab and clearly separate it vertically from the distant ground floor.
+- FIRST FLOOR / GROUND FLOOR: the atrium bottom is TWO FULL STORIES BELOW camera, approximately 9–10 meters beneath the third-floor viewpoint. Its tiled floor is densely covered with hundreds of mannequins looking steeply UP directly into the camera. Their bodies are strongly foreshortened because of the high viewpoint.
+
+Use a steep downward camera pitch around 55–60 degrees and a wide rectilinear lens. We see much more of the first-floor tiled plan and the second-floor walkway TOP surfaces than wall fronts. The third-floor railing only occupies a narrow lower corner, not a huge central barrier. No ceiling or skylight. No drone in the atrium: viewpoint is anchored to a third-floor balcony edge. Make the intermediate second-floor walkway unmistakable between the viewer and ground floor. Strong architectural height and two-story drop.
+
+All mannequins on first-floor ground AND second-floor railing lift and rotate their heads toward our exact THIRD-FLOOR camera position; no one looks down. Natural fixed mannequin faces, visible plastic seams, pale ivory materials. Crowded but readable. Cold dim light with faint warm store lighting, subdued gray-black abandoned architecture. No humans, blood, gore, UI, text, arrows, labels or watermark. ONE landscape image, not a diagram or montage.

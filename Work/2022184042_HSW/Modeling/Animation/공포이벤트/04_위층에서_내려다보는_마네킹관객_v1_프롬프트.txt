@@ -1,0 +1,16 @@
+위층에서 내려다보는 마네킹 관객
+생성 방식: 내장 이미지 생성 도구
+사용자 요청: 위층에서 아래를 내려다보며 1층 바닥과 2층 난간의 마네킹들이 모두 관찰자를 바라보는 장면
+
+Use case: stylized-concept.
+Create ONE cinematic survival-horror game concept image inside an abandoned multi-story department-store atrium, landscape composition, realistic detailed rendering.
+CRITICAL CAMERA: first-person viewpoint from the THIRD-FLOOR balcony, looking STEEPLY DOWN over its railing into the atrium. Camera height approximately 9 meters above ground floor, pitched downward about 45 degrees, wide-angle but no fisheye. A small section of the viewer's near third-floor railing enters the lower foreground to establish the elevated vantage point without blocking the view. No visible player body or hands. Do not place camera on ground floor; do not look upward; do not show the skylight. The main subject is BELOW the viewer.
+
+TWO CLEAR LEVELS OF MANNEQUINS:
+1. The FIRST / GROUND FLOOR far below fills the center and lower-middle of the image: a huge dense gathering of hundreds of upright aged-ivory fiberglass shop mannequins covers the atrium floor shoulder-to-shoulder. Some floor tiles visible between feet at the edges. Bodies foreshortened from above; no corpses or prone bodies.
+2. The SECOND-FLOOR balcony, one level BELOW the camera and ABOVE the ground-floor crowd, runs around the opposite and side edges of the atrium. Its continuous railing is densely lined with additional standing mannequins, shoulder-to-shoulder, hands resting on the railing. Clear balcony slab, railing and shop entrances establish that this crowd occupies a separate higher level than the floor crowd.
+
+MOST IMPORTANT: EVERY mannequin on BOTH levels is staring directly UP AT THE CAMERA'S EXACT POSITION on the third floor. Heads and necks are tilted backward and faces lifted, with individual face angles converging precisely toward the viewer. The ground-floor mannequins look steeply UP; those on the second-floor rail look diagonally UP toward the viewer. Show pale front faces and eye sockets directed at us, NOT merely the tops or backs of heads, NOT mannequins looking down into the atrium or facing unrelated directions. Bodies may have varied orientation, but all heads aim at us. This synchronized gaze produces the feeling that the entire building has noticed the player. They remain eerily motionless.
+
+Materials and atmosphere: unmistakably artificial smooth expressionless department-store mannequins, subtle assembly joints, scuffed ivory fiberglass and anatomically featureless display forms, not real humans. Dark shopfronts, tarnished metal rails, black stone columns and dusty worn tile. Cold dim ambient light and a few muted amber fixtures; enough illumination on the upturned faces to read their gaze clearly even deep below. Strong architectural depth, oppressive stillness, restrained realistic cinematic horror palette, no heavy obscuring fog.
+No human protagonist, no blood or gore, no text, labels, logo, UI or watermark. Single image, not a collage. Priority: elevated DOWNWARD first-person view + crowded ground floor + crowded second-floor railing + ALL faces staring UP into lens.

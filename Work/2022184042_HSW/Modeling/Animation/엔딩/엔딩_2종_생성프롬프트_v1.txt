@@ -1,0 +1,32 @@
+엔딩 이미지 2종
+생성 방식: 내장 이미지 생성 도구
+사용자 요청에 따른 연출 시안. 통합 기획서는 변경하지 않았다.
+참조: 주인공 02안 사면도 및 파트너 훼손0 정면 이미지
+
+1. 노말엔딩
+파트너를 남겨두고 탈출한 이후, 플레이어와 파트너의 옷을 입은 마네킹이 정측면 구도로 마주 보고 뒤로 행인 실루엣이 지나가는 장면.
+
+Use case: stylized-concept.
+Create ONE standalone landscape cinematic ending illustration for a survival-horror game, not a collage, not a character sheet. High-quality cinematic environment rendering with the established anime-influenced character design retained; readable composition and restrained emotional storytelling. No captions, ending titles, UI, logos, watermark, blood or gore.
+Reference image1 is the MALE PLAYER design: lean young adult man, messy black layered fringe obscuring both eyes, black short-sleeve stand-collar half-zip pullover with subtle single rectangular front pocket, loose black shorts, white crew sports socks, white low-top sneakers.
+Reference image2 is the PARTNER design and clothing: gray newsboy cap, black twin braids, dark buttoned cardigan with five white cat motifs, closed white collared shirt, burgundy plaid pleated skirt, opaque pale tights, black ribbed legwarmers, black canvas sneakers with white toe caps.
+Do not copy the T-poses or reference background.
+
+NORMAL ENDING: The player escaped alone, leaving his partner behind. A quiet aftermath on an ordinary public shopping arcade sidewalk. The living partner is ABSENT. Instead, a lifeless retail MANNEQUIN wears her recognizable complete outfit.
+
+CRITICAL COMPOSITION: a strictly SIDE-ON, level cinematic two-shot. Male player at LEFT, facing RIGHT in exact 90-degree profile. Partner-clothed mannequin at RIGHT, facing LEFT in exact 90-degree profile. Both full bodies visible, same ground plane, one meter of empty space between them. Their faces point DIRECTLY AT EACH OTHER. The camera is perpendicular to the line joining them; neither face nor torso faces the viewer. Not a three-quarter shot, not first person, not over-the-shoulder. Player slightly taller than mannequin.
+Player stands motionless, shoulders subtly slumped, arms hanging, stunned and regretful; bangs continue to conceal eyes. Mannequin is visibly manufactured pale ivory fiberglass: smooth blank molded face with no anime eyes, rigid neck and articulated hands; entirely motionless on a modest display base. It wears the partner's gray cap, white-cat dark cardigan, white shirt, plaid skirt, pale tights, black legwarmers and sneakers. No real human skin on its head or hands, NO living girl, NO braided wig: recognizable clothing on a hollow artificial substitute, not a human transformation scene.
+Behind BOTH subjects, several ordinary passersby walk horizontally through the public walkway, rendered ONLY as anonymous dark softly motion-blurred silhouettes. They pass without noticing, background figures never obscure the two main profiles or fill their central gap. Everyday shopfronts softly blurred in the far background, natural late-afternoon gray light with restrained shop illumination. Foreground pair completely still and sharp against moving silhouettes. Quiet emotionally hollow atmosphere, ordinary life continues around the isolated survivor. No fire, no pursuing creatures, no extra foreground mannequin.
+
+2. 진엔딩
+불타는 백화점을 뒤로하고 플레이어와 파트너가 함께 탈출하는 장면.
+
+Use case: stylized-concept.
+Create ONE standalone landscape cinematic ending illustration for a survival-horror game, not a collage, not a character sheet. High-quality cinematic environment rendering with the established anime-influenced character design retained; readable composition and restrained emotional storytelling. No captions, ending titles, UI, logos, watermark, blood or gore.
+Reference image1 is the MALE PLAYER design: lean young adult man, messy black layered fringe obscuring both eyes, black short-sleeve stand-collar half-zip pullover with subtle single rectangular front pocket, loose black shorts, white crew sports socks, white low-top sneakers.
+Reference image2 is the PARTNER design and clothing: gray newsboy cap, black twin braids, dark buttoned cardigan with five white cat motifs, closed white collared shirt, burgundy plaid pleated skirt, opaque pale tights, black ribbed legwarmers, black canvas sneakers with white toe caps.
+Do not copy the T-poses or reference background.
+
+TRUE ENDING: BOTH the male player and the REAL LIVING female partner have escaped together. A large department store burns BEHIND THEM while they emerge together into the open exterior plaza, safely clear of the flames.
+Third-person cinematic medium-wide full-body two-shot, camera outside facing the pair as they move AWAY from the burning entrance toward the camera. Male on left and partner on right, firmly holding hands, staying close and supporting each other's pace. They are visibly alive and exhausted but relieved, not celebratory posing. The partner glances toward him with relief; he turns his head slightly toward her, his eyes remain covered by black fringe. Wind lifts her twin braids. Preserve both exact reference outfits, intact and properly worn with a little dust/soot only; no injuries, no torn clothing, no exposed underwear. This is their shared survival and trust, not abandonment.
+The architecture behind is clearly a MULTI-STORY DEPARTMENT STORE: broad glass facade, recessed retail entrance, display windows and a canopy. Intense orange flames blaze INSIDE the entrance and upper windows, thick smoke rising behind the building, occasional embers in distant air. The pair stand fully OUTSIDE beyond the threshold with open ground around them, not inside the inferno, not engulfed or on fire. Fire creates warm rim light on clothes and hair; cooler nightfall light gently illuminates their faces from the front so silhouettes do not erase them. Wet or polished pavement subtly reflects the fire. Convey the transition from a terrifying building to the outside and the emotional relief of escaping together. Strong clear foreground bond contrasted with destructive fire in the background. No other main characters, no mannequins replacing the partner, no corpse or graphic injury.

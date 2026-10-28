@@ -1,0 +1,10 @@
+노말엔딩 백화점 내부 배경 수정 v2
+생성 방식: 내장 이미지 생성 도구
+기존 인물과 정측면 구도 및 지나가는 사람들의 실루엣은 유지하고 배경을 백화점 내부로 변경.
+
+Use case: precise-object-edit.
+Edit ONLY THE BACKGROUND/SETTING of the attached NORMAL ENDING illustration. Change the outdoor city shopping sidewalk into the INTERIOR OF A DEPARTMENT STORE.
+Preserve the two foreground subjects exactly: male player on the left in strict right-facing side profile, partner-clothed blank mannequin on the right in strict left-facing side profile, their positions, scale, clothing, mannequin base, separation, still poses, side-on camera, melancholy mood and image composition. Preserve the blurred pedestrian silhouettes walking BEHIND them. Do not change the mannequin into the real partner.
+
+NEW SETTING: a clearly indoor department-store retail floor with a visible continuous ceiling overhead, recessed ceiling lights, polished stone tile floor, wide interior aisle, retail counters, clothing racks, merchandise displays and interior architectural columns. An escalator or interior atrium railing can appear subtly in the distant background to establish this is a department store, not an outdoor shopping street. Both foreground subjects stand on the same indoor floor. The mannequin is beside an indoor clothing display. Background shoppers remain anonymous dark softly motion-blurred silhouettes passing laterally behind both main subjects, ordinary life continuing around the motionless player and mannequin. Warm shop illumination mixed with neutral overhead lighting, subdued cinematic color grade, the same anime-influenced characters and detailed environment as the source.
+NO exterior street, outdoor sidewalk, city buildings, sky, street lamps, roadside trees, rain or exterior puddles. No abandoned ruin, no fire, no additional main characters, no text or ending captions. Keep the foreground pair sharp, quiet and isolated. Only replace the outdoor environment with a convincing indoor department store. Single landscape image.

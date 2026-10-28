@@ -1,0 +1,28 @@
+주인공 정면 4종 시안 v1
+작성일: 2026-10-28
+생성 방식: 내장 이미지 생성 도구
+01 둥근 직모 / 라운드넥
+02 자연스러운 헝클어진 레이어드 / 반집업
+03 긴 샤기 레이어드 / 박시한 라운드넥
+04 비대칭 앞머리 / 칼라 반팔
+흰 운동화는 사용자의 첫 참고 사진을 기준으로 적용했다.
+
+초기 생성 프롬프트
+Use case: stylized-concept.
+Create ONE character-design comparison sheet containing FOUR DIFFERENT FRONT-VIEW concept options for an original male game protagonist. All four are full-body straight-on FRONT views, not a turnaround. White/light gray plain background, clean polished anime game concept art with readable construction suitable for later 3D modeling. One horizontal row, generous equal spacing, same scale, same height and baseline. Small unobtrusive option numbers "01", "02", "03", "04" under the corresponding feet, no other text.
+
+Reference image1 is CLOTHING AND PALETTE inspiration only: black relaxed short-sleeve top, loose black shorts above the knees, white ribbed crew-length sports socks and simple white low-top trainers. Do not copy the seated pose, cropped framing, person, phone, watch, couch, brands or room.
+Reference image2 is HAIR CONCEALMENT inspiration only: opaque dark bangs physically obscure BOTH EYES, making the protagonist's facial identity understated and hard to distinguish. No visible irises, eyes or eyebrows through hair, no transparent bangs. Nose and neutral closed mouth may be simply drawn, skin remains natural. Do not copy that character exactly, its shirt, blue scene lighting or facial identity.
+
+Common to all four: a young ADULT male, lean ordinary build, modestly broad shoulders, natural masculine proportions, not childlike or chibi, not heavily muscular. Same body build and height for fair comparison. Straight upright relaxed front stance, feet slightly apart, both arms down and held a little away from hips so clothing silhouette and hands remain visible; no hands in pockets, no gestures, no perspective or three-quarter angles. Solid black short-sleeved top and loose black above-knee shorts, opaque fabric, subtle charcoal highlights and restrained folds to separate the black garments; white sports socks and white trainers. No accessories, weapons, hats, masks, facial markings, logos, lettering on clothes. Clean white background, no cast shadow or scenery.
+
+Clearly distinguish four ORIGINAL hairstyle silhouettes while keeping both eyes fully concealed:
+01: compact rounded straight black haircut, soft dense layered fringe across the eyes, neat short nape and restrained side volume; quiet anonymous everyday feel. Plain relaxed black crew-neck short-sleeve tee.
+02: natural tousled black layered hair with uneven pointed bangs falling below eye level, moderate crown texture, close to the eye-concealing idea of reference2 but original; practical ordinary protagonist. Black short-sleeve half-zip stand-collar pullover inspired by reference1, zipper closed to upper chest.
+03: slightly longer soft shag black hair, layered sides reaching ear bottoms, light outward tips and a long dense curtain of irregular bangs with NO center gap over either eye; more withdrawn silhouette. Slightly boxy black crew-neck tee.
+04: straighter angular layered black hair, softly asymmetric long fringe completely covering BOTH eyes, cleaner narrower side silhouette and short nape; calm reserved look. Black short-sleeve small-collar polo, minimal plain placket.
+
+Keep the anonymous look believable through real hair occlusion, NOT a black censorship bar, a featureless erased head, a glowing shadow face, or horror distortion. Do not show eyes even in option04. All four must be distinct proposals but belong to the same coherent game art style and common wardrobe. Full head-to-toe framing, no overlap or clipping, no extra figures or inset portraits.
+
+04 앞머리 보정 프롬프트
+Edit this four-option male protagonist front-view concept sheet. Change ONLY the fringe of option 04 (rightmost character). Extend and densify its asymmetric black fringe across BOTH eyes and eyebrows: cover the exposed viewer-left eye/eyebrow region with opaque overlapping natural black hair strands. Keep its asymmetric hairstyle and silhouette distinct from options 01–03, but absolutely no visible eyes or eyebrow lines, no gaps, no see-through hair, no black censor bar. Preserve every other feature exactly: options 01–03 unchanged, all bodies, clothing, black polo collar on04, neutral lower face, footwear, white background, scale, composition and option labels 01 02 03 04. Do not crop. No other edits.

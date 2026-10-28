@@ -1,0 +1,18 @@
+주인공 02안 T포즈 사면도 v1
+작성일: 2026-10-28
+생성 방식: 내장 이미지 생성 도구
+사용자 선택: 주인공 정면 4종 시안 중 02번
+특징: 양쪽 눈을 가리는 헝클어진 검은 머리, 검은 반집업 반팔, 검은 반바지, 흰 스포츠 양말, 흰 운동화
+화면 좌측부터 정면, 후면, 왼쪽을 보는 측면, 오른쪽을 보는 측면
+본 이미지는 3D 모델링용 참고 시안이며 정밀 계측 도면이 아니다.
+
+생성 프롬프트
+Use case: stylized-concept.
+Create a production character turnaround sheet for 3D modeling using ONLY OPTION 02, the SECOND MALE FROM THE LEFT in the provided four-option reference. The user selected this exact design. Ignore options01,03,04. Preserve option02's body proportions, apparent adult age, lean build, messy black layered hairstyle, anonymous face with both eyes covered by opaque long bangs, clothing fit, palette and clean anime rendering.
+
+Output exactly FOUR full-body ORTHOGRAPHIC views of this ONE selected man, horizontally ordered: FRONT, BACK, profile facing LEFT, profile facing RIGHT. White background. All four show the SAME rigid neutral T-POSE rotated in space, arms straight horizontally at shoulder height, palms down, legs straight and slightly separated. Front/back both arms fully extended; side views arms point directly toward/away from camera and are foreshortened at shoulder level, NEVER lowered at sides. Head facing forward relative to body, no tilt. No perspective or three-quarter views. Same body height, skull scale, shoulder, elbow, wrist, waist, knee, ankle levels and floor line in every view. Keep the selected adult male proportions rather than importing proportions from another character.
+
+Selected design details: moderately tousled black layered hair with irregular pointed strands and dense opaque fringe fully covering BOTH eyes and eyebrows. Nose and neutral mouth visible. Hair has coherent crown and short layered nape in back and profile; neither side view should reveal a readable eye under the fringe. Preserve the upper face obscured by real hair, not a censor bar or erased face.
+Relaxed solid black short-sleeve stand-collar HALF-ZIP pullover, zipper centered from collar down the upper chest, with the same subtle vertical rectangular patch pocket on the character's anatomical LEFT front lower chest/upper abdomen (viewer-right in front), as option02. This single pocket stays on that side and is not duplicated on the back. The back of the top is plain. Natural woven fabric folds and underarm drape adapted to the T-pose; sleeves end above elbows, no elastic cuffs, no balloon sleeves. Loose plain black shorts ending just above knees. White ribbed crew-length sports socks on both legs at equal height; simple white lace-up low-top sneakers, no brand logos. No accessories or additional gear, no hat, watch, phone, mask, logos or jewelry.
+
+COMPOSITION: very wide 3:1 sheet. Character bodies occupy at most 75% of canvas height, with generous top/bottom margins. Allocate broad columns for front and back T-pose, narrow columns for profiles. Leave at least one head-width of completely empty space between the front figure's fingertips and the back figure's fingertips; no overlapping silhouettes at all. Full fingers, hair and shoes inside canvas. All bodies same scale; do not enlarge profiles to fill columns. Crisp contours, restrained charcoal highlights so black fabric construction remains readable. Only the four character rotations, no captions, numbering, grid, construction lines, detail insets, ground shadows or background objects.
