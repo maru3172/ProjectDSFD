@@ -369,6 +369,9 @@ void AMultiplayTestGameMode::BeginPlay()
         // Learned opponent habits and relief continue on the new floor (personality/style come from the bot id).
         if(Instance->ServerMatchCarryover->BotLearning)MatchBots->ImportLearning(*Instance->ServerMatchCarryover->BotLearning);
     }
+    // Stand-ins for survivors who left alive (also in matches without a frozen bot roster).
+    if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();Instance&&Instance->ServerMatchCarryover)
+        MatchBots->AcceptStandIns(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->StandIns,Instance->ServerMatchCarryover->StandInOwners);
 	if (GetNetMode() == NM_DedicatedServer)
 		GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this,[this]()
 		{
@@ -1730,17 +1733,79 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 	if (bHadMatchRecord && AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		!LeavingRecord.bForfeited && !ExitingMultiplayController->bVoluntaryExitDeclared)
 	{
+		// A survivor still in play who leaves: with a human teammate still playing, a stand-in bot plays on in the
+		// leaver's place for the grace (and after it, as a desertion); with none, it is a desertion at once and the
+		// match resolves now. A survivor already out (caught or escaped) who leaves keeps that result. Alone with bots
+		// (one person in a bot match) there is no desertion: leaving is a loss and the match ends.
+		const bool bLeftInPlay = LeavingRecord.Role == TEXT("Survivor") && !LeavingRecord.bServerBot &&
+			(LeavingRecord.SurvivorState == EMultiplayTestSurvivorState::Active ||
+			 LeavingRecord.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting);
+		const bool bTeammatePlaying = HasOtherHumanSurvivorInPlay(ExitingMultiplayController);
 		LeavingRecord.bDisconnected = true;
 		LeavingRecord.ReconnectDeadlineWorldSeconds = GetWorld()->GetTimeSeconds() + ReconnectGraceSeconds;
-		DisconnectedMatchRecords.Add(LeavingRecord.UserId, LeavingRecord);
-		RecordTimeline(EProjectMatchEvent::Disconnected, LeavingRecord.DisplayName);
-		UE_LOG(LogProjectProject01Multiplayer, Warning,
-			TEXT("%s disconnected unexpectedly; reconnect is allowed for %.1f seconds."),
-			*LeavingRecord.UserId, ReconnectGraceSeconds);
+		if (!CountsAsDesertion())
+		{
+			// Alone with bots: leaving at any point is a loss, never a desertion, and the match ends now.
+			LeavingRecord.ReconnectDeadlineWorldSeconds = 0.0;
+			if (bLeftInPlay) LeavingRecord.SurvivorState = EMultiplayTestSurvivorState::Eliminated;
+			DisconnectedMatchRecords.Add(LeavingRecord.UserId, LeavingRecord);
+			RecordTimeline(EProjectMatchEvent::Disconnected, LeavingRecord.DisplayName);
+			if (UProjectProject01GameInstance* GameInstance = GetGameInstance<UProjectProject01GameInstance>(); IsValid(GameInstance))
+			{
+				GameInstance->NotifyAuthoritativePlayerForfeit(AuthoritativeMatchId, LeavingRecord.UserId, LeavingRecord.Role, false);
+			}
+			const bool bMannequin = LeavingRecord.Role == TEXT("Mannequin");
+			GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this, bMannequin]()
+			{
+				if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return;
+				if (bMannequin) FinishAuthoritativeMatch(TEXT("MannequinLeft"));
+				else CheckForMatchCompletion();
+			}));
+		}
+		else
+		{
+			if (bLeftInPlay && bTeammatePlaying && LeavingRecord.SurvivorState == EMultiplayTestSurvivorState::Active && MatchBots)
+			{
+				LeavingRecord.bReplacedByBot = MatchBots->AddStandIn(LeavingRecord);
+			}
+			DisconnectedMatchRecords.Add(LeavingRecord.UserId, LeavingRecord);
+			RecordTimeline(EProjectMatchEvent::Disconnected, LeavingRecord.DisplayName);
+			if (LeavingRecord.bReplacedByBot)
+			{
+				RecordTimeline(EProjectMatchEvent::ReplacedByBot, LeavingRecord.DisplayName);
+			}
+			if (bLeftInPlay && !bTeammatePlaying)
+			{
+				// Next tick: this controller's own logout finishes before the match may resolve.
+				const FString UserId = LeavingRecord.UserId;
+				GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this, UserId]()
+				{
+					if (FMultiplayTestServerPlayerRecord* Deserter = DisconnectedMatchRecords.Find(UserId); Deserter && !Deserter->bForfeited)
+					{
+						ApplyForfeit(*Deserter, TEXT("Deserted"));
+					}
+				}));
+			}
+			UE_LOG(LogProjectProject01Multiplayer, Warning,
+				TEXT("%s disconnected unexpectedly; reconnect is allowed for %.1f seconds."),
+				*LeavingRecord.UserId, ReconnectGraceSeconds);
+		}
 	}
 	else if (bHadMatchRecord && LeavingRecord.bForfeited && !LeavingRecord.UserId.IsEmpty())
 	{
 		DisconnectedMatchRecords.Add(LeavingRecord.UserId, LeavingRecord);
+	}
+	else if (bHadMatchRecord && AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress && !LeavingRecord.UserId.IsEmpty())
+	{
+		// Left through the menu after being caught or escaping: gone for good, and that result is still recorded
+		// at the end of the match (a loss for a caught survivor). Only the room seat is released now.
+		LeavingRecord.bDisconnected = false;
+		LeavingRecord.ReconnectDeadlineWorldSeconds = 0.0;
+		DisconnectedMatchRecords.Add(LeavingRecord.UserId, LeavingRecord);
+		if (UProjectProject01GameInstance* GameInstance = GetGameInstance<UProjectProject01GameInstance>(); IsValid(GameInstance))
+		{
+			GameInstance->NotifyAuthoritativePlayerForfeit(AuthoritativeMatchId, LeavingRecord.UserId, LeavingRecord.Role, false);
+		}
 	}
 	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::Ending &&
 		AuthoritativeMatchPhase != EMultiplayTestMatchPhase::Results)
@@ -1776,6 +1841,50 @@ void AMultiplayTestGameMode::DeclareVoluntaryExit(AMultiplayTestPlayerController
 	if (FMultiplayTestServerPlayerRecord* Record = MatchPlayerRecords.Find(RequestingController))
 	{
 		SnapshotPlayerRecord(RequestingController, *Record);
+		// Alone with bots only escaping or catching everyone wins: leaving is a plain loss (no forfeit) and ends the match.
+		if (!CountsAsDesertion())
+		{
+			RecordTimeline(EProjectMatchEvent::Eliminated, Record->DisplayName);
+			if (Record->Role == TEXT("Mannequin"))
+			{
+				FinishAuthoritativeMatch(TEXT("MannequinLeft"));
+				return;
+			}
+			if (Record->SurvivorState == EMultiplayTestSurvivorState::Active || Record->SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting)
+			{
+				Record->SurvivorState = EMultiplayTestSurvivorState::Eliminated;
+				if (APlayerCharacter* Survivor = Record->SurvivorPawn.Get(); IsValid(Survivor))
+				{
+					if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
+					{
+						Movement->StopMovementImmediately();
+						Movement->DisableMovement();
+					}
+					Survivor->SetActorEnableCollision(false);
+					Survivor->SetActorHiddenInGame(true);
+				}
+			}
+			RequestingController->SetServerMatchState(AuthoritativeMatchPhase, Record->SurvivorState);
+			CheckForMatchCompletion();
+			return;
+		}
+		// Already caught or escaped: that result stands (the record is settled when this player logs out).
+		if (Record->Role == TEXT("Survivor") && Record->SurvivorState != EMultiplayTestSurvivorState::Active &&
+			Record->SurvivorState != EMultiplayTestSurvivorState::TransitionWaiting)
+		{
+			return;
+		}
+		// Leaving while in play is a desertion like quitting the game, only settled at once (it was a choice).
+		// Leaving alive beside a human teammate still playing: a stand-in bot plays on with the remaining lives.
+		// The stand-in joins MatchPlayerRecords, which may move this record: look it up again afterwards.
+		if (Record->Role == TEXT("Survivor") && Record->SurvivorState == EMultiplayTestSurvivorState::Active &&
+			MatchBots && HasOtherHumanSurvivorInPlay(RequestingController) &&
+			MatchBots->AddStandIn(FMultiplayTestServerPlayerRecord(*Record)))
+		{
+			Record = &MatchPlayerRecords.FindChecked(RequestingController);
+			Record->bReplacedByBot = true;
+			RecordTimeline(EProjectMatchEvent::ReplacedByBot, Record->DisplayName);
+		}
 		ApplyForfeit(*Record, TEXT("VoluntaryExit"));
 		RequestingController->SetServerMatchState(AuthoritativeMatchPhase, Record->SurvivorState);
 		if (Record->Role == TEXT("Survivor") &&
@@ -1921,6 +2030,21 @@ bool AMultiplayTestGameMode::RestoreDisconnectedMatchPlayer(AMultiplayTestPlayer
 	DisconnectedMatchRecords.Remove(Controller->GetAuthenticatedUserId());
 	Restored.bDisconnected = false;
 	Restored.ReconnectDeadlineWorldSeconds = 0.0;
+	// Back within the grace: take over from the stand-in where it is, with the lives it kept (or as it ended).
+	if (Restored.bReplacedByBot && MatchBots)
+	{
+		FTransform Where = Restored.LastPawnTransform;
+		int32 Lives = Restored.RemainingDeathCount;
+		EMultiplayTestSurvivorState State = Restored.SurvivorState;
+		if (MatchBots->ReleaseStandIn(Restored.UserId, Where, Lives, State))
+		{
+			Restored.LastPawnTransform = Where;
+			Restored.RemainingDeathCount = Lives;
+			// The stand-in's escape is not the player's: a player who comes back after it got out has not escaped.
+			Restored.SurvivorState = State == EMultiplayTestSurvivorState::Escaped ? EMultiplayTestSurvivorState::Eliminated : State;
+		}
+		Restored.bReplacedByBot = false;
+	}
 	if (Restored.Role == TEXT("Survivor"))
 	{
 		APlayerCharacter* Survivor = Cast<APlayerCharacter>(Controller->GetPawn());
@@ -2015,13 +2139,13 @@ void AMultiplayTestGameMode::ApplyForfeit(FMultiplayTestServerPlayerRecord& Reco
 	RecordTimeline(EProjectMatchEvent::Forfeited, Record.DisplayName, Reason);
 	UE_LOG(LogProjectProject01Multiplayer, Warning,
 		TEXT("Player %s (%s) forfeited: %s."), *Record.UserId, *Record.Role, *Reason);
-	if (Reason == TEXT("ReconnectTimeout"))
+	if (Reason == TEXT("ReconnectTimeout") || Reason == TEXT("Deserted") || Reason == TEXT("VoluntaryExit"))
 	{
 		if (UProjectProject01GameInstance* GameInstance = GetGameInstance<UProjectProject01GameInstance>();
 			IsValid(GameInstance))
 		{
 			GameInstance->NotifyAuthoritativePlayerForfeit(
-				AuthoritativeMatchId, Record.UserId, Record.Role);
+				AuthoritativeMatchId, Record.UserId, Record.Role, true);
 		}
 	}
 
@@ -2059,7 +2183,24 @@ void AMultiplayTestGameMode::ProcessReconnectTimeouts()
 		if (!Pair.Value.bForfeited && Pair.Value.ReconnectDeadlineWorldSeconds > 0.0 &&
 			Now >= Pair.Value.ReconnectDeadlineWorldSeconds)
 		{
+			// Already caught (or escaped) when they left: not a desertion. The result stays as it was (a loss for a
+			// caught survivor) and only their room seat is released.
+			if (Pair.Value.Role == TEXT("Survivor") && (Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
+				Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Escaped))
+			{
+				Pair.Value.ReconnectDeadlineWorldSeconds = 0.0;
+				Pair.Value.bDisconnected = false; // Gone for good, like a forfeited record (no longer waited for).
+				if (UProjectProject01GameInstance* GameInstance = GetGameInstance<UProjectProject01GameInstance>(); IsValid(GameInstance))
+				{
+					GameInstance->NotifyAuthoritativePlayerForfeit(AuthoritativeMatchId, Pair.Value.UserId, Pair.Value.Role, false);
+				}
+				continue;
+			}
 			ApplyForfeit(Pair.Value, TEXT("ReconnectTimeout"));
+			if (MatchBots)
+			{
+				MatchBots->KeepStandIn(Pair.Key);
+			}
 			if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
 			{
 				break;
@@ -2569,6 +2710,9 @@ bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharac
 	if (auto* Controller = Cast<AMultiplayTestPlayerController>(Survivor->GetController())) Controller->CaptureLevelTransitionState();
 	Record->SurvivorState = EMultiplayTestSurvivorState::TransitionWaiting;
 	RecordTimeline(EProjectMatchEvent::LevelTravel, Record->DisplayName);
+    if(auto* QuestController=Cast<AMultiplayTestPlayerController>(Survivor->GetController()))
+        if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
+            Instance->ReportMainQuestFloor(QuestController->GetAuthenticatedMatchId(),QuestController->GetAuthenticatedUserId(),TEXT("/Game/MyProject/Level/")+UGameplayStatics::GetCurrentLevelName(this,true));
 	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
 	{
 		Movement->StopMovementImmediately();
@@ -2601,6 +2745,24 @@ bool AMultiplayTestGameMode::IsRegisteredActiveSurvivor(const APlayerCharacter* 
 	// above is the ownership check, just as in FindSurvivorRecord.
 	return Record && Record->Role==TEXT("Survivor") &&
 		Record->SurvivorState==EMultiplayTestSurvivorState::Active && !Record->bDisconnected && !Record->bForfeited;
+}
+
+bool AMultiplayTestGameMode::CountsAsDesertion() const
+{
+    // PvP always; a bot match only with two or more people in it (alone with bots, leaving is only a loss).
+    if(!MatchBots||!MatchBots->HasRoster())return true;
+    TSet<FString> Humans;
+    for(const auto& Pair:MatchPlayerRecords)if(!Pair.Value.bServerBot)Humans.Add(Pair.Value.UserId);
+    for(const auto& Pair:DisconnectedMatchRecords)if(!Pair.Value.bServerBot)Humans.Add(Pair.Value.UserId);
+    return Humans.Num()>=2;
+}
+
+bool AMultiplayTestGameMode::HasOtherHumanSurvivorInPlay(const AMultiplayTestPlayerController* Except) const
+{
+    for(const auto& Pair:MatchPlayerRecords)
+        if(Pair.Key.Get()!=Except&&Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bServerBot&&!Pair.Value.bForfeited&&!Pair.Value.bDisconnected&&
+            (Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active||Pair.Value.SurvivorState==EMultiplayTestSurvivorState::TransitionWaiting))return true;
+    return false;
 }
 
 float AMultiplayTestGameMode::GetFallDeathZ() const
@@ -2706,7 +2868,8 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
     {
         auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
         Carry->CustomRules=CustomMatchRules;
-        if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();Carry->BotLearning=MatchBots->ExportLearning();}
+        if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();Carry->BotLearning=MatchBots->ExportLearning();
+            Carry->StandIns=MatchBots->GetStandIns();Carry->StandInOwners=MatchBots->GetStandInOwners();}
         Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
         Carry->Disconnected=DisconnectedMatchRecords;
         for(const auto& Pair:MatchPlayerRecords)if(Pair.Key.IsValid())Carry->Players.Add(Pair.Value.UserId,Pair.Value);
@@ -2798,11 +2961,26 @@ bool AMultiplayTestGameMode::AreAllHumanSurvivorsEliminatedInBotMatch() const
 
 void AMultiplayTestGameMode::CheckForMatchCompletion()
 {
+	// A stand-in only holds a place beside a human teammate still playing. With none left, whoever it stands in
+	// for is a deserter now (they left alive) and the stand-ins no longer count: the match resolves on the humans.
+	const bool bHumanSurvivorInPlay = HasOtherHumanSurvivorInPlay(nullptr);
+	if (!bHumanSurvivorInPlay && AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress)
+	{
+		for (TPair<FString, FMultiplayTestServerPlayerRecord>& Pair : DisconnectedMatchRecords)
+		{
+			if (Pair.Value.Role == TEXT("Survivor") && Pair.Value.bReplacedByBot && !Pair.Value.bForfeited)
+			{
+				if (MatchBots) MatchBots->KeepStandIn(Pair.Key);
+				ApplyForfeit(Pair.Value, TEXT("Deserted")); // Checks completion again, for the next one too.
+				return;
+			}
+		}
+	}
 	TArray<EMultiplayTestSurvivorState> SurvivorStates;
 	bool bAnySurvivorForfeited = false;
 	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
 	{
-		if (Pair.Value.Role == TEXT("Survivor"))
+		if (Pair.Value.Role == TEXT("Survivor") && (bHumanSurvivorInPlay || !MatchBots || !MatchBots->IsStandIn(Pair.Key.Get())))
 		{
 			SurvivorStates.Add(Pair.Value.SurvivorState);
 			bAnySurvivorForfeited |= Pair.Value.bForfeited;
@@ -2988,6 +3166,26 @@ void AMultiplayTestGameMode::SubmitAuthoritativeResults()
 		Submission.Controller = Controller;
 		Submission.UserId = Pair.Value.UserId;
 		Submission.Result = BuildFinalResult(Controller, Pair.Value);
+	}
+	// Players who left: one already caught or escaped keeps that result (a caught one's loss is recorded like any
+	// other); one still in play when the match ended inside their reconnect grace never came back, a desertion.
+	for (const TPair<FString, FMultiplayTestServerPlayerRecord>& Pair : DisconnectedMatchRecords)
+	{
+		const FMultiplayTestServerPlayerRecord& Record = Pair.Value;
+		if (Record.bForfeited || Record.bServerBot || Record.UserId.IsEmpty() || !IsValid(GameInstance) || AuthoritativeMatchId.IsEmpty())
+		{
+			continue;
+		}
+		const bool bOut = Record.Role == TEXT("Survivor") && (Record.SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
+			Record.SurvivorState == EMultiplayTestSurvivorState::Escaped);
+		if (!bOut && CountsAsDesertion()) // Alone with bots, a player who left (any role) just has a loss.
+		{
+			if (Record.bDisconnected) GameInstance->NotifyAuthoritativePlayerForfeit(AuthoritativeMatchId, Record.UserId, Record.Role, true);
+			continue;
+		}
+		FPendingAuthoritativeSubmission& Submission = Submissions.AddDefaulted_GetRef();
+		Submission.UserId = Record.UserId;
+		Submission.Result = BuildFinalResult(nullptr, Record);
 	}
 
 	PendingResultSubmissions = Submissions.Num();

@@ -38,6 +38,12 @@ private:
     bool IsRoomMember(const FString& UserId) const;
     static TArray<TPair<FString,FString>> RoomMenuActions(bool bSelf,bool bFriend,bool bBlocked);
     static TArray<TPair<FString,FString>> PartyMenuActions(bool bSelf,bool bLeader);
+    /** Party kick and leader transfer ask first (yes/no). */
+    void AskThen(const FString& Question,TFunction<void()> OnYes,const FString& SkipKey=FString());
+    /** Social action; removing a friend, blocking and deleting a conversation ask first. */
+    void ActConfirmed(const FString& Op,const FString& Account);
+    UPROPERTY(Transient) TObjectPtr<class UProjectConfirmDialogWidget> ConfirmDialog;
+    const FJsonObject* PartyNoticeSnapshot=nullptr; // Snapshot already checked for a party removal notice.
     FString PendingRoomMenu, ReportReason;
     FVector2D RoomMenuPosition=FVector2D::ZeroVector;
     bool bBlocksOnly=false;

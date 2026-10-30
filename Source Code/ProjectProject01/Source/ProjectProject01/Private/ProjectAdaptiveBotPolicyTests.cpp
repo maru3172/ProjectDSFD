@@ -369,6 +369,16 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         }
         Check(ParkedBodies(Difficulty::For(1),false)>ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)==0&&
             ParkedBodies(Difficulty::For(1),true)<=ParkedBodies(Difficulty::For(1),false)&&ParkedBodies(Difficulty::For(3),true)<ParkedBodies(Difficulty::For(3),false),"Beginners leave more bodies parked; masters none; fewer in the endgame");
+        {
+            bool Untouched=true,Bounded=true;
+            for(int L=1;L<=5;++L)for(bool E:{false,true})
+            {
+                const auto D=Difficulty::For(L);
+                Untouched&=ParkedBodies(D,E,false)==ParkedBodies(D,E)&&SoloAttackScale(D,false)==1.f&&SoloEndgameScale(D,false)==1.f;
+                Bounded&=ParkedBodies(D,E,true)>=ParkedBodies(D,E)&&ParkedBodies(D,E,true)<=9&&SoloAttackScale(D,true)>=1.f&&SoloEndgameScale(D,true)>=0.f&&SoloEndgameScale(D,true)<=1.f;
+            }
+            Check(Untouched&&Bounded,"One-human-with-bot values never touch other teams and only ever ease the mannequin");
+        }
         Check(StallSeconds(Difficulty::For(5))<StallSeconds(Difficulty::For(1))&&StallSeconds(Difficulty::For(5))>=15.f,"Masters break a stalemate sooner, never instantly");
         // Floor depth: firmer each floor down, full after four, level-scaled, never negative.
         Check(FloorResolve(Difficulty::For(3),0)==0&&FloorResolve(Difficulty::For(3),1)<FloorResolve(Difficulty::For(3),2)&&

@@ -99,8 +99,12 @@ bool FProjectMatchTimelineWidgetTest::RunTest(const FString&)
     auto* Widget=CastChecked<UProjectProject01MatchResultWidget>(Base);
     FMultiplayTestMatchResult Result;Result.Role=TEXT("Survivor");
     FProjectMatchTimelineEvent Event;Event.Kind=EProjectMatchEvent::Escaped;Event.Seconds=70;Event.PlayerName=TEXT("생존자 A");Result.Timeline.Add(Event);
+    // By design only observers get the match history; players see their own result.
+    Widget->ConfigureResult(Result);
+    TestTrue(TEXT("A player's result has no history button"),Widget->TimelineButton->GetVisibility()==ESlateVisibility::Collapsed);
+    Result.Role=TEXT("Observer");
     Widget->ConfigureResult(Result);Widget->FadeElapsedSeconds=Widget->FadeDurationSeconds;
-    TestTrue(TEXT("History button appears for multiplayer history"),Widget->TimelineButton->GetVisibility()==ESlateVisibility::Visible);
+    TestTrue(TEXT("History button appears for an observer's history"),Widget->TimelineButton->GetVisibility()==ESlateVisibility::Visible);
     Widget->HandleTimelineClicked();
     TestTrue(TEXT("History can replace summary without travel"),Widget->bShowingTimeline&&Widget->TimelineFrame->GetVisibility()==ESlateVisibility::Visible);
     auto* Row=Cast<UTextBlock>(Widget->TimelineRows->GetChildAt(0));

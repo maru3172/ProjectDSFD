@@ -1,5 +1,7 @@
 #include "ProjectProject01SocialWidget.h"
 #include "ProjectCaseRecords.h"
+#include "ProjectCaseProfileSlate.h"
+#include "ProjectConfirmDialog.h"
 #include "ProjectCasePresentation.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01SocialSubsystem.h"
@@ -111,6 +113,7 @@ void UProjectProject01SocialWidget::NativeDestruct()
     if(GetGameInstance())if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->OnChanged.RemoveAll(this);
     if(GetGameInstance())if(auto* S=SocialSubsystem())
     {S->OnChanged.RemoveAll(this);S->OnRoomContextReady.RemoveAll(this);S->OnWhisperSent.RemoveAll(this);S->OnActionCompleted.RemoveAll(this);if(!bBlocksOnly)S->OpenConversation(FString());}
+    if(ConfirmDialog){ConfirmDialog->RemoveFromParent();ConfirmDialog=nullptr;}
     Page.Reset();ModalKind.Reset();bRoomMemberProfile=false;Super::NativeDestruct();
 }
 void UProjectProject01SocialWidget::ReleaseSlateResources(bool Children)
@@ -226,7 +229,7 @@ void UProjectProject01SocialWidget::FriendMenu(const FString& Account,const FPoi
         if(Op==TEXT("PartyInvite")&&Lobby&&Lobby->HasCurrentRoom())
         {const auto& Room=Lobby->GetCurrentRoom();if(Room.bRandomParty||Room.bRandomMatch||Room.bBotMatch||Room.bStarting||Room.bServerPreparing||Room.bStarted)continue;}
         Menu.AddMenuEntry(Txt(Entry.Key),FText::GetEmpty(),FSlateIcon(),FUIAction(FExecuteAction::CreateWeakLambda(this,[this,Account,Op]
-        {if(Op==TEXT("Profile"))ShowProfile(Account);else if(Op==TEXT("PartyInvite")){PartyInviteDraft=Account;Page=TEXT("PartyInvite");CloseModal();BuildPanel();if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),Account);}else if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(Op,Account);})));
+        {if(Op==TEXT("Profile"))ShowProfile(Account);else if(Op==TEXT("PartyInvite")){PartyInviteDraft=Account;Page=TEXT("PartyInvite");CloseModal();BuildPanel();if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),Account);}else ActConfirmed(Op,Account);})));
     }
     FSlateApplication::Get().PushMenu(TakeWidget(),FWidgetPath(),Menu.MakeWidget(),Event.GetScreenSpacePosition(),FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
@@ -264,7 +267,7 @@ void UProjectProject01SocialWidget::RoomContextReady(const FString& UserId,bool 
             Page=TEXT("RoomActions");bRoomMemberProfile=false;Social->Status.Reset();BuildPanel();
             if(Op==TEXT("Request")){ShowModal(TEXT("Add"),Account);return;}
             if(Op==TEXT("Report")){ShowModal(TEXT("Report"),UserId,Name+TEXT(" [")+Account+TEXT("]"));return;}
-            Social->Act(Op,Account);
+            ActConfirmed(Op,Account);
         })));
     };
     for(const auto& Action:RoomMenuActions(Flag(J,TEXT("isSelf")),Flag(J,TEXT("isFriend")),Flag(J,TEXT("isBlocked"))))
@@ -288,7 +291,7 @@ TArray<TPair<FString,FString>> UProjectProject01SocialWidget::PartyMenuActions(b
 {
     TArray<TPair<FString,FString>> Actions{{TEXT("프로필 확인"),TEXT("Profile")}};if(Self)return Actions;
     Actions.Emplace(TEXT("귓속말"),TEXT("Whisper"));Actions.Emplace(TEXT("신고"),TEXT("Report"));
-    if(Leader){Actions.Emplace(TEXT("파티장 위임"),TEXT("Transfer"));Actions.Emplace(TEXT("파티 강퇴"),TEXT("Kick"));}return Actions;
+    if(Leader){Actions.Emplace(TEXT("파티장 위임"),TEXT("Transfer"));Actions.Emplace(TEXT("파티에서 강제 퇴장"),TEXT("Kick"));}return Actions;
 }
 bool UProjectProject01SocialWidget::ShowPartyMemberMenu(const FString& UserId,const FVector2D& Position)
 {
@@ -308,6 +311,8 @@ bool UProjectProject01SocialWidget::ShowPartyMemberMenu(const FString& UserId,co
             if(Op==TEXT("Profile"))ShowProfile(Account);
             else if(Op==TEXT("Whisper"))OpenThread(Account);
             else if(Op==TEXT("Report")){Page=TEXT("RoomActions");BuildPanel();ShowModal(TEXT("AccountReport"),Account);}
+            else if(Op==TEXT("Kick"))AskThen(TEXT("강제 퇴장 시키시겠습니까?"),[R,Op,UserId]{R->PartyAction(Op,UserId);},TEXT("PartyKick"));
+            else if(Op==TEXT("Transfer"))AskThen(TEXT("정말로 파티장을 위임하시겠습니까?"),[R,Op,UserId]{R->PartyAction(Op,UserId);},TEXT("TransferPartyLeader"));
             else R->PartyAction(Op,UserId);
         });
     }
@@ -346,9 +351,15 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
         Body->AddSlot().AutoHeight().Padding(0,8)[SNew(SBox).HeightOverride(150)[Input]];
         Body->AddSlot().AutoHeight()[Btn(TEXT("신고 제출"),[this,Input,AccountInput]
         {
-            auto* Social=SocialSubsystem();if(!Social)return;
-            if(AccountInput)Social->SubmitAccountReport(AccountInput->GetText().ToString(),ReportReason,Input->GetText().ToString());
-            else Social->SubmitRoomReport(ModalTarget,ReportReason,Input->GetText().ToString());
+            // The text is read when the question opens; "예" sends exactly what was confirmed.
+            const FString Account=AccountInput?AccountInput->GetText().ToString():FString(),Detail=Input->GetText().ToString();
+            const bool bAccount=AccountInput.IsValid();const FString Target=ModalTarget,Reason=ReportReason;
+            const TWeakObjectPtr<UProjectProject01SocialWidget> Weak(this);
+            AskThen(TEXT("제출하시겠습니까?"),[Weak,bAccount,Account,Detail,Target,Reason]
+            {
+                auto* Self=Weak.Get();auto* Social=Self?Self->SocialSubsystem():nullptr;if(!Social)return;
+                if(bAccount)Social->SubmitAccountReport(Account,Reason,Detail);else Social->SubmitRoomReport(Target,Reason,Detail);
+            },TEXT("ReportSubmit"));
         })];
     }
     else if(Kind==TEXT("Edit"))
@@ -388,6 +399,16 @@ void UProjectProject01SocialWidget::RefreshView()
 {
     auto* S=SocialSubsystem();
     if(!S)return;SetVisibility(S->IsAuthenticated()?ESlateVisibility::SelfHitTestInvisible:ESlateVisibility::Collapsed);
+    // Removed from the party by its leader: the backend says so once in the next snapshot.
+    if(auto* Records=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;Records&&Records->Snapshot&&Records->Snapshot.Get()!=PartyNoticeSnapshot)
+    {
+        PartyNoticeSnapshot=Records->Snapshot.Get();const TSharedPtr<FJsonObject>* State=nullptr;bool Removed=false;
+        if(Records->Snapshot->TryGetObjectField(TEXT("partyState"),State)&&(*State)->TryGetBoolField(TEXT("removedFromParty"),Removed)&&Removed)
+        {
+            if(!ConfirmDialog&&GetOwningPlayer()){ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog)ConfirmDialog->AddToViewport(980);}
+            if(ConfirmDialog)ConfirmDialog->Notify(TEXT("파티에서 강제 퇴장되었습니다."));
+        }
+    }
     if(!S->IsAuthenticated()){PendingRoomMenu.Reset();Page.Reset();ThreadAccount.Reset();Filter.Reset();PartyInviteDraft.Reset();SeenInvites.Reset();SeenFriendRequests.Reset();CloseModal();if(Panel)Panel->ClearChildren();if(FSlateApplication::IsInitialized())FSlateApplication::Get().DismissAllMenus();return;}
     if(Feedback)Feedback->SetText(Txt(S->Status));
     bool Unread=false;for(auto V:Rows(S->Snapshot,TEXT("notifications")))Unread|=Flag(V->AsObject(),TEXT("unread"));for(auto V:Rows(S->Snapshot,TEXT("conversations")))Unread|=Flag(V->AsObject(),TEXT("unread"));
@@ -415,7 +436,7 @@ void UProjectProject01SocialWidget::RefreshView()
     }
     if(List)List->ClearChildren();
     auto Add=[this](const FString& T){if(List)List->AddSlot().AutoHeight().Padding(3)[Label(T)];};
-    auto Action=[this](const FString& T,const FString& Op,const FString& A){if(List)List->AddSlot().AutoHeight().Padding(2)[Btn(T,[this,Op,A]{if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(Op,A);})];};
+    auto Action=[this](const FString& T,const FString& Op,const FString& A){if(List)List->AddSlot().AutoHeight().Padding(2)[Btn(T,[this,Op,A]{ActConfirmed(Op,A);})];};
     if(Page==TEXT("PartyInvite")&&List&&R)
     {
         const bool Ready=R->IsAuthenticated()&&!R->IsBusy();
@@ -458,7 +479,7 @@ void UProjectProject01SocialWidget::RefreshView()
         auto C=Rows(S->Snapshot,TEXT("conversations"));if(C.IsEmpty())Add(TEXT("아직 대화가 없습니다. 상대 계정 ID로 대화를 열어보세요."));
         for(auto V:C){auto J=V->AsObject();FString A=Str(J,TEXT("accountId"));List->AddSlot().AutoHeight().Padding(0,5)[SNew(SHorizontalBox)
           +SHorizontalBox::Slot().FillWidth(1)[Btn((Flag(J,TEXT("unread"))?TEXT("● "):TEXT(""))+Str(J,TEXT("displayName"))+TEXT(" [")+A+TEXT("]\n")+Str(J,TEXT("body")).Left(70),[this,A]{OpenThread(A);})]
-          +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("대화 삭제"),[this,A]{if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(TEXT("DeleteConversation"),A);})]];}
+          +SHorizontalBox::Slot().AutoWidth()[Btn(TEXT("대화 삭제"),[this,A]{ActConfirmed(TEXT("DeleteConversation"),A);})]];}
     }
     if(Page==TEXT("Thread")&&MessageLog)
     {
@@ -476,12 +497,27 @@ void UProjectProject01SocialWidget::RefreshView()
         if(Progression)
         {
             double Level=1;(*Progression)->TryGetNumberField(TEXT("level"),Level);
-            List->AddSlot().AutoHeight().Padding(0,6)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectCasePresentation::FrameColor(*Progression)).Padding(10)
-                [Label(ProjectCasePresentation::Identity(*Progression,Str(J,TEXT("displayName")))+FString::Printf(TEXT(" · 계정 레벨 %d"),int32(Level)))]];
+            List->AddSlot().AutoHeight().Padding(0,6)[SNew(ProjectCaseProfile::SDossier).State(*Progression).DisplayName(Str(J,TEXT("displayName"))).Bio(Str(J,TEXT("bio")))];
         }
-        List->AddSlot().AutoHeight().Padding(0,8)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).Padding(12).BorderBackgroundColor(AccentColor(Str(J,TEXT("accent"))))[Label(Str(J,TEXT("displayName"))+TEXT(" [")+Str(J,TEXT("accountId"))+TEXT("]\n")+TitleName(Str(J,TEXT("title")))+TEXT("\n")+Str(J,TEXT("statusMessage"))+TEXT("\n")+Str(J,TEXT("bio")))]];
+        if(!Progression)List->AddSlot().AutoHeight().Padding(0,8)[Label(Str(J,TEXT("displayName"))+TEXT("\n")+Str(J,TEXT("bio")))];
+        Add(TEXT("[")+Str(J,TEXT("accountId"))+TEXT("] ")+Str(J,TEXT("statusMessage")));
         for(auto V:Rows(S->Profile,TEXT("statistics"))){auto Stat=V->AsObject();double Games=0,Wins=0,Captures=0,Rescues=0,Escape=0;Stat->TryGetNumberField(TEXT("matches"),Games);Stat->TryGetNumberField(TEXT("wins"),Wins);Stat->TryGetNumberField(TEXT("captures"),Captures);Stat->TryGetNumberField(TEXT("rescues"),Rescues);bool HasEscape=Stat->TryGetNumberField(TEXT("bestEscapeSeconds"),Escape);
           Add((Str(Stat,TEXT("role"))==TEXT("Mannequin")?FString(TEXT("마네킹")):FString(TEXT("생존자")))+FString::Printf(TEXT(" — %d경기 / %d승\n붙잡기 %d회 / 구출 %d회"),(int32)Games,(int32)Wins,(int32)Captures,(int32)Rescues)+(HasEscape?FString::Printf(TEXT("\n최단 탈출 %.1f초"),Escape):FString()));}
         if(Rows(S->Profile,TEXT("statistics")).IsEmpty())Add(TEXT("아직 서버가 보관한 경기 기록이 없습니다."));Add(Str(S->Profile,TEXT("statisticsNote")));
     }
+}
+void UProjectProject01SocialWidget::AskThen(const FString& Question,TFunction<void()> OnYes,const FString& SkipKey)
+{
+    if(!ConfirmDialog&&GetOwningPlayer())
+    {ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog)ConfirmDialog->AddToViewport(980);}
+    if(ConfirmDialog)ConfirmDialog->Ask(Question,MoveTemp(OnYes),SkipKey);else OnYes();
+}
+void UProjectProject01SocialWidget::ActConfirmed(const FString& Op,const FString& Account)
+{
+    const TWeakObjectPtr<UProjectProject01SocialWidget> Weak(this);
+    auto Run=[Weak,Op,Account]{if(auto* Self=Weak.Get())if(auto* Social=Self->SocialSubsystem())Social->Act(Op,Account);};
+    const TCHAR* Question=Op==TEXT("Remove")?TEXT("친구를 삭제하시겠습니까?"):Op==TEXT("Block")?TEXT("차단하시겠습니까?"):
+        Op==TEXT("DeleteConversation")?TEXT("대화를 삭제하시겠습니까?"):nullptr;
+    // Removing a friend and deleting a conversation are deletions: always asked. Blocking may be skipped for today.
+    if(Question)AskThen(Question,Run,Op==TEXT("Block")?TEXT("Block"):TEXT(""));else Run();
 }

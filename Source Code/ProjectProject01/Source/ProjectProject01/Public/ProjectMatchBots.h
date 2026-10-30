@@ -5,6 +5,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "ProjectAdaptiveBotPolicy.h"
 #include "ProjectMatchBotTypes.h"
+#include "MultiplayTestPlayerController.h"
+struct FMultiplayTestServerPlayerRecord;
 #include "ProjectMatchBots.generated.h"
 
 UCLASS()
@@ -120,9 +122,23 @@ public:
     static uint8 StyleOf(const FProjectMatchBotSpec& Spec);
     /** A survivor's team ping (human or bot): bots look, learn the exit, or come to help. */
     void HearPing(class AMultiplayTestPlayerController* Sender,uint8 Type,const FVector& Location); // Type: EProjectProject01PingType
+    /** A human survivor left mid-match while alive and a human teammate still plays: a helper bot plays on from where
+     *  they were, with the lives they had. Not part of the frozen roster (claims never list it, experience skips it). */
+    bool AddStandIn(const FMultiplayTestServerPlayerRecord& Leaver);
+    /** The leaver came back within the grace: hands back the stand-in's place, lives and state and removes it. */
+    bool ReleaseStandIn(const FString& UserId,FTransform& Where,int32& Lives,EMultiplayTestSurvivorState& State);
+    /** The grace ran out (desertion): the stand-in plays the rest of the match. */
+    void KeepStandIn(const FString& UserId);
+    bool HasStandInFor(const FString& UserId)const{return StandInFor.FindKey(UserId)!=nullptr;}
+    bool IsStandIn(const class AController* PC)const{if(!PC)return false;for(const auto& Spec:StandIns)if(Controllers.FindRef(Spec.BotId).Get()==PC)return true;return false;}
+    /** Level travel: stand-ins (and whose place each one holds) continue on the next floor. */
+    const TArray<FProjectMatchBotSpec>& GetStandIns()const{return StandIns;}
+    const TMap<FString,FString>& GetStandInOwners()const{return StandInFor;}
+    void AcceptStandIns(const FString& Match,const TArray<FProjectMatchBotSpec>& Bots,const TMap<FString,FString>& Owners);
 private:
     class AMultiplayTestGameMode* Mode()const;
     bool SpawnParticipants();
+    class AMultiplayTestPlayerController* SpawnOne(const FProjectMatchBotSpec& Spec,bool Arrival);
     void TickSurvivor(class AMultiplayTestPlayerController* PC,const FProjectMatchBotSpec& Spec,float Delta);
     void TickMannequin(class AMultiplayTestPlayerController* PC,const FProjectMatchBotSpec& Spec,float Delta);
     void Sense(APawn* Observer,AActor* Target,uint32 Team,FProjectMatchBotBrain& Brain,bool Visible,bool HumanAlly=false);
@@ -139,6 +155,8 @@ private:
     int32 TeamPlays(const FString& Role,const FString& Except)const;
     AActor* ChooseObjective(APawn* Pawn,const FProjectMatchBotBrain& Brain,const FProjectMatchBotSpec& Spec,bool Varied,const AActor* Avoid,FVector& Goal,FVector& Look);
     TArray<FProjectMatchBotSpec> Specs;
+    TArray<FProjectMatchBotSpec> StandIns;
+    TMap<FString,FString> StandInFor; // Stand-in bot id -> the user whose place it holds while they may still return.
     TMap<FString,TWeakObjectPtr<class AMultiplayTestPlayerController>> Controllers;
     TMap<TWeakObjectPtr<AActor>,FProjectMatchBotBrain> Brains;
     TArray<TWeakObjectPtr<AActor>> Objectives;

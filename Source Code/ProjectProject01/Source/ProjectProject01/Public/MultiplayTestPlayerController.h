@@ -155,6 +155,7 @@ public:
 	void SetAuthenticatedLobbyIdentity(const FProjectProject01ValidatedJoinClaim& Claim);
 	const FString& GetAuthenticatedDisplayName() const { return AuthenticatedDisplayName; }
 	void SetServerMatchState(EMultiplayTestMatchPhase NewPhase, EMultiplayTestSurvivorState NewSurvivorState);
+	bool DoesLeavingForfeit() const { return bLeavingForfeits && MatchPhase == EMultiplayTestMatchPhase::InProgress; }
 	void DeliverMatchResultToOwner(const FMultiplayTestMatchResult& Result);
 	UFUNCTION(Client,Reliable)
 	void ClientQueueDeathCamera(class APlayerCharacter* Victim,const FString& Reason);
@@ -170,6 +171,7 @@ public:
 	void CaptureLevelTransitionState();
 	void CancelLevelTransitionCarryover(bool bRestoreGameplay);
 	const FString& GetAuthenticatedUserId() const { return AuthenticatedUserId; }
+    UFUNCTION(Client,Reliable) void ClientRefreshCaseProgress();
 	const FString& GetAuthenticatedMatchId() const { return AuthenticatedMatchId; }
 	const FString& GetAuthenticatedRole() const { return AuthenticatedRole; }
 	bool IsLocalMannequinPlayer() const { return IsLocalController() && bLocalMultiplayerRoleKnown && bLocalMultiplayerMannequinRole; }
@@ -396,6 +398,10 @@ private:
 
 	UPROPERTY(Replicated)
 	EMultiplayTestSurvivorState SurvivorState = EMultiplayTestSurvivorState::NotApplicable;
+
+	/** Leaving now would be a forfeit (still in play, and not alone with bots): the menu asks first. */
+	UPROPERTY(Replicated)
+	bool bLeavingForfeits = false;
 
 	FString AuthenticatedUserId;
 	FString AuthenticatedDisplayName;

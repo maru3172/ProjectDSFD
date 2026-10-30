@@ -25,11 +25,13 @@ void FProjectBotSimulationTest::GetTests(TArray<FString>& Names,TArray<FString>&
     {const FString Name=FString::Printf(TEXT("Level%d.Run%02d"),Level,Run);Names.Add(Name);Commands.Add(Name);}
     // Difficulty ladder: a level-3 side stands in for an average player against each level of the other side.
     // "M%dS3": average survivors vs each mannequin level. "H3S%d": a level-3 mannequin that parks no bodies, like a
-    // human mannequin player, vs each survivor level.
+    // human mannequin player, vs each survivor level. "P%dS3": one human survivor with a bot partner (one level-3 bot
+    // plays the human, its partner stays in helper mode as beside a human) vs each mannequin level.
     for(int32 Level=1;Level<=5;++Level)for(int32 Run=1;Run<=30;++Run)
     {
         const FString AsSurvivor=FString::Printf(TEXT("Ladder.M%dS3.Run%02d"),Level,Run),AsMannequin=FString::Printf(TEXT("Ladder.H3S%d.Run%02d"),Level,Run);
-        Names.Add(AsSurvivor);Commands.Add(AsSurvivor);Names.Add(AsMannequin);Commands.Add(AsMannequin);
+        const FString AsSoloSurvivor=FString::Printf(TEXT("Ladder.P%dS3.Run%02d"),Level,Run);
+        Names.Add(AsSurvivor);Commands.Add(AsSurvivor);Names.Add(AsMannequin);Commands.Add(AsMannequin);Names.Add(AsSoloSurvivor);Commands.Add(AsSoloSurvivor);
     }
 }
 bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
@@ -44,6 +46,7 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
     const int32 Level=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(8,1)),1,5):FMath::Clamp(FCString::Atoi(*Parameter.Mid(5,1)),1,5);
     const int32 SurvivorLevel=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(10,1)),1,5):Level;
     ProjectBots::ParkOverride()=Parameter.StartsWith(TEXT("Ladder.H"))?0:-1;
+    ProjectBots::HumanTeamOverride()=Parameter.StartsWith(TEXT("Ladder.P"));
     // -BotSimProbe=N: masters take one expert value (1 reaction, 2 sharing, 3 coordination, 4 skill) or one expert
     // table group (5 watch discipline, 6 combo book, 7 play tuning, 8 map/mood/ping tables).
     int32 Probe=0;FParse::Value(FCommandLine::Get(),TEXT("BotSimProbe="),Probe);ProjectBots::Difficulty::Probe()=Probe;
@@ -92,7 +95,8 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
             FProjectProject01ValidatedJoinClaim Claim;Claim.UserId=TEXT("Simulation.Observer");Claim.DisplayName=TEXT("관전자");Claim.Role=TEXT("Observer");Claim.MatchId=State->Match;Claim.RoomId=Room;
             Observer->SetAuthenticatedLobbyIdentity(Claim);Observer->Admit();State->Observer=Observer;
             TArray<FProjectMatchBotSpec> Specs;
-            for(int32 I=0;I<3;++I)Specs.Add({FGuid::NewGuid().ToString(),FString::Printf(TEXT("봇 %d"),I+1),I==0?TEXT("Mannequin"):TEXT("Survivor"),I==0?Level:SurvivorLevel});
+            // Solo stand-in: bot 3 is the helper partner (named so the bot code can tell), bot 2 plays the human.
+            for(int32 I=0;I<3;++I)Specs.Add({FGuid::NewGuid().ToString(),I==2&&ProjectBots::HumanTeamOverride()?FString(TEXT("SimHelper")):FString::Printf(TEXT("봇 %d"),I+1),I==0?TEXT("Mannequin"):TEXT("Survivor"),I==0?Level:SurvivorLevel});
             FString Error;if(!Mode->MatchBots->AcceptRoster(Room,State->Match,Specs,Error)){AddError(Error);End();return true;}
             State->Initialized=true;return false;
         }
@@ -101,11 +105,17 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
         int32 Escaped=0,Caught=0;
         for(const auto& Pair:Mode->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor"))
         {Escaped+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Escaped;Caught+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Eliminated;}
+        // Each survivor's own outcome: in the solo stand-in, which of the two (the helper or the one playing the human) got out.
+        FString Each;
+        for(const auto& Pair:Mode->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor"))
+            Each+=FString::Printf(TEXT(" %s=%s@%.0f"),Pair.Value.DisplayName==TEXT("SimHelper")?TEXT("Helper"):TEXT("Lead"),
+                Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Escaped?TEXT("Escaped"):Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Eliminated?TEXT("Caught"):TEXT("Other"),
+                Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Escaped?Pair.Value.EscapeSeconds:Pair.Value.FirstCaptureSeconds);
         const auto Script=Mode->MatchBots->ScriptOf();
         const TCHAR* Result=Escaped==2?TEXT("BothEscaped"):Escaped==1?TEXT("OneEscaped"):TEXT("MannequinWin");
-        UE_LOG(LogTemp,Display,TEXT("[BotSim] Run=%s Level=%d SurvivorLevel=%d Mannequin=%s Survivors=%s Result=%s Escaped=%d Caught=%d MatchSeconds=%.0f Floor=%d"),*Parameter,Level,SurvivorLevel,
+        UE_LOG(LogTemp,Display,TEXT("[BotSim] Run=%s Level=%d SurvivorLevel=%d Mannequin=%s Survivors=%s Result=%s Escaped=%d Caught=%d MatchSeconds=%.0f Floor=%d%s"),*Parameter,Level,SurvivorLevel,
             ANSI_TO_TCHAR(ProjectBots::MatchScript::Name(Script.Mannequin)),ANSI_TO_TCHAR(ProjectBots::MatchScript::Name(Script.Survivors)),Result,Escaped,Caught,
-            Mode->GetElapsedMatchSeconds(),Mode->MatchBots->FloorDepth);
+            Mode->GetElapsedMatchSeconds(),Mode->MatchBots->FloorDepth,*Each);
         End();return true;
     }));
     return true;

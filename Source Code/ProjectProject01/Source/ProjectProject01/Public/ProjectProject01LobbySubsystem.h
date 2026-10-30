@@ -182,6 +182,7 @@ struct PROJECTPROJECT01_API FProjectProject01RoomMember
     // Local presentation only; server-owned bots never enter the human membership/auth list.
     UPROPERTY(BlueprintReadOnly) bool bIsBot=false;
     UPROPERTY(BlueprintReadOnly) bool bIsObserver=false;
+    UPROPERTY(BlueprintReadOnly) FString BannerId;
 };
 
 USTRUCT(BlueprintType)
@@ -412,6 +413,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool HasCurrentRoom() const { return CurrentRoom.IsValid(); }
+	/** True once after the host removed this player from the room (the lobby shows a notice). */
+	bool ConsumeRemovedFromRoom() { const bool b = bRemovedFromRoom; bRemovedFromRoom = false; return b; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending || bAwaitingPartyAdmission; }
@@ -438,6 +441,7 @@ private:
     FString DesiredLeaderboardEndpoint;
     bool bLeaderboardRefreshQueued=false;
 	friend class FProjectStaleFrontendResponseTest;
+    friend class FProjectFrontendBehaviorTest;
 	friend class FProjectReviewAsyncStateTest;
 #if WITH_DEV_AUTOMATION_TESTS
     TFunction<void(const FString&)> ReviewRequestSink;
@@ -472,6 +476,7 @@ private:
 
 	UPROPERTY(Config)
 	FString ApiBaseUrl = TEXT("http://127.0.0.1:5080");
+	bool bRemovedFromRoom = false;
 
 	/** Hamachi 등 암호화된 개발 VPN에서만 허용할 정확한 HTTP API 주소입니다. 운영 배포에서는 비워 둡니다. */
 	UPROPERTY(Config)

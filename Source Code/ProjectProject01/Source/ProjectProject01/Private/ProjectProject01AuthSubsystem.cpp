@@ -308,6 +308,34 @@ void UProjectProject01AuthSubsystem::MarkRoleGuideSeenForAccount(const bool bMan
 	}
 }
 
+void UProjectProject01AuthSubsystem::MarkInitialTutorialSeenForAccount()
+{
+	if (!IsSignedIn() || InitialTutorialProgressRequest.IsValid() ||
+		(bSeenInitialTutorialForAccount && !bInitialTutorialProgressPending)) return;
+	bSeenInitialTutorialForAccount = true;
+	bInitialTutorialProgressPending = true;
+	if (ApiBaseUrl.IsEmpty() || !IsApiBaseUrlAllowed()) return;
+	auto Pending = FHttpModule::Get().CreateRequest();
+	Pending->SetURL(ApiBaseUrl + TEXT("/api/auth/guide-progress"));
+	Pending->SetVerb(TEXT("POST"));
+	Pending->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Pending->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + AccessToken);
+	FProjectProject01VersionContract::ApplyToRequest(Pending);
+	Pending->SetTimeout(RequestTimeoutSeconds);
+	Pending->SetContentAsString(TEXT("{\"role\":\"InitialTutorial\"}"));
+	Pending->OnProcessRequestComplete().BindWeakLambda(this,
+		[this](TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Completed,
+			TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> Response, bool bConnected)
+		{
+			if (InitialTutorialProgressRequest != Completed) return;
+			InitialTutorialProgressRequest.Reset();
+			if (bConnected && Response && Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300)
+				bInitialTutorialProgressPending = false;
+		});
+	InitialTutorialProgressRequest = Pending;
+	if (!Pending->ProcessRequest()) InitialTutorialProgressRequest.Reset();
+}
+
 void UProjectProject01AuthSubsystem::HandleGuideProgressRequestComplete(
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request,
 	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> Response,
@@ -527,6 +555,10 @@ void UProjectProject01AuthSubsystem::HandleRequestComplete(
 		bSeenMannequinGuideForAccount = false;
 		Json->TryGetBoolField(TEXT("seenSurvivorGuide"), bSeenSurvivorGuideForAccount);
 		Json->TryGetBoolField(TEXT("seenMannequinGuide"), bSeenMannequinGuideForAccount);
+		bool bServerSeenInitialTutorial = false;
+		Json->TryGetBoolField(TEXT("seenInitialTutorial"), bServerSeenInitialTutorial);
+		bSeenInitialTutorialForAccount = bServerSeenInitialTutorial ||
+			(Operation == EAuthOperation::Refresh && bSeenInitialTutorialForAccount);
 	}
 	else if (Operation == EAuthOperation::Logout)
 	{
@@ -638,6 +670,14 @@ bool UProjectProject01AuthSubsystem::CanStartOperation(const EAuthOperation Oper
 void UProjectProject01AuthSubsystem::ClearSession()
 {
     ++SessionGeneration;
+	if (InitialTutorialProgressRequest.IsValid())
+	{
+		InitialTutorialProgressRequest->OnProcessRequestComplete().Unbind();
+		InitialTutorialProgressRequest->CancelRequest();
+		InitialTutorialProgressRequest.Reset();
+	}
+	bSeenInitialTutorialForAccount = false;
+	bInitialTutorialProgressPending = false;
 	if (GuideProgressRequest.IsValid())
 	{
 		GuideProgressRequest->OnProcessRequestComplete().Unbind();
@@ -656,6 +696,7 @@ void UProjectProject01AuthSubsystem::ClearSession()
 bool UProjectProject01AuthSubsystem::TickSessionMonitor(const float DeltaSeconds)
 {
 	(void)DeltaSeconds;
+	if (bInitialTutorialProgressPending) MarkInitialTutorialSeenForAccount();
 	CheckAuthenticatedSession();
 	return true;
 }

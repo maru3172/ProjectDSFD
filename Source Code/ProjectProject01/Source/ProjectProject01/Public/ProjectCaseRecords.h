@@ -34,6 +34,9 @@ public:
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
     void Refresh();
+    void DrawAction(const FString& Operation,int32 Count);
+    void SaveFeatured(const TArray<FString>& Codes,const FString& Bio);
+    TSharedPtr<class FJsonObject> DrawResult;
     void RefreshStoryArchives();
     void RefreshAchievementRates();
     TSharedPtr<class FJsonObject> GetAchievementRates()const;
@@ -51,17 +54,24 @@ public:
     UFUNCTION(BlueprintCallable,Category="Case Records|Campaign") bool RecordCampaignAchievement(FName Code);
     UFUNCTION(BlueprintPure,Category="Case Records|Campaign") bool HasCampaignAchievement(FName Code) const;
     bool IsAuthenticated()const;
-    bool IsBusy()const{return Request.IsValid();}
+    bool IsBusy()const{return Request.IsValid();} bool IsWriting()const;
     bool CanImport()const;
     const TSet<FString>& GetLocalAchievements()const;
     TSharedPtr<class FJsonObject> Snapshot;
     FString Status;
     FSimpleMulticastDelegate OnChanged;
+    FSimpleMulticastDelegate OnReceipt;
+    TSharedPtr<class FJsonObject> LastReceipt;
+    FString ConfirmationScope()const;
+    bool ShouldConfirm(const FString& Category)const;
+    void SkipConfirmationToday(const FString& Category);
+    void MainQuestAction(const FString& Action,const FString& Role=FString());
 private:
     void ClearSession();
     bool Tick(float Delta);
     void Send(const FString& Path,const FString& Body=FString());
     bool PrepareWrite();
+    void ApplyDrawResponse(const TSharedPtr<class FJsonObject>& Response);
     void PersistLocal();
     UPROPERTY() TObjectPtr<UProjectCampaignAchievementSave> Local;
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> Request;
@@ -75,11 +85,18 @@ private:
     FTSTicker::FDelegateHandle Ticker;
     float PollIn=0;
     FString CurrentLocalSlot;
+    FString PendingDrawId,PendingDrawOperation;
+    int32 PendingDrawCount=0;
+    double PendingDrawRevision=0;
     bool bPersistence=true,bSaving=false,bSaveDirty=false;
+    TMap<FString,FString> ConfirmationDays;
     bool bImportAttempted=false;
     FString AchievementAccount;
     TSet<FString> SeenOnlineAchievements;
     void ObserveAchievements();
+    void ObserveMainQuest();
+    FString QuestAccount;
+    int64 SeenQuestRevision=0;
     void TickPartyAdmission(float Delta);
     void ReadPartyAdmission(const TSharedPtr<class FJsonObject>& Json);
     void SendPartyAdmission(const FString& Body=FString());
@@ -108,12 +125,43 @@ protected:
 private:
     void RefreshPanel();
     void BuildStoryBook(const TSharedPtr<class FJsonObject>& Investigation,bool Archived);
+    void BuildCollection(const TSharedPtr<class FJsonObject>& State);
+    void BuildDraw(const TSharedPtr<class FJsonObject>& State);
+    void BuildMainQuest(const TSharedPtr<class FJsonObject>& State);
+    void RequestDrawAction(const FString& Operation,int32 Count);
+    void ExecuteDrawAction(const FString& Operation,int32 Count);
+    void RequestPurchase(const FString& Id);
+    void ConfirmAction(const FString& Category,const FString& Title,TFunction<void()> Action);
+    void ResolveConfirmation(bool Accept,bool SkipToday);
+    void ShowReceipt();
+    void OpenDrawParcel(int32 Index);
+    void OpenAllDrawParcels();
+    void FinishRarePresentation();
     void Close();
     FString Page=TEXT("Achievements");
     FString RenderedFingerprint;
     int32 InvestigationStage=1,InvestigationPiece=1,ArchiveIndex=0;
     bool bOpenedOnline=false;
     bool bShopFundsMessageHandled=false;
+    bool bShowDrawRates=false,bEditingProfile=false,bDrawResultOpen=false;
+    bool bDrawRequestedHere=false;
+    FString CollectionCategory=TEXT("All"),DrawFeedback;
+    double DrawFeedbackAt=-100;
+    int32 CollectionPage=0;
+    int32 DrawExchangeCount=1;
+    int32 SelectedQuestStage=-1;
+    TMap<int32,int32> DrawShowcase;
+    FString LastDrawReceipt;
+    TMap<int32,double> ParcelOpenTimes;
+    TArray<int32> RareRevealQueue;
+    double RareRevealBeganAt=0;
+    TSharedPtr<class SOverlay> RarePresentationLayer;
+    TSharedPtr<class SOverlay> TransactionLayer;
+    TFunction<void()> ConfirmedAction;
+    FString ConfirmationCategory,ConfirmationAccount;
+    uint64 ConfirmationGeneration=0;
+    TArray<FString> FeaturedDraft;
+    FString BioDraft;
     TSharedPtr<class SProjectShopFundsNotice> ShopFundsNotice;
     TSharedPtr<class SVerticalBox> Body;
     TSharedPtr<class SScrollBox> RecordsScroll;
@@ -142,4 +190,14 @@ class PROJECTPROJECT01_API UProjectCaseOpenButton final : public UButton
 public:
     UPROPERTY() TObjectPtr<UUserWidget> ReturnWidget;
     UFUNCTION() void OpenRecords();
+};
+
+UCLASS()
+class PROJECTPROJECT01_API UProjectCaseBanner final : public UWidget
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(Transient) FString ItemId;
+protected:
+    virtual TSharedRef<SWidget> RebuildWidget() override;
 };

@@ -10,12 +10,14 @@
 #include "Engine/World.h"
 #include "Engine/DemoNetDriver.h"
 #include "GameFramework/WorldSettings.h"
+#include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "NetworkReplayStreaming.h"
 #include "PlayInEditorDataTypes.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "UObject/UnrealType.h"
+#include "ProjectEditorTestWorlds.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReplayPlayTest,"ProjectProject01.Editor.Replay.RoundTrip",
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -34,9 +36,22 @@ bool FProjectReplayPlayTest::RunTest(const FString&)
             // Keep a failed fixture for diagnosis; never enumerate/delete the user's replays.
             GEditor->RequestEndPlayMap();const double Stop=FPlatformTime::Seconds()+15;
             AddCommand(new FFunctionLatentCommand([this,Stop]{if(!GEditor->IsPlaySessionInProgress())return true;if(FPlatformTime::Seconds()<Stop)return false;AddError(TEXT("Replay PIE failed to stop"));return true;}));
+            // The worlds the replay loaded finish their teardown on the following frames; collect them here, so a
+            // later test's own garbage collection never meets a half torn-down replay world.
+            auto Frames=MakeShared<int32>(0);
+            AddCommand(new FFunctionLatentCommand([Frames]{if(++*Frames<4)return false;ProjectEditorTestWorlds::ReleaseLeftoverWorlds();return true;}));
         };
         if(FPlatformTime::Seconds()>Deadline){AddError(FString::Printf(TEXT("Replay round trip timed out at stage %d"),State->Stage));End();return true;}
-        UWorld* World=GEditor->PlayWorld;if(!World||!World->HasBegunPlay())return false;
+        UWorld* World=GEditor->PlayWorld;
+        // Waiting for playback: what the world and demo driver look like (grep "[ReplayWait]") when it never starts.
+        if(State->Stage==3&&World&&FPlatformTime::Seconds()-State->At>2)
+        {
+            State->At=FPlatformTime::Seconds();auto* Driver=World->GetDemoNetDriver();auto* First=World->GetFirstPlayerController();
+            UE_LOG(LogTemp,Display,TEXT("[ReplayWait] Map=%s Seamless=%d Begun=%d Time=%.2f Real=%.2f DebugPause=%d Playing=%d PC=%s Paused=%d Driver=%d DemoTime=%.2f Total=%.2f Dilation=%.2f Frame=%d Data=%d"),
+                *World->GetMapName(),World->IsInSeamlessTravel(),World->HasBegunPlay(),World->GetTimeSeconds(),World->GetRealTimeSeconds(),World->bDebugPauseExecution,World->IsPlayingReplay(),*GetNameSafe(First),World->IsPaused(),
+                Driver!=nullptr,Driver?Driver->GetDemoCurrentTime():-1.f,Driver?Driver->GetDemoTotalTime():-1.f,World->GetWorldSettings()->DemoPlayTimeDilation,Driver?Driver->GetDemoFrameNum():-1,Driver&&Driver->GetReplayStreamer().IsValid()&&Driver->GetReplayStreamer()->IsDataAvailable());
+        }
+        if(!World||!World->HasBegunPlay())return false;
         auto* Instance=World->GetGameInstance<UProjectProject01GameInstance>();auto* Replay=Instance?Instance->GetSubsystem<UProjectMatchReplay>():nullptr;
         if(!Replay)return false;const double Now=FPlatformTime::Seconds();
         auto* PC=World->GetFirstPlayerController();

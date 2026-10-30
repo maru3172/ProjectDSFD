@@ -34,12 +34,14 @@ internal static partial class LobbyEndpoints
         if(columns.Count==0)await CommunityEndpoints.Exec(c,null,"ALTER TABLE bot_match_rosters ADD COLUMN display_name VARCHAR(48) NOT NULL DEFAULT '봇'",ct);
         await BotSkillRatings.EnsureAsync(c,ct);
         await BotExperience.EnsureAsync(c,ct);
+        await MatchDesertions.EnsureAsync(c,ct);
         await EnsureObserverSchemaAsync(c,ct);
     }
 
     private static void MapBotMatches(this WebApplication app,Func<bool> available)
     {
         app.MapOpenObservers(available);
+        MatchDesertions.Map(app);
         app.MapPost("/api/bot-matches",async(CreateBotMatchRequest body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await AuthenticateAsync(request,db,ct);

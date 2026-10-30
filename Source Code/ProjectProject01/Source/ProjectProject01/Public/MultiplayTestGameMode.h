@@ -35,6 +35,7 @@ struct FMultiplayTestServerPlayerRecord
 	bool bForfeited = false;
 	bool bDisconnected = false;
     bool bServerBot=false;
+    bool bReplacedByBot=false; // A stand-in bot plays on in this survivor's place (left alive mid-match); the bots count the stand-in instead.
 	double ReconnectDeadlineWorldSeconds = 0.0;
 };
 
@@ -45,6 +46,7 @@ struct FMultiplayTestMatchCarryover
     FString BotRoomId;
     TArray<FProjectMatchBotSpec> Bots;
     TMap<FString,FMultiplayTestServerPlayerRecord> Players,Disconnected;
+    TArray<FProjectMatchBotSpec> StandIns;TMap<FString,FString> StandInOwners; // UProjectMatchBots stand-ins.
     double ElapsedSeconds=0,PreparedRealSeconds=0,PreparedWorldSeconds=0;
     TSharedPtr<struct FProjectBotLearning> BotLearning; // Bot habits/relief for the next floor (ProjectMatchBots.h).
 };
@@ -58,6 +60,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 {
 	GENERATED_BODY()
 	friend class FProjectReviewMatchCarryoverTest;
+	friend class FProjectForfeitRulesTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
 	friend class FProjectShutterTest;
@@ -122,6 +125,10 @@ private:
 public:
 	/** Server-owned match membership, including ticket-free local PIE role assignments. */
 	bool IsRegisteredActiveSurvivor(const class APlayerCharacter* Survivor) const;
+    /** A human survivor other than Except still in play (not caught, escaped, gone or forfeited). */
+    bool HasOtherHumanSurvivorInPlay(const class AMultiplayTestPlayerController* Except) const;
+    /** Leaving while in play is a desertion: in PvP, and in a bot match with two or more people (else a loss). */
+    bool CountsAsDesertion() const;
 	bool IsAuthoritativeMatchInProgress() const { return AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress; }
 	/** seamless travel 직전 각 컨트롤러의 다음 맵 스폰 여부와 암전을 준비합니다. */
 	void PrepareLevelTransitionTravel(float FadeSeconds = 0.6f);

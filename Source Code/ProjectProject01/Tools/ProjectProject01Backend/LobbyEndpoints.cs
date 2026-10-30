@@ -184,9 +184,15 @@ internal static partial class LobbyEndpoints
                 var room = await LoadCurrentRoomAsync(
                     connection, null, user.Id,
                     CanLaunchOrConnect(), ct);
-                return room is null
-                    ? Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."))
-                    : Results.Ok(new { message = "방 상태를 갱신했습니다.", room });
+                // Removed by the host: said once. In another room by now, the old removal is no longer news.
+                if (room is not null)
+                {
+                    await CommunityEndpoints.Exec(connection, null, "DELETE FROM room_removal_notices WHERE user_id=@u", ct, ("u", user.Id));
+                    return Results.Ok(new { message = "방 상태를 갱신했습니다.", room });
+                }
+                return await TakeRoomRemovalNoticeAsync(connection, user.Id, ct)
+                    ? Results.NotFound(new { message = "방에서 강제 퇴장되었습니다.", removedByHost = true })
+                    : Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
             }
             catch (MySqlException)
             {
@@ -1304,6 +1310,12 @@ internal static partial class LobbyEndpoints
 			{
 				await using var connection = await database.OpenConnectionAsync(ct);
 				await using var transaction = await connection.BeginTransactionAsync(ct);
+				// Kept even when the room seat is already gone: the player still sees the desertion result.
+				if (body.Desertion != false)
+				{
+					await MatchDesertions.RecordAsync(connection, transaction, matchId.ToString("D"), userId,
+						NormalizeLeaderboardRole(body.Role ?? string.Empty) ?? "Survivor", ct);
+				}
 				string? roomId = null;
 				ulong hostUserId = 0;
 				await using (var membership = new MySqlCommand(
@@ -1327,7 +1339,7 @@ internal static partial class LobbyEndpoints
 
 				if (roomId is null)
 				{
-					await transaction.RollbackAsync(ct);
+					await transaction.CommitAsync(ct);
 					return Results.Ok(new { message = "이미 정리된 경기 참가자입니다." });
 				}
 
@@ -2333,10 +2345,11 @@ internal static partial class LobbyEndpoints
         await using (var memberCommand = new MySqlCommand(
             """
             SELECT m.user_id, u.display_name, r.host_user_id = m.user_id AS is_host,
-                   m.is_ready, m.assigned_role, m.returned_to_room,m.is_observer
+                   m.is_ready, m.assigned_role, m.returned_to_room,m.is_observer,COALESCE(banner.item_id,'') banner_id
             FROM room_members m
             INNER JOIN users u ON u.id = m.user_id
             INNER JOIN game_rooms r ON r.id = m.room_id
+            LEFT JOIN case_loadout banner ON banner.user_id=m.user_id AND banner.slot='Banner'
             WHERE m.room_id = @roomId
             ORDER BY is_host DESC, m.joined_at_utc ASC, m.user_id ASC;
             """, connection, transaction) { CommandTimeout = 5 })
@@ -2348,7 +2361,7 @@ internal static partial class LobbyEndpoints
                 members.Add(new RoomMember(
                     reader.GetUInt64(0).ToString(System.Globalization.CultureInfo.InvariantCulture),
                     reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3),
-                    reader.IsDBNull(4) ? string.Empty : reader.GetString(4), reader.GetBoolean(5),reader.GetBoolean(6)));
+                    reader.IsDBNull(4) ? string.Empty : reader.GetString(4), reader.GetBoolean(5),reader.GetBoolean(6),reader.GetString(7)));
             }
         }
 
@@ -2475,7 +2488,8 @@ internal sealed record SubmitVerifiedMatchResultRequest(
     double? AllCapturedSeconds,
     int? RescueCount,
     double? EscapeSeconds);
-internal sealed record AuthoritativeForfeitRequest(string? MatchId, string? UserId, string? Role);
+// Desertion: the player left while still in play (null from an older server counts as one). False only releases the seat.
+internal sealed record AuthoritativeForfeitRequest(string? MatchId, string? UserId, string? Role, bool? Desertion = null);
 internal sealed record CompleteAuthoritativeMatchRequest(string? MatchId,List<BotExperienceUpload>? BotExperience=null);
 internal sealed record SubmitLeaderboardRecordRequest(
     string? MatchId,
@@ -2493,7 +2507,7 @@ internal sealed record RoomExitResult(bool HadMembership, bool HostTransferred, 
 internal sealed record RoomSummary(
     string RoomId, string JoinCode, string Name, string HostDisplayName, int MemberCount, int MaxPlayers, bool HasPassword);
 internal sealed record RoomMember(
-    string UserId, string DisplayName, bool IsHost, bool Ready, string AssignedRole, bool ReturnedToRoom,bool IsObserver=false);
+    string UserId, string DisplayName, bool IsHost, bool Ready, string AssignedRole, bool ReturnedToRoom,bool IsObserver=false,string BannerId="");
 internal sealed record RoomChatMessage(string MessageId, string DisplayName, string Message, string CreatedAtUtc);
 internal sealed record RoomState(
     string RoomId,

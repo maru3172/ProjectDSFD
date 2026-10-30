@@ -11,6 +11,8 @@ internal static class FeatureChecks
         try
         {
             Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+            if(args.Length==1&&args[0]=="--draw-rules")
+            {CaseDrawChecks.Rules(Check);Console.WriteLine($"PASS: {checks} draw rules");return 0;}
             if(args.Length==2&&args[0]=="--server-administration-ui-checks")
             {
                 ServerAdministrationUiChecks.Run(Path.GetFullPath(args[1]),Check);
@@ -20,6 +22,16 @@ internal static class FeatureChecks
             {
                 string output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);
                 HttpRequestMessage MockCaseRequest(HttpMethod method,string endpoint,object? body)=>new(method,"http://127.0.0.1:1"+endpoint);
+                using(var draw=new CaseDrawAdministrationForm(MockCaseRequest))
+                {
+                    var grid=Children(draw).OfType<DataGridView>().Single();
+                    var defaults=JsonSerializer.SerializeToElement(CaseDraw.Draft.Prizes,new JsonSerializerOptions(JsonSerializerDefaults.Web)).EnumerateArray().ToArray();
+                    CaseDrawAdministrationForm.AddMissingPrizes(grid,defaults.Where(p=>new[]{"afterhours","embers","archive","receipt","points"}.Contains(p.GetProperty("id").GetString())));
+                    grid.Rows[0].Cells["weight"].Value=7;Check(CaseDrawAdministrationForm.AddMissingPrizes(grid,defaults)==24&&grid.Rows.Cast<DataGridViewRow>().Count(r=>!r.IsNewRow)==29,"운영 창에서 기존 5종에 24종 추가해 전체 29종 표시");
+                    Check(Convert.ToInt32(grid.Rows.Cast<DataGridViewRow>().Single(r=>!r.IsNewRow&&Convert.ToString(r.Cells["id"].Value)=="afterhours").Cells["weight"].Value)==7&&CaseDrawAdministrationForm.AddMissingPrizes(grid,defaults)==0,"기존 확률 설정 보존, 기본 상품 반복 추가 중복 없음");
+                    PrepareRender(draw);using var bitmap=new Bitmap(draw.Width,draw.Height);draw.DrawToBitmap(bitmap,new Rectangle(Point.Empty,draw.Size));bitmap.Save(Path.Combine(output,"case-draw-products.png"));
+                    foreach(var b in Children(draw).OfType<Button>())Check(draw.ClientRectangle.Contains(draw.RectangleToClient(b.RectangleToScreen(b.ClientRectangle))),"뽑기 운영 버튼이 화면 안에 표시됨 "+b.Text);
+                }
                 using(var settings=new CaseInvestigationForm(MockCaseRequest))
                 {
                     PrepareRender(settings);var amount=Children(settings).OfType<NumericUpDown>().Single();Check(amount.Minimum==15&&amount.Maximum==117,"사건 조사 수량 도우미 범위 15~117");
@@ -108,6 +120,11 @@ internal static class FeatureChecks
                 string reviewRoot=Path.GetFullPath(Path.Combine("Saved","ReviewRemediation","Launcher"))+Path.DirectorySeparatorChar;
                 if(!root.StartsWith(reviewRoot,StringComparison.OrdinalIgnoreCase))return 24;
                 try{using var lease=ProjectOperationLock.Acquire(root);return 0;}catch(IOException){return 23;}
+            }
+            if (args.Length > 0 && args[0] == "--frontend-integration")
+            {
+                IntegrationChecks.RunAsync(args[1],int.Parse(args[2]),frontendOnly:true).GetAwaiter().GetResult();
+                return 0;
             }
             if (args.Length > 0 && args[0] == "--integration")
             {

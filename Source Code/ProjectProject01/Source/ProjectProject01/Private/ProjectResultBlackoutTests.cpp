@@ -4,6 +4,7 @@
 #include "MultiplayTestPlayerController.h"
 #include "Components/Border.h"
 #include "Components/VerticalBox.h"
+#include "Components/TextBlock.h"
 #include "ProjectDFSDUITheme.h"
 #include "Blueprint/WidgetTree.h"
 #include "Slate/WidgetRenderer.h"
@@ -28,6 +29,7 @@ bool FProjectResultBlackoutTest::RunTest(const FString&)
         FMultiplayTestMatchResult Result;Result.Role=Outcome==TEXT("MannequinVictory")?TEXT("Mannequin"):TEXT("Survivor");
         Result.Outcome=Outcome;Result.bSuccess=Outcome!=TEXT("Eliminated");
         Widget->ConfigureResult(Result);
+        TestFalse(TEXT("Participants retain outcome text without detailed match results"),Widget->ResultText->GetText().ToString().Contains(TEXT("전체 경기 시간"))||Widget->ResultText->GetText().ToString().Contains(TEXT("구출 횟수"))||Widget->ResultText->GetText().ToString().Contains(TEXT("붙잡은 횟수")));
         TestEqual(TEXT("Before viewport handoff, multiplayer background is already fully opaque"),Widget->FadeBackground->GetBrushColor().A,1.f);
         TestEqual(TEXT("Blackout first: the result menu starts hidden"),Widget->ResultMenu->GetRenderOpacity(),0.f);
         // NativeConstruct calls this same initializer. Construction must not reset
@@ -51,6 +53,7 @@ bool FProjectResultBlackoutTest::RunTest(const FString&)
         TestEqual(TEXT("A verification refresh cannot replay blackout"),Widget->FadeBackground->GetBrushColor().A,1.f);
     }
     FMultiplayTestMatchResult Observed;Observed.Role=TEXT("Observer");Widget->ConfigureResult(Observed);
+    TestTrue(TEXT("Open observers retain detailed match results"),Widget->ResultText->GetText().ToString().Contains(TEXT("전체 경기 시간")));
     TestEqual(TEXT("Observer result starts with the world already covered"),Widget->FadeBackground->GetBrushColor().A,1.f);
     TestEqual(TEXT("Observer result contents start hidden for a gradual reveal"),Widget->ResultMenu->GetRenderOpacity(),0.f);
     for(float Delta:{.016f,.5f,2.f})

@@ -239,6 +239,8 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	/** ESC acts like the visible way out: closes a question, leaves the save slots, or asks to quit on the home menu. */
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
 	enum class ESaveSlotConfirmationAction : uint8
@@ -321,6 +323,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UWidgetSwitcher> TitlePageSwitcher;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectConfirmDialogWidget> QuitConfirmDialog; // "게임을 종료하시겠습니까?"
+	bool bQuitConfirmed = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> SinglePlayerButton;
@@ -550,6 +556,15 @@ private:
 	void HandleQuitGameClicked();
 
 	UFUNCTION()
+	void HandleForfeitConfirmClicked();
+
+	UFUNCTION()
+	void HandleForfeitCancelClicked();
+
+	/** True (and the question shown) until the player confirms this exit; a forfeit is spelled out. */
+	bool AskBeforeExit(EPendingExitAction ExitAction);
+
+	UFUNCTION()
 	void HandleLobbyRequestResult(EProjectProject01LobbyOperation Operation, bool bSuccess, const FString& Message);
 
 	UFUNCTION()
@@ -631,7 +646,31 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UButton> ReturnToTitleButton;
 
+	/** Every exit asks first (switcher page 3); leaving while still in play also warns that it forfeits. */
 	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> ExitConfirmTitleText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextBlock> ExitConfirmBodyText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UCheckBox> ExitSkipCheck; // "오늘 하루 다시 묻지 않기" (plain way back only)
+	FString ExitSkipKey;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ForfeitConfirmButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UButton> ForfeitCancelButton;
+
+	EPendingExitAction ForfeitPendingAction = EPendingExitAction::None;
+
+	/** Single player: overwriting a filled save slot and loading (losing unsaved progress) ask 예/아니오 first. */
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectConfirmDialogWidget> ConfirmDialog;
+	bool bSaveOverwriteConfirmed = false, bLoadConfirmed = false;
+	void AskThen(const FString& Question, TFunction<void()> OnYes, const FString& SkipKey = FString());
+	bool bForfeitConfirmed = false;
 	TObjectPtr<class UButton> QuitGameButton;
 
 	UPROPERTY(Transient)
@@ -676,6 +715,12 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	/** Logout, title, room and leaderboard registration ask 예/아니오 like the same buttons elsewhere. */
+	UPROPERTY(Transient)
+	TObjectPtr<class UProjectConfirmDialogWidget> ConfirmDialog;
+	bool bActionConfirmed = false;
+	/** True (question shown) until confirmed; the action then calls its handler again. */
+	bool AskFirst(const FString& Question, const FString& SkipKey, void (UProjectProject01MatchResultWidget::*Handler)());
 	friend class FProjectMatchTimelineWidgetTest;
 	friend class FProjectResultBlackoutTest;
 	void InitializeResultPresentation();
@@ -780,6 +825,7 @@ private:
 	UFUNCTION() void HandleVoiceSettingsClicked();
 	UPROPERTY(Transient) TObjectPtr<class UButton> VoiceSettingsButton;
 	UPROPERTY(Transient) TObjectPtr<class UProjectProject01VoiceSettingsWidget> VoiceSettingsWidget;
+	UPROPERTY(Transient) TObjectPtr<class UProjectConfirmDialogWidget> DefaultsConfirmDialog; // "설정을 초기화하시겠습니까?"
 	enum class EBindingTarget : uint8
 	{
 		None,
@@ -1005,12 +1051,19 @@ public:
 };
 
 UCLASS()
+class PROJECTPROJECT01_API UProjectProject01ComboOptionWidget final : public UUserWidget
+{
+    GENERATED_BODY()
+};
+
+UCLASS()
 class PROJECTPROJECT01_API UProjectProject01LobbyWidget final : public UUserWidget
 {
 	GENERATED_BODY()
 	friend class FProjectLobbySessionPresentationTest;
 	friend class FProjectReviewAsyncStateTest;
 	friend class FProjectLobbyReadabilityTest;
+    friend class FProjectFrontendBehaviorTest;
     friend class UProjectProject01LobbySelectionBinding;
 
 public:
@@ -1022,9 +1075,16 @@ protected:
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	/** ESC presses the way out of the page that shows (a question closes as no). */
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+    void MaybeShowInitialTutorial();
+    UFUNCTION() void HandleInitialTutorialPlay();
+    UFUNCTION() void HandleInitialTutorialSkip();
+    UPROPERTY(Transient) TObjectPtr<class UBorder> InitialTutorialPrompt;
+    UPROPERTY(Transient) TObjectPtr<class UButton> InitialTutorialPlayButton;
     UFUNCTION() void HandleOpenMatchClicked();
     UFUNCTION() void HandleBotMatchClicked();
     UFUNCTION() void HandleBotMatchCreateClicked();
@@ -1103,6 +1163,10 @@ private:
     UPROPERTY(Transient) TObjectPtr<class UButton> LobbySettingsButton;
     UPROPERTY(Transient) TObjectPtr<UProjectProject01SettingsWidget> LobbySettingsWidget;
     UPROPERTY(Transient) TObjectPtr<class UProjectProject01SocialWidget> SocialOverlay;
+    UPROPERTY(Transient) TObjectPtr<class UProjectDesertionNoticeWidget> DesertionNotice; // Shown once per desertion.
+    UPROPERTY(Transient) TObjectPtr<class UProjectConfirmDialogWidget> ConfirmDialog; // Logout / host transfer questions, removal notice.
+    bool bLogoutConfirmed=false,bTransferHostConfirmed=false;
+    UPROPERTY(Transient) TArray<TObjectPtr<class UButton>> EscapeButtons; // ESC presses the first one showing.
     UPROPERTY(Transient) TObjectPtr<class UVerticalBox> MemberProfilePanel;
     UPROPERTY(Transient) TObjectPtr<class UVerticalBox> ObserverProfilePanel;
     UPROPERTY(Transient) TArray<TObjectPtr<UProjectProject01RoomProfileBinding>> MemberProfileBindings;
@@ -1340,6 +1404,7 @@ protected:
 	virtual void NativeDestruct() override;
 
 private:
+	UPROPERTY(Transient) TObjectPtr<class UProjectConfirmDialogWidget> ConfirmDialog; // "리더보드에 등록하시겠습니까?"
 	UFUNCTION()
 	void HandleRefreshClicked();
 

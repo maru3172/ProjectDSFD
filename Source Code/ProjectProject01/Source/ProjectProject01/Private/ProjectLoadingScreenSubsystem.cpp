@@ -45,31 +45,36 @@ namespace ProjectLoading
 				.Text_Lambda([Value](){return FText::FromString(Value());}).AutoWrapText(false)
 				.WrapTextAt_Lambda([this,Small](){return Small?PeerWidth():OwnWidth();});};
 			TSharedRef<SVerticalBox> Own=SNew(SVerticalBox);
-			Own->AddSlot().AutoHeight().Padding(0,0,0,12)[Text([](){return FString(TEXT("게임을 불러오는 중"));},24)];
-			Own->AddSlot().AutoHeight().Padding(0,0,0,8)[Text([this](){const auto S=State->Read();const FString Role=S.OwnRole.IsEmpty()?FString():TEXT(" · ")+S.OwnRole;return FString::Printf(TEXT("%s (나)%s — %d%%"),*S.OwnName,*Role,S.Progress);},22)];
-			Own->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(24)[SNew(SProgressBar).Style(&BarStyle).Percent_Lambda([this](){return TOptional<float>(State->Read().Progress/100.f);}).FillColorAndOpacity(FLinearColor(.66f,.25f,.12f))]];
-			Own->AddSlot().AutoHeight().Padding(0,10,0,0)[Text([this](){const auto S=State->Read();return FString::Printf(TEXT("%s · %d초 경과"),*S.Stage,FMath::Max(0,int32(FPlatformTime::Seconds()-S.Started)));},16)];
-			Own->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(0,8,0,0)
-			[SNew(SButton).Visibility_Lambda([this](){return State->Read().CanCancel?EVisibility::Visible:EVisibility::Collapsed;})
+            // Fixed text rows keep the bottom-anchored gauge still when text wraps or cancel appears.
+            Own->AddSlot().AutoHeight().Padding(0,0,0,12)[SNew(SBox).HeightOverride(36)[Text([](){return FString(TEXT("게임을 불러오는 중"));},24)]];
+            Own->AddSlot().AutoHeight().Padding(0,0,0,8)[SNew(SBox).HeightOverride(56).Clipping(EWidgetClipping::ClipToBounds)[Text([this](){const auto S=State->Read();const FString Role=S.OwnRole.IsEmpty()?FString():TEXT(" · ")+S.OwnRole;return FString::Printf(TEXT("%s (나)%s — %d%%"),*S.OwnName,*Role,S.Progress);},22)]];
+            Own->AddSlot().AutoHeight()[SNew(SBox).Tag(TEXT("ProjectLoadingOwnGauge")).HeightOverride(24)[SNew(SProgressBar).Style(&BarStyle).Percent_Lambda([this](){return TOptional<float>(State->Read().Progress/100.f);}).FillColorAndOpacity(FLinearColor(.66f,.25f,.12f))]];
+            auto Footer=SNew(SHorizontalBox);
+            auto StageText=Text([this](){const auto S=State->Read();return FString::Printf(TEXT("%s · %d초 경과"),*S.Stage,FMath::Max(0,int32(FPlatformTime::Seconds()-S.Started)));},16);
+            StageText->SetWrapTextAt(0.f);StageText->SetAutoWrapText(true);
+            Footer->AddSlot().FillWidth(1).VAlign(VAlign_Center)[StageText];
+            Footer->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(12,0,0,0)
+            [SNew(SButton).Visibility_Lambda([this](){return State->Read().CanCancel?EVisibility::Visible:EVisibility::Hidden;})
 			.OnClicked_Lambda([Cancel=Args._OnCancel](){Cancel.ExecuteIfBound();return FReply::Handled();})
 			[Text([](){return FString(TEXT("세션 대기 취소"));},15)]];
+            Own->AddSlot().AutoHeight().Padding(0,10,0,0)[SNew(SBox).HeightOverride(48).Clipping(EWidgetClipping::ClipToBounds)[Footer]];
 			TSharedRef<SVerticalBox> Peers=SNew(SVerticalBox);
 			for(int32 Index=0;Index<2;++Index)
 			{
 				auto Other=[this,Index]()->TOptional<FProjectLoadingParticipant>
 				{auto S=State->Read();S.Participants.RemoveAll([&S](const auto& P){return P.UserId==S.OwnId || (S.OwnId.IsEmpty() && P.DisplayName==S.OwnName);});return S.Participants.IsValidIndex(Index)?TOptional<FProjectLoadingParticipant>(S.Participants[Index]):TOptional<FProjectLoadingParticipant>();};
-				TSharedRef<SVerticalBox> Row=SNew(SVerticalBox).Visibility_Lambda([Other](){return Other().IsSet()?EVisibility::Visible:EVisibility::Collapsed;});
-				Row->AddSlot().AutoHeight()[Text([Other](){const auto P=Other();return P.IsSet()?FString::Printf(TEXT("%s — %d%%"),*P->DisplayName,P->Progress):FString();},15,true)];
+                TSharedRef<SVerticalBox> Row=SNew(SVerticalBox).Visibility_Lambda([this,Other](){return State->Read().Multiplayer && Other().IsSet()?EVisibility::Visible:EVisibility::Hidden;});
+                Row->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(40).Clipping(EWidgetClipping::ClipToBounds)[Text([Other](){const auto P=Other();return P.IsSet()?FString::Printf(TEXT("%s — %d%%"),*P->DisplayName,P->Progress):FString();},15,true)]];
 				Row->AddSlot().AutoHeight().Padding(0,5,0,5)[SNew(SBox).HeightOverride(12)[SNew(SProgressBar).Style(&BarStyle).Percent_Lambda([Other](){const auto P=Other();return TOptional<float>(P.IsSet()?P->Progress/100.f:0.f);}).FillColorAndOpacity(FLinearColor(.45f,.46f,.48f))]];
-				Row->AddSlot().AutoHeight().Padding(0,0,0,16)[Text([Other](){const auto P=Other();return P.IsSet()?FString(P->Progress==100?TEXT("준비 완료"):P->Progress>=70?TEXT("화면 준비 중"):TEXT("접속·맵 로딩 확인 대기")):FString();},12,true)];
-				Peers->AddSlot().AutoHeight()[Row];
+                Row->AddSlot().AutoHeight().Padding(0,0,0,16)[SNew(SBox).HeightOverride(36)[Text([Other](){const auto P=Other();return P.IsSet()?FString(P->Progress==100?TEXT("준비 완료"):P->Progress>=70?TEXT("화면 준비 중"):TEXT("접속·맵 로딩 확인 대기")):FString();},12,true)]];
+                Peers->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(114)[Row]];
 			}
 			TSharedRef<SOverlay> Layout=SNew(SOverlay)
 				+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(24,0,0,0)
 				[SNew(SBox).WidthOverride_Lambda([this](){return FOptionalSize(PeerWidth());})[Peers]]
 				+SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
 				[SNew(SBox).WidthOverride_Lambda([this](){return FOptionalSize(MessageWidth());})
-				[SNew(STextBlock).Text(FText::FromString(TEXT("모든 참가자가 준비되면 시작됩니다.")))
+                [SNew(STextBlock).Tag(TEXT("ProjectLoadingMessage")).Text_Lambda([this](){return FText::FromString(State->Read().Multiplayer?TEXT("모든 참가자가 준비되면 시작됩니다."):TEXT("로딩중입니다. 잠시만 기다려주세요."));})
 				.Font(FCoreStyle::GetDefaultFontStyle("Regular",23)).ColorAndOpacity(FLinearColor(.88f,.87f,.83f))
 				.AutoWrapText(false).WrapTextAt_Lambda([this](){return MessageWidth();}).Justification(ETextJustify::Center)]]
 				+SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(24,0,24,32)
@@ -81,7 +86,7 @@ namespace ProjectLoading
 	private:
 		float ScreenWidth() const {const float Width=float(GetCachedGeometry().GetLocalSize().X);return Width>0?Width:1280.f;}
 		float PeerWidth() const {return FMath::Min(260.f,ScreenWidth()*.23f);}
-		float MessageWidth() const {return FMath::Min(600.f,ScreenWidth()*.42f);}
+        float MessageWidth() const {return State->Read().Multiplayer?FMath::Min(600.f,ScreenWidth()*.42f):OwnWidth();}
 		float OwnWidth() const {return FMath::Min(900.f,FMath::Max(200.f,ScreenWidth()-48.f));}
 		TSharedPtr<FProjectLoadingScreenState,ESPMode::ThreadSafe> State;
 		FProgressBarStyle BarStyle;
@@ -202,7 +207,7 @@ void UProjectLoadingScreenSubsystem::UpdateParticipants(const FString& Epoch,con
 void UProjectLoadingScreenSubsystem::ReleaseMultiplayerGate(const FString& Epoch)
 {if(State && Epoch==EpochId){FScopeLock Lock(&State->Mutex);State->Data.Released=true;}}
 void UProjectLoadingScreenSubsystem::NotifyViewReady()
-{if(State)State->Advance(100,TEXT("준비 완료 · 다른 참가자를 기다리는 중"));}
+{if(State)State->Advance(100,State->Read().Multiplayer?TEXT("준비 완료 · 다른 참가자를 기다리는 중"):TEXT("준비 완료"));}
 uint8 UProjectLoadingScreenSubsystem::GetLocalProgress() const {return State?State->Read().Progress:0;}
 bool UProjectLoadingScreenSubsystem::FinishPresentation(float RevealSeconds)
 {

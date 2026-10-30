@@ -50,6 +50,7 @@ private:
     TArray<FProjectLocalReplay> Entries;
     FString RecordingName, RecordingMatch, BlockedMatch, Status;
     double PlaybackStartedAt = 0;
+    bool bPlaybackNudged = false; // A short replay stuck before its first frame was moved on once (see Tick).
     bool bRecordingEnabled = false, bListing = false, bDeleting = false, bPlaybackPending = false;
     bool bCatalogueReady = false;
     int64 ListedBytes = 0;

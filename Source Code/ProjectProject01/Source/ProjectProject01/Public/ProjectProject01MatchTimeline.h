@@ -7,7 +7,7 @@ UENUM(BlueprintType)
 enum class EProjectMatchEvent : uint8
 {
     Started, LevelStarted, LevelTravel, DeathCountLost, Eliminated, Escaped,
-    Disconnected, Reconnected, Forfeited, Ended
+    Disconnected, Reconnected, Forfeited, Ended, ReplacedByBot
 };
 
 /** Final-result-only data. No actor references, account IDs, hidden positions or live replication. */

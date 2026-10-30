@@ -427,7 +427,8 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
                 if(Lobby->RoomRoleRow->GetVisibility()==ESlateVisibility::Visible)
                 {
                     auto* Row=CastChecked<UHorizontalBox>(Lobby->RoomRoleRow->GetParent());
-                    auto* NameText=CastChecked<UTextBlock>(Row->GetChildAt(0));
+					UTextBlock* NameText=nullptr;for(auto* Child:Row->GetAllChildren())if(auto* Text=Cast<UTextBlock>(Child)){NameText=Text;break;}
+                    if(!TestNotNull(TEXT("Player name remains present beside the banner"),NameText))continue;
                     const auto LabelGeometry=NameText->GetCachedGeometry(),RoleGeometry=Lobby->RoomRoleRow->GetCachedGeometry(),RowGeometry=Row->GetCachedGeometry();
                     TestTrue(TEXT("Own role chooser sits at the right edge of the participant card"),FMath::Abs(RoleGeometry.GetAbsolutePosition().X+RoleGeometry.GetAbsoluteSize().X-RowGeometry.GetAbsolutePosition().X-RowGeometry.GetAbsoluteSize().X)<1);
                     TestTrue(TEXT("Name retains space and cannot paint over the role chooser"),LabelGeometry.GetAbsoluteSize().X>24&&LabelGeometry.GetAbsolutePosition().X+LabelGeometry.GetAbsoluteSize().X<=RoleGeometry.GetAbsolutePosition().X+1&&NameText->GetClipping()==EWidgetClipping::ClipToBounds);
@@ -442,6 +443,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 	RenderLayout(TEXT("FixedBrowser"),{Lobby->JoinRoomButton,Lobby->OpenCodeJoinButton,Lobby->OpenCreateRoomButton,BrowserBack,Lobby->LogoutButton});
 	State->CurrentRoom={};State->CurrentRoom.RoomId=TEXT("layout-host");State->CurrentRoom.Name=TEXT("함께 탈출해요");State->CurrentRoom.JoinCode=TEXT("ABCD1234");
 	State->CurrentRoom.bIsHost=true;State->CurrentRoom.bGameServerOnline=true;State->CurrentRoom.bCanStart=true;
+    M1.BannerId=TEXT("banner_afterhours");M2.BannerId=TEXT("banner_embers");
 	auto ObserverMember=M2;ObserverMember.UserId=TEXT("303");ObserverMember.DisplayName=TEXT("관전자");ObserverMember.bIsObserver=true;
 	State->CurrentRoom.Members={M1,M2,ObserverMember};State->CurrentRoom.Bots={BotA};Lobby->RefreshCurrentRoomView();
 	TestEqual(TEXT("Host administration starts folded, leaving room for chat"),Lobby->RoomToolsFrame->GetVisibility(),ESlateVisibility::Collapsed);

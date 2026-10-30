@@ -956,7 +956,17 @@ inline float LurkPatience(const Difficulty& D,const Persona& P){return 8.f+10.f*
 // all ten bodies. The rest keep their usual AI. The endgame table frees a few more from level 2 up.
 // Balance runs only: a value >= 0 replaces the count (0 stands in for a human mannequin, who parks nothing).
 inline int& ParkOverride(){static int Value=-1;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,5,0},E[]={8,8,6,4,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+// Balance runs only: one survivor bot (the simulation's "SimHelper") behaves as if a human were on its team (helper
+// mode) and the mannequin treats the match as one human with a bot partner; the other survivor bot plays the human.
+inline bool& HumanTeamOverride(){static bool Value=false;return Value;}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,5,0},E[]={8,8,6,5,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+// One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
+// values apply only then (two humans and bot-only teams keep the plain tables).
+inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int S[]={0,0,0,1,0};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return std::min(9,Base+S[std::max(1,std::min(5,D.Level))-1]);}
+inline float SoloAttackScale(const Difficulty& D,bool SoloHuman){static constexpr float S[]={1,1,1,1,1};return SoloHuman?S[std::max(1,std::min(5,D.Level))-1]:1.f;}
+// With a lone human, the helper falling must not turn the whole mannequin on that human: lower levels keep their
+// ordinary hunt (no endgame push, no extra bodies woken), higher levels still close the match.
+inline float SoloEndgameScale(const Difficulty& D,bool SoloHuman){static constexpr float S[]={0,0,0,1,1};return SoloHuman?S[std::max(1,std::min(5,D.Level))-1]:1.f;}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the

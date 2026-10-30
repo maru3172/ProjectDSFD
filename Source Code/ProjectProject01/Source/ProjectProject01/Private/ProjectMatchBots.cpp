@@ -250,7 +250,13 @@ bool UProjectMatchBots::SpawnParticipants()
     if(!World||!GM->bServerWorldInitialized||!World->HasBegunPlay())return false;
     bool HasHuman=false;for(const auto& Pair:GM->MatchPlayerRecords)HasHuman|=Pair.Key.IsValid()&&!Pair.Value.bServerBot;
     if(!HasHuman&&!GM->HasOpenObservers())return false; // A pre-login reservation cannot start an unattended match.
-    for(const auto& Spec:Specs)
+    for(const auto* List:{&Specs,&StandIns})for(const auto& Spec:*List)if(!SpawnOne(Spec,true)){Failed=true;return false;}
+    Spawned=true;GM->TryStartAuthoritativeMatch();return true;
+}
+
+AMultiplayTestPlayerController* UProjectMatchBots::SpawnOne(const FProjectMatchBotSpec& Spec,bool Arrival)
+{
+    auto* GM=Mode();auto* World=GM->GetWorld();
     {
         const FString Id=TEXT("Bot:")+Spec.BotId;
         AMultiplayTestPlayerController* PC=nullptr;
@@ -259,7 +265,7 @@ bool UProjectMatchBots::SpawnParticipants()
         if(!PC)
         {
             PC=World->SpawnActorDeferred<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,GM,nullptr,ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-            if(!PC){Failed=true;return false;}PC->bServerControlledBot=true;
+            if(!PC)return nullptr;PC->bServerControlledBot=true;
             FProjectProject01ValidatedJoinClaim Claim;Claim.UserId=Id;Claim.DisplayName=Spec.DisplayName;Claim.Role=Spec.Role;Claim.MatchId=MatchId;Claim.RoomId=SourceRoom;
             PC->SetAuthenticatedLobbyIdentity(Claim);UGameplayStatics::FinishSpawningActor(PC,FTransform::Identity);
         }
@@ -279,25 +285,76 @@ bool UProjectMatchBots::SpawnParticipants()
             // Seamless travel may restart the controller with DefaultPawnClass. Replace only
             // that bot body, otherwise it has no server-driven movement and stands still.
             APawn* OldPawn=PC->GetPawn();if(OldPawn){PC->UnPossess();OldPawn->Destroy();}
-            AActor* Start=GM->ChoosePlayerStart(PC);if(!Start){Failed=true;return false;}
+            AActor* Start=GM->ChoosePlayerStart(PC);if(!Start)return nullptr;
             FVector Location=Start->GetActorLocation();const auto* Template=GM->DefaultPawnClass?Cast<ACharacter>(GM->DefaultPawnClass->GetDefaultObject()):GetDefault<AProjectMatchBotCharacter>();
             const float Half=Template?Template->GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight():88.f;
             if(auto* Nav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
             {FNavLocation Floor;if(Nav->ProjectPointToNavigation(Location,Floor,FVector(180,180,300)))Location=Floor.Location+FVector(0,0,Half+2);}
             FActorSpawnParameters Params;Params.Owner=PC;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
             auto* Pawn=World->SpawnActor<AProjectMatchBotCharacter>(AProjectMatchBotCharacter::StaticClass(),Location,Start->GetActorRotation(),Params);
-            if(!Pawn){Failed=true;return false;}
+            if(!Pawn)return nullptr;
             Pawn->ApplyDefaultPawnAppearance(); // Same call runs on every client in the pawn's BeginPlay/Tick.
             PC->Possess(Pawn);Pawn->SetAutonomousProxy(true);GM->SetPlayerDefaults(Pawn);PC->SetControlRotation(Start->GetActorRotation());
             if(Previous)Pawn->SetRemainingDeathCountForGameMode(Previous->RemainingDeathCount);
             Pawn->GetCharacterMovement()->bCanWalkOffLedges=false;
         }
         if(Spec.Role==TEXT("Mannequin"))GM->AssignRandomInitialMannequinView(PC);
-        GM->RegisterMatchPlayer(PC);GM->InitializeLoadingGate(PC);Controllers.Add(Spec.BotId,PC);
+        // A stand-in joins a running match: the loading gate is long released.
+        GM->RegisterMatchPlayer(PC);if(Arrival)GM->InitializeLoadingGate(PC);Controllers.Add(Spec.BotId,PC);
         if(Spec.Role==TEXT("Survivor"))if(auto* Record=GM->MatchPlayerRecords.Find(PC))
             Record->SurvivorPawn=Cast<APlayerCharacter>(PC->GetPawn());
+        return PC;
     }
-    Spawned=true;GM->TryStartAuthoritativeMatch();return true;
+}
+
+bool UProjectMatchBots::AddStandIn(const FMultiplayTestServerPlayerRecord& Leaver)
+{
+    auto* GM=Mode();
+    if(!GM||!GM->HasAuthority()||Leaver.Role!=TEXT("Survivor")||Leaver.UserId.IsEmpty()||StandInFor.FindKey(Leaver.UserId))return false;
+    if(MatchId.IsEmpty())MatchId=GM->AuthoritativeMatchId;
+    if(SourceRoom.IsEmpty())SourceRoom=FGuid::NewGuid().ToString();
+    // Beside a human the stand-in is a helper (TickSurvivor sees the human ally). Level: the bot mannequin's, else average.
+    int32 Level=3;for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))Level=Spec.Difficulty;
+    const FProjectMatchBotSpec Spec{FGuid::NewGuid().ToString(),FString::Printf(TEXT("%s (봇)"),*Leaver.DisplayName.Left(40)),TEXT("Survivor"),Level};
+    auto* PC=SpawnOne(Spec,false);auto* Pawn=PC?Cast<APlayerCharacter>(PC->GetPawn()):nullptr;
+    if(!Pawn)
+    {
+        if(PC){if(APawn* Body=PC->GetPawn()){PC->UnPossess();Body->Destroy();}GM->MatchPlayerRecords.Remove(PC);PC->Destroy();}
+        Controllers.Remove(Spec.BotId);return false;
+    }
+    // Plays on from where the leaver was, with the lives the leaver had.
+    Pawn->SetActorTransform(Leaver.LastPawnTransform,false,nullptr,ETeleportType::TeleportPhysics);PC->SetControlRotation(Leaver.LastPawnTransform.Rotator());
+    Pawn->SetRemainingDeathCountForGameMode(Leaver.RemainingDeathCount);
+    if(auto* Record=GM->MatchPlayerRecords.Find(PC)){Record->RemainingDeathCount=Leaver.RemainingDeathCount;Record->SurvivorState=EMultiplayTestSurvivorState::Active;}
+    PC->SetServerMatchState(GM->AuthoritativeMatchPhase,EMultiplayTestSurvivorState::Active);
+    StandIns.Add(Spec);StandInFor.Add(Spec.BotId,Leaver.UserId);Spawned=true;
+    return true;
+}
+
+bool UProjectMatchBots::ReleaseStandIn(const FString& UserId,FTransform& Where,int32& Lives,EMultiplayTestSurvivorState& State)
+{
+    auto* GM=Mode();const FString* BotId=GM?StandInFor.FindKey(UserId):nullptr;if(!BotId)return false;
+    const FString Id=*BotId;StandInFor.Remove(Id);StandIns.RemoveAll([&](const FProjectMatchBotSpec& Spec){return Spec.BotId==Id;});
+    auto* PC=Controllers.FindRef(Id).Get();Controllers.Remove(Id);if(!PC)return false;
+    const auto* Record=GM->MatchPlayerRecords.Find(PC);
+    if(Record){State=Record->SurvivorState;Lives=Record->RemainingDeathCount;}
+    if(auto* Pawn=Cast<APlayerCharacter>(PC->GetPawn())){Where=Pawn->GetActorTransform();Lives=Pawn->GetRemainingDeathCount();PC->UnPossess();Pawn->Destroy();}
+    else if(Record&&Record->SurvivorPawn.IsValid()){Where=Record->SurvivorPawn->GetActorTransform();Record->SurvivorPawn->Destroy();}
+    GM->MatchPlayerRecords.Remove(PC);GM->ExplicitRoleControllers.Remove(PC);PC->Destroy();
+    return Record!=nullptr;
+}
+
+void UProjectMatchBots::KeepStandIn(const FString& UserId)
+{
+    if(const FString* BotId=StandInFor.FindKey(UserId))StandInFor.Remove(FString(*BotId));
+}
+
+void UProjectMatchBots::AcceptStandIns(const FString& Match,const TArray<FProjectMatchBotSpec>& Bots,const TMap<FString,FString>& Owners)
+{
+    if(Bots.IsEmpty())return;
+    if(MatchId.IsEmpty())MatchId=Match;if(SourceRoom.IsEmpty())SourceRoom=FGuid::NewGuid().ToString();
+    for(const auto& Spec:Bots)if(!StandIns.ContainsByPredicate([&](const FProjectMatchBotSpec& S){return S.BotId==Spec.BotId;}))StandIns.Add(Spec);
+    for(const auto& Pair:Owners)StandInFor.Add(Pair.Key,Pair.Value);
 }
 
 void UProjectMatchBots::NoteProgress(double Now)
@@ -322,7 +379,7 @@ void UProjectMatchBots::NoteProgress(double Now)
 }
 void UProjectMatchBots::Tick(float Delta)
 {
-    auto* GM=Mode();if(!GM||!GM->HasAuthority()||Specs.IsEmpty())return;
+    auto* GM=Mode();if(!GM||!GM->HasAuthority()||(Specs.IsEmpty()&&StandIns.IsEmpty()))return;
     if(Failed)
     {
         if(GM->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::Ending||GM->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::Results)return;
@@ -348,6 +405,8 @@ void UProjectMatchBots::Tick(float Delta)
         auto* PC=Controllers.FindRef(Spec.BotId).Get();if(!PC){Failed=true;return;}
         if(Spec.Role==TEXT("Mannequin"))TickMannequin(PC,Spec,Delta);else TickSurvivor(PC,Spec,Delta);
     }
+    // A stand-in that cannot be found is simply gone (handed back); never an infrastructure failure.
+    for(const auto& Spec:TArray<FProjectMatchBotSpec>(StandIns))if(auto* PC=Controllers.FindRef(Spec.BotId).Get())TickSurvivor(PC,Spec,Delta);
 }
 void UProjectMatchBots::Sense(APawn* Observer,AActor* Target,uint32 Team,FProjectMatchBotBrain& B,bool Visible,bool HumanAlly)
 {
@@ -736,9 +795,17 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         if(BotBuddy&&Pair.Value.UserId.StartsWith(TEXT("Bot:")))BuddyBotId=Pair.Value.UserId.RightChop(4);
         break;
     }
+    // A human on this team at any point of the match (still playing, caught, escaped or gone) keeps the bot a helper
+    // for the whole match: it does not switch to bot-team tactics once the human is out.
+    // Sim stand-in for one human + bot partner: only the partner (tagged by the simulation) is a helper; the other bot
+    // plays the human. The helper treats that bot as its human partner in full (follows it, pings exits to it, reads
+    // nothing from its memory), as it would beside a real player.
+    if(HumanTeamOverride()&&Spec.DisplayName==TEXT("SimHelper")&&Buddy){HumanAlly=true;BotBuddy=false;BuddyBotId.Reset();}
+    bool HumanTeam=HumanAlly||(HumanTeamOverride()&&Spec.DisplayName==TEXT("SimHelper"));
+    for(const auto& Pair:GM->MatchPlayerRecords)HumanTeam|=Pair.Key.Get()!=PC&&Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bServerBot;
     // Level-scaled team tactics and psychological plays only when no human is on this team.
     // Beside a human, bots stay helpers (see Policy: no deception, short cover).
-    const bool TeamPlay=!HumanAlly;
+    const bool TeamPlay=!HumanTeam;
     // Survivor plan: together suits careful/supportive characters, split suits bold runners. Beside a human the
     // bot stays a helper, so the plan shows only lightly.
     {
@@ -749,7 +816,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Endgame: the other survivor is caught, escaped or through the exit -> hurry out.
     {
         int32 Survivors=0,ActiveSurvivors=0;
-        for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")){++Survivors;ActiveSurvivors+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;}
+        for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++Survivors;ActiveSurvivors+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;}
         Urgency=EndgameUrgency(Level,Survivors,ActiveSurvivors);B.Policy.Urgency=Urgency;
     }
     const bool Rush=Urgency>0;
@@ -825,11 +892,11 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             const auto* Body=Cast<AMannequinAICharacter>(Threat.Actor.Get());
             Threat.Covered=Body&&BuddyPC&&GM->CanSurvivorSeeMannequin(BuddyPC,Body);
         }
-        Sense(Pawn,Target,2,B,Target!=nullptr,HumanAlly);
+        Sense(Pawn,Target,2,B,Target!=nullptr,HumanTeam);
         if(!B.Visible&&B.Policy.Random()<B.Policy.Profile.Sharing)
             for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==2&&Entry.Seen.Target&&Entry.Seen.At>=0&&Now-Entry.Seen.At<=B.Policy.Profile.Memory)
                 for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(It->GetUniqueID()==Entry.Seen.Target)
-                {if(B.Target.Get()!=*It||Now-B.SeenAt>B.Policy.Profile.Memory)B.ReactAt=Now+B.Policy.Profile.Reaction*(HumanAlly?1.25:1.);B.Target=*It;B.Known=U(Entry.Seen.Position);B.SeenAt=Entry.Seen.At;break;}
+                {if(B.Target.Get()!=*It||Now-B.SeenAt>B.Policy.Profile.Memory)B.ReactAt=Now+B.Policy.Profile.Reaction*(HumanTeam?1.25:1.);B.Target=*It;B.Known=U(Entry.Seen.Position);B.SeenAt=Entry.Seen.At;break;}
     }
     // Combo feedback: a play worked for the survivor if it ended with no unfrozen mannequin in reach.
     {
@@ -862,7 +929,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             }
         }
     }
-    auto C=Context(B,false);C.HasAlly=Buddy!=nullptr;C.HumanAlly=HumanAlly;C.Stamina=Pawn->GetCurrentStamina()/FMath::Max(1.f,Pawn->GetMaxStamina());
+    auto C=Context(B,false);C.HasAlly=Buddy!=nullptr;C.HumanAlly=HumanTeam;C.Stamina=Pawn->GetCurrentStamina()/FMath::Max(1.f,Pawn->GetMaxStamina());
     // Multiplayer has zero EXTRA death counts: zero means alive until caught, not critically hurt.
     C.Health=Pawn->IsGameOver()?0.f:1.f;
     if(C.Visible||C.Remembered)C.Range=FMath::Clamp(FVector::Dist2D(Pawn->GetActorLocation(),B.Known)/2400.f,0.f,1.f);
@@ -956,7 +1023,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     bool Watching=WatchIndex>=0&&B.Disciplined&&!InWatchLapse(Now,Quirks.Phase,Level)&&Now>=B.LookAwayUntil;
     if(!Watching){if(Now>=B.LookAwayUntil)B.WatchSince=-1;}
     else if(B.WatchSince<0)B.WatchSince=Now;
-    else if(Now-B.WatchSince>GazeHoldLimit(Level,HumanAlly))
+    else if(Now-B.WatchSince>GazeHoldLimit(Level,HumanTeam))
     {
         B.LookAwayUntil=Now+LookAwaySeconds(Level)*(.8f+.4f*B.Policy.Random());B.WatchSince=-1;Watching=false;
         // Eyes go to the way ahead (or a quick look around), not back to the mannequin; skilled survivors also check behind.
@@ -1276,8 +1343,8 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(Stalled&&Now>=Mine.StallLogAt)
     {
         Mine.StallLogAt=Now+10.;
-        UE_LOG(LogTemp,Display,TEXT("[BotStall] Survivor=%s L%d Tactic=%d Knows=%d Watching=%d Danger=%d Holding=%d PlayHold=%d Listening=%d Lurking=%d Moving=%d HasGoal=%d Goal=%.0fm Exit=%s Plays=%d Stamina=%.2f"),
-            *Spec.BotId.Left(8),Level.Level,static_cast<int32>(Tactic),Knows,Watching,Danger,Holding,PlayHold,Listening,Lurking,Moving,HasGoal,FVector::Dist2D(Here,Goal)/100.f,
+        UE_LOG(LogTemp,Display,TEXT("[BotStall] Survivor=%s L%d Helper=%d Tactic=%d Knows=%d Watching=%d Danger=%d Holding=%d PlayHold=%d Listening=%d Lurking=%d Moving=%d HasGoal=%d Goal=%.0fm Exit=%s Plays=%d Stamina=%.2f"),
+            *Spec.BotId.Left(8),Level.Level,HumanTeam,static_cast<int32>(Tactic),Knows,Watching,Danger,Holding,PlayHold,Listening,Lurking,Moving,HasGoal,FVector::Dist2D(Here,Goal)/100.f,
             *GetNameSafe(Mine.Objective.Get()),Dir.ActiveCount(),C.Stamina);
     }
     Pawn->SetBotSprint(Moving&&!B.Recovering&&(PlayRun||(!WatchRetreating&&!(Progress&&Watching)&&((Knows&&Tactic!=Action::Search&&!Progress)||Dash))));
@@ -1323,11 +1390,14 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     // Play style decides how readily this bot reaches for each play; the Director still enforces level, tells and cooldowns.
     const uint8 StyleId=static_cast<uint8>(StyleFor(Persona::From(GetTypeHash(Spec.BotId)*2654435761u+1u),Spec.Role==TEXT("Mannequin")));
     // Endgame: only one survivor left in play -> commit to catching it.
-    float Urgency=0;
+    float Urgency=0;bool SoloHuman=HumanTeamOverride();
     {
-        int32 Total=0,ActiveCount=0;
-        for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")){++Total;ActiveCount+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;}
-        Urgency=EndgameUrgency(Level,Total,ActiveCount);
+        int32 Total=0,ActiveCount=0,Humans=0;
+        for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++Total;ActiveCount+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;Humans+=!Pair.Value.bServerBot;}
+        // One human with a bot partner, for the whole match (the records keep caught and escaped players; one who left
+        // alive is out of the records or marked replaced, and its stand-in bot counts instead).
+        SoloHuman|=Humans==1&&Total==2;
+        Urgency=EndgameUrgency(Level,Total,ActiveCount)*SoloEndgameScale(Level,SoloHuman);
     }
     // Deeper floors: firmer judgement; part of it shows as steady pressure even before the endgame.
     const float Resolve=FloorResolve(Level,FloorDepth);
@@ -1482,7 +1552,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     if(Now>=Mine.ParkCheckAt)
     {
         Mine.ParkCheckAt=Now+1.5;
-        const int32 ParkCount=ParkedBodies(Level,Urgency>0);
+        const int32 ParkCount=ParkedBodies(Level,Urgency>0,SoloHuman);
         FVector Ref=Body->GetActorLocation();double RefAt=-1;
         for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==1&&Entry.Seen.Target&&Entry.Seen.At>RefAt){RefAt=Entry.Seen.At;Ref=U(Entry.Seen.Position);}
         TArray<AMannequinAICharacter*,TInlineAllocator<10>> Order;for(auto* X:Bodies)if(X!=Body)Order.Add(X);
@@ -1799,7 +1869,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* Target=Cast<APlayerCharacter>(B.Target.Get());
     if(Target&&B.Visible&&!Target->IsGameOver()&&Tactic!=Action::Lure&&!Decoy&&Now>=B.AttackAt)
     {
-        B.AttackAt=Now+FMath::Lerp(1.6f,.32f,B.Policy.Profile.Skill)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
+        B.AttackAt=Now+FMath::Lerp(Level.Level==1?1.75f:Level.Level==2?1.6f:2.1f,.33f,B.Policy.Profile.Skill)*SoloAttackScale(Level,SoloHuman)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
         bool Watched=false;for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.IsValid()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)Watched|=GM->CanSurvivorSeeMannequin(Pair.Key.Get(),Body);
         if(!Watched&&!Body->IsFrozenBySurvivorVision()&&Offset.SizeSquared()<=FMath::Square(GM->MultiplayerManualAttackRange)&&FVector::DotProduct(Body->GetActorForwardVector(),Offset.GetSafeNormal())>=.25f&&AI->LineOfSightTo(Target)&&Target->HandleMannequinCatch(Body))
         {

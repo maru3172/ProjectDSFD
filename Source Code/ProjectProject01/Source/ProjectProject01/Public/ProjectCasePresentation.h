@@ -27,6 +27,7 @@ namespace ProjectCasePresentation
     inline FLinearColor FrameColor(const TSharedPtr<FJsonObject>& State)
     {
         const FString Id=Equipped(State,TEXT("Frame"));
+        if(Id==TEXT("frame_archive"))return FLinearColor(.24f,.26f,.28f);
         if(Id.StartsWith(TEXT("level_frame_")))return FMath::Lerp(FLinearColor(.22f,.12f,.06f),FLinearColor(.46f,.12f,.10f),FMath::Clamp(FCString::Atoi(*Id.RightChop(12))/100.f,0.f,1.f));
         if(Id.StartsWith(TEXT("investigation_seal_")))return FMath::Lerp(FLinearColor(.25f,.16f,.05f),FLinearColor(.50f,.36f,.10f),FMath::Clamp(FCString::Atoi(*Id.RightChop(19))/13.f,0.f,1.f));
         return Id==TEXT("frame_crimson")?FLinearColor(.32f,.065f,.05f):Id==TEXT("frame_silver")?FLinearColor(.29f,.32f,.35f):FLinearColor(.065f,.07f,.075f);

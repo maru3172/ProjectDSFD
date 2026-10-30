@@ -101,6 +101,14 @@ bool UProjectMatchReplay::Tick(float)
     {
         if (World->IsPlayingReplay() && Cast<AProjectReplayController>(GetGameInstance()->GetFirstLocalPlayerController()))
         { bPlaybackPending = false; OnChanged.Broadcast(); }
+        // Engine trap with replays shorter than its 5 s read-ahead: the first tick buffers the whole file, processes no
+        // frame when that tick is shorter than the first recorded frame, and from then on "no data on frame 0" waits
+        // forever. Moving to 0.5 s once makes the driver process the buffered frames.
+        else if (auto* Driver = World->IsPlayingReplay() ? World->GetDemoNetDriver() : nullptr;
+            Driver && !bPlaybackNudged && Driver->GetDemoFrameNum() == 0 && Driver->GetDemoCurrentTime() > 0 &&
+            Driver->GetReplayStreamer().IsValid() && !Driver->GetReplayStreamer()->IsDataAvailable() &&
+            FPlatformTime::Seconds() - PlaybackStartedAt > 1.0)
+        { bPlaybackNudged = true; Driver->GotoTimeInSeconds(FMath::Min(.5f, Driver->GetDemoTotalTime())); }
         else if (FPlatformTime::Seconds() - PlaybackStartedAt > 30)
         { Status = TEXT("리플레이를 불러오지 못했습니다. 파일과 게임 버전을 확인하세요."); ExitPlayback(); }
         return true;
@@ -187,7 +195,7 @@ bool UProjectMatchReplay::Play(const FString& Name)
     { Status = TEXT("경기에서 나온 뒤 로비에서 저장된 리플레이를 선택하세요."); OnChanged.Broadcast(); return false; }
     if (const auto* Lobby = GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>(); Lobby && Lobby->HasCurrentRoom())
     { Status = TEXT("방에서 나온 뒤 리플레이를 재생하세요."); OnChanged.Broadcast(); return false; }
-    StopRecording(); bPlaybackPending = true; PlaybackStartedAt = FPlatformTime::Seconds(); PlaybackDepartureWorld = World;
+    StopRecording(); bPlaybackPending = true; bPlaybackNudged = false; PlaybackStartedAt = FPlatformTime::Seconds(); PlaybackDepartureWorld = World;
     auto* Replays = GetGameInstance()->GetSubsystem<UReplaySubsystem>();
     if (!Replays || !Replays->PlayReplay(Name, nullptr, StreamOptions()))
     { bPlaybackPending = false; Status = TEXT("리플레이 재생을 시작하지 못했습니다."); OnChanged.Broadcast(); return false; }

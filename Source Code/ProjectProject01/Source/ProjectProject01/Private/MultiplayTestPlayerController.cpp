@@ -877,6 +877,10 @@ void AMultiplayTestPlayerController::SetServerMatchState(
 	const EMultiplayTestSurvivorState PreviousSurvivorState = SurvivorState;
 	MatchPhase = NewPhase;
 	SurvivorState = NewSurvivorState;
+    if(const auto* Mode=GetWorld()?GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>():nullptr)
+        bLeavingForfeits=!bServerControlledBot&&NewPhase==EMultiplayTestMatchPhase::InProgress&&Mode->CountsAsDesertion()&&
+            (NewSurvivorState==EMultiplayTestSurvivorState::Active||NewSurvivorState==EMultiplayTestSurvivorState::TransitionWaiting||
+             (NewSurvivorState==EMultiplayTestSurvivorState::NotApplicable&&(AuthenticatedRole==TEXT("Mannequin")||IsValid(GetViewedMannequin()))));
 	if (NewSurvivorState==EMultiplayTestSurvivorState::Active || NewSurvivorState==EMultiplayTestSurvivorState::NotApplicable)
 		SurvivorSpectatorView={};
 	ForceNetUpdate();
@@ -1490,8 +1494,7 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 	UProjectProject01GameUserSettings* EditorSettings = UProjectProject01GameUserSettings::Get();
 	// PIE만 로컬 테스트 상태를 사용하며, 패키징된 클라이언트는 아래 계정 상태만 사용한다.
 	bShouldShowMannequinGuide = IsValid(EditorSettings) &&
-		(!EditorSettings->HasSeenMannequinGuide() ||
-			(GetWorld() && GetWorld()->WorldType == EWorldType::PIE));
+		!EditorSettings->HasSeenMannequinGuide();
 #else
 	UProjectProject01AuthSubsystem* Auth = GetGameInstance()
 		? GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()
@@ -1892,6 +1895,7 @@ void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetime
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, ViewedMannequin, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, MatchPhase, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorState, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bLeavingForfeits, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorSpectatorView, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bManualMannequinCommandIssued, COND_OwnerOnly);
 }

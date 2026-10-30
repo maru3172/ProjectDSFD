@@ -1867,7 +1867,8 @@ void UProjectProject01GameInstance::NotifyAuthoritativeMatchEnded(const FString&
 void UProjectProject01GameInstance::NotifyAuthoritativePlayerForfeit(
 	const FString& MatchId,
 	const FString& UserId,
-	const FString& Role)
+	const FString& Role,
+	const bool bDesertion)
 {
 	if (!FProjectResultOutbox::IsProductionMatchId(MatchId)) return;
 	const UWorld* World = GetWorld();
@@ -1888,6 +1889,7 @@ void UProjectProject01GameInstance::NotifyAuthoritativePlayerForfeit(
 	Json->SetStringField(TEXT("matchId"), MatchId);
 	Json->SetStringField(TEXT("userId"), UserId);
 	Json->SetStringField(TEXT("role"), Role);
+	Json->SetBoolField(TEXT("desertion"), bDesertion);
 	FString Body;
 	FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Body));
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();

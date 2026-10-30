@@ -84,15 +84,16 @@ internal static class CaseRecords
                 await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_mission_progress(user_id,mode,period_id,metric,value) VALUES(@u,@mode,@period,@metric,@v) ON DUPLICATE KEY UPDATE value=LEAST(1000000,value+@v)",ct,("u",user),("mode",mode),("period",period),("metric",metric.Item1),("v",metric.Item2));
         await Unlock(c,tx,user,mode=="Bot"?"bot_first":"pvp_first","Server",ct);
         if(won)await Unlock(c,tx,user,role=="Survivor"?"survivor_escape":"mannequin_victory","Server",ct);
+        await MainQuest.VerifiedAsync(c,tx,user,match,role,won,Convert.ToInt32(rows[0]["capture_count"]),Convert.ToDouble(rows[0]["escape_seconds"]),ct);
     }
     private static Task Unlock(MySqlConnection c,MySqlTransaction tx,ulong user,string code,string source,CancellationToken ct)=>
         CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO case_achievements(user_id,code,source) VALUES(@u,@code,@source)",ct,("u",user),("code",code),("source",source));
     internal static async Task<object> PublicProfileAsync(MySqlConnection c,ulong user,CancellationToken ct)
     {
         var rows=await CommunityEndpoints.Rows(c,null,"SELECT xp FROM case_accounts WHERE user_id=@u",ct,("u",user));long xp=rows.Count==0?0:Convert.ToInt64(rows[0]["xp"]);
-        return new{level=Level(xp),roleExperience=await CommunityEndpoints.Rows(c,null,"SELECT role,xp FROM case_role_xp WHERE user_id=@u ORDER BY role",ct,("u",user)),loadout=await CommunityEndpoints.Rows(c,null,"SELECT slot,item_id itemId FROM case_loadout WHERE user_id=@u ORDER BY slot",ct,("u",user))};
+        return new{level=Level(xp),displayedBanners=await CaseCollection.BannersAsync(c,null,user,ct),featured=await CaseCollection.FeaturedAsync(c,null,user,ct),cosmetics=CaseCollection.Items,roleExperience=await CommunityEndpoints.Rows(c,null,"SELECT role,xp FROM case_role_xp WHERE user_id=@u ORDER BY role",ct,("u",user)),loadout=await CommunityEndpoints.Rows(c,null,"SELECT slot,item_id itemId FROM case_loadout WHERE user_id=@u ORDER BY slot",ct,("u",user))};
     }
-    private static async Task<object> Snapshot(MySqlConnection c,MySqlTransaction tx,ulong user,IConfiguration config,CancellationToken ct)
+    internal static async Task<object> Snapshot(MySqlConnection c,MySqlTransaction tx,ulong user,IConfiguration config,CancellationToken ct)
     {
         var account=await LockAccountAsync(c,tx,user,ct);long xp=Convert.ToInt64(account["xp"]);
         var dateRows=await CommunityEndpoints.Rows(c,tx,"SELECT UTC_TIMESTAMP(6) utc",ct);
@@ -110,10 +111,11 @@ internal static class CaseRecords
         }
         string? incident=config["CaseRecords:IncidentTimestamp"]; // A story timestamp, not the season start date.
         int level=Level(xp);long levelStartXp=(long)(level-1)*(level-1)*100,nextLevelXp=level>=100?xp:(long)level*level*100;
-        return new{userId=user.ToString(),level,xp,levelStartXp,nextLevelXp,levelProgress=level>=100?1.0:Math.Clamp((xp-levelStartXp)/(double)(nextLevelXp-levelStartXp),0,1),credits=Convert.ToInt64(account["credits"]),currencyName="기록 포인트",missionWeeklyEarned=budget.Earned,missionWeeklyLimit=budget.Limit,missions,
+        var collection=await CaseCollection.SnapshotAsync(c,tx,user,ct);
+        return new{userId=user.ToString(),collection,level,xp,levelStartXp,nextLevelXp,levelProgress=level>=100?1.0:Math.Clamp((xp-levelStartXp)/(double)(nextLevelXp-levelStartXp),0,1),credits=Convert.ToInt64(account["credits"]),currencyName="기록 포인트",missionWeeklyEarned=budget.Earned,missionWeeklyLimit=budget.Limit,missions,
             levelRewards=Enumerable.Range(1,20).Select(n=>n*5).Select(n=>new{level=n,credits=CaseLevelRewards.Credits(n),itemId=CaseLevelRewards.Item(n),claimed=claimed.Contains(CaseLevelRewards.Key(n)),available=level>=n&&!claimed.Contains(CaseLevelRewards.Key(n))}),
             season=new{id=Season,title="_OMINOUS ENTRY",incidentTimestamp=string.IsNullOrWhiteSpace(incident)?"202X-XX-XX 18:24:01":incident,availability="(~ 정식 출시 전까지)",free=true,investigation=await CaseInvestigation.SnapshotAsync(c,tx,user,config,ct)},
-            catalogue=Catalogue,inventory=await CommunityEndpoints.Rows(c,tx,"SELECT item_id itemId FROM case_inventory WHERE user_id=@u ORDER BY item_id",ct,("u",user)),
+            catalogue=Catalogue,mainQuest=await MainQuest.SnapshotAsync(c,tx,user,ct),achievementRewards=await CaseCollection.AchievementRewardsAsync(c,tx,user,ct),inventory=await CommunityEndpoints.Rows(c,tx,"SELECT item_id itemId FROM case_inventory WHERE user_id=@u ORDER BY item_id",ct,("u",user)),
             loadout=await CommunityEndpoints.Rows(c,tx,"SELECT slot,item_id itemId FROM case_loadout WHERE user_id=@u ORDER BY slot",ct,("u",user)),
             achievements=await CommunityEndpoints.Rows(c,tx,"SELECT code,source,earned_at_utc earnedAtUtc FROM case_achievements WHERE user_id=@u ORDER BY code",ct,("u",user)),partyState=await OpenParties.SnapshotAsync(c,tx,user,ct)};
     }
@@ -123,6 +125,9 @@ internal static class CaseRecords
     {
         app.MapGet("/api/case-records/achievement-rates",async(AuthDatabase db,CancellationToken ct)=>Results.Ok(await CaseAchievementRates.GetAsync(db,ct))).RequireRateLimiting("survey-read");
         CaseMissionBudget.Map(app);
+        CaseCollection.Map(app);
+        MainQuest.Map(app);
+        CaseDebugCurrency.Map(app);
         app.MapOpenParties();
         app.MapCaseInvestigation();
         app.MapGet("/api/case-records",async(HttpRequest request,AuthDatabase db,CancellationToken ct)=>
@@ -134,11 +139,25 @@ internal static class CaseRecords
         app.MapPost("/api/case-records/action",async(ActionRequest body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await LobbyEndpoints.AuthenticateAsync(request,db,ct);if(user is null)return Results.Unauthorized();
-            if(body.Action is not ("Buy" or "Equip" or "ClaimMission" or "ClaimAllMissions" or "RerollMission" or "ClaimLevelReward" or "ClaimRecord" or "ClaimInvestigationStage")||body.Id is null||body.Id.Length>48)return Results.BadRequest();
+            if(body.Action is not ("Buy" or "Equip" or "ShowBanner" or "HideBanner" or "DebugAddPoints" or "ClaimMission" or "ClaimAllMissions" or "RerollMission" or "ClaimLevelReward" or "ClaimRecord" or "ClaimInvestigationStage" or "ClaimAchievement")||body.Id is null||body.Id.Length>48)return Results.BadRequest();
+            if(body.Action=="DebugAddPoints")
+            {
+                if(!app.Services.GetRequiredService<CaseDebugCurrency>().CanGrant(request))return Results.Json(new{message="서버 운영에서 에디터 디버그 포인트를 허용하고 127.0.0.1로 접속하세요."},statusCode:403);
+                if(!Guid.TryParse(body.Id,out _))return Results.BadRequest();
+            }
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);var account=await LockAccountAsync(c,tx,user.Id,ct);
-            if(body.Action is "Buy" or "Equip")
+            object? receipt=null;
+            if(body.Action=="DebugAddPoints")await CaseDebugCurrency.GrantAsync(c,tx,user.Id,body.Id,ct);
+            else if(body.Action=="ClaimAchievement")
+            {
+                var reward=await CaseCollection.ClaimAchievementAsync(c,tx,user.Id,body.Id,ct);
+                if(reward is null)return Results.Conflict(new{message="업적·도전과제를 먼저 달성하세요."});
+                receipt=new{title="획득하셨습니다",items=new[]{new{itemId=reward.Id,name=reward.Name,count=1}}};
+            }
+            else if(body.Action is "Buy" or "Equip")
             {
                 var item=Catalogue.FirstOrDefault(i=>i.Id==body.Id);
+                if(item is null&&body.Action=="Equip"&&CaseCollection.Find(body.Id) is {} cosmetic)item=new Item(cosmetic.Id,cosmetic.Name,cosmetic.Slot,0);
                 if(item is null&&body.Action=="Equip"&&CaseInvestigation.IsRareItem(body.Id))item=new Item(body.Id,"희귀 조사 완성 테두리","Frame",0);
                 if(item is null&&body.Action=="Equip"&&CaseLevelRewards.IsItem(body.Id))item=new Item(body.Id,"레벨 기념 테두리","Frame",0);
                 if(item is null)return Results.BadRequest();
@@ -148,11 +167,17 @@ internal static class CaseRecords
                     if(Convert.ToInt64(account["credits"])<item.Price)return Results.Conflict(new{message="포인트가 부족합니다"});
                     await CommunityEndpoints.Exec(c,tx,"UPDATE case_accounts SET credits=credits-@p WHERE user_id=@u;INSERT INTO case_inventory(user_id,item_id) VALUES(@u,@id)",ct,("p",item.Price),("u",user.Id),("id",item.Id));
                 }
+                if(body.Action=="Buy")receipt=new{title="구매하셨습니다",items=new[]{new{itemId=item.Id,name=item.Name,count=1}}};
                 if(body.Action=="Equip")
                 {
                     if(!owned)return Results.Conflict(new{message="보유한 꾸미기만 사용할 수 있습니다."});
                     await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_loadout(user_id,slot,item_id) VALUES(@u,@s,@id) ON DUPLICATE KEY UPDATE item_id=@id",ct,("u",user.Id),("s",item.Slot),("id",item.Id));
+                    if(item.Slot=="Banner")await CaseCollection.ShowBannerAsync(c,tx,user.Id,item.Id,ct);
                 }
+            }
+            else if(body.Action is "ShowBanner" or "HideBanner")
+            {
+                if(!await CaseCollection.DisplayBannerAsync(c,tx,user.Id,body.Id,body.Action=="ShowBanner",ct))return Results.Conflict(new{message="보유한 배너만 전시할 수 있습니다."});
             }
             else if(body.Action=="ClaimLevelReward")
             {
@@ -192,19 +217,19 @@ internal static class CaseRecords
                     }
                 }
             }
-            var snapshot=await Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{message="처리되었습니다.",snapshot});
+            var snapshot=await Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{message="처리되었습니다.",snapshot,receipt});
         }).RequireRateLimiting("social");
         app.MapPost("/api/case-records/import-campaign",async(ImportRequest body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await LobbyEndpoints.AuthenticateAsync(request,db,ct);if(user is null)return Results.Unauthorized();
-            if(!body.Confirmed||!Guid.TryParse(body.SaveId,out _)||body.Codes is null||body.Codes.Length>LocalAchievements.Count||body.Codes.Any(code=>!LocalAchievements.Contains(code)))return Results.BadRequest(new{message="로컬 캠페인 업적의 계정 귀속을 확인하세요."});
+            if(!body.Confirmed||!Guid.TryParse(body.SaveId,out _)||body.Codes is null||body.Codes.Length>LocalAchievements.Count||body.Codes.Any(code=>!LocalAchievements.Contains(code)))return Results.BadRequest(new{message="로컬 캠페인 업적·도전과제의 계정 귀속을 확인하세요."});
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);await LockAccountAsync(c,tx,user.Id,ct);
             string save=Guid.Parse(body.SaveId).ToString();
             await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_campaign_bindings(save_id,user_id) VALUES(@s,@u) ON DUPLICATE KEY UPDATE save_id=VALUES(save_id)",ct,("s",save),("u",user.Id));
             var binding=await CommunityEndpoints.Rows(c,tx,"SELECT user_id FROM case_campaign_bindings WHERE save_id=@s FOR UPDATE",ct,("s",save));
-            if(Convert.ToUInt64(binding[0]["user_id"])!=user.Id)return Results.Conflict(new{message="이미 다른 계정에 귀속한 캠페인 업적입니다."});
+            if(Convert.ToUInt64(binding[0]["user_id"])!=user.Id)return Results.Conflict(new{message="이미 다른 계정에 귀속한 캠페인 업적·도전과제입니다."});
             foreach(string code in body.Codes.Distinct())await Unlock(c,tx,user.Id,code,"LocalCampaign",ct);
-            await tx.CommitAsync(ct);return Results.Ok(new{message="싱글 업적을 병합했습니다. 로컬 신고로 재화·경쟁 업적은 지급되지 않습니다."});
+            await tx.CommitAsync(ct);return Results.Ok(new{message="싱글 업적·도전과제를 병합했습니다. 로컬 신고로 재화·경쟁 업적·도전과제는 지급되지 않습니다."});
         }).RequireRateLimiting("social");
     }
 }

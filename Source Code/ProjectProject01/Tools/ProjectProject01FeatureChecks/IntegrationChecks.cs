@@ -14,7 +14,7 @@ using MySqlConnector;
 internal static class IntegrationChecks
 {
     private static int passed;
-    public static async Task RunAsync(string projectRoot,int port,string? editorExecutable=null)
+    public static async Task RunAsync(string projectRoot,int port,string? editorExecutable=null,bool frontendOnly=false)
     {
         if(port!=23307)throw new InvalidOperationException("Only the isolated test MySQL port is allowed.");
         string output=Path.Combine(projectRoot,"Saved","FeatureChecks");
@@ -37,6 +37,7 @@ internal static class IntegrationChecks
         var builder=WebApplication.CreateBuilder(new WebApplicationOptions{ContentRootPath=output});
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(database);
+        builder.Services.AddSingleton<CaseDebugCurrency>();
         builder.Services.AddSingleton(new CrashArtifactStore(Path.Combine(output,"CrashArtifactsFixture",Guid.NewGuid().ToString("N")),TimeProvider.System));
         builder.Services.AddSingleton<ServiceControlState>();
         builder.Services.AddHostedService<ServiceControlScheduleWorker>();
@@ -70,6 +71,7 @@ internal static class IntegrationChecks
         // Invalid registration must be rejected by the real shared handler before
         // it can issue tokens. No substitute validation/HTTP route is tested here.
         app.MapRegistration((_,_,_,_)=>throw new InvalidOperationException("Invalid input reached session issuance."));
+        app.MapGuideProgress();
         app.MapProjectProject01ServiceAdministration();
         app.MapCommunity();
         app.MapCaseRecords();
@@ -83,6 +85,15 @@ internal static class IntegrationChecks
             using var admin=new HttpClient{BaseAddress=new Uri(app.Urls.Single())};
             admin.DefaultRequestHeaders.Add("X-ProjectProject01-Admin-Key",new string('a',48));
             using var player=new HttpClient{BaseAddress=admin.BaseAddress};
+            if(frontendOnly)
+            {
+                await CaseDrawChecks.RunAsync(database,admin);
+                await CaseRecordChecks.RunAsync(database,admin);
+                await MainQuestChecks.RunAsync(database,admin);
+                await GuideProgressChecks.RunAsync(database,admin);
+                Console.WriteLine("PASS: frontend-only checks (no bot simulation or AI checks)");
+                return;
+            }
             await AdminScriptChecks.RunAsync(projectRoot,admin,database,Check);
             await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null01",password="ReviewPassword123!",displayName=(string?)null}),HttpStatusCode.BadRequest,"F29 null 표시 이름 회원가입은 실제 HTTP에서 400");
             await Expect(await player.PostAsJsonAsync("/api/auth/register",new {accountId="Review_Null02",password="ReviewPassword123!"}),HttpStatusCode.BadRequest,"F29 누락된 표시 이름도 400");
@@ -205,6 +216,7 @@ internal static class IntegrationChecks
             await BotMatchChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await OpenObserverChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await CaseRecordChecks.RunAsync(database,admin);
+            await CaseDrawChecks.RunAsync(database,admin);
             await CaseMissionRewardChecks.RunAsync(database,admin);
             await MissionBudgetChecks.RunAsync(database,admin);
             await BulkRewardChecks.RunAsync(database,admin);

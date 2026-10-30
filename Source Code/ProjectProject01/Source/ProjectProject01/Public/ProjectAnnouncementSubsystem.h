@@ -14,6 +14,7 @@ public:
     virtual void Initialize(FSubsystemCollectionBase& Collection)override;
     virtual void Deinitialize()override;
     void NotifyAchievement(const FString& Code);
+    void NotifyQuest(const FString& Name,const FString& Kind,const FString& Detail,const FString& EventId);
 private:
     bool Poll(float Delta);
     UFUNCTION() void ServiceChanged(bool Maintenance,const FString& Notice,const FString& ShutdownAt,const FString& Message);

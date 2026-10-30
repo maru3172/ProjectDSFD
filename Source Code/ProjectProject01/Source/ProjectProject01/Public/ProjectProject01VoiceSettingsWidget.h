@@ -24,6 +24,9 @@ private:
 	UFUNCTION() void RefreshDevices();
 	UFUNCTION() void Apply();
 	UFUNCTION() void Reset();
+	/** "음성 설정 초기화" asks first (예/아니오, no daily opt-out: it wipes the chosen values). */
+	UFUNCTION() void AskReset();
+	UPROPERTY(Transient) TObjectPtr<class UProjectConfirmDialogWidget> ConfirmDialog;
 	UFUNCTION() void ToggleMicrophoneTest();
 	UFUNCTION() void ToggleMute();
 	UFUNCTION() void Back();

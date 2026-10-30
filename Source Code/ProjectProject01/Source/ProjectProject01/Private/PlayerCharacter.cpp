@@ -32,6 +32,7 @@
 // 카메라 B 키 디버깅 관련
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
 #include "InputCoreTypes.h"
@@ -787,8 +788,7 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 	// PIE만 로컬 테스트 상태를 사용한다. 세 클라이언트가 공용 설정을 공유해도 각 Pawn에서
 	// 한 번씩 보이며, 이 분기는 패키징된 클라이언트에 포함되지 않는다.
 	bShouldShowSurvivorGuide = IsValid(EditorSettings) &&
-		(!EditorSettings->HasSeenSurvivorGuide() ||
-			(GetWorld() && GetWorld()->WorldType == EWorldType::PIE));
+		!EditorSettings->HasSeenSurvivorGuide();
 #else
 	UProjectProject01AuthSubsystem* Auth = GetGameInstance()
 		? GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()
@@ -1497,9 +1497,16 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	// Balance diagnostics: what the catching body was doing (grep "[CatchBy]").
 	if (const AMannequinAICharacter* Catcher = Cast<AMannequinAICharacter>(CatchingMannequin))
 	{
-		UE_LOG(LogTemp, Display, TEXT("[CatchBy] Activity=%s Command=%s Frozen=%d CatcherSpeed=%.0f VictimSpeed=%.0f"),
+		// Who was caught, when, and how far from the other survivor still in play (-1: none).
+		const FString Victim = GetPlayerState() ? GetPlayerState()->GetPlayerName() : FString();
+		const double Second = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0; float PartnerDistance = -1.f;
+		for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
+		{
+			if (*It != this && !It->IsGameOver()) { PartnerDistance = FVector::Dist2D(GetActorLocation(), It->GetActorLocation()); }
+		}
+		UE_LOG(LogTemp, Display, TEXT("[CatchBy] Activity=%s Command=%s Frozen=%d CatcherSpeed=%.0f VictimSpeed=%.0f Victim=%s Second=%.0f PartnerDistance=%.0f"),
 			*UEnum::GetValueAsString(Catcher->GetMultiplayActivity()), *UEnum::GetValueAsString(Catcher->GetMultiplayCommand()),
-			Catcher->IsFrozenBySurvivorVision(), Catcher->GetVelocity().Size2D(), GetVelocity().Size2D());
+			Catcher->IsFrozenBySurvivorVision(), Catcher->GetVelocity().Size2D(), GetVelocity().Size2D(), *Victim, Second, PartnerDistance);
 	}
 	return true;
 }

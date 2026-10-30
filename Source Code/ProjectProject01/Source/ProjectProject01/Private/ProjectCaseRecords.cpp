@@ -58,8 +58,9 @@ void UProjectCaseRecords::ClearSession()
 {
     ClearPartyAdmission();
     if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
-    Snapshot.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
+    Snapshot.Reset();DrawResult.Reset();LastReceipt.Reset();PendingDrawId.Reset();PendingDrawOperation.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
     AchievementAccount.Reset();SeenOnlineAchievements.Reset();
+    QuestAccount.Reset();SeenQuestRevision=0;
 }
 bool UProjectCaseRecords::IsAuthenticated()const{const auto* A=Auth(this);return A&&A->IsSignedIn();}
 bool UProjectCaseRecords::Tick(float Delta)
@@ -70,6 +71,42 @@ bool UProjectCaseRecords::Tick(float Delta)
     PollIn-=Delta;if(PollIn<=0){PollIn=15;Refresh();}return true;
 }
 void UProjectCaseRecords::Refresh(){if(IsAuthenticated()&&!Request)Send(TEXT("/api/case-records"));}
+void UProjectCaseRecords::ApplyDrawResponse(const TSharedPtr<FJsonObject>& Response)
+{
+    if(!Response)return;
+    const TSharedPtr<FJsonObject>* State=nullptr,*Draw=nullptr,*Result=nullptr,*Collection=nullptr;
+    const bool FullState=Response->TryGetObjectField(TEXT("snapshot"),State);if(FullState)Snapshot=*State;
+    if(Snapshot&&Snapshot->TryGetObjectField(TEXT("collection"),Collection)&&Response->TryGetObjectField(TEXT("draw"),Draw))(*Collection)->SetObjectField(TEXT("draw"),*Draw);
+    if(Response->TryGetObjectField(TEXT("result"),Result))DrawResult=*Result;
+    PendingDrawId.Reset();PendingDrawOperation.Reset();PollIn=FullState?15:0;
+}
+void UProjectCaseRecords::DrawAction(const FString& Operation,int32 Count)
+{
+    if(!PrepareWrite()||!Snapshot)return;
+    if(Operation==TEXT("Exchange")){if(Count<1||Count>2000000)return;}
+    else if(Operation==TEXT("EditorReset"))
+    {
+#if WITH_EDITOR
+        if(!GIsEditor||Count!=1)return;
+#else
+        return;
+#endif
+    }
+    else if(Operation!=TEXT("Draw")||(Count!=1&&Count!=5))return;
+    const TSharedPtr<FJsonObject>* Collection=nullptr,*Draw=nullptr;
+    if(!Snapshot->TryGetObjectField(TEXT("collection"),Collection)||!(*Collection)->TryGetObjectField(TEXT("draw"),Draw))return;
+    if(!PendingDrawId.IsEmpty()&&(PendingDrawOperation!=Operation||PendingDrawCount!=Count))
+    {Status=TEXT("이전 요청의 결과를 먼저 확인하세요.");OnChanged.Broadcast();return;}
+    if(PendingDrawId.IsEmpty()){PendingDrawId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);PendingDrawOperation=Operation;PendingDrawCount=Count;(*Draw)->TryGetNumberField(TEXT("revision"),PendingDrawRevision);}
+    auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("operation"),Operation);Json->SetNumberField(TEXT("count"),Count);Json->SetStringField(TEXT("requestId"),PendingDrawId);Json->SetNumberField(TEXT("revision"),PendingDrawRevision);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/draw"),Body);
+}
+void UProjectCaseRecords::SaveFeatured(const TArray<FString>& Codes,const FString& Bio)
+{
+    if(!PrepareWrite())return;auto Json=MakeShared<FJsonObject>();TArray<TSharedPtr<FJsonValue>> Values;
+    for(const auto& Code:Codes)Values.Add(MakeShared<FJsonValueString>(Code));Json->SetArrayField(TEXT("codes"),Values);Json->SetStringField(TEXT("bio"),Bio);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/featured"),Body);
+}
 TSharedPtr<FJsonObject> UProjectCaseRecords::GetAchievementRates()const
 {const auto* A=Auth(this);return A&&A->GetApiBaseUrlForAuthenticatedRequest()==AchievementRateBase?AchievementRates:nullptr;}
 void UProjectCaseRecords::RefreshAchievementRates()
@@ -120,8 +157,17 @@ bool UProjectCaseRecords::PrepareWrite()
     if(Request&&Request->GetVerb()==TEXT("GET")){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     return !Request;
 }
+bool UProjectCaseRecords::IsWriting()const{return Request&&Request->GetVerb()!=TEXT("GET");}
 void UProjectCaseRecords::Action(const FString& Op,const FString& Id,const FString& Mode,int32 ExpectedRerolls)
 {
+    if(Op==TEXT("DebugAddPoints"))
+    {
+#if WITH_EDITOR
+        if(!GIsEditor)return;
+#else
+        return;
+#endif
+    }
     if(!PrepareWrite())return;auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),Op);Json->SetStringField(TEXT("id"),Id);Json->SetStringField(TEXT("mode"),Mode);
     if(ExpectedRerolls>=0)Json->SetNumberField(TEXT("expectedRerolls"),ExpectedRerolls);
     if((Op==TEXT("RerollMission")||Op==TEXT("ClaimMission"))&&Snapshot)
@@ -161,6 +207,9 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
     auto Pending=FHttpModule::Get().CreateRequest();Request=Pending;
     Pending->SetURL(A->GetApiBaseUrlForAuthenticatedRequest()+Path);Pending->SetVerb(Body.IsEmpty()?TEXT("GET"):TEXT("POST"));Pending->SetTimeout(5);
     Pending->SetHeader(TEXT("Authorization"),TEXT("Bearer ")+A->GetAccessTokenForAuthenticatedRequest());Pending->SetHeader(TEXT("Content-Type"),TEXT("application/json; charset=utf-8"));FProjectProject01VersionContract::ApplyToRequest(Pending);
+#if WITH_EDITOR
+    if(GIsEditor)Pending->SetHeader(TEXT("X-ProjectProject01-Client"),TEXT("Editor"));
+#endif
     if(!Body.IsEmpty())Pending->SetContentAsString(Body);
     Pending->OnProcessRequestComplete().BindWeakLambda(this,[this,Generation,Path](FHttpRequestPtr Completed,FHttpResponsePtr Response,bool Connected)
     {
@@ -181,16 +230,38 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
                 if(Snapshot->TryGetObjectField(TEXT("partyState"),Party)&&(*Party)->TryGetStringField(TEXT("currentRoomId"),Room)&&!Room.IsEmpty())
                     if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();Lobby&&!Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight())Lobby->RefreshCurrentRoom();
             }
+            else if(Path==TEXT("/api/case-records/draw"))
+            {
+                ApplyDrawResponse(Json);
+            }
+            else if(Path==TEXT("/api/case-records/featured")){PollIn=0;}
             else if(Path==TEXT("/api/parties/action"))
             {const TSharedPtr<FJsonObject>* Party=nullptr;if(Snapshot&&Json->TryGetObjectField(TEXT("partyState"),Party))Snapshot->SetObjectField(TEXT("partyState"),*Party);PollIn=0;}
             else if(Path.EndsWith(TEXT("import-campaign")))
             {if(Snapshot)Snapshot->TryGetStringField(TEXT("userId"),Local->BoundAccountId);PersistLocal();PollIn=0;}
             else {const TSharedPtr<FJsonObject>* State=nullptr;if(Json->TryGetObjectField(TEXT("snapshot"),State))Snapshot=*State;}
             Status=Path==TEXT("/api/case-records")?FString():TEXT("처리되었습니다.");
+            if(Path==TEXT("/api/case-records/draw")){FString Operation;if(DrawResult&&DrawResult->TryGetStringField(TEXT("operation"),Operation)&&Operation==TEXT("EditorReset"))Status=TEXT("이 계정의 뽑기 획득 기록을 초기화했습니다.");}
             ObserveAchievements();
+            ObserveMainQuest();
+            const TSharedPtr<FJsonObject>* Receipt=nullptr;
+            if(Json->TryGetObjectField(TEXT("receipt"),Receipt)&&Receipt&&Receipt->IsValid())
+            {LastReceipt=*Receipt;OnReceipt.Broadcast();}
+            else if(Path==TEXT("/api/case-records/draw"))
+            {
+                FString Operation;double Count=0;
+                if(DrawResult&&DrawResult->TryGetStringField(TEXT("operation"),Operation)&&Operation==TEXT("Exchange")&&DrawResult->TryGetNumberField(TEXT("count"),Count)&&Count>0)
+                {
+                    auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("name"),TEXT("뽑기 재화"));Item->SetNumberField(TEXT("count"),Count);
+                    LastReceipt=MakeShared<FJsonObject>();LastReceipt->SetStringField(TEXT("title"),TEXT("구매하셨습니다"));
+                    LastReceipt->SetArrayField(TEXT("items"),{MakeShared<FJsonValueObject>(Item)});OnReceipt.Broadcast();
+                }
+            }
         }
         else
         {
+            if(Path==TEXT("/api/case-records/draw"))
+            {if(Response&&Response->GetResponseCode()>=400&&Response->GetResponseCode()<500){PendingDrawId.Reset();PendingDrawOperation.Reset();}}
             Status=TEXT("서버 응답을 확인하지 못했습니다. 다시 시도하세요.");if(Response&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json)&&Json)Json->TryGetStringField(TEXT("message"),Status);
             if(Response&&Response->GetResponseCode()==409)PollIn=0;
         }
@@ -226,7 +297,7 @@ void UProjectCaseRecords::PersistLocal()
     const FString Target=CampaignAchievementSlotName+(CurrentLocalSlot.EndsWith(TEXT("_GenerationA"))?TEXT("_GenerationB"):TEXT("_GenerationA"));
     ++Local->Generation;
     FAsyncSaveGameToSlotDelegate Complete;Complete.BindWeakLambda(this,[this,Target](const FString&,int32,bool Success)
-    {bSaving=false;if(!Success){Status=TEXT("로컬 업적 저장에 실패했습니다. 마지막 정상 기록은 유지됩니다.");OnChanged.Broadcast();}else{CurrentLocalSlot=Target;if(bSaveDirty)PersistLocal();}});
+    {bSaving=false;if(!Success){Status=TEXT("로컬 업적·도전과제 저장에 실패했습니다. 마지막 정상 기록은 유지됩니다.");OnChanged.Broadcast();}else{CurrentLocalSlot=Target;if(bSaveDirty)PersistLocal();}});
     // Never overwrite the newest valid generation; a failed write cannot erase every earned achievement.
     UGameplayStatics::AsyncSaveGameToSlot(Local,Target,0,Complete);
 }

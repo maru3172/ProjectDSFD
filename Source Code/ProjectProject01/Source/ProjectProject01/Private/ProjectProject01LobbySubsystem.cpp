@@ -202,7 +202,7 @@ bool UProjectProject01LobbySubsystem::ParseMatchmaking(const TSharedPtr<FJsonObj
 void UProjectProject01LobbySubsystem::CreateBotMatch(const FString& Role,int32 Difficulty)
 {
     if(HasCurrentRoom()||IsMatchmaking()||IsRequestInFlight())return;
-    if((Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))||Difficulty<1||Difficulty>5)
+    if((Role!=TEXT("Any")&&Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))||Difficulty<1||Difficulty>5)
     {Complete(EProjectProject01LobbyOperation::CreateBotMatch,false,TEXT("역할과 1~5단계 난이도를 선택하세요."));return;}
     ClearGameJoinTicket();
     TSharedRef<FJsonObject> Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("role"),Role);Json->SetNumberField(TEXT("difficulty"),Difficulty);
@@ -661,6 +661,9 @@ void UProjectProject01LobbySubsystem::HandleRequestComplete(
             if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->AnswerPartyAdmission(TEXT("Cancel"),Request->GetHeader(TEXT("X-ProjectProject01-Party-Admission")));
 		if (StatusCode == 404 && Operation == EProjectProject01LobbyOperation::RefreshCurrentRoom)
 		{
+			// The host removed this player: the lobby says so once (ConsumeRemovedFromRoom).
+			bool bRemoved = false;
+			if (bJsonValid && Json->TryGetBoolField(TEXT("removedByHost"), bRemoved) && bRemoved) bRemovedFromRoom = true;
 			CurrentRoom = FProjectProject01RoomState();
 			ClearGameJoinTicket();
 			OnCurrentRoomChanged.Broadcast();
@@ -863,6 +866,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 		}
 		MemberJson->TryGetBoolField(TEXT("returnedToRoom"), Member.bReturnedToRoom);
         MemberJson->TryGetBoolField(TEXT("isObserver"),Member.bIsObserver);
+        MemberJson->TryGetStringField(TEXT("bannerId"),Member.BannerId);if(Member.BannerId.Len()>32)Member.BannerId.Reset();
 		MemberJson->TryGetStringField(TEXT("assignedRole"), Member.AssignedRole);
 		Parsed.Members.Add(MoveTemp(Member));
 	}

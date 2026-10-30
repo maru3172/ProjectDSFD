@@ -2,6 +2,7 @@
 #include "ProjectPracticeEnvironment.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01AuthSubsystem.h"
+#include "ProjectCaseRecords.h"
 #include "ProjectProject01LoginWidget.h"
 #include "PlayerCharacter.h"
 #include "MannequinAICharacter.h"
@@ -1063,6 +1064,7 @@ void AProjectProject01TutorialGameMode::FinishAuthoritativeMatch(const FString& 
 void AProjectProject01TutorialGameMode::FinishTutorial()
 {
 	if (bFinishing) return;
+    if(!bPracticeOnly&&!bFreePractice)if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->MainQuestAction(TEXT("TutorialComplete"),bMannequin?TEXT("Mannequin"):TEXT("Survivor"));
 	bFinishing=true; EndSeconds=0; SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending); StopAllMannequinsForMatchEnd();
 	if (auto* C=Learner->FindComponentByClass<UProjectProject01ObjectiveComponent>()) C->CompleteObjective();
 	if (auto* Pawn=Cast<ACharacter>(Learner->GetPawn())) Pawn->GetCharacterMovement()->StopMovementImmediately();

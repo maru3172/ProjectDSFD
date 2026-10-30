@@ -7,6 +7,8 @@ internal static partial class LobbyEndpoints
     {
         var rows=await CommunityEndpoints.Rows(c,null,"SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='room_members' AND column_name='is_observer'",ct);
         if(rows.Count==0)await CommunityEndpoints.Exec(c,null,"ALTER TABLE room_members ADD COLUMN is_observer BOOLEAN NOT NULL DEFAULT FALSE",ct);
+        // A player the host removed from the room is told so once, on their next room refresh.
+        await CommunityEndpoints.Exec(c,null,"CREATE TABLE IF NOT EXISTS room_removal_notices(user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,removed_at_utc DATETIME(6) NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)",ct);
     }
     private static void MapOpenObservers(this WebApplication app,Func<bool> available)
     {
@@ -32,6 +34,7 @@ internal static partial class LobbyEndpoints
                 {
                     if(target==user.Id)return Results.BadRequest(new LobbyFailure("자신은 방 나가기를 사용하세요."));
                     await RemoveUserFromCurrentRoomAsync(c,tx,target,ct);
+                    await CommunityEndpoints.Exec(c,tx,"INSERT INTO room_removal_notices(user_id,removed_at_utc) VALUES(@u,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE removed_at_utc=UTC_TIMESTAMP(6)",ct,("u",target));
                 }
                 else
                 {
@@ -49,5 +52,15 @@ internal static partial class LobbyEndpoints
             }
             catch(MySqlException){return DatabaseUnavailable();}
         }).RequireRateLimiting("lobby");
+    }
+}
+internal static partial class LobbyEndpoints
+{
+    // True once (the notice is cleared) when the host removed this player from a room in the last 10 minutes.
+    internal static async Task<bool> TakeRoomRemovalNoticeAsync(MySqlConnection c,ulong user,CancellationToken ct)
+    {
+        int taken=await CommunityEndpoints.Exec(c,null,"DELETE FROM room_removal_notices WHERE user_id=@u AND removed_at_utc>UTC_TIMESTAMP(6)-INTERVAL 10 MINUTE",ct,("u",user));
+        await CommunityEndpoints.Exec(c,null,"DELETE FROM room_removal_notices WHERE user_id=@u",ct,("u",user));
+        return taken>0;
     }
 }

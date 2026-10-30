@@ -22,6 +22,7 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Components/BoxComponent.h"
+#include "Widgets/Text/STextBlock.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectLoadingBarrierTest,"ProjectProject01.Multiplayer.Loading.Barrier",
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -63,9 +64,19 @@ bool FProjectLoadingRenderTest::RunTest(const FString&)
 			FProjectLoadingParticipant B;B.UserId=TEXT("B");B.DisplayName=TEXT("다른 참가자");B.Progress=100;
 			FProjectLoadingParticipant C;C.UserId=TEXT("C");C.DisplayName=TEXT("접속 중인 참가자");C.Progress=0;State->Data.Participants={A,B,C};}
 		const auto Widget=MakeProjectLoadingScreenWidget(State);FWidgetRenderer Renderer(true);
+        auto FindTag=[&](FName Tag)
+        {
+            TSharedPtr<SWidget> Found;
+            TFunction<void(TSharedRef<SWidget>)> Visit=[&](TSharedRef<SWidget> Node)
+            {if(Node->GetTag()==Tag)Found=Node;if(auto* Children=Node->GetChildren())for(int32 I=0;I<Children->Num();++I)Visit(Children->GetChildAt(I));};
+            Visit(Widget);return Found;
+        };
 		auto* Target=Renderer.DrawWidget(Widget,FVector2D(Size));
 		for(int32 Frame=0;Frame<4;++Frame)Renderer.DrawWidget(Target,Widget,FVector2D(Size),.016f);
 		FlushRenderingCommands();
+        auto Gauge=FindTag(TEXT("ProjectLoadingOwnGauge"));
+        if(!TestTrue(TEXT("Own gauge is measurable"),Gauge.IsValid()))return false;
+        const FVector2D GaugePosition=Gauge->GetCachedGeometry().GetAbsolutePosition();
 		TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(false);
 		TestTrue(TEXT("Loading UI renders real progress pixels"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags));
 		int32 OwnBarRows=0;
@@ -84,6 +95,21 @@ bool FProjectLoadingRenderTest::RunTest(const FString&)
 		FlushRenderingCommands();Pixels.Reset();Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags);
 		FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);
 		TestTrue(TEXT("Server allocation renders within the same loading screen"),FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("ServerPreparing_%dx%d.png"),Size.X,Size.Y))));
+        TestTrue(TEXT("Cancel visibility and role updates never move the gauge"),Gauge->GetCachedGeometry().GetAbsolutePosition().Equals(GaugePosition,.1f));
+        {FScopeLock Lock(&State->Mutex);State->Data.Stage=TEXT("게임 서버 접속을 확인하고 플레이 화면 준비가 완료되기를 기다리는 중입니다.");State->Data.OwnName=TEXT("두 줄로 길게 표시되는 참가자의 닉네임과 진행 정보");State->Data.CanCancel=false;State->Data.Participants.SetNum(1);}
+        for(int32 Frame=0;Frame<5;++Frame)
+        {
+            Renderer.DrawWidget(Target,Widget,FVector2D(Size),.016f);
+            TestTrue(TEXT("Wrapped text and optional participant changes cannot cause vertical gauge jitter"),Gauge->GetCachedGeometry().GetAbsolutePosition().Equals(GaugePosition,.1f));
+        }
+        {FScopeLock Lock(&State->Mutex);State->Data.Multiplayer=false;State->Data.OwnName=TEXT("플레이어");State->Data.OwnRole.Reset();State->Data.Stage=TEXT("맵을 읽는 중");}
+        for(int32 Frame=0;Frame<4;++Frame)Renderer.DrawWidget(Target,Widget,FVector2D(Size),.016f);
+        auto Message=FindTag(TEXT("ProjectLoadingMessage"));
+        TestTrue(TEXT("Solo loading uses the requested message without waiting for other participants"),Message.IsValid()&&StaticCastSharedPtr<STextBlock>(Message)->GetText().ToString()==TEXT("로딩중입니다. 잠시만 기다려주세요."));
+        FlushRenderingCommands();Pixels.Reset();Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags);
+        FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);
+        FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("SinglePlayerLoading_%dx%d.png"),Size.X,Size.Y)));
+        Target->ReleaseResource();
 	}
 	return true;
 }

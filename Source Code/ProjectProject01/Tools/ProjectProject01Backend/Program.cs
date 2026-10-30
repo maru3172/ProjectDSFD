@@ -19,6 +19,7 @@ const int RefreshTokenDays = 30;
 // Match the helper's redirected UTF-8 reader; never inherit a legacy Windows code page.
 Console.OutputEncoding = new UTF8Encoding(false);
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<CaseDebugCurrency>();
 var localConfigurationPath = Path.Combine(
     builder.Environment.ContentRootPath,
     "LocalMySql",
@@ -349,7 +350,7 @@ app.MapPost("/api/auth/login", async (
         return Results.Ok(new AuthSuccess(
             "로그인되었습니다.", user.DisplayName, tokens.AccessToken, tokens.RefreshToken,
             tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc,
-            user.SeenSurvivorGuide, user.SeenMannequinGuide));
+            user.SeenSurvivorGuide, user.SeenMannequinGuide, user.SeenInitialTutorial));
     }
     catch (MySqlException)
     {
@@ -383,10 +384,11 @@ app.MapPost("/api/auth/refresh", async (
         string displayName;
         bool seenSurvivorGuide;
         bool seenMannequinGuide;
+        bool seenInitialTutorial;
         await using (var select = new MySqlCommand(
             """
             SELECT s.id, s.user_id, u.display_name,
-                   u.seen_survivor_guide, u.seen_mannequin_guide
+                   u.seen_survivor_guide, u.seen_mannequin_guide, u.seen_initial_tutorial
             FROM auth_sessions s
             INNER JOIN users u ON u.id = s.user_id
             WHERE s.refresh_token_hash = @refreshHash
@@ -412,6 +414,7 @@ app.MapPost("/api/auth/refresh", async (
             displayName = reader.GetString(2);
             seenSurvivorGuide = reader.GetBoolean(3);
             seenMannequinGuide = reader.GetBoolean(4);
+            seenInitialTutorial = reader.GetBoolean(5);
         }
 
         await RevokeSessionAsync(connection, transaction, sessionId, cancellationToken);
@@ -421,7 +424,7 @@ app.MapPost("/api/auth/refresh", async (
         return Results.Ok(new AuthSuccess(
             "세션이 갱신되었습니다.", displayName, tokens.AccessToken, tokens.RefreshToken,
             tokens.AccessExpiresAtUtc, tokens.RefreshExpiresAtUtc,
-            seenSurvivorGuide, seenMannequinGuide));
+            seenSurvivorGuide, seenMannequinGuide, seenInitialTutorial));
     }
     catch (MySqlException)
     {
@@ -450,49 +453,7 @@ app.MapGet("/api/auth/session", async (
     }
 }).RequireRateLimiting("lobby");
 
-// 역할 안내 확인 여부는 설치 PC가 아니라 로그인 계정에 귀속한다. 클라이언트는 안내를
-// 실제로 띄운 직후 해당 역할만 기록하며, 다른 역할의 최초 안내 상태는 변경하지 않는다.
-app.MapPost("/api/auth/guide-progress", async (
-    HttpRequest request,
-    GuideProgressRequest body,
-    AuthDatabase database,
-    CancellationToken cancellationToken) =>
-{
-    var normalizedRole = body.Role?.Trim();
-    if (!string.Equals(normalizedRole, "Survivor", StringComparison.OrdinalIgnoreCase) &&
-        !string.Equals(normalizedRole, "Mannequin", StringComparison.OrdinalIgnoreCase))
-    {
-        return Results.BadRequest(new AuthFailure("역할 안내 종류가 올바르지 않습니다."));
-    }
-    try
-    {
-        var user = await LobbyEndpoints.AuthenticateAsync(request, database, cancellationToken);
-        if (user is null)
-        {
-            return Results.Unauthorized();
-        }
-        await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        var column = string.Equals(normalizedRole, "Mannequin", StringComparison.OrdinalIgnoreCase)
-            ? "seen_mannequin_guide"
-            : "seen_survivor_guide";
-        await using var update = new MySqlCommand(
-            $"UPDATE users SET {column} = TRUE WHERE id = @userId;", connection)
-        {
-            CommandTimeout = 5
-        };
-        update.Parameters.AddWithValue("@userId", user.Id);
-        await update.ExecuteNonQueryAsync(cancellationToken);
-        return Results.Ok(new
-        {
-            message = "역할 안내 확인 상태를 저장했습니다.",
-            role = normalizedRole
-        });
-    }
-    catch (MySqlException)
-    {
-        return DatabaseUnavailable();
-    }
-}).RequireRateLimiting("lobby");
+app.MapGuideProgress();
 
 app.MapPost("/api/auth/logout", async (
     HttpRequest request,
@@ -630,7 +591,7 @@ static async Task<AuthUser?> LoadUserAsync(
     await using var command = new MySqlCommand(
         """
         SELECT id, account_id, display_name, password_hash, failed_login_count, locked_until_utc,
-               seen_survivor_guide, seen_mannequin_guide
+               seen_survivor_guide, seen_mannequin_guide, seen_initial_tutorial
         FROM users
         WHERE account_id = @accountId
         LIMIT 1;
@@ -653,7 +614,8 @@ static async Task<AuthUser?> LoadUserAsync(
         reader.GetUInt32(4),
         reader.IsDBNull(5) ? null : DateTime.SpecifyKind(reader.GetDateTime(5), DateTimeKind.Utc),
         reader.GetBoolean(6),
-        reader.GetBoolean(7));
+        reader.GetBoolean(7),
+        reader.GetBoolean(8));
 }
 
 static async Task<TokenPair> CreateSessionAsync(
@@ -840,6 +802,9 @@ internal sealed class AuthDatabase
         await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
         await LobbyEndpoints.EnsureMatchBotSchemaAsync(connection, cancellationToken);
         await CaseRecords.EnsureAsync(connection,cancellationToken);
+        await CaseCollection.EnsureAsync(connection,cancellationToken);
+        await MainQuest.EnsureAsync(connection,cancellationToken);
+        await CaseDraw.EnsureAsync(connection,cancellationToken);
         await CustomRoomRules.EnsureAsync(connection,cancellationToken);
         await CaseMissionSlots.EnsureAsync(connection,cancellationToken);
         await CaseInvestigation.EnsureAsync(connection,cancellationToken);
@@ -871,7 +836,7 @@ internal sealed class AuthDatabase
         CancellationToken cancellationToken)
     {
         await connection.ChangeDatabaseAsync("projectproject01", cancellationToken);
-        foreach (var columnName in new[] { "seen_survivor_guide", "seen_mannequin_guide" })
+        foreach (var columnName in new[] { "seen_survivor_guide", "seen_mannequin_guide", "seen_initial_tutorial" })
         {
             await using var columnCommand = new MySqlCommand(
                 "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'projectproject01' AND table_name = 'users' AND column_name = @columnName;",
@@ -883,6 +848,12 @@ internal sealed class AuthDatabase
                     $"ALTER TABLE users ADD COLUMN {columnName} BOOLEAN NOT NULL DEFAULT FALSE AFTER locked_until_utc;",
                     connection) { CommandTimeout = 15 };
                 await addColumn.ExecuteNonQueryAsync(cancellationToken);
+                if (columnName == "seen_initial_tutorial")
+                {
+                    await using var backfill = new MySqlCommand(
+                        "UPDATE users SET seen_initial_tutorial=TRUE WHERE seen_survivor_guide=TRUE OR seen_mannequin_guide=TRUE;", connection);
+                    await backfill.ExecuteNonQueryAsync(cancellationToken);
+                }
             }
         }
     }
@@ -1148,7 +1119,8 @@ internal sealed record AuthSuccess(
     DateTime AccessExpiresAtUtc,
     DateTime RefreshExpiresAtUtc,
     bool SeenSurvivorGuide,
-    bool SeenMannequinGuide);
+    bool SeenMannequinGuide,
+    bool SeenInitialTutorial = false);
 internal sealed record AuthUser(
     ulong Id,
     string AccountId,
@@ -1157,7 +1129,8 @@ internal sealed record AuthUser(
     uint FailedLoginCount,
     DateTime? LockedUntilUtc,
     bool SeenSurvivorGuide,
-    bool SeenMannequinGuide);
+    bool SeenMannequinGuide,
+    bool SeenInitialTutorial = false);
 internal sealed record TokenPair(
     string AccessToken,
     string RefreshToken,

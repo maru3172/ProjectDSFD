@@ -29,6 +29,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/App.h"
 #include "Misc/ScopeExit.h"
+#include "ProjectEditorTestWorlds.h"
 
 namespace ProjectPlayTests
 {
@@ -67,6 +68,10 @@ namespace ProjectPlayTests
 			if (FPlatformTime::Seconds()<Deadline) return false;
 			Test->AddError(TEXT("PIE did not shut down after the test")); if (Cleanup) Cleanup(); return true;
 		}));
+		// Worlds a map override loaded finish their teardown on the following frames; collect them here, so a later
+		// test's own garbage collection never meets a half torn-down world.
+		auto Frames=MakeShared<int32>(0);
+		Test->AddCommand(new FFunctionLatentCommand([Frames]{if(++*Frames<4)return false;ProjectEditorTestWorlds::ReleaseLeftoverWorlds();return true;}));
 	}
 }
 

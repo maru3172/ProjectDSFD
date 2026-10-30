@@ -110,6 +110,11 @@ void UProjectAnnouncementSubsystem::NotifyAchievement(const FString& Code)
 {
     if(!AchievementOverlay)AchievementOverlay=ProjectAchievementToast::Create();ProjectAchievementToast::Show(AchievementOverlay.ToSharedRef(),Code);
 }
+void UProjectAnnouncementSubsystem::NotifyQuest(const FString& Name,const FString& Kind,const FString& Detail,const FString& EventId)
+{
+    if(!AchievementOverlay)AchievementOverlay=ProjectAchievementToast::Create();
+    ProjectAchievementToast::ShowQuest(AchievementOverlay.ToSharedRef(),Name,Kind,Detail,EventId);
+}
 bool UProjectAnnouncementSubsystem::Poll(float)
 {
     auto* V=GetGameInstance()->GetGameViewportClient();if(!V)return true;

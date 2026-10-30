@@ -36,13 +36,15 @@ FText ProjectProject01Timeline::FormatEvent(const FProjectMatchTimelineEvent& Ev
     case EProjectMatchEvent::Reconnected: Action = NSLOCTEXT("MatchTimeline", "Reconnected", "재접속"); break;
     case EProjectMatchEvent::Forfeited: Action = NSLOCTEXT("MatchTimeline", "Forfeited", "기권"); break;
     case EProjectMatchEvent::Ended: Action = NSLOCTEXT("MatchTimeline", "Ended", "경기 종료"); break;
+    case EProjectMatchEvent::ReplacedByBot: Action = NSLOCTEXT("MatchTimeline", "ReplacedByBot", "봇이 이어서 플레이"); break;
     }
     const int32 Seconds = FMath::Clamp(FMath::FloorToInt(Event.Seconds), 0, 359999);
     FText Detail = FText::FromString(Event.Detail);
     if (Event.Kind == EProjectMatchEvent::DeathCountLost)
         Detail = FText::Format(NSLOCTEXT("MatchTimeline","Remaining","남은 데카: {0}"), Detail);
     else if (Event.Kind == EProjectMatchEvent::Forfeited)
-        Detail = Event.Detail == TEXT("ReconnectTimeout") ? NSLOCTEXT("MatchTimeline","Timeout","재접속 유예 만료") : NSLOCTEXT("MatchTimeline","Exit","직접 나가기");
+        Detail = Event.Detail == TEXT("ReconnectTimeout") ? NSLOCTEXT("MatchTimeline","Timeout","재접속 유예 만료")
+            : Event.Detail == TEXT("Deserted") ? NSLOCTEXT("MatchTimeline","Deserted","경기 이탈") : NSLOCTEXT("MatchTimeline","Exit","직접 나가기");
     else if (Event.Kind == EProjectMatchEvent::Ended)
     {
         if (Event.Detail == TEXT("TimeLimit")) Detail = NSLOCTEXT("MatchTimeline","TimeLimit","제한 시간 종료");

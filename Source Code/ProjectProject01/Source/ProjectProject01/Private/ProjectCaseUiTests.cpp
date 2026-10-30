@@ -19,12 +19,14 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/SlateRenderer.h"
 #include "Fonts/FontMeasure.h"
 #include "Widgets/Input/SButton.h"
+#include "InputCoreTypes.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCaseUiRenderTest,"ProjectProject01.CaseRecords.RenderPages",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
 bool FProjectCaseUiRenderTest::RunTest(const FString&)
@@ -42,8 +44,37 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
       "partyState":{"role":"Survivor","invites":[],"party":{"id":"fixture","mode":"Open","leaderId":"1","maximum":3,"isLeader":true,"members":[{"userId":"1","displayName":"테스트 조사관","role":"Survivor"}]}},
       "season":{"incidentTimestamp":"202X-XX-XX 18:24:01","availability":"(~ 정식 출시 전까지)","investigation":{"enabled":true,"weeklyLimit":15,"collectedThisWeek":3,"remainingThisWeek":12,"records":[],"stages":[]}}})json");
     if(!TestTrue(TEXT("Offline render fixture decodes"),FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),R->Snapshot)))return false;
+    TSharedPtr<FJsonObject> Collection;
+    FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(FString(TEXT(R"json({"bio":"폐점 이후의 기록을 수집합니다.","featured":[{"code":"campaign_escape"}],"catalogue":[
+      {"id":"banner_afterhours","name":"폐점 이후","slot":"Banner"},{"id":"banner_embers","name":"잔불","slot":"Banner"},
+      {"id":"stamp_checkpoint","name":"첫 기록 인장","slot":"Stamp","achievement":"campaign_checkpoint"},
+      {"id":"badge_exit","name":"탈출구 기념 배지","slot":"Badge","achievement":"campaign_escape"},
+      {"id":"plate_training","name":"교육 직원 명찰","slot":"Nameplate","achievement":"bot_first"},{"id":"icon_receipt","name":"오래된 영수증","slot":"Icon"}],
+      "draw":{"revision":1,"tickets":5,"pity":83,"pityAvailable":true,"active":true,"pool":{"title":"RECORD 0","prizes":[
+       {"id":"a","name":"폐점 이후","grade":1,"itemId":"banner_afterhours","probability":1},{"id":"b","name":"잔불","grade":2,"itemId":"banner_embers","probability":5},
+       {"id":"c","name":"보관 문서 테두리","grade":3,"itemId":"frame_archive","probability":10},{"id":"d","name":"오래된 영수증","grade":4,"itemId":"icon_receipt","probability":20},
+       {"id":"e","name":"기록 포인트","grade":5,"credits":5,"probability":64}],"guaranteePrizes":[{"id":"a","probability":100}]}}})json"))),Collection);
+    struct FExtraDrawItem{const TCHAR* Id;const TCHAR* Name;const TCHAR* Slot;int32 Grade;};
+    auto DrawPool=Collection->GetObjectField(TEXT("draw"))->GetObjectField(TEXT("pool"));auto DrawPrizes=DrawPool->GetArrayField(TEXT("prizes"));auto DrawCatalogue=Collection->GetArrayField(TEXT("catalogue"));
+    for(const FExtraDrawItem& Extra:TArray<FExtraDrawItem>{{TEXT("banner_lastlight"),TEXT("마지막 점등"),TEXT("Banner"),1},{TEXT("banner_silentfloor"),TEXT("침묵의 층"),TEXT("Banner"),1},{TEXT("frame_burntcase"),TEXT("그을린 사건철"),TEXT("Frame"),1},{TEXT("banner_emergency"),TEXT("비상등 아래"),TEXT("Banner"),2},{TEXT("banner_shutter"),TEXT("닫힌 셔터"),TEXT("Banner"),2},{TEXT("plate_nightwatch"),TEXT("야간 경비 명찰"),TEXT("Nameplate"),2},{TEXT("seal_unresolved"),TEXT("미결 사건 인장"),TEXT("Stamp"),2},{TEXT("icon_masterkey"),TEXT("분실된 마스터키"),TEXT("Icon"),2},{TEXT("frame_carbon"),TEXT("먹지 테두리"),TEXT("Frame"),3},{TEXT("frame_evidence"),TEXT("증거 봉투 테두리"),TEXT("Frame"),3},{TEXT("banner_escalator"),TEXT("멈춘 에스컬레이터"),TEXT("Banner"),3},{TEXT("banner_service"),TEXT("직원 전용 통로"),TEXT("Banner"),3},{TEXT("plate_lostfound"),TEXT("분실물 보관 명찰"),TEXT("Nameplate"),3},{TEXT("stamp_closed"),TEXT("폐점 확인 소인"),TEXT("Stamp"),3},{TEXT("badge_rooftop"),TEXT("옥상 출입 배지"),TEXT("Badge"),3},{TEXT("icon_floormap"),TEXT("접힌 층별 안내도"),TEXT("Icon"),3},{TEXT("icon_ticket"),TEXT("빛바랜 대기표"),TEXT("Icon"),4},{TEXT("icon_locker"),TEXT("보관함 열쇠"),TEXT("Icon"),4},{TEXT("stamp_received"),TEXT("접수 완료 도장"),TEXT("Stamp"),4},{TEXT("stamp_checked"),TEXT("열람 확인 도장"),TEXT("Stamp"),4},{TEXT("badge_basement"),TEXT("지하층 기념 배지"),TEXT("Badge"),4},{TEXT("badge_service"),TEXT("안내 데스크 배지"),TEXT("Badge"),4},{TEXT("frame_staple"),TEXT("스테이플 문서 테두리"),TEXT("Frame"),4},{TEXT("plate_archive"),TEXT("기록실 직원 명찰"),TEXT("Nameplate"),4}})
+    {auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("id"),Extra.Id);J->SetStringField(TEXT("itemId"),Extra.Id);J->SetStringField(TEXT("name"),Extra.Name);J->SetStringField(TEXT("slot"),Extra.Slot);J->SetNumberField(TEXT("grade"),Extra.Grade);J->SetNumberField(TEXT("probability"),3);DrawPrizes.Add(MakeShared<FJsonValueObject>(J));DrawCatalogue.Add(MakeShared<FJsonValueObject>(J));}DrawPool->SetArrayField(TEXT("prizes"),DrawPrizes);Collection->SetArrayField(TEXT("catalogue"),DrawCatalogue);
+    R->Snapshot->SetObjectField(TEXT("collection"),Collection);
+    {
+        const auto Original=R->Snapshot;auto NewState=MakeShared<FJsonObject>();NewState->Values=Original->Values;
+        auto NewCollection=MakeShared<FJsonObject>();NewCollection->Values=Collection->Values;NewState->SetObjectField(TEXT("collection"),NewCollection);NewState->SetNumberField(TEXT("credits"),0);
+        auto NewDraw=MakeShared<FJsonObject>();NewDraw->Values=Collection->GetObjectField(TEXT("draw"))->Values;NewDraw->SetNumberField(TEXT("pity"),17);NewDraw->SetNumberField(TEXT("tickets"),2);
+        auto Response=MakeShared<FJsonObject>();Response->SetObjectField(TEXT("snapshot"),NewState);Response->SetObjectField(TEXT("draw"),NewDraw);R->PendingDrawId=TEXT("pending-fixture");R->ApplyDrawResponse(Response);
+        TestTrue(TEXT("A draw response replaces wallet/inventory state immediately"),R->Snapshot==NewState&&R->Snapshot->GetNumberField(TEXT("credits"))==0);
+        TestEqual(TEXT("New stack appears without another polling request"),R->Snapshot->GetObjectField(TEXT("collection"))->GetObjectField(TEXT("draw"))->GetNumberField(TEXT("pity")),17.0);
+        TestTrue(TEXT("Draw success resolves the pending idempotency request"),R->PendingDrawId.IsEmpty());R->Snapshot=Original;R->DrawResult.Reset();
+        TestEqual(TEXT("A complete response avoids an immediate duplicate account poll"),R->PollIn,15.f);
+    }
     R->Local->Earned.Add(TEXT("campaign_checkpoint"));
     auto Escaped=MakeShared<FJsonObject>();Escaped->SetStringField(TEXT("code"),TEXT("campaign_escape"));R->Snapshot->SetArrayField(TEXT("achievements"),{MakeShared<FJsonValueObject>(Escaped)});
+    TArray<TSharedPtr<FJsonValue>> AchievementRewards;
+    for(const FString Code:{TEXT("campaign_checkpoint"),TEXT("campaign_escape"),TEXT("campaign_complete"),TEXT("pvp_first"),TEXT("bot_first"),TEXT("survivor_escape"),TEXT("mannequin_victory")})
+    {auto Reward=MakeShared<FJsonObject>();Reward->SetStringField(TEXT("code"),Code);Reward->SetBoolField(TEXT("earned"),Code==TEXT("campaign_escape")||Code==TEXT("pvp_first"));Reward->SetBoolField(TEXT("claimed"),false);AchievementRewards.Add(MakeShared<FJsonValueObject>(Reward));}
+    R->Snapshot->SetArrayField(TEXT("achievementRewards"),AchievementRewards);
     R->AchievementRateBase=Auth->GetApiBaseUrlForAuthenticatedRequest();R->AchievementRates=MakeShared<FJsonObject>();
     TArray<TSharedPtr<FJsonValue>> RateRows;for(const FString Code:{FString(TEXT("campaign_checkpoint")),FString(TEXT("campaign_escape")),FString(TEXT("campaign_complete"))})
     {auto Rate=MakeShared<FJsonObject>();Rate->SetStringField(TEXT("code"),Code);Rate->SetNumberField(TEXT("percentage"),Code==TEXT("campaign_checkpoint")?75:Code==TEXT("campaign_escape")?25:0);RateRows.Add(MakeShared<FJsonValueObject>(Rate));}R->AchievementRates->SetArrayField(TEXT("achievements"),RateRows);
@@ -58,7 +89,7 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     TArray<TSharedPtr<FJsonValue>> Catalogue;
     const TArray<FString> ItemIds{TEXT("frame_crimson"),TEXT("frame_silver"),TEXT("icon_file"),TEXT("icon_seal"),TEXT("title_witness")};
     const TArray<FString> ItemNames{TEXT("붉은 봉인 테두리"),TEXT("조사관 테두리"),TEXT("사건 기록 아이콘"),TEXT("증거 봉인 아이콘"),TEXT("목격자 명찰")};
-    for(int32 I=0;I<ItemIds.Num();++I){auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("id"),ItemIds[I]);Item->SetStringField(TEXT("name"),ItemNames[I]);Item->SetNumberField(TEXT("price"),100);Catalogue.Add(MakeShared<FJsonValueObject>(Item));}
+    for(int32 I=0;I<ItemIds.Num();++I){auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("id"),ItemIds[I]);Item->SetStringField(TEXT("name"),ItemNames[I]);Item->SetStringField(TEXT("slot"),ItemIds[I].StartsWith(TEXT("frame_"))?TEXT("Frame"):ItemIds[I].StartsWith(TEXT("icon_"))?TEXT("Icon"):TEXT("Nameplate"));Item->SetNumberField(TEXT("price"),100);Catalogue.Add(MakeShared<FJsonValueObject>(Item));}
     R->Snapshot->SetArrayField(TEXT("catalogue"),Catalogue);
     auto OwnedFrame=MakeShared<FJsonObject>();OwnedFrame->SetStringField(TEXT("itemId"),TEXT("level_frame_25"));R->Snapshot->SetArrayField(TEXT("inventory"),{MakeShared<FJsonValueObject>(OwnedFrame)});
     TArray<TSharedPtr<FJsonValue>> Rewards;
@@ -73,6 +104,45 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     static_cast<UUserWidget*>(Widget)->Initialize();static_cast<UUserWidget*>(Dock)->Initialize();auto Slate=Widget->TakeWidget();auto DockSlate=Dock->TakeWidget();
     R->Request.Reset(); // Construction completed without HTTP; the synchronous render does not run the core ticker.
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("CaseRecordUIQA");IFileManager::Get().MakeDirectory(*Directory,true);FWidgetRenderer Renderer(false);
+    R->bPersistence=false;R->ConfirmationDays.Reset();
+    const auto CaptureTransaction=[&](const FString& Name)
+    {
+        for(const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
+        {
+            auto* Target=ProjectUIRenderCapture::Create(Size);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+            for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),0);
+            FlushRenderingCommands();TArray<FColor> Pixels;
+            if(ProjectUIRenderCapture::Read(Target,Pixels)){TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("%s_%dx%d.png"),*Name,Size.X,Size.Y)));}
+            Target->ReleaseResource();
+        }
+    };
+    int32 Confirmed=0;
+    Widget->Page=TEXT("Draw");Widget->RefreshPanel();
+    Widget->ConfirmAction(TEXT("Draw"),TEXT("계속 진행하시겠습니까?"),[&]{++Confirmed;});
+    TestTrue(TEXT("Opening a confirmation neither spends nor runs the action"),Confirmed==0&&Widget->TransactionLayer->GetChildren()->Num()==1&&!R->Request.IsValid());
+    CaptureTransaction(TEXT("DrawConfirmation"));Widget->ResolveConfirmation(false,false);
+    TestTrue(TEXT("No cancels without saving a skip preference"),Confirmed==0&&R->ShouldConfirm(TEXT("Draw")));
+    Widget->ConfirmAction(TEXT("Purchase"),TEXT("구매하시겠습니까?"),[&]{++Confirmed;});CaptureTransaction(TEXT("PurchaseConfirmation"));Widget->ResolveConfirmation(true,false);
+    TestTrue(TEXT("Yes without the checkbox still asks on the next purchase"),Confirmed==1&&R->ShouldConfirm(TEXT("Purchase")));
+    Widget->ConfirmAction(TEXT("Draw"),TEXT("계속 진행하시겠습니까?"),[&]{++Confirmed;});Widget->ResolveConfirmation(true,true);
+    TestTrue(TEXT("Daily draw preference covers draw sizes without silencing point purchases"),Confirmed==2&&!R->ShouldConfirm(TEXT("Draw"))&&R->ShouldConfirm(TEXT("Purchase")));
+    Widget->ConfirmAction(TEXT("Draw"),TEXT("계속 진행하시겠습니까?"),[&]{++Confirmed;});TestTrue(TEXT("Suppressed draw proceeds once without a modal"),Confirmed==3&&Widget->TransactionLayer->GetChildren()->Num()==0);
+    Widget->ConfirmAction(TEXT("Purchase"),TEXT("구매하시겠습니까?"),[&]{++Confirmed;});Widget->ResolveConfirmation(false,true);
+    TestTrue(TEXT("No never buys, while the checked daily preference is remembered"),Confirmed==3&&!R->ShouldConfirm(TEXT("Purchase")));
+    R->ConfirmationDays.Add(R->ConfirmationScope()+TEXT(".Draw"),(FDateTime::Now()-FTimespan::FromDays(1)).ToString(TEXT("%Y-%m-%d")));
+    TestTrue(TEXT("Yesterday's preference expires at the calendar-day boundary"),R->ShouldConfirm(TEXT("Draw")));
+    Widget->ConfirmAction(TEXT("Draw"),TEXT("계속 진행하시겠습니까?"),[&]{++Confirmed;});R->Snapshot->SetStringField(TEXT("userId"),TEXT("other"));Widget->ResolveConfirmation(true,true);
+    TestTrue(TEXT("Account changes invalidate a pending confirmation and do not copy daily preferences"),Confirmed==3&&R->ShouldConfirm(TEXT("Draw")));R->Snapshot->SetStringField(TEXT("userId"),TEXT("1"));
+    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("구매하셨습니다"),TEXT("frame_silver")},{TEXT("획득하셨습니다"),TEXT("stamp_checkpoint")}})
+    {
+        R->LastReceipt=MakeShared<FJsonObject>();R->LastReceipt->SetStringField(TEXT("title"),Entry.Key);auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("itemId"),Entry.Value);Item->SetStringField(TEXT("name"),Entry.Value==TEXT("frame_silver")?TEXT("은빛 기록 테두리"):TEXT("첫 기록 인장"));Item->SetNumberField(TEXT("count"),1);
+        R->LastReceipt->SetArrayField(TEXT("items"),{MakeShared<FJsonValueObject>(Item)});Widget->ShowReceipt();TestEqual(TEXT("Successful receipt shows a single acknowledgement modal"),Widget->TransactionLayer->GetChildren()->Num(),1);
+        CaptureTransaction(Entry.Key==TEXT("구매하셨습니다")?TEXT("PurchaseReceipt"):TEXT("AchievementReceipt"));Widget->TransactionLayer->ClearChildren();R->LastReceipt.Reset();
+    }
+    auto Quest=MakeShared<FJsonObject>();Quest->SetStringField(TEXT("name"),TEXT("탐사"));Quest->SetStringField(TEXT("baseStory"),TEXT("폐점 안내가 끝난 뒤, 조사 기록의 첫 장을 펼쳤다."));Quest->SetNumberField(TEXT("stage"),0);Quest->SetBoolField(TEXT("completed"),false);
+    TArray<TSharedPtr<FJsonValue>> QuestSteps;const TArray<FString> QuestTitles{TEXT("생존자 튜토리얼 완료"),TEXT("어떤 매칭이든 게임 1번 플레이"),TEXT("3층 맵 탈출하기"),TEXT("2층 맵 탈출하기"),TEXT("백화점을 무사히 탈출하기"),TEXT("마네킹 튜토리얼 완료"),TEXT("마네킹으로 플레이어 1명 잡기"),TEXT("마네킹으로 승리하기")};
+    for(int32 I=0;I<8;++I){auto S=MakeShared<FJsonObject>();S->SetStringField(TEXT("id"),I==0?TEXT("survivor_tutorial"):I==5?TEXT("mannequin_tutorial"):FString::FromInt(I));S->SetStringField(TEXT("title"),QuestTitles[I]);S->SetBoolField(TEXT("active"),I==0);S->SetBoolField(TEXT("completed"),false);S->SetBoolField(TEXT("canSkip"),I==0);auto G=MakeShared<FJsonObject>();G->SetStringField(TEXT("label"),QuestTitles[I]);G->SetNumberField(TEXT("progress"),0);G->SetNumberField(TEXT("target"),1);S->SetArrayField(TEXT("goals"),{MakeShared<FJsonValueObject>(G)});QuestSteps.Add(MakeShared<FJsonValueObject>(S));}
+    Quest->SetArrayField(TEXT("steps"),QuestSteps);R->Snapshot->SetObjectField(TEXT("mainQuest"),Quest);
     const auto PartyState=R->Snapshot->GetObjectField(TEXT("partyState")),Party=PartyState->GetObjectField(TEXT("party"));
     const auto OriginalMembers=Party->GetArrayField(TEXT("members"));
     for(int32 Count:{1,3,2,0})
@@ -106,7 +176,14 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     }
     }
     Party->SetArrayField(TEXT("members"),OriginalMembers);PartyState->SetObjectField(TEXT("party"),Party);
-    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("Achievements")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive"))})
+    const auto OriginalLoadout=R->Snapshot->GetArrayField(TEXT("loadout"));auto Banner=MakeShared<FJsonObject>();Banner->SetStringField(TEXT("slot"),TEXT("Banner"));Banner->SetStringField(TEXT("itemId"),TEXT("banner_afterhours"));R->Snapshot->SetArrayField(TEXT("loadout"),{MakeShared<FJsonValueObject>(Banner)});
+    for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
+    {
+        auto* Target=ProjectUIRenderCapture::Create(Size);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);for(int Pass=0;Pass<3;Pass++)Renderer.DrawWidget(Target,DockSlate,Dpi,FVector2D(Size),0);FlushRenderingCommands();TArray<FColor> Pixels;
+        if(TestTrue(TEXT("Equipped banner renders inside the existing profile dock"),ProjectUIRenderCapture::Read(Target,Pixels))){TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("DockBanner_%dx%d.png"),Size.X,Size.Y)));}Target->ReleaseResource();
+    }
+    R->Snapshot->SetArrayField(TEXT("loadout"),OriginalLoadout);
+    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("ProfileEdit")),FString(TEXT("Collection")),FString(TEXT("CollectionBanner")),FString(TEXT("CollectionFrame")),FString(TEXT("Draw")),FString(TEXT("DrawReset")),FString(TEXT("DrawInactive")),FString(TEXT("DrawNoFunds")),FString(TEXT("DrawRates")),FString(TEXT("DrawResult")),FString(TEXT("DrawRare")),FString(TEXT("Events")),FString(TEXT("Achievements")),FString(TEXT("OnlineAchievements")),FString(TEXT("Quest")),FString(TEXT("QuestAll")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive"))})
     {
         Auth->AuthState=Page==TEXT("Archive")?EProjectProject01AuthState::SignedOut:EProjectProject01AuthState::SignedIn;
         if(Page==TEXT("TrackComplete")||Page==TEXT("TrackUnclaimed")||Page==TEXT("Archive"))
@@ -125,9 +202,67 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         // that page, rather than reusing one frame's cached attributes across cases.
         Widget->ReleaseSlateResources(true);Widget=NewObject<UProjectCaseRecordWidget>(World);static_cast<UUserWidget*>(Widget)->Initialize();
         if(Page==TEXT("ProfileClaimed"))Rewards[0]->AsObject()->SetBoolField(TEXT("claimed"),true);
+        R->Snapshot->SetArrayField(TEXT("loadout"),OriginalLoadout);
+        if(Page.StartsWith(TEXT("Profile")))
+        {
+            TArray<TSharedPtr<FJsonValue>> Displayed;for(const FString Id:{FString(TEXT("banner_afterhours")),FString(TEXT("banner_embers"))}){auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("itemId"),Id);Displayed.Add(MakeShared<FJsonValueObject>(J));}Collection->SetArrayField(TEXT("displayedBanners"),Displayed);
+            R->Snapshot->SetArrayField(TEXT("loadout"),{MakeShared<FJsonValueObject>(Banner)});
+        }
+        else Collection->SetArrayField(TEXT("displayedBanners"),TArray<TSharedPtr<FJsonValue>>{});
         R->Snapshot->SetNumberField(TEXT("credits"),Page==TEXT("ShopNoFunds")?0:500);
-        Widget->Page=Page.StartsWith(TEXT("Track"))?TEXT("Track"):Page.StartsWith(TEXT("Profile"))?TEXT("Profile"):Page.StartsWith(TEXT("Shop"))?TEXT("Shop"):Page;R->Status=Page==TEXT("TrackComplete")?TEXT("보상을 수령했습니다."):Page==TEXT("ShopNoFunds")?TEXT("포인트가 부족합니다"):FString();
+        Collection->GetObjectField(TEXT("draw"))->SetNumberField(TEXT("tickets"),Page==TEXT("DrawNoFunds")?0:5);
+        Collection->GetObjectField(TEXT("draw"))->SetBoolField(TEXT("active"),Page!=TEXT("DrawInactive"));
+        Widget->bEditingProfile=Page==TEXT("ProfileEdit");Widget->BioDraft=TEXT("폐점 이후의 기록을 수집합니다.");
+        R->DrawResult.Reset();
+        if(Page==TEXT("DrawReset"))
+        {R->DrawResult=MakeShared<FJsonObject>();R->DrawResult->SetStringField(TEXT("operation"),TEXT("EditorReset"));R->DrawResult->SetStringField(TEXT("requestId"),TEXT("reset-response"));Widget->bDrawResultOpen=Widget->bDrawRequestedHere=true;Widget->ParcelOpenTimes.Add(0,FPlatformTime::Seconds());Widget->RareRevealQueue.Add(0);}
+        if(Page==TEXT("DrawResult")||Page==TEXT("DrawRare"))
+        {
+            R->DrawResult=MakeShared<FJsonObject>();R->DrawResult->SetStringField(TEXT("operation"),TEXT("Draw"));R->DrawResult->SetStringField(TEXT("requestId"),TEXT("render-only"));
+            TArray<TSharedPtr<FJsonValue>> Awards;for(int32 I=0;I<5;I++){auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("name"),I==0?TEXT("폐점 이후"):I==1?TEXT("잔불"):TEXT("기록 포인트"));if(I<2)J->SetStringField(TEXT("itemId"),I==0?TEXT("banner_afterhours"):TEXT("banner_embers"));J->SetNumberField(TEXT("grade"),I+1);J->SetNumberField(TEXT("credits"),I<2?0:5);Awards.Add(MakeShared<FJsonValueObject>(J));}R->DrawResult->SetArrayField(TEXT("awards"),Awards);
+            Widget->LastDrawReceipt=TEXT("render-only");Widget->bDrawResultOpen=true;
+        }
+        Widget->CollectionCategory=Page==TEXT("CollectionBanner")?TEXT("Banner"):Page==TEXT("CollectionFrame")?TEXT("Frame"):TEXT("All");
+        if(Page==TEXT("QuestAll"))
+        {
+            Quest->SetNumberField(TEXT("stage"),7);
+            for(int32 I=0;I<QuestSteps.Num();++I){auto S=QuestSteps[I]->AsObject();S->SetBoolField(TEXT("active"),I==7);S->SetBoolField(TEXT("completed"),I<7);S->SetBoolField(TEXT("canSkip"),false);}
+        }
+        Widget->Page=Page.StartsWith(TEXT("Quest"))?TEXT("Quest"):Page.StartsWith(TEXT("Collection"))?TEXT("Collection"):Page.StartsWith(TEXT("Draw"))?TEXT("Draw"):Page.StartsWith(TEXT("Track"))?TEXT("Track"):Page.StartsWith(TEXT("Profile"))?TEXT("Profile"):Page.StartsWith(TEXT("Shop"))?TEXT("Shop"):Page;Widget->bShowDrawRates=Page==TEXT("DrawRates");R->Status=Page==TEXT("TrackComplete")?TEXT("보상을 수령했습니다."):Page==TEXT("ShopNoFunds")?TEXT("포인트가 부족합니다"):FString();
         R->Request=FHttpModule::Get().CreateRequest();Slate=Widget->TakeWidget();R->Request.Reset();Widget->RefreshPanel();
+        if(Page==TEXT("DrawReset"))TestTrue(TEXT("Confirmed reset clears previous boxes and solo reveal without showing stale results"),!Widget->bDrawResultOpen&&!Widget->bDrawRequestedHere&&Widget->ParcelOpenTimes.IsEmpty()&&Widget->RareRevealQueue.IsEmpty());
+        if(Page==TEXT("DrawInactive"))
+        {
+            Widget->RequestDrawAction(TEXT("Draw"),1);TestTrue(TEXT("An unpublished pool explains the reason without creating boxes or HTTP"),Widget->DrawFeedback.Contains(TEXT("공개되지"))&&!R->Request.IsValid()&&!Widget->bDrawRequestedHere);
+            int32 EnabledActions=0;TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> N){if(N->GetType()==FName(TEXT("SButton"))){auto* C=N->GetChildren();if(C&&C->Num()==1&&C->GetChildAt(0)->GetType()==FName(TEXT("STextBlock"))){auto Caption=StaticCastSharedRef<STextBlock>(C->GetChildAt(0))->GetText().ToString();if(Caption==TEXT("1개 뽑기")||Caption==TEXT("5개 뽑기")||Caption==TEXT("재화 1개 교환 · 500 P")||Caption==TEXT("최대 교환"))EnabledActions+=N->IsEnabled()?1:0;}}if(auto* C=N->GetChildren())for(int32 I=0;I<C->Num();I++)Inspect(C->GetChildAt(I));};Inspect(Slate);TestEqual(TEXT("Draw and exchange buttons remain clickable for feedback"),EnabledActions,4);
+        }
+        if(Page==TEXT("DrawNoFunds"))
+        {
+            auto Draw=Collection->GetObjectField(TEXT("draw"));Draw->SetNumberField(TEXT("tickets"),0);Widget->RequestDrawAction(TEXT("Draw"),1);Widget->ResolveConfirmation(true,false);Widget->RequestDrawAction(TEXT("Draw"),5);Widget->ResolveConfirmation(true,false);
+            TestEqual(TEXT("Insufficient currency uses the shop-style feedback"),Widget->DrawFeedback,FString(TEXT("재화가 부족합니다")));TestFalse(TEXT("Insufficient currency sends no HTTP and creates no draw"),R->Request.IsValid()||R->DrawResult.IsValid()||Widget->bDrawResultOpen||Widget->bDrawRequestedHere);
+        }
+        if(Page==TEXT("Draw")||Page==TEXT("DrawNoFunds"))
+        {
+            int32 Parcels=0;TFunction<void(TSharedRef<SWidget>)> Count=[&](TSharedRef<SWidget> N){if(N->GetType()==FName(TEXT("SParcel")))Parcels++;if(auto* Children=N->GetChildren())for(int I=0;I<Children->Num();I++)Count(Children->GetChildAt(I));};Count(Slate);TestEqual(TEXT("No boxes exist before a successful draw"),Parcels,0);
+        }
+        if(Page==TEXT("DrawResult")||Page==TEXT("DrawRare"))
+        {
+            TestTrue(TEXT("Five results start unopened"),Widget->ParcelOpenTimes.IsEmpty());Widget->OpenDrawParcel(0);const double First=Widget->ParcelOpenTimes[0];Widget->OpenAllDrawParcels();
+            TestEqual(TEXT("Open all affects every remaining parcel"),Widget->ParcelOpenTimes.Num(),5);TestEqual(TEXT("Open all keeps already opened parcel timing"),Widget->ParcelOpenTimes[0],First);
+            for(int32 I=2;I<5;I++)TestEqual(TEXT("Unopened parcels begin their normal animation simultaneously"),Widget->ParcelOpenTimes[I],Widget->ParcelOpenTimes[1]);
+            TestFalse(TEXT("Opening parcels never submits another draw request"),R->Request.IsValid());
+            TestEqual(TEXT("Two rare prizes each receive their own solo presentation"),Widget->RareRevealQueue.Num(),2);
+            if(Page==TEXT("DrawResult"))
+            {
+                FPointerEvent Click(0,FVector2D::ZeroVector,FVector2D::ZeroVector,TSet<FKey>{EKeys::LeftMouseButton},EKeys::LeftMouseButton,0,FModifierKeysState());
+                auto Solo=Widget->RarePresentationLayer->GetChildren()->GetChildAt(0);Solo->OnMouseButtonDown(FGeometry(),Click);
+                TestEqual(TEXT("First click skips to the product without closing it"),Widget->RareRevealQueue.Num(),2);Solo->OnMouseButtonDown(FGeometry(),Click);
+                TestEqual(TEXT("Immediate second click cannot skip the product reveal and acknowledgement together"),Widget->RareRevealQueue.Num(),2);
+                for(int32 Remaining=1;Remaining>=0;Remaining--){Widget->RareRevealBeganAt=FPlatformTime::Seconds()-5;Widget->RenderedFingerprint.Reset();Widget->RefreshPanel();Widget->RarePresentationLayer->GetChildren()->GetChildAt(0)->OnMouseButtonDown(FGeometry(),Click);TestEqual(TEXT("After product reveal, a click advances exactly one reward"),Widget->RareRevealQueue.Num(),Remaining);}
+            }
+            else Widget->RareRevealBeganAt=FPlatformTime::Seconds()-5;
+            for(auto& Open:Widget->ParcelOpenTimes)Open.Value-=5;Widget->RenderedFingerprint.Reset();Widget->RefreshPanel();
+        }
         for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
         {
             auto* Target=ProjectUIRenderCapture::Create(Size);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
@@ -139,7 +274,7 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
             // Its viewport, rather than the full content extent, must fit on screen.
             if(!TestTrue(TEXT("Each freshly constructed record page owns its scroll viewport"),Widget->RecordsScroll.IsValid()))return false;
             const auto G=Widget->RecordsScroll->GetCachedGeometry();TestTrue(TEXT("Record scroll viewport fits inside the screen"),G.GetAbsolutePosition().X>=0&&G.GetAbsolutePosition().Y>=0&&G.GetAbsolutePosition().X+G.GetAbsoluteSize().X<=Size.X+1&&G.GetAbsolutePosition().Y+G.GetAbsoluteSize().Y<=Size.Y+1);
-            if(Page.StartsWith(TEXT("Track"))||Page==TEXT("Archive")||Page==TEXT("Pvp")||Page==TEXT("Bot")||Page==TEXT("Shop"))
+            if(Page.StartsWith(TEXT("Track"))||Page.StartsWith(TEXT("Draw"))||Page.StartsWith(TEXT("Profile"))||Page.StartsWith(TEXT("Collection"))||Page==TEXT("Events")||Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements")||Page.StartsWith(TEXT("Quest"))||Page==TEXT("Archive")||Page==TEXT("Pvp")||Page==TEXT("Bot")||Page==TEXT("Shop"))
                 TestTrue(FString::Printf(TEXT("Page fits without scrolling: %s %dx%d desired %.1f available %.1f"),*Page,Size.X,Size.Y,Widget->Body->GetDesiredSize().Y,G.GetLocalSize().Y),Widget->Body->GetDesiredSize().Y<=G.GetLocalSize().Y+1);
             if(Page==TEXT("TrackUnclaimed")||Page==TEXT("TrackComplete"))
             {
@@ -148,14 +283,14 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
                 TestTrue(TEXT("Collected pieces show word clues independently of story claim"),Clue);
                 TestEqual(TEXT("Full story appears only when the server marks it available"),Story,Page==TEXT("TrackComplete"));
             }
-            if(Page.StartsWith(TEXT("Profile")))
+            if(Page.StartsWith(TEXT("Profile"))&&Page!=TEXT("ProfileEdit"))
             {
                 int32 RewardRows=0;FString RewardText;TFunction<void(TSharedRef<SWidget>)> CountRewards=[&](TSharedRef<SWidget> Node)
                 {
                     if(Node->GetType()==FName(TEXT("STextBlock"))){const FString Text=StaticCastSharedRef<STextBlock>(Node)->GetText().ToString();if(Text.StartsWith(TEXT("레벨 "))&&Text.Contains(TEXT(" · "))){++RewardRows;RewardText=Text;}}
                     if(auto* Children=Node->GetChildren())for(int32 I=0;I<Children->Num();++I)CountRewards(Children->GetChildAt(I));
                 };CountRewards(Slate);TestEqual(TEXT("Only the next unclaimed level reward is displayed"),RewardRows,1);
-                TestTrue(TEXT("Claiming a milestone advances the displayed reward"),RewardText.StartsWith(Page==TEXT("ProfileClaimed")?TEXT("레벨 10 ·"):TEXT("레벨 5 ·")));
+                TestTrue(TEXT("Claiming a milestone advances the displayed reward"),RewardText.StartsWith(Page==TEXT("Profile")?TEXT("레벨 5 ·"):TEXT("레벨 10 ·")));
             }
             if(Page==TEXT("ShopNoFunds"))
             {
@@ -178,6 +313,21 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
                     TestTrue(TEXT("The filled puzzle rectangle is moderately portrait and pieces vary in both dimensions"),(Max.Y-Min.Y)>(Max.X-Min.X)&&(Max.Y-Min.Y)<(Max.X-Min.X)*1.5&&Shapes.Num()>=5);
                     TestTrue(TEXT("Part completion is above the puzzle rather than inside the story"),Progress.IsValid()&&Progress->GetCachedGeometry().GetAbsolutePosition().Y<Min.Y);
                 }
+            }
+            if(Page==TEXT("DrawResult")&&Size.X==1280)
+            {
+                const auto SavedTimes=Widget->ParcelOpenTimes;
+                const double OpeningAge[]{2.54,1.39,.45,.45,.45};
+                for(auto& Open:Widget->ParcelOpenTimes)Open.Value=FPlatformTime::Seconds()-OpeningAge[FMath::Clamp(Open.Key,0,4)];
+                Widget->RenderedFingerprint.Reset();Widget->RefreshPanel();
+                for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),0);
+                FlushRenderingCommands();TArray<FColor> OpeningPixels;
+                if(TestTrue(TEXT("Opening-seam halo renders without lighting the entire parcel"),ProjectUIRenderCapture::Read(Target,OpeningPixels)))
+                {
+                    TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,OpeningPixels,PNG);
+                    FFileHelper::SaveArrayToFile(PNG,*(Directory/TEXT("DrawOpeningHalo_1280x720.png")));
+                }
+                Widget->ParcelOpenTimes=SavedTimes;Widget->RenderedFingerprint.Reset();Widget->RefreshPanel();
             }
             Target->ReleaseResource();
         }

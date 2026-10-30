@@ -13,6 +13,8 @@ internal static partial class OpenParties
         CREATE TABLE IF NOT EXISTS case_party_invites(id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,party_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
           recipient_id BIGINT UNSIGNED NOT NULL,expires_at_utc DATETIME(6) NOT NULL,UNIQUE KEY uq_case_invite(party_id,recipient_id),
           FOREIGN KEY(party_id) REFERENCES case_parties(id) ON DELETE CASCADE,FOREIGN KEY(recipient_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS case_party_removal_notices(user_id BIGINT UNSIGNED PRIMARY KEY,removed_at_utc DATETIME(6) NOT NULL,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS case_role_preferences(user_id BIGINT UNSIGNED PRIMARY KEY,role VARCHAR(16) NOT NULL DEFAULT 'Any',
           FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         """,ct);await EnsureAdmissionsAsync(c,ct);}
@@ -48,7 +50,10 @@ internal static partial class OpenParties
         var invites=await CommunityEndpoints.Rows(c,tx,"SELECT CAST(i.id AS CHAR) id,u.display_name leaderName,p.mode FROM case_party_invites i JOIN case_parties p ON p.id=i.party_id JOIN users u ON u.id=p.leader_id WHERE i.recipient_id=@u AND i.expires_at_utc>UTC_TIMESTAMP(6) ORDER BY i.expires_at_utc LIMIT 16",ct,("u",user));
         var preference=await CommunityEndpoints.Rows(c,tx,"SELECT COALESCE((SELECT b.human_role FROM bot_rooms b JOIN game_rooms g ON g.id=b.room_id WHERE g.host_user_id=@u AND EXISTS(SELECT 1 FROM room_members m WHERE m.room_id=g.id AND m.user_id=@u)),p.role,'Any') role FROM users u LEFT JOIN case_role_preferences p ON p.user_id=u.id WHERE u.id=@u",ct,("u",user));
         var rooms=await CommunityEndpoints.Rows(c,tx,"SELECT CAST(room_id AS CHAR) id FROM room_members WHERE user_id=@u",ct,("u",user));
-        return new{party,invites,role=preference.Count==0?"Any":preference[0]["role"],currentRoomId=rooms.Count==0?"":rooms[0]["id"]};
+        // Removed by the leader in the last 10 minutes and not in a party again since: said once, then cleared.
+        bool removedFromParty=party is null&&await CommunityEndpoints.Exec(c,tx,"DELETE FROM case_party_removal_notices WHERE user_id=@u AND removed_at_utc>UTC_TIMESTAMP(6)-INTERVAL 10 MINUTE",ct,("u",user))>0;
+        await CommunityEndpoints.Exec(c,tx,"DELETE FROM case_party_removal_notices WHERE user_id=@u",ct,("u",user));
+        return new{party,invites,role=preference.Count==0?"Any":preference[0]["role"],currentRoomId=rooms.Count==0?"":rooms[0]["id"],removedFromParty};
     }
     internal static async Task LeaveAsync(MySqlConnection c,MySqlTransaction tx,ulong user,CancellationToken ct)
     {
@@ -182,6 +187,8 @@ internal static partial class OpenParties
                     if(!ulong.TryParse(body.Target,out ulong target)||target==user.Id)return Results.BadRequest();
                     if(await PartyOf(c,tx,target,ct)!=id)return Results.NotFound();if(await Busy(c,tx,target,ct))return Results.Conflict();
                     await LeaveAsync(c,tx,target,ct);
+                    // The removed player is told once, on their next snapshot.
+                    await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_party_removal_notices(user_id,removed_at_utc) VALUES(@t,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE removed_at_utc=UTC_TIMESTAMP(6)",ct,("t",target));
                 }
                 else
                 {

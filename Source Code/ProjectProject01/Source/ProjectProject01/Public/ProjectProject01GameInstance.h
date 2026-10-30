@@ -354,6 +354,7 @@ public:
 
 	/** 경기 접속을 끝내거나 취소할 때 메모리에 남은 일회용 티켓과 키를 제거합니다. */
 	void ClearPendingGameConnection();
+    void ReportMainQuestFloor(const FString& MatchId,const FString& UserId,const FString& Map);
 
 	/** PreLogin이 암호화 핸드셰이크에서 검증된 claim을 한 번 가져옵니다. */
 	bool ConsumeValidatedJoinClaim(
@@ -388,7 +389,9 @@ public:
 
 	/** 재접속 유예시간이 만료된 플레이어를 백엔드 방에서도 서버 권위로 정리합니다. */
 	void NotifyAuthoritativeMatchEnded(const FString& MatchId,const TArray<FProjectBotExperienceUpload>& BotExperience={});
-	void NotifyAuthoritativePlayerForfeit(const FString& MatchId, const FString& UserId, const FString& Role);
+	/** bDesertion: left while still in play and never came back (the player sees a desertion notice). False only
+	 *  releases the room seat of a player who left after being caught or escaping (their result stands). */
+	void NotifyAuthoritativePlayerForfeit(const FString& MatchId, const FString& UserId, const FString& Role, bool bDesertion = true);
 
 	/** 데디케이티드 서버가 실행 중임을 백엔드에 알립니다. 서버 월드에서만 전송됩니다. */
 	void SendGameServerHeartbeat();

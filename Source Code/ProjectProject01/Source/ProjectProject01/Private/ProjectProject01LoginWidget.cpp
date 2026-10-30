@@ -7,6 +7,8 @@
 #include "ProjectDFSDBranding.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectCustomRoomRulesWidget.h"
+#include "ProjectDesertionNotice.h"
+#include "ProjectConfirmDialog.h"
 #include "ProjectProject01SocialSubsystem.h"
 #include "ProjectProject01SocialWidget.h"
 
@@ -91,6 +93,17 @@ namespace
 
 namespace ProjectProject01LoginUI
 {
+    FString MatchReturnCaption(const UUserWidget* Widget)
+    {
+        const auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(Widget);
+        if(Lobby)
+        {
+            const auto& Room=Lobby->GetCurrentRoom();
+            if(!Lobby->HasCurrentRoom() || Room.bRandomMatch || Room.bRandomParty || Room.bBotMatch)
+                return TEXT("매칭으로 돌아가기");
+        }
+        return TEXT("방으로 돌아가기");
+    }
 	bool IsSupportedServerIpv4(FString Address)
 	{
 		Address.TrimStartAndEndInline();
@@ -1284,8 +1297,25 @@ namespace ProjectProject01TitleRoutes
 	const FName TitleLevel(TEXT("/Game/MyProject/Level/TitleLevel"));
 }
 
+FReply UProjectProject01TitleWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	if (InKeyEvent.GetKey() != EKeys::Escape || bNavigationRequested)
+	{
+		return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+	}
+	// The way out of whatever is showing: a question closes as "no", the save slots go back, the home menu asks to quit.
+	if (IsValid(QuitConfirmDialog) && QuitConfirmDialog->IsOpen()) QuitConfirmDialog->Dismiss();
+	else if (IsValid(SaveSlotConfirmationBlur) && SaveSlotConfirmationBlur->GetVisibility() == ESlateVisibility::Visible) HandleSaveSlotConfirmationNoClicked();
+	else if (IsValid(TitlePageSwitcher) && TitlePageSwitcher->GetActiveWidgetIndex() == 1) HandleSaveSlotsBackClicked();
+	else HandleQuitClicked();
+	return FReply::Handled();
+}
+
 void UProjectProject01TitleWidget::NativeDestruct()
 {
+	if (IsValid(QuitConfirmDialog)) QuitConfirmDialog->RemoveFromParent();
+	QuitConfirmDialog = nullptr;
+	bQuitConfirmed = false;
 	if (UWorld* World = GetWorld(); IsValid(World))
 	{
 		World->GetTimerManager().ClearTimer(ServiceStatusTimer);
@@ -1830,6 +1860,24 @@ void UProjectProject01TitleWidget::HandleQuitClicked()
 	{
 		return;
 	}
+	if (!bQuitConfirmed)
+	{
+		if (!IsValid(QuitConfirmDialog))
+		{
+			QuitConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(PlayerController, UProjectConfirmDialogWidget::StaticClass());
+			if (QuitConfirmDialog) { QuitConfirmDialog->AddToViewport(990); QuitConfirmDialog->SetReturnFocus(this); }
+		}
+		if (IsValid(QuitConfirmDialog))
+		{
+			const TWeakObjectPtr<UProjectProject01TitleWidget> Weak(this);
+			QuitConfirmDialog->Ask(TEXT("게임을 종료하시겠습니까?"), [Weak]()
+			{
+				if (UProjectProject01TitleWidget* Self = Weak.Get()) { Self->bQuitConfirmed = true; Self->HandleQuitClicked(); }
+			});
+			return;
+		}
+	}
+	bQuitConfirmed = false;
 
 	bNavigationRequested = true;
 	SetMenuEnabled(false);
@@ -2442,7 +2490,12 @@ bool UProjectProject01GameGuideWidget::Initialize()
 	SetIsFocusable(true);
 	BuildWidgetTree();
 	ProjectDFSDUI::ApplyTree(WidgetTree);
-	ProjectDFSDUI::FramePage(WidgetTree,960);
+	// Keep the pamphlet panel unchanged; only dim the live world behind it.
+	FButtonStyle BackdropStyle = ScreenButton->GetStyle();
+	const FSlateColorBrush Backdrop(FLinearColor(0, 0, 0, .60f));
+	BackdropStyle.SetNormal(Backdrop).SetHovered(Backdrop).SetPressed(Backdrop).SetDisabled(Backdrop);
+	ScreenButton->SetStyle(BackdropStyle);
+	ScreenButton->SetBackgroundColor(FLinearColor::White);
 	return true;
 }
 
@@ -2650,6 +2703,7 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 	if (IsValid(ReturnToRoomButton))
 	{
 		ReturnToRoomButton->SetVisibility(bMultiplayer ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+        ProjectProject01LoginUI::SetButtonText(ReturnToRoomButton,ProjectProject01LoginUI::MatchReturnCaption(this));
 	}
 	if (IsValid(GameRulesButton))
 	{
@@ -2699,6 +2753,10 @@ void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMulti
 void UProjectProject01SessionMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	// Each opening starts on the menu (a forfeit question left open is dropped).
+	ForfeitPendingAction = EPendingExitAction::None;
+	bForfeitConfirmed = false;
+	if (IsValid(SessionPageSwitcher) && SessionPageSwitcher->GetActiveWidgetIndex() == 3) SessionPageSwitcher->SetActiveWidgetIndex(0);
 	bActiveSurveyAvailable = false;
 	ActiveSurvey = FProjectProject01SurveyDefinition();
 	if (IsValid(SurveyButton)) SurveyButton->SetIsEnabled(false);
@@ -2732,6 +2790,8 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 	if (IsValid(SurveyButton)) SurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSurveyClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
+	if (IsValid(ForfeitConfirmButton)) ForfeitConfirmButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleForfeitConfirmClicked);
+	if (IsValid(ForfeitCancelButton)) ForfeitCancelButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleForfeitCancelClicked);
 
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -2754,6 +2814,10 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 
 void UProjectProject01SessionMenuWidget::NativeDestruct()
 {
+	// The menu is removed and added again on each opening: an open question goes with it.
+	if (IsValid(ConfirmDialog)) ConfirmDialog->RemoveFromParent();
+	ConfirmDialog = nullptr;
+	bSaveOverwriteConfirmed = bLoadConfirmed = false;
 	if (IsValid(ContinueButton)) ContinueButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleContinueClicked);
 	if (IsValid(SaveCheckpointButton)) SaveCheckpointButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked);
 	if (ManualSaveSlotButtons.Num() == UProjectProject01SaveSubsystem::SaveSlotCount)
@@ -2784,6 +2848,8 @@ void UProjectProject01SessionMenuWidget::NativeDestruct()
 	if (IsValid(SurveyButton)) SurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleSurveyClicked);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked);
 	if (IsValid(QuitGameButton)) QuitGameButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleQuitGameClicked);
+	if (IsValid(ForfeitConfirmButton)) ForfeitConfirmButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleForfeitConfirmClicked);
+	if (IsValid(ForfeitCancelButton)) ForfeitCancelButton->OnClicked.RemoveDynamic(this, &UProjectProject01SessionMenuWidget::HandleForfeitCancelClicked);
 
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -2882,6 +2948,16 @@ void UProjectProject01SessionMenuWidget::SaveCheckpointToSlot(const int32 SlotIn
 		SetBusy(false, TEXT("저장할 싱글플레이 상태를 찾지 못했습니다."), true);
 		return;
 	}
+	if (!bSaveOverwriteConfirmed && Saves->HasRecoverableSaveInSlot(SlotIndex))
+	{
+		const TWeakObjectPtr<UProjectProject01SessionMenuWidget> Weak(this);
+		AskThen(TEXT("저장된 기록을 덮어쓰시겠습니까?"), [Weak, SlotIndex]()
+		{
+			if (UProjectProject01SessionMenuWidget* Self = Weak.Get()) { Self->bSaveOverwriteConfirmed = true; Self->SaveCheckpointToSlot(SlotIndex); }
+		});
+		return;
+	}
+	bSaveOverwriteConfirmed = false;
 	ShowManualSaveSlots(false);
 	SetBusy(true, TEXT("체크포인트를 저장하는 중..."));
 	Saves->SaveCheckpointToSlot(Player, SlotIndex, TEXT("ManualPauseMenu"));
@@ -2929,6 +3005,16 @@ void UProjectProject01SessionMenuWidget::HandleLoadCheckpointClicked()
 		SetBusy(false, TEXT("저장 시스템을 찾지 못했습니다."), true);
 		return;
 	}
+	if (!bLoadConfirmed)
+	{
+		const TWeakObjectPtr<UProjectProject01SessionMenuWidget> Weak(this);
+		AskThen(TEXT("저장하지 않은 진행은 사라집니다. 불러오시겠습니까?"), [Weak]()
+		{
+			if (UProjectProject01SessionMenuWidget* Self = Weak.Get()) { Self->bLoadConfirmed = true; Self->HandleLoadCheckpointClicked(); }
+		}, TEXT("LoadCheckpoint"));
+		return;
+	}
+	bLoadConfirmed = false;
 	SetBusy(true, TEXT("마지막 체크포인트를 불러오는 중..."));
 	if (Saves->LoadLatestCheckpoint())
 	{
@@ -2969,6 +3055,16 @@ void UProjectProject01SessionMenuWidget::LoadCheckpointFromSlot(const int32 Slot
 		SetBusy(false, TEXT("불러올 저장 지점을 찾지 못했습니다."), true);
 		return;
 	}
+	if (!bLoadConfirmed)
+	{
+		const TWeakObjectPtr<UProjectProject01SessionMenuWidget> Weak(this);
+		AskThen(TEXT("저장하지 않은 진행은 사라집니다. 불러오시겠습니까?"), [Weak, SlotIndex]()
+		{
+			if (UProjectProject01SessionMenuWidget* Self = Weak.Get()) { Self->bLoadConfirmed = true; Self->LoadCheckpointFromSlot(SlotIndex); }
+		}, TEXT("LoadCheckpoint"));
+		return;
+	}
+	bLoadConfirmed = false;
 	SetBusy(true, FString::Printf(TEXT("저장소 %d을(를) 불러오는 중..."), SlotIndex));
 	if (Saves->LoadCheckpointFromSlot(SlotIndex))
 	{
@@ -3031,7 +3127,7 @@ void UProjectProject01SessionMenuWidget::HandleSaveOperationCompleted(
 
 void UProjectProject01SessionMenuWidget::HandleReturnToRoomClicked()
 {
-	if (!bMultiplayer || bBusy)
+	if (!bMultiplayer || bBusy || AskBeforeExit(EPendingExitAction::ReturnToRoom))
 	{
 		return;
 	}
@@ -3130,7 +3226,7 @@ void UProjectProject01SessionMenuWidget::RefreshActiveSurvey()
 
 void UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked()
 {
-	if (bBusy)
+	if (bBusy || AskBeforeExit(EPendingExitAction::ReturnToTitle))
 	{
 		return;
 	}
@@ -3146,7 +3242,7 @@ void UProjectProject01SessionMenuWidget::HandleReturnToTitleClicked()
 
 void UProjectProject01SessionMenuWidget::HandleQuitGameClicked()
 {
-	if (bBusy)
+	if (bBusy || AskBeforeExit(EPendingExitAction::QuitGame))
 	{
 		return;
 	}
@@ -3161,6 +3257,80 @@ void UProjectProject01SessionMenuWidget::HandleQuitGameClicked()
 	{
 		UKismetSystemLibrary::QuitGame(this, PlayerController, EQuitPreference::Quit, false);
 	}
+}
+
+bool UProjectProject01SessionMenuWidget::AskBeforeExit(const EPendingExitAction ExitAction)
+{
+	// Every exit asks once; once confirmed, the same exit goes through. Only leaving while still in play (not when
+	// caught, escaped or alone with bots) adds the forfeit warning.
+	if (bForfeitConfirmed)
+	{
+		bForfeitConfirmed = false;
+		return false;
+	}
+	if (!IsValid(SessionPageSwitcher))
+	{
+		return false;
+	}
+	const FString Question = ExitAction == EPendingExitAction::ReturnToRoom ? TEXT("방으로 돌아가시겠습니까?")
+		: ExitAction == EPendingExitAction::ReturnToTitle ? TEXT("타이틀로 돌아가시겠습니까?") : TEXT("게임을 종료하시겠습니까?");
+	const AMultiplayTestPlayerController* Controller = Cast<AMultiplayTestPlayerController>(GetOwningPlayer());
+	const bool bForfeits = bMultiplayer && IsValid(Controller) && Controller->DoesLeavingForfeit();
+	// "오늘 하루 다시 묻지 않기" only for a plain way back (room or title); a forfeit and quitting the game always ask.
+	ExitSkipKey = bForfeits || ExitAction == EPendingExitAction::QuitGame ? FString()
+		: ExitAction == EPendingExitAction::ReturnToRoom ? TEXT("MenuReturnToRoom") : TEXT("MenuReturnToTitle");
+	if (!ExitSkipKey.IsEmpty() && UProjectConfirmDialogWidget::IsSkippedToday(ExitSkipKey))
+	{
+		return false;
+	}
+	if (IsValid(ExitSkipCheck))
+	{
+		ExitSkipCheck->SetIsChecked(false);
+		ExitSkipCheck->SetVisibility(ExitSkipKey.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
+	if (IsValid(ExitConfirmTitleText))
+		ExitConfirmTitleText->SetText(FProjectProject01Localization::Text(bForfeits ? TEXT("경기에서 나가기") : TEXT("나가기")));
+	if (IsValid(ExitConfirmBodyText))
+		ExitConfirmBodyText->SetText(FProjectProject01Localization::Text(bForfeits
+			? TEXT("지금 나가면 기권 처리됩니다.\n기권은 패배로 기록됩니다.\n\n") + Question
+			: Question));
+	ForfeitPendingAction = ExitAction;
+	SessionPageSwitcher->SetActiveWidgetIndex(3);
+	return true;
+}
+
+void UProjectProject01SessionMenuWidget::HandleForfeitConfirmClicked()
+{
+	const EPendingExitAction Action = ForfeitPendingAction;
+	ForfeitPendingAction = EPendingExitAction::None;
+	if (IsValid(ExitSkipCheck) && ExitSkipCheck->IsChecked()) UProjectConfirmDialogWidget::SkipToday(ExitSkipKey);
+	if (IsValid(SessionPageSwitcher)) SessionPageSwitcher->SetActiveWidgetIndex(0);
+	bForfeitConfirmed = true;
+	switch (Action)
+	{
+	case EPendingExitAction::ReturnToRoom: HandleReturnToRoomClicked(); break;
+	case EPendingExitAction::ReturnToTitle: HandleReturnToTitleClicked(); break;
+	case EPendingExitAction::QuitGame: HandleQuitGameClicked(); break;
+	default: break;
+	}
+	bForfeitConfirmed = false;
+}
+
+void UProjectProject01SessionMenuWidget::AskThen(const FString& Question, TFunction<void()> OnYes, const FString& SkipKey)
+{
+	if (!IsValid(ConfirmDialog) && GetOwningPlayer())
+	{
+		ConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
+		if (ConfirmDialog) { ConfirmDialog->AddToViewport(990); ConfirmDialog->SetReturnFocus(this); } // Above this menu.
+	}
+	if (IsValid(ConfirmDialog)) ConfirmDialog->Ask(Question, MoveTemp(OnYes), SkipKey);
+	else OnYes();
+}
+
+void UProjectProject01SessionMenuWidget::HandleForfeitCancelClicked()
+{
+	ForfeitPendingAction = EPendingExitAction::None;
+	if (IsValid(SessionPageSwitcher)) SessionPageSwitcher->SetActiveWidgetIndex(0);
 }
 
 void UProjectProject01SessionMenuWidget::BeginAuthenticatedExit(const EPendingExitAction ExitAction)
@@ -3462,6 +3632,24 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 			FString::Printf(TEXT("저장소 %d 불러오기"), SlotIndex)));
 	}
 	LoadSaveCancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, LoadSaveSlotPanel, TEXT("돌아가기"));
+
+	UVerticalBox* ForfeitPage = WidgetTree->ConstructWidget<UVerticalBox>();
+	SessionPageSwitcher->AddChild(ForfeitPage);
+	ExitConfirmTitleText = ProjectProject01LoginUI::AddLabel(WidgetTree, ForfeitPage, TEXT("나가기"), 30.0f);
+	ExitConfirmBodyText = ProjectProject01LoginUI::AddLabel(WidgetTree, ForfeitPage, TEXT(""), 16.0f);
+	ExitSkipCheck = WidgetTree->ConstructWidget<UCheckBox>();
+	UTextBlock* ExitSkipText = WidgetTree->ConstructWidget<UTextBlock>();
+	ExitSkipText->SetText(FProjectProject01Localization::Text(TEXT("오늘 하루 다시 묻지 않기")));
+	ExitSkipText->SetColorAndOpacity(FSlateColor(ProjectDFSDUI::Text()));
+	ExitSkipCheck->AddChild(ExitSkipText);
+	ProjectDFSDUI::Apply(ExitSkipCheck);
+	if (UVerticalBoxSlot* SkipSlot = ForfeitPage->AddChildToVerticalBox(ExitSkipCheck))
+	{
+		SkipSlot->SetHorizontalAlignment(HAlign_Center);
+		SkipSlot->SetPadding(FMargin(8.0f));
+	}
+	ForfeitConfirmButton = ProjectProject01LoginUI::AddButton(WidgetTree, ForfeitPage, TEXT("나가기"));
+	ForfeitCancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, ForfeitPage, TEXT("취소"));
 	SessionPageSwitcher->SetActiveWidgetIndex(0);
 
 	ExitFadeOverlay = WidgetTree->ConstructWidget<UBorder>();
@@ -3600,8 +3788,33 @@ void UProjectProject01MatchResultWidget::InitializeResultPresentation()
 	}
 }
 
+bool UProjectProject01MatchResultWidget::AskFirst(const FString& Question, const FString& SkipKey,
+	void (UProjectProject01MatchResultWidget::*Handler)())
+{
+	if (bActionConfirmed)
+	{
+		bActionConfirmed = false;
+		return false;
+	}
+	if (!IsValid(ConfirmDialog) && GetOwningPlayer())
+	{
+		ConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
+		if (ConfirmDialog) { ConfirmDialog->AddToViewport(990); ConfirmDialog->SetReturnFocus(this); }
+	}
+	if (!IsValid(ConfirmDialog)) return false;
+	const TWeakObjectPtr<UProjectProject01MatchResultWidget> Weak(this);
+	ConfirmDialog->Ask(Question, [Weak, Handler]()
+	{
+		if (UProjectProject01MatchResultWidget* Self = Weak.Get()) { Self->bActionConfirmed = true; (Self->*Handler)(); }
+	}, SkipKey);
+	return true;
+}
+
 void UProjectProject01MatchResultWidget::NativeDestruct()
 {
+	if (IsValid(ConfirmDialog)) ConfirmDialog->RemoveFromParent();
+	ConfirmDialog = nullptr;
+	bActionConfirmed = false;
 	if (IsValid(TimelineButton)) TimelineButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleTimelineClicked);
 	if (IsValid(RegisterButton))
 	{
@@ -3689,6 +3902,10 @@ void UProjectProject01MatchResultWidget::HandleRegisterClicked()
 		return;
 	}
 
+	if (AskFirst(TEXT("리더보드에 등록하시겠습니까?"), TEXT("LeaderboardRegister"), &UProjectProject01MatchResultWidget::HandleRegisterClicked))
+	{
+		return;
+	}
 	const EProjectProject01LeaderboardRole Role = Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase)
 		? EProjectProject01LeaderboardRole::Mannequin
 		: EProjectProject01LeaderboardRole::Survivor;
@@ -3701,7 +3918,8 @@ void UProjectProject01MatchResultWidget::HandleRegisterClicked()
 
 void UProjectProject01MatchResultWidget::HandleReturnToRoomClicked()
 {
-	if (!bSinglePlayer && !bBusy && FadeElapsedSeconds >= FadeDurationSeconds)
+	if (!bSinglePlayer && !bBusy && FadeElapsedSeconds >= FadeDurationSeconds &&
+		!AskFirst(TEXT("방으로 돌아가시겠습니까?"), TEXT("ResultReturnToRoom"), &UProjectProject01MatchResultWidget::HandleReturnToRoomClicked))
 	{
 		bReturnAfterRegistration = false;
 		BeginReturnToRoom();
@@ -3736,7 +3954,8 @@ void UProjectProject01MatchResultWidget::HandleLeaderboardClicked()
 
 void UProjectProject01MatchResultWidget::HandleReturnToTitleClicked()
 {
-	if (bBusy || FadeElapsedSeconds < FadeDurationSeconds)
+	if (bBusy || FadeElapsedSeconds < FadeDurationSeconds ||
+		AskFirst(TEXT("타이틀로 돌아가시겠습니까?"), TEXT("ResultReturnToTitle"), &UProjectProject01MatchResultWidget::HandleReturnToTitleClicked))
 	{
 		return;
 	}
@@ -3786,7 +4005,8 @@ void UProjectProject01MatchResultWidget::HandleLoadLastCheckpointClicked()
 
 void UProjectProject01MatchResultWidget::HandleLogoutClicked()
 {
-	if (!bSinglePlayer && !bBusy && FadeElapsedSeconds >= FadeDurationSeconds)
+	if (!bSinglePlayer && !bBusy && FadeElapsedSeconds >= FadeDurationSeconds &&
+		!AskFirst(TEXT("로그아웃 하시겠습니까?"), TEXT("Logout"), &UProjectProject01MatchResultWidget::HandleLogoutClicked))
 	{
 		BeginAuthenticatedExit(false);
 	}
@@ -3988,7 +4208,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 		Details = TEXT("탈출하였습니다");
 	}
 
-	if (!bSinglePlayer)
+	if (!bSinglePlayer && Result.Role==TEXT("Observer"))
 	{
         if(Result.Role==TEXT("Observer"))
         {
@@ -4017,7 +4237,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	ResultText->SetText(FProjectProject01Localization::Text(Details));
     auto DisplayFont=ResultText->GetFont();DisplayFont.Size=Result.Role==TEXT("Observer")?22:36;ResultText->SetFont(DisplayFont);
     ResultText->SetAutoWrapText(Result.Role==TEXT("Observer"));ResultText->SetWrapTextAt(900);
-	const bool bHasTimeline = !bSinglePlayer && !Result.Timeline.IsEmpty();
+	const bool bHasTimeline = !bSinglePlayer && Result.Role==TEXT("Observer") && !Result.Timeline.IsEmpty();
 	if (!bHasTimeline) bShowingTimeline = false;
 	if (IsValid(TimelineButton))
 	{
@@ -4059,11 +4279,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	if (IsValid(ReturnToRoomButton))
 	{
 		ReturnToRoomButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
-		// Bot matches go back to the bot match start screen; only open matching returns to its room.
-		const UProjectProject01LobbySubsystem* RoomLobby = GetGameInstance()
-			? GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
-		const bool bBotRoom = RoomLobby && RoomLobby->HasCurrentRoom() && RoomLobby->GetCurrentRoom().bBotMatch;
-		ProjectProject01LoginUI::SetButtonText(ReturnToRoomButton, bBotRoom ? TEXT("봇전으로 돌아가기") : TEXT("방으로 돌아가기"));
+        ProjectProject01LoginUI::SetButtonText(ReturnToRoomButton,ProjectProject01LoginUI::MatchReturnCaption(this));
 	}
 	if (IsValid(LogoutButton)) LogoutButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (IsValid(LoadLastCheckpointButton))
@@ -4185,7 +4401,7 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 
 void UProjectProject01MatchResultWidget::HandleTimelineClicked()
 {
-	if (bSinglePlayer || bBusy || FadeElapsedSeconds < FadeDurationSeconds || Result.Timeline.IsEmpty()) return;
+	if (bSinglePlayer || Result.Role!=TEXT("Observer") || bBusy || FadeElapsedSeconds < FadeDurationSeconds || Result.Timeline.IsEmpty()) return;
 	bShowingTimeline = !bShowingTimeline;
 	RefreshResultText();
 }
@@ -4271,6 +4487,8 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 void UProjectProject01SettingsWidget::NativeDestruct()
 {
 	if (IsValid(VoiceSettingsWidget)) VoiceSettingsWidget->RemoveFromParent();
+	if (IsValid(DefaultsConfirmDialog)) DefaultsConfirmDialog->RemoveFromParent();
+	DefaultsConfirmDialog = nullptr;
 	if (IsValid(VoiceSettingsButton)) VoiceSettingsButton->OnClicked.RemoveDynamic(this,&UProjectProject01SettingsWidget::HandleVoiceSettingsClicked);
 	if (IsValid(MasterVolumeSlider)) MasterVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleMasterVolumeChanged);
 	if (IsValid(SFXVolumeSlider)) SFXVolumeSlider->OnValueChanged.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleSFXVolumeChanged);
@@ -4443,11 +4661,25 @@ void UProjectProject01SettingsWidget::HandleCancelClicked()
 
 void UProjectProject01SettingsWidget::HandleDefaultsClicked()
 {
-	if (GetGameInstance()) if (auto* Voice = GetGameInstance()->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
-		Voice->SetAudioPreferences(TEXT(""),TEXT(""),1.0f);
-	SetPendingDefaults();
-	RefreshAllControls();
-	ApplyPendingSettings();
+	// Every chosen value goes back to default at once: asked first, like a deletion (no daily opt-out).
+	const TWeakObjectPtr<UProjectProject01SettingsWidget> Weak(this);
+	auto Reset = [Weak]()
+	{
+		UProjectProject01SettingsWidget* Self = Weak.Get();
+		if (!Self) return;
+		if (Self->GetGameInstance()) if (auto* Voice = Self->GetGameInstance()->GetSubsystem<UProjectProject01VoiceChatSubsystem>())
+			Voice->SetAudioPreferences(TEXT(""),TEXT(""),1.0f);
+		Self->SetPendingDefaults();
+		Self->RefreshAllControls();
+		Self->ApplyPendingSettings();
+	};
+	if (!IsValid(DefaultsConfirmDialog) && GetOwningPlayer())
+	{
+		DefaultsConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
+		if (DefaultsConfirmDialog) { DefaultsConfirmDialog->AddToViewport(995); DefaultsConfirmDialog->SetReturnFocus(this); }
+	}
+	if (IsValid(DefaultsConfirmDialog)) DefaultsConfirmDialog->Ask(TEXT("설정을 초기화하시겠습니까?"), Reset);
+	else Reset();
 }
 
 void UProjectProject01SettingsWidget::HandleRevertVideoClicked() { RevertPendingVideoMode(); }
@@ -4970,7 +5202,7 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("환경설정"), 30.0f);
     {
         auto* Achievements=WidgetTree->ConstructWidget<UProjectCaseOpenButton>();Achievements->ReturnWidget=this;
-        auto* Caption=WidgetTree->ConstructWidget<UTextBlock>();Caption->SetText(FText::FromString(TEXT("업적 / 로컬 캠페인 기록")));Achievements->AddChild(Caption);
+        auto* Caption=WidgetTree->ConstructWidget<UTextBlock>();Caption->SetText(FText::FromString(TEXT("업적·도전과제 / 로컬 캠페인 기록")));Achievements->AddChild(Caption);
         Achievements->OnClicked.AddUniqueDynamic(Achievements,&UProjectCaseOpenButton::OpenRecords);Root->AddChildToVerticalBox(Achievements)->SetPadding(FMargin(4));
     }
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Root, TEXT("변경 후 적용을 눌러 저장하세요."), 14.0f);
@@ -5255,6 +5487,11 @@ void UProjectProject01LobbyWidget::NativeConstruct()
     if(auto* Social=GameInstanceSubsystemOf<UProjectProject01SocialSubsystem>(this))Social->SetLobbyVisible(true);
     if(IsValid(LobbySettingsButton))LobbySettingsButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbySettingsClicked);
 	Super::NativeConstruct();
+    // A desertion from an earlier match: its result is shown once on coming into the lobby.
+    if(!IsValid(DesertionNotice)&&GetOwningPlayer()){DesertionNotice=CreateWidget<UProjectDesertionNoticeWidget>(GetOwningPlayer(),UProjectDesertionNoticeWidget::StaticClass());if(DesertionNotice)DesertionNotice->AddToViewport(960);}
+    if(IsValid(DesertionNotice))DesertionNotice->Check();
+    if(!IsValid(ConfirmDialog)&&GetOwningPlayer()){ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog){ConfirmDialog->AddToViewport(970);ConfirmDialog->SetVisibility(ESlateVisibility::Collapsed);ConfirmDialog->SetReturnFocus(this);}}
+    bLogoutConfirmed=bTransferHostConfirmed=false;
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
 	LobbySurvey = FProjectProject01SurveyDefinition();
 	LobbySurveyPollCounter = 0;
@@ -5335,11 +5572,47 @@ void UProjectProject01LobbyWidget::NativeConstruct()
 	}
 }
 
+FReply UProjectProject01LobbyWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	if (InKeyEvent.GetKey() != EKeys::Escape || bTravelRequested || bGameStartFadeActive)
+	{
+		return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+	}
+	if (IsValid(ConfirmDialog) && ConfirmDialog->IsOpen())
+	{
+		ConfirmDialog->Dismiss();
+		return FReply::Handled();
+	}
+	// Shown = visible itself and on every parent, and the active page of every switcher on the way up.
+	auto Shown = [](const UWidget* Widget)
+	{
+		for (const UWidget* W = Widget; W; W = W->GetParent())
+		{
+			if (!W->IsVisible()) return false;
+			if (const UWidgetSwitcher* Switcher = Cast<UWidgetSwitcher>(W->GetParent()); Switcher && Switcher->GetActiveWidget() != W) return false;
+		}
+		return true;
+	};
+	for (UButton* Button : EscapeButtons)
+	{
+		if (IsValid(Button) && Button->GetIsEnabled() && Shown(Button))
+		{
+			Button->OnClicked.Broadcast();
+			break;
+		}
+	}
+	return FReply::Handled();
+}
+
 void UProjectProject01LobbyWidget::NativeDestruct()
 {
     if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this))Records->OnChanged.RemoveAll(this);
 	if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(TutorialTravelTimer);
     if(auto* Social=GameInstanceSubsystemOf<UProjectProject01SocialSubsystem>(this))Social->SetLobbyVisible(false);
+    if(IsValid(DesertionNotice))DesertionNotice->RemoveFromParent();
+    if(IsValid(ConfirmDialog))ConfirmDialog->RemoveFromParent();
+    ConfirmDialog=nullptr;
+    DesertionNotice=nullptr;
     if(IsValid(LobbySettingsWidget))LobbySettingsWidget->RemoveFromParent();
     LobbySettingsWidget=nullptr;
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.RemoveDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
@@ -5382,6 +5655,7 @@ void UProjectProject01LobbyWidget::NativeDestruct()
 void UProjectProject01LobbyWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+    MaybeShowInitialTutorial();
     ContinueGameAdmission(InDeltaTime);
     if(IsValid(LobbyViewSwitcher) && LobbyViewSwitcher->GetActiveWidgetIndex()==3)
         if(auto* Lobby=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;
@@ -5399,6 +5673,31 @@ void UProjectProject01LobbyWidget::NativeTick(const FGeometry& MyGeometry, const
 		: 1.0f;
 	StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f,
 		FMath::Clamp(FadeAlpha, 0.0f, 1.0f)));
+}
+
+void UProjectProject01LobbyWidget::MaybeShowInitialTutorial()
+{
+    auto* Auth=GameInstanceSubsystemOf<UProjectProject01AuthSubsystem>(this);
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    if(!GetOwningPlayer()||!Auth||!Auth->IsSignedIn()||Auth->HasSeenInitialTutorialForAccount()||
+       !Lobby||Lobby->HasCurrentRoom()||Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||
+       !InitialTutorialPrompt||bOpenTitleSurveyOnRefresh||bTravelRequested||bGameStartFadeActive||
+       !LobbyViewSwitcher||LobbyViewSwitcher->GetActiveWidgetIndex()!=4)return;
+    Auth->MarkInitialTutorialSeenForAccount();
+    InitialTutorialPrompt->SetVisibility(ESlateVisibility::Visible);
+    if(InitialTutorialPlayButton)InitialTutorialPlayButton->SetKeyboardFocus();
+}
+
+void UProjectProject01LobbyWidget::HandleInitialTutorialPlay()
+{
+    if(InitialTutorialPrompt)InitialTutorialPrompt->SetVisibility(ESlateVisibility::Collapsed);
+    StartTutorial(false);
+}
+
+void UProjectProject01LobbyWidget::HandleInitialTutorialSkip()
+{
+    if(InitialTutorialPrompt)InitialTutorialPrompt->SetVisibility(ESlateVisibility::Collapsed);
+    SetKeyboardFocus();
 }
 
 void UProjectProject01LobbyWidget::HandleOpenCreateRoomClicked()
@@ -5569,18 +5868,24 @@ namespace
     {
         const FText Help=BotDifficultyHelp(Item);
         if(Help.IsEmpty())return nullptr;
-        auto* Frame=NewObject<UBorder>(Outer);Frame->SetBrushColor(ProjectDFSDUI::Panel());Frame->SetPadding(FMargin(12,8));
-        auto* Text=NewObject<UTextBlock>(Outer);Text->SetText(Help);Text->SetColorAndOpacity(ProjectDFSDUI::Text());
+        auto* Tooltip=NewObject<UProjectProject01ComboOptionWidget>(Outer);Tooltip->Initialize();
+        auto* Frame=Tooltip->WidgetTree->ConstructWidget<UBorder>();Frame->SetBrushColor(ProjectDFSDUI::Panel());Frame->SetPadding(FMargin(12,8));
+        auto* Text=Tooltip->WidgetTree->ConstructWidget<UTextBlock>();Text->SetText(Help);Text->SetColorAndOpacity(ProjectDFSDUI::Text());
         auto Font=Text->GetFont();Font.Size=18;Text->SetFont(Font);
-        Frame->AddChild(Text);return Frame;
+        Frame->AddChild(Text);Tooltip->WidgetTree->RootWidget=Frame;return Tooltip;
     }
 }
 UWidget* UProjectProject01LobbyWidget::GenerateBotDifficultyItem(FString Item)
 {
-    auto* Text=NewObject<UTextBlock>(this);
+    // UComboBoxString retains Slate rows, not arbitrary generated UWidgets. A user-widget
+    // wrapper supplies SObjectWidget's GC reference for both the caption and open-list rows.
+    auto* Option=NewObject<UProjectProject01ComboOptionWidget>(this);
+    Option->Initialize();
+    auto* Text=Option->WidgetTree->ConstructWidget<UTextBlock>();
     Text->SetText(FText::FromString(Item));Text->SetColorAndOpacity(ProjectDFSDUI::Text());
-    Text->SetToolTip(BotDifficultyTooltip(this,Item)); // Shown while hovered, gone when the mouse leaves.
-    return Text;
+    Option->WidgetTree->RootWidget=Text;
+    Option->SetToolTip(BotDifficultyTooltip(Option,Item));
+    return Option;
 }
 void UProjectProject01LobbyWidget::HandleBotDifficultyChanged(FString Item,ESelectInfo::Type)
 {
@@ -5609,7 +5914,17 @@ void UProjectProject01LobbyWidget::HandleMoveToObserver()
 void UProjectProject01LobbyWidget::HandleMoveToPlayer()
 {if(!SelectedHostTransferUserId.IsEmpty())if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->EditRoomParticipant(TEXT("play"),SelectedHostTransferUserId);RefreshCurrentRoomView();}
 void UProjectProject01LobbyWidget::HandleKickParticipant()
-{if(!SelectedHostTransferUserId.IsEmpty())if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))L->EditRoomParticipant(TEXT("kick"),SelectedHostTransferUserId);RefreshCurrentRoomView();}
+{
+    if(SelectedHostTransferUserId.IsEmpty())return;
+    const FString Target=SelectedHostTransferUserId;const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
+    auto Kick=[Weak,Target]()
+    {
+        auto* Self=Weak.Get();if(!Self)return;
+        if(auto* L=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(Self))L->EditRoomParticipant(TEXT("kick"),Target);
+        Self->RefreshCurrentRoomView();
+    };
+    if(IsValid(ConfirmDialog))ConfirmDialog->Ask(TEXT("강제 퇴장 시키시겠습니까?"),Kick,TEXT("RoomKick"));else Kick();
+}
 void UProjectProject01LobbyWidget::HandleRemoveRoomBot()
 {
     const int32 Index=RoomBotSelection?RoomBotSelection->GetSelectedIndex():INDEX_NONE;
@@ -5817,14 +6132,17 @@ void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 
 void UProjectProject01LobbyWidget::HandleLeaveRoomClicked()
 {
-	CancelGameStartCountdown();
-	if (UGameInstance* GameInstance = GetGameInstance())
+	// Asked first; the start countdown is cancelled only once the player really leaves.
+	const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
+	auto Leave = [Weak]()
 	{
-		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
-		{
-			Lobby->LeaveRoom();
-		}
-	}
+		UProjectProject01LobbyWidget* Self = Weak.Get();
+		if (!Self) return;
+		Self->CancelGameStartCountdown();
+		if (UProjectProject01LobbySubsystem* Lobby = GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(Self)) Lobby->LeaveRoom();
+	};
+	if (IsValid(ConfirmDialog)) ConfirmDialog->Ask(TEXT("방에서 나가시겠습니까?"), Leave, TEXT("LeaveRoom"));
+	else Leave();
 }
 
 void UProjectProject01LobbyWidget::HandleTransferHostClicked()
@@ -5834,21 +6152,34 @@ void UProjectProject01LobbyWidget::HandleTransferHostClicked()
 		? GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
 	if (!IsValid(Lobby) || !Lobby->HasCurrentRoom() || !Lobby->GetCurrentRoom().Members.ContainsByPredicate([this](const FProjectProject01RoomMember& M){return !M.bIsHost&&M.UserId==SelectedHostTransferUserId;}))
 	{
+		bTransferHostConfirmed = false;
 		SetStatus(TEXT("방장을 넘길 플레이어를 선택하세요."), true);
 		return;
 	}
+	if (!bTransferHostConfirmed && IsValid(ConfirmDialog))
+	{
+		const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
+		ConfirmDialog->Ask(TEXT("정말로 방장을 위임하시겠습니까?"), [Weak]()
+		{
+			if (UProjectProject01LobbyWidget* Self = Weak.Get()) { Self->bTransferHostConfirmed = true; Self->HandleTransferHostClicked(); }
+		}, TEXT("TransferHost"));
+		return;
+	}
+	bTransferHostConfirmed = false;
 	Lobby->TransferHost(SelectedHostTransferUserId);
 }
 
 void UProjectProject01LobbyWidget::HandleDeleteRoomClicked()
 {
-	if (UGameInstance* GameInstance = GetGameInstance())
+	// Deleting the room sends everyone in it back to the lobby: asked first like removing one player.
+	const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
+	auto Delete = [Weak]()
 	{
-		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
-		{
-			Lobby->DeleteRoom();
-		}
-	}
+		if (UProjectProject01LobbyWidget* Self = Weak.Get())
+			if (UProjectProject01LobbySubsystem* Lobby = GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(Self)) Lobby->DeleteRoom();
+	};
+	if (IsValid(ConfirmDialog)) ConfirmDialog->Ask(TEXT("방을 삭제하고 모든 참가자를 로비로 보내시겠습니까?"), Delete);
+	else Delete();
 }
 
 void UProjectProject01LobbyWidget::HandleCopyJoinCodeClicked()
@@ -5902,6 +6233,16 @@ void UProjectProject01LobbyWidget::HandleLogoutClicked()
 	// A confirmed random match keeps the existing no-cancellation policy until gameplay starts.
 	if (IsValid(Lobby) && Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().bRandomMatch &&
 		!Lobby->GetCurrentRoom().bReturnedToRoom) return;
+	if (!bLogoutConfirmed && IsValid(ConfirmDialog))
+	{
+		const TWeakObjectPtr<UProjectProject01LobbyWidget> Weak(this);
+		ConfirmDialog->Ask(TEXT("로그아웃 하시겠습니까?"), [Weak]()
+		{
+			if (UProjectProject01LobbyWidget* Self = Weak.Get()) { Self->bLogoutConfirmed = true; Self->HandleLogoutClicked(); }
+		}, TEXT("Logout"));
+		return;
+	}
+	bLogoutConfirmed = false;
 	bLobbyLogoutInProgress = true;
 	SetIsEnabled(false);
 	if (IsValid(LogoutButton))
@@ -6137,6 +6478,10 @@ void UProjectProject01LobbyWidget::HandleRoomListChanged()
 void UProjectProject01LobbyWidget::HandleCurrentRoomChanged()
 {
 	RefreshCurrentRoomView();
+	if (auto* Lobby = GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this); Lobby && Lobby->ConsumeRemovedFromRoom() && IsValid(ConfirmDialog))
+	{
+		ConfirmDialog->Notify(TEXT("방에서 강제 퇴장되었습니다."));
+	}
 }
 
 void UProjectProject01LobbyWidget::RefreshLobbyState()
@@ -6319,13 +6664,18 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
     Keys.Add(TEXT("self:")+SelfId);
     Keys.Add(DuoBot?TEXT("duo-bot"):TEXT("open-or-solo"));
 	for(const auto& M:Members)Keys.Add(FString::Printf(TEXT("%s:%d:%s:%d%d%d%d:%d:%s"),*M.UserId,M.DisplayName.Len(),*M.DisplayName,
-		M.bIsHost,M.bIsReady,M.bReturnedToRoom,M.bIsObserver,bRevealRoles,*M.AssignedRole));
+		M.bIsHost,M.bIsReady,M.bReturnedToRoom,M.bIsObserver,bRevealRoles,*M.AssignedRole)+TEXT(":")+M.BannerId);
 	// Keep live buttons stable across the room's periodic refresh (including mouse-down/up).
 	if(Keys==MemberProfileRowKeys)return;
 	MemberProfileRowKeys=MoveTemp(Keys);if(RoomRoleRow)RoomRoleRow->RemoveFromParent();MemberProfilePanel->ClearChildren();if(ObserverProfilePanel)ObserverProfilePanel->ClearChildren();MemberProfileBindings.Reset();
 	for(const auto& M:Members)
 	{
 		auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();
+		if(!M.BannerId.IsEmpty()&&!M.bIsBot)
+        {
+            auto* Banner=WidgetTree->ConstructWidget<UProjectCaseBanner>();Banner->ItemId=M.BannerId;
+            auto* BannerSlot=Row->AddChildToHorizontalBox(Banner);BannerSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));BannerSlot->SetVerticalAlignment(VAlign_Center);BannerSlot->SetPadding(FMargin(0,0,8,0));
+        }
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
 		const FString Role=bRevealRoles&&!M.AssignedRole.IsEmpty()?TEXT(" [")+M.AssignedRole+TEXT("]"):FString();
         const FString ReadyStatus=M.bIsBot?FString(TEXT("준비")):M.bIsHost&&!DuoBot?FString(TEXT("시작 대기")):M.bIsReady?FString(TEXT("준비")):FString(TEXT("대기"));
@@ -7106,7 +7456,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ParticipantManagement=WidgetTree->ConstructWidget<UVerticalBox>();MemberTools->AddChildToVerticalBox(ParticipantManagement);
 	auto* Observe=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("관전자로 변경"));Observe->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMoveToObserver);
 	auto* Play=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("플레이 참가자로 변경"));Play->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMoveToPlayer);
-	auto* Kick=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원 강퇴"));Kick->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleKickParticipant);
+	auto* Kick=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원 강제 퇴장"));Kick->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleKickParticipant);
 	auto* SessionTools=WidgetTree->ConstructWidget<UVerticalBox>();RoomToolsSwitcher->AddChild(SessionTools);
     CustomRulesButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("커스텀 규칙"));
     CustomRulesButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCustomRulesClicked);
@@ -7195,6 +7545,8 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     BotMatchCancelButton->SetVisibility(ESlateVisibility::Collapsed);
     BotMatchBackButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("뒤로가기"));BotMatchBackButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchBackClicked);
     auto* BotLogout=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("로그아웃 / 로그인 화면으로"));BotLogout->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
+    // ESC: the way out of whatever page shows, most specific first (an open panel before the page under it).
+    EscapeButtons={CloseCodeJoin,CancelCreateRoomButton.Get(),LeaveRoomButton.Get(),BotMatchBackButton.Get(),TutorialBack,MatchBackButton.Get(),BrowserBack,ModesLogoutButton.Get(),BotLogout,MatchLogoutButton.Get(),LogoutButton.Get()};
 
     // Compact only the matching panels; social overlays and other game menus retain their layout.
     for(UVerticalBox* Panel : {BrowserPanel,Matching,Modes,CodeJoinPanel.Get()})
@@ -7222,6 +7574,21 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	}
     RefreshMatchmakingView();
 	ShowLobbyView(4);
+    InitialTutorialPrompt=WidgetTree->ConstructWidget<UBorder>();
+    InitialTutorialPrompt->SetBrushColor(FLinearColor(0,0,0,.88f));
+    InitialTutorialPrompt->SetHorizontalAlignment(HAlign_Center);
+    InitialTutorialPrompt->SetVerticalAlignment(VAlign_Center);
+    InitialTutorialPrompt->SetVisibility(ESlateVisibility::Collapsed);
+    auto* InitialSlot=RootOverlay->AddChildToOverlay(InitialTutorialPrompt);
+    InitialSlot->SetHorizontalAlignment(HAlign_Fill);InitialSlot->SetVerticalAlignment(VAlign_Fill);
+    auto* InitialSize=WidgetTree->ConstructWidget<USizeBox>();InitialSize->SetWidthOverride(440);InitialTutorialPrompt->AddChild(InitialSize);
+    auto* InitialContents=WidgetTree->ConstructWidget<UVerticalBox>();InitialSize->AddChild(InitialContents);
+    auto* InitialHeading=ProjectProject01LoginUI::AddLabel(WidgetTree,InitialContents,TEXT("생존자 튜토리얼"),28);
+    InitialHeading->SetJustification(ETextJustify::Center);
+    InitialTutorialPlayButton=ProjectProject01LoginUI::AddButton(WidgetTree,InitialContents,TEXT("시작"));
+    InitialTutorialPlayButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleInitialTutorialPlay);
+    auto* SkipInitial=ProjectProject01LoginUI::AddButton(WidgetTree,InitialContents,TEXT("건너뛰기"));
+    SkipInitial->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleInitialTutorialSkip);
 }
 
 void UProjectProject01LobbyWidget::SetStatus(const FString& Message, const bool bIsError)
@@ -7364,6 +7731,7 @@ void UProjectProject01LeaderboardWidget::NativeConstruct()
 	{
 		ReturnToRoomButton->SetVisibility(bOpenedFromMatchResult
 			? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+        ProjectProject01LoginUI::SetButtonText(ReturnToRoomButton,ProjectProject01LoginUI::MatchReturnCaption(this));
 	}
 	if (Lobby->HasPendingLeaderboardRecord())
 	{
@@ -7390,6 +7758,8 @@ void UProjectProject01LeaderboardWidget::NativeDestruct()
 			Lobby->OnLeaderboardChanged.RemoveDynamic(this, &UProjectProject01LeaderboardWidget::HandleLeaderboardChanged);
 		}
 	}
+	if (IsValid(ConfirmDialog)) ConfirmDialog->RemoveFromParent();
+	ConfirmDialog = nullptr;
 	Super::NativeDestruct();
 }
 
@@ -7485,8 +7855,23 @@ void UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked()
 		return;
 	}
 
-	SetStatus(TEXT("방금 경기의 서버 검증 성공 기록을 등록하는 중..."), false);
-	Lobby->SubmitPendingLeaderboardRecord();
+	// Registered only on "예"; "아니오" leaves the leaderboard as it is, nothing sent.
+	const TWeakObjectPtr<UProjectProject01LeaderboardWidget> Weak(this);
+	auto Submit = [Weak]()
+	{
+		UProjectProject01LeaderboardWidget* Self = Weak.Get();
+		UProjectProject01LobbySubsystem* Current = Self ? GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(Self) : nullptr;
+		if (!Current || !Current->HasPendingLeaderboardRecord()) return;
+		Self->SetStatus(TEXT("방금 경기의 서버 검증 성공 기록을 등록하는 중..."), false);
+		Current->SubmitPendingLeaderboardRecord();
+	};
+	if (!IsValid(ConfirmDialog) && GetOwningPlayer())
+	{
+		ConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
+		if (ConfirmDialog) { ConfirmDialog->AddToViewport(980); ConfirmDialog->SetVisibility(ESlateVisibility::Collapsed); }
+	}
+	if (IsValid(ConfirmDialog)) ConfirmDialog->Ask(TEXT("리더보드에 등록하시겠습니까?"), Submit, TEXT("LeaderboardRegister"));
+	else Submit();
 }
 
 void UProjectProject01LeaderboardWidget::HandleReturnToLobbyClicked()

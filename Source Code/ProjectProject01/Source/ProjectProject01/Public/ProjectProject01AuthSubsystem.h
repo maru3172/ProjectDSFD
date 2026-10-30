@@ -115,6 +115,8 @@ public:
 	bool HasSeenMannequinGuideForAccount() const { return bSeenMannequinGuideForAccount; }
 	/** 안내가 실제로 표시된 직후 계정별 진행 상태를 백엔드에 저장합니다. */
 	void MarkRoleGuideSeenForAccount(bool bMannequinRole);
+	bool HasSeenInitialTutorialForAccount() const { return bSeenInitialTutorialForAccount; }
+	void MarkInitialTutorialSeenForAccount();
 
 	/** 인증된 로비 API 요청에만 사용하는 현재 액세스 토큰입니다. 로그나 UI에는 노출하지 않습니다. */
 	const FString& GetAccessTokenForAuthenticatedRequest() const { return AccessToken; }
@@ -132,6 +134,7 @@ private:
 	friend class FProjectLoginRegistrationTest;
 	friend class FProjectSocialWidgetLayoutTest;
 	friend class FProjectCaseUiRenderTest;
+    friend class FProjectFrontendBehaviorTest;
     friend class FProjectPartyAdmissionWidgetTest;
 	enum class EAuthOperation : uint8
 	{
@@ -204,6 +207,9 @@ private:
 
 	UPROPERTY(Transient)
 	bool bSeenMannequinGuideForAccount = false;
+	bool bSeenInitialTutorialForAccount = false;
+	bool bInitialTutorialProgressPending = false;
+	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> InitialTutorialProgressRequest;
 
 	UPROPERTY(Transient)
 	bool bMaintenanceEnabled = false;
