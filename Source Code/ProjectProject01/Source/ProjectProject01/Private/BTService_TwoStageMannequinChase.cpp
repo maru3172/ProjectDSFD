@@ -5,9 +5,13 @@
 
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
 
+#include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
 
@@ -18,11 +22,9 @@ UBTService_TwoStageMannequinChase::UBTService_TwoStageMannequinChase()
 	// 각 마네킹이 독립된 서비스 상태를 갖도록 한다.
 	bCreateNodeInstance = true;
 	
-	// 0.2 초마다 역할을 다시 검사한다.
-	Interval = 0.2f;
-	
-	// 모든 마네킹이 같은 프레임에 검사하는 것을 완화한다.
-	RandomDeviation = 0.05f;
+	// 플레이어 시야에 들어온 프레임에 바로 정지하도록 매 프레임 검사한다.
+	Interval = 0.0f;
+	RandomDeviation = 0.0f;
 }
 
 void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
@@ -47,10 +49,13 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		return;
 	}
 
-	APlayerCharacter* Player =Cast<APlayerCharacter>(UGameplayStatics::GetActorOfClass(GetWorld(), APlayerCharacter::StaticClass()));
+	APlayerCharacter* Player = Cast<APlayerCharacter>(UGameplayStatics::GetActorOfClass(GetWorld(), APlayerCharacter::StaticClass()));
 	// 플레이어가 없으면 모든 추적 상태를 제거한다.
 	if (!IsValid(Player))
 	{
+		AIController->StopMovement();
+		CurrentMannequin->SetFrozen(true);
+		Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), false);
 		Blackboard->ClearValue(TEXT("TargetActor"));
 		Blackboard->ClearValue(TEXT("RoamingLocation"));
 		Blackboard->SetValueAsInt(TEXT("ChaseTier"),static_cast<int32>(ETwoStageMannequinTier::Roaming));
@@ -61,6 +66,22 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	TArray<AActor*> AllMannequins;
 
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
+
+	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins);
+
+	Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), bObservedByPlayerOrHelper);
+
+	if (bObservedByPlayerOrHelper)
+	{
+		// 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
+		AIController->StopMovement();
+		// 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
+		CurrentMannequin->SetFrozen(true);
+		return;
+	}
+
+	// 플레이어가 마네킹을 보고 있지 않으므로 애니메이션 정지를 해제한다.
+	CurrentMannequin->SetFrozen(false);
 
 	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, *Player, AllMannequins);
 
@@ -76,6 +97,179 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		ApplyRoamingState(*Blackboard, *CurrentMannequin);
 		break;
 	}
+}
+
+bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayerCharacter& Player, AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
+{
+	APlayerController* PlayerController = Cast<APlayerController>(Player.GetController());
+	if (!IsValid(PlayerController))
+	{
+		return false;
+	}
+
+	FVector CameraLocation = FVector::ZeroVector;
+	FRotator CameraRotation = FRotator::ZeroRotator;
+	PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+
+	if (CameraLocation.ContainsNaN() || CameraRotation.ContainsNaN())
+	{
+		return false;
+	}
+
+	APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager;
+	const float CameraFOVDegrees = IsValid(CameraManager) ? CameraManager->GetFOVAngle() : 90.0f;
+	const float ExpandedHalfFOVDegrees = FMath::Max(0.0f, CameraFOVDegrees * 0.5f * 1.15f);
+	const float ViewConeMinimumDot = FMath::Cos(FMath::DegreesToRadians(ExpandedHalfFOVDegrees));
+	const FVector CameraForward = CameraRotation.Vector().GetSafeNormal();
+
+	UCapsuleComponent* MannequinCapsule = CurrentMannequin.GetCapsuleComponent();
+	if (!IsValid(MannequinCapsule))
+	{
+		return false;
+	}
+
+	USkeletalMeshComponent* MannequinMesh = CurrentMannequin.GetMesh();
+	if (!IsValid(MannequinMesh))
+	{
+		return false;
+	}
+
+	const FVector CapsuleCenter = MannequinCapsule->GetComponentLocation();
+	const float HalfHeight = MannequinCapsule->GetScaledCapsuleHalfHeight();
+	const float Radius = MannequinCapsule->GetScaledCapsuleRadius();
+	const float DetectionMargin = 30.0f;
+	const float DetectionRadius = Radius + DetectionMargin;
+	const float DetectionHalfHeight = HalfHeight + DetectionMargin;
+	const FVector Up = MannequinCapsule->GetUpVector();
+	const FVector Right = MannequinCapsule->GetRightVector();
+	const FVector Forward = MannequinCapsule->GetForwardVector();
+
+	const FName BoneNames[] =
+	{
+		TEXT("head"),
+		TEXT("pelvis"),
+		TEXT("hand_l"),
+		TEXT("hand_r"),
+		TEXT("foot_l"),
+		TEXT("foot_r"),
+	};
+
+	TArray<FVector> Points;
+	Points.Add(CapsuleCenter);
+	Points.Add(CapsuleCenter - Up);
+	Points.Add(CapsuleCenter + Up);
+	Points.Add(CapsuleCenter - Right * Radius);
+	Points.Add(CapsuleCenter + Right * Radius);
+	Points.Add(CapsuleCenter - Forward * Radius);
+	Points.Add(CapsuleCenter + Forward * Radius);
+
+	for (const FName& BoneName : BoneNames)
+	{
+		if (MannequinMesh->GetBoneIndex(BoneName) != INDEX_NONE)
+		{
+			Points.Add(MannequinMesh->GetBoneLocation(BoneName));
+		}
+	}
+
+	bool bInScreen = false;
+
+	FCollisionQueryParams BodyQueryParams;
+	BodyQueryParams.AddIgnoredActor(&Player);
+	for (AActor* OtherMannequin : AllMannequins)
+	{
+		if (OtherMannequin != &CurrentMannequin)
+		{
+			BodyQueryParams.AddIgnoredActor(OtherMannequin);
+		}
+	}
+
+	for (const FVector& Point : Points)
+	{
+		const FVector CameraToPoint = (Point - CameraLocation).GetSafeNormal();
+		if (CameraToPoint.IsNearlyZero() || FVector::DotProduct(CameraForward, CameraToPoint) < ViewConeMinimumDot)
+		{
+			continue;
+		}
+
+		FHitResult HitResult;
+		const bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, CameraLocation, Point, ECC_GameTraceChannel1, BodyQueryParams);
+		if (bHit && HitResult.GetActor() == &CurrentMannequin)
+		{
+			bInScreen = true;
+			break;
+		}
+	}
+
+	if (!bInScreen)
+	{
+		TArray<FVector> GuardPoints;
+		const FVector GuardDirections[] =
+		{
+			Right, -Right, Forward, -Forward,
+			(Right + Forward).GetSafeNormal(),
+			(Right - Forward).GetSafeNormal(),
+			(-Right + Forward).GetSafeNormal(),
+			(-Right - Forward).GetSafeNormal()
+		};
+		const float CylinderHalfHeight = FMath::Max(HalfHeight - Radius, 0.0f);
+		const float GuardHeights[] = { -CylinderHalfHeight, 0.0f, CylinderHalfHeight };
+
+		for (const float Height : GuardHeights)
+		{
+			for (const FVector& Direction : GuardDirections)
+			{
+				GuardPoints.Add(CapsuleCenter + Up * Height + Direction * DetectionRadius);
+			}
+		}
+
+		GuardPoints.Add(CapsuleCenter + Up * DetectionHalfHeight);
+		GuardPoints.Add(CapsuleCenter - Up * DetectionHalfHeight);
+
+		for (const FName& BoneName : BoneNames)
+		{
+			if (MannequinMesh->GetBoneIndex(BoneName) != INDEX_NONE)
+			{
+				const FVector BoneLocation = MannequinMesh->GetBoneLocation(BoneName);
+				GuardPoints.Add(BoneLocation + Right * DetectionMargin);
+				GuardPoints.Add(BoneLocation - Right * DetectionMargin);
+				GuardPoints.Add(BoneLocation + Forward * DetectionMargin);
+				GuardPoints.Add(BoneLocation - Forward * DetectionMargin);
+			}
+		}
+
+		FCollisionQueryParams GuardQueryParams;
+		GuardQueryParams.AddIgnoredActor(&Player);
+		GuardQueryParams.AddIgnoredActor(&CurrentMannequin);
+		for (AActor* OtherMannequin : AllMannequins)
+		{
+			if (OtherMannequin != &CurrentMannequin)
+			{
+				GuardQueryParams.AddIgnoredActor(OtherMannequin);
+			}
+		}
+
+		for (const FVector& GuardPoint : GuardPoints)
+		{
+			const FVector CameraToGuardPoint = (GuardPoint - CameraLocation).GetSafeNormal();
+			if (CameraToGuardPoint.IsNearlyZero() || FVector::DotProduct(CameraForward, CameraToGuardPoint) < ViewConeMinimumDot)
+			{
+				continue;
+			}
+
+			FHitResult GuardHit;
+			const bool bGuardBlocked = GetWorld()->LineTraceSingleByChannel(GuardHit, CameraLocation, GuardPoint, ECC_GameTraceChannel1, GuardQueryParams);
+			if (!bGuardBlocked)
+			{
+				bInScreen = true;
+				break;
+			}
+		}
+	}
+
+	AHelperRearGuardCharacter* HelperRearGuard = Cast<AHelperRearGuardCharacter>(UGameplayStatics::GetActorOfClass(GetWorld(), AHelperRearGuardCharacter::StaticClass()));
+	const bool bInHelperRearGuardSight = IsValid(HelperRearGuard) && HelperRearGuard->CanObserveActor(&CurrentMannequin);
+
+	return bInScreen || bInHelperRearGuardSight;
 }
 
 ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const APlayerCharacter& Player, const TArray<AActor*>& AllMannequins) const

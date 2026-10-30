@@ -33,6 +33,13 @@ protected:
 	virtual void TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 	
 private:
+	// 플레이어 또는 조력자가 현재 마네킹을 바라보고 있는지 검사한다.
+	bool IsObservedByPlayerOrHelper(
+		const APlayerCharacter& Player,
+		AMannequinAICharacter& CurrentMannequin,
+		const TArray<AActor*>& AllMannequins
+		) const;
+	
 	// 역할 판정 함수
 	ETwoStageMannequinTier DetermineChaseTier(
 		const AMannequinAICharacter& CurrentMannequin,
