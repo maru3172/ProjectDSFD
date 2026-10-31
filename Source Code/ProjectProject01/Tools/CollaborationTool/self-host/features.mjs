@@ -2,6 +2,7 @@ import {statfsSync,readFileSync} from 'node:fs';
 import path from 'node:path';
 import {Problem,q,rows,run,transaction,json,input,text,now,user,requireUser,requireOperator,membership,audit,notify,settings,saveSettings,dataRoot,sha,safeBlob,current} from './runtime.mjs';
 import {teamAction,commitsFor} from './team.mjs';
+import {projectAction,lockCheck} from './project-tools.mjs';
 import {vaultRoot} from './vault.mjs';
 const id=()=>crypto.randomUUID(),day=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const validDay=value=>{if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||Number.isNaN(Date.parse(value+'T00:00:00Z'))||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw new Problem(400,'날짜를 확인하세요.');return value};
@@ -26,15 +27,17 @@ export async function augmentData(response,url){if(!response.ok)return response;
 }
 export async function featureRoute(request,url){const me=requireUser(),value=request.method==='POST'?await input(request):Object.fromEntries(url.searchParams),action=value.action??'overview';
  if(action==='commits'){const w=text(value.workspace,80,true);membership(w,false);return json(await commitsFor(w,text(value.entry,80,true),vaultRoot()))}
+ if(action==='lockCheck'&&request.method==='POST'){const w=text(value.workspace,80,true);membership(w,false);return json(await lockCheck(w,me,value,vaultRoot(),!!current()?.loopback))}
  if(action==='passwordSet'&&request.method==='POST'){requireOperator();const {passwordHash}=await import('./auth.mjs');run('UPDATE local_users SET password_hash=? WHERE id=?',await passwordHash(value.password),me.userId);return json({ok:true})}
  return transaction(()=>{const before=current().atomic;current().atomic=true;try{
- if(request.method!=='POST'&&!['system','overview','entry','page','weeklyReport'].includes(action))throw new Problem(405,'변경은 저장 버튼으로 요청하세요.');
+ if(request.method!=='POST'&&!['system','overview','entry','page','weeklyReport','locks','bugs','milestones'].includes(action))throw new Problem(405,'변경은 저장 버튼으로 요청하세요.');
  if(action==='system'){requireOperator();const disk=statfsSync(dataRoot);return json({settings,dataRoot,freeBytes:disk.bavail*disk.bsize,backups:rows('SELECT * FROM backup_events ORDER BY created_at DESC LIMIT 20'),recentErrors:readFileSync(path.join(dataRoot,'logs','server.log'),'utf8').split('\n').filter(x=>x.includes('failed')||x.includes('error')).slice(-15),loopback:!!current()?.loopback})}
  if(action==='settings'){requireOperator();return json({settings:saveSettings(value.settings??{})})}
 
  const w=text(value.workspace,80,true),role=membership(w,request.method==='POST'&&!['read','ack','favorite','saveView','deleteView','preferences','acceptTransfer','acceptHandover','archive'].includes(action));
  const admin=()=>{if(!['owner','admin'].includes(role.role))throw new Problem(403,'공간 관리자만 변경할 수 있습니다.')};
  const entry=()=>getEntry(w,text(value.entry,80,true));
+ if(['locks','lock','unlock','bugReport','bugs','milestones'].includes(action))return json(projectAction(action,value,w,me,role.role));
  if(action==='meetingImport'||action==='weeklyReport'){if(action==='weeklyReport'&&value.save&&request.method!=='POST')throw new Problem(405,'저장은 저장 버튼으로 요청하세요.');return json(teamAction(action,value,w,me))}
  if(action==='overview')return json({userId:me.userId,templates:rows("SELECT * FROM templates WHERE workspace_id=? AND (scope='team' OR author_id=?) ORDER BY name",w,me.userId),repeats:rows('SELECT * FROM repeat_rules WHERE workspace_id=? ORDER BY next_day',w),handovers:rows('SELECT h.*,e.title FROM handovers h JOIN entries e ON e.id=h.entry_id WHERE h.workspace_id=? ORDER BY h.created_at DESC',w),favorites:rows('SELECT e.* FROM favorites f JOIN entries e ON e.id=f.entry_id WHERE f.workspace_id=? AND f.user_id=? AND e.deleted_at IS NULL',w,me.userId),views:rows('SELECT * FROM saved_views WHERE workspace_id=? AND user_id=?',w,me.userId),transfers:rows("SELECT * FROM ownership_transfers WHERE workspace_id=? AND status='pending'",w),preferences:q('SELECT * FROM user_preferences WHERE user_id=?',me.userId)??{deadline_alerts:1,reminder_days:3},tasks:rows("SELECT * FROM entries WHERE workspace_id=? AND kind IN ('task','goal','plan') AND status<>'done' AND deleted_at IS NULL ORDER BY due_day IS NULL,due_day,id",w),files:rows('SELECT a.*,e.title FROM attachments a LEFT JOIN entries e ON e.id=a.entry_id WHERE a.workspace_id=? ORDER BY a.created_at DESC',w),quota:settings.workspaceFileLimitMB*1048576,used:q('SELECT coalesce(sum(size),0) n FROM attachments WHERE workspace_id=?',w).n});
  if(action==='entry'){const e=entry();return json({checks:rows('SELECT * FROM check_items WHERE entry_id=? ORDER BY position,id',e.id),dependencies:rows('SELECT e.id,e.title,e.status FROM dependencies d JOIN entries e ON e.id=d.requires_id WHERE d.entry_id=?',e.id),acks:rows('SELECT t.user_id,m.name,a.version,a.confirmed_at FROM ack_targets t LEFT JOIN members m ON m.workspace_id=t.workspace_id AND m.user_id=t.user_id LEFT JOIN acknowledgements a ON a.entry_id=t.entry_id AND a.user_id=t.user_id WHERE t.entry_id=?',e.id),version:e.version,favorite:!!q('SELECT 1 FROM favorites WHERE entry_id=? AND user_id=?',e.id,me.userId)})}

@@ -4,7 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
 import {startServer} from '../self-host/server.mjs';
-import {q,run,dataRoot} from '../self-host/runtime.mjs';
+import {q,run,now,dataRoot} from '../self-host/runtime.mjs';
 import {recordCode} from '../self-host/team.mjs';
 const root=path.resolve('outputs/team-tools-'+Date.now()),checks=[];await mkdir(root,{recursive:true});let app,cookie='';const check=(name,value)=>{assert.ok(value,name);checks.push(name)};
 const req=async(url,value,status=200)=>{const response=await fetch(app.origin+url,{method:value===undefined?'GET':'POST',headers:{Cookie:cookie,...(value!==undefined?{'Content-Type':'application/json',Origin:app.origin}:{})},body:value===undefined?undefined:JSON.stringify(value)});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];const data=await response.json();assert.equal(response.status,status,url+JSON.stringify(data));return data};
@@ -40,5 +40,44 @@ try{
  await writeFile(path.join(dataRoot,'vault.json'),JSON.stringify({root:repo})); // The linked Git folder, as the 이 PC·Git tab saves it.
  const commits=await req(`/api/features?action=commits&workspace=${w}&entry=${first.meeting}`);
  check('커밋 연결: 코드가 든 커밋만, 대소문자 무관',commits.available&&commits.commits.length===1&&commits.commits[0].subject.startsWith('문서 정리'));
+
+ // Asset locks, between the owner and a second member.
+ const ownerCookie=cookie;await req('/api/auth/register',{username:'artist',name:'아티스트',password:'test-password-23456'});
+ const artist=(await req('/api/auth/accounts')).accounts.find(a=>a.username==='artist');await req('/api/auth/accounts',{id:artist.id,status:'active'});
+ run('INSERT INTO members VALUES(?,?,?,?,?,?,?)',crypto.randomUUID(),w,artist.id,'아티스트','artist@local.invalid','member',now());
+ const own=await post('lock',{path:'Content\\Maps\\Lobby.umap',hours:8,reason:'조명'}),extended=await post('lock',{path:'Content/Maps/Lobby.umap',hours:24});
+ check('잠금: 역슬래시 경로 정리, 같은 사람은 연장',extended.extended&&extended.id===own.id&&q('SELECT path FROM asset_locks WHERE id=?',own.id).path==='Content/Maps/Lobby.umap');
+ for(const bad of ['C:/Game/Lobby.umap','/Content/A.uasset','Content/../Secret.uasset'])await post('lock',{path:bad},400);checks.push('잠금: 절대 경로·상위 폴더 거부');
+ cookie='';await req('/api/auth/login',{username:'artist',password:'test-password-23456'});const artistCookie=cookie;
+ await post('lock',{path:'content/maps/lobby.umap'},409);await post('lock',{path:'Content/Maps/'},409);checks.push('잠금: 남이 잠근 파일·그 폴더는 대소문자 무관하게 막음');
+ const pasted=await post('lockCheck',{paths:' M Content/Maps/Lobby.umap\n?? Content/Characters/New.uasset\nR  Old.umap -> Content/Maps/Arena.umap\n M Source/Game.cpp'});
+ check('변경 확인: 남의 잠금과 겹침, 안 잠근 에셋만 골라냄',pasted.checked===4&&pasted.conflicts.length===1&&pasted.conflicts[0].lock.holder&&pasted.unlocked.join()==='Content/Characters/New.uasset,Content/Maps/Arena.umap');
+ const artistLock=await post('lock',{path:'Content/Characters/'});await post('unlock',{id:own.id},403);checks.push('잠금: 남의 잠금은 팀원이 못 풂');
+ cookie=ownerCookie;await post('unlock',{id:artistLock.id});
+ check('관리자가 풀면 잠근 사람에게 알림',!!q("SELECT id FROM notifications WHERE user_id=? AND title LIKE '%Content/Characters/%'",artist.id)&&(await req(`/api/features?action=locks&workspace=${w}`)).locks.length===1);
+ run('UPDATE asset_locks SET expires_at=? WHERE id=?','2000-01-01T00:00:00.000Z',own.id);cookie=artistCookie;await post('lock',{path:'Content/Maps/Lobby.umap'});
+ check('기한 지난 잠금은 다른 사람이 잡을 수 있음',(await req(`/api/features?action=locks&workspace=${w}`)).locks.every(l=>l.user_id===artist.id));
+ cookie=ownerCookie;await writeFile(path.join(repo,'a.txt'),'changed');await mkdir(path.join(repo,'Content','Maps'),{recursive:true});await writeFile(path.join(repo,'Content','Maps','Lobby.umap'),'x');
+ const fromGit=await post('lockCheck',{fromGit:true});
+ check('서버 PC는 연결한 Git 폴더로 바로 확인',fromGit.conflicts.some(c=>c.path==='Content/Maps/Lobby.umap'));
+
+ // Bug and playtest reports.
+ await post('bugReport',{type:'bug',title:'벽에 낌',steps:'',actual:'낌',mutation:'bug-0'},400);checks.push('버그: 재현 순서 없으면 거부');
+ const bug=await post('bugReport',{type:'bug',title:'벽에 낌',severity:'critical',frequency:'always',build:'0.3.1',place:'Lobby',steps:'1. 문으로 달린다',expected:'지나감',actual:'벽에 낌',mutation:'bug-1'});
+ const bugRow=q('SELECT e.*,t.name type FROM entries e JOIN record_types t ON t.id=e.custom_type_id WHERE e.id=?',bug.id);
+ check('버그: 업무·높은 우선순위·버그 항목·요약 정리',bugRow.kind==='task'&&bugRow.priority==='high'&&bugRow.type==='버그'&&bugRow.summary.startsWith('심각도: 치명')&&bugRow.body.includes('## 재현 순서'));
+ check('버그: 같은 요청 재시도는 하나만',(await post('bugReport',{type:'bug',title:'벽에 낌',steps:'1',actual:'2',mutation:'bug-1'})).id===bug.id);
+ const play=await post('bugReport',{type:'playtest',title:'첫 판',tester:'친구',bad:'시작이 느림',mutation:'play-1'});const bugs=await req(`/api/features?action=bugs&workspace=${w}`);
+ check('플레이테스트 의견은 메모로, 목록에 각각 표시',q('SELECT kind FROM entries WHERE id=?',play.id).kind==='note'&&bugs.bugs.some(b=>b.id===bug.id)&&bugs.playtests.some(p=>p.id===play.id)&&q("SELECT count(*) n FROM record_types WHERE workspace_id=? AND name='버그'",w).n===1);
+
+ // Milestones: progress counts work at any depth under a goal.
+ const goal=(await req('/api/data',{workspace:w,action:'create',kind:'goal',title:'알파 빌드',body:'',day:'2026-10-27',due_day:'2099-12-31'})).id;
+ const plan=(await req('/api/data',{workspace:w,action:'create',kind:'plan',title:'맵 완성',body:'',day:'2026-10-27'})).id;
+ const t1=(await req('/api/data',{workspace:w,action:'create',kind:'task',title:'조명',body:'',day:'2026-10-27'})).id;
+ const t2=(await req('/api/data',{workspace:w,action:'create',kind:'task',title:'사운드',body:'',day:'2026-10-27',due_day:'2026-01-01'})).id;
+ const memo=(await req('/api/data',{workspace:w,action:'create',kind:'note',title:'참고',body:'',day:'2026-10-27'})).id;
+ run('UPDATE entries SET parent_id=? WHERE id IN (?,?,?)',goal,plan,t2,memo);run("UPDATE entries SET parent_id=?,status='done' WHERE id=?",plan,t1);run("UPDATE entries SET status='blocked' WHERE id=?",t2);
+ const alpha=(await req(`/api/features?action=milestones&workspace=${w}`)).milestones.find(m=>m.id===goal);
+ check('마일스톤: 하위 단계까지 업무만 세고 진행률·막힘·기한 지남 계산',alpha.total===3&&alpha.done===1&&alpha.blocked===1&&alpha.late===1&&alpha.percent===33&&alpha.daysLeft>0);
  await writeFile(path.join(root,'results.json'),JSON.stringify({passed:checks.length,checks},null,2));console.log(JSON.stringify({passed:checks.length,checks},null,2));
 }finally{if(app)await app.close()}

@@ -21,6 +21,7 @@
 | 경기 시작 기록 | `OnMatchStartedAsync` | 봇 로스터 고정, 규칙·어픽스 고정, 봇 레이팅 기준, 사건 기록 모드·조사 |
 | 접속 티켓 확인 | `AddTicketFieldsAsync` | 응답에 `bots`, `customRules`, `affixes` 추가 |
 
+게임 모듈 목록은 `Game/GameModules.cs` 한곳에 있고, 어셈블리가 열릴 때 스스로 등록합니다(`ModuleInitializer`). 그래서 서버와 검사 프로그램이 같은 모듈을 봅니다.
 
 ### 등록 순서 (바꾸면 안 되는 이유)
 

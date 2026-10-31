@@ -6,3 +6,9 @@
 .operations-content pre.team-report{max-height:420px;background:#f7faf8;border:1px solid #e2e8e4;border-radius:8px;padding:12px}
 .operations-content .team-commits{list-style:none;padding:0;display:grid;gap:6px}
 .operations-content .team-commits li{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px}
+.operations-content .team-sections{flex-wrap:wrap;margin-bottom:12px}
+.operations-content .team-sections button{font-size:12px;min-height:30px}
+.operations-content .team-warning{display:flex;gap:6px;align-items:center;color:#a13f25;font-weight:600}
+.operations-content .team-progress{height:8px;background:#e5ece8;border-radius:4px;overflow:hidden}
+.operations-content .team-progress>i{display:block;height:100%;background:#22877d}
+.operations-content .team-milestones{display:grid;gap:4px}
