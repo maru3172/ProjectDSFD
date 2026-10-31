@@ -45,7 +45,7 @@ public:
         if(Kind!=TEXT("Condition")&&Kind!=TEXT("Stage")&&Kind!=TEXT("Complete"))return;
         FAchievementToastEntry E;E.Code=TEXT("Quest:")+EventId;E.bQuest=true;
         if(ActiveCode==E.Code||Queue.ContainsByPredicate([&](const auto& Q){return Q.Code==E.Code;}))return;
-        E.Title=TEXT("- ")+Name+(Kind==TEXT("Condition")?TEXT(" 퀘스트 조건 완료 -"):Kind==TEXT("Stage")?TEXT(" 퀘스트 단계 완료 -"):TEXT(" 퀘스트 완료 -"));E.Condition=Detail;
+        E.Title=TEXT("- ")+Name+(Kind==TEXT("Condition")?TEXT(" 퀘스트 조건 완료 -"):Kind==TEXT("Stage")?TEXT(" 퀘스트 단계 완료 -"):TEXT(" 퀘스트 전체 완료 -"));E.Condition=Detail;
         if(Queue.Num()<24)Queue.Add(MoveTemp(E));if(ActiveCode.IsEmpty()&&GapRemaining<=0)Next();
     }
     void Next()
@@ -122,7 +122,7 @@ bool FProjectAchievementToastTest::RunTest(const FString&)
             Capture(FString::Printf(TEXT("QuestNotice%d"),Order.Num()));EmptyFrames=0;
         }
     }
-    TestTrue(TEXT("Quest notices are condition, stage, complete in order without duplicate overlays"),Order==TArray<FString>{TEXT("- 탐사 퀘스트 조건 완료 -"),TEXT("- 탐사 퀘스트 단계 완료 -"),TEXT("- 탐사 퀘스트 완료 -")});
+    TestTrue(TEXT("Quest notices are condition, stage, complete in order without duplicate overlays"),Order==TArray<FString>{TEXT("- 탐사 퀘스트 조건 완료 -"),TEXT("- 탐사 퀘스트 단계 완료 -"),TEXT("- 탐사 퀘스트 전체 완료 -")});
     TestTrue(TEXT("Condition notice names the fulfilled requirement and queued notices have a visible gap"),GoalDescribed&&GapObserved);
     TestEqual(TEXT("Quest notices leave the screen after acknowledgement time"),Toast->GetVisibility(),EVisibility::Collapsed);
     Target->ReleaseResource();Lobby->ReleaseSlateResources(true);

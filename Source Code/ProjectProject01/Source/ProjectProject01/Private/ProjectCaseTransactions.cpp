@@ -35,7 +35,7 @@ FString UProjectCaseRecords::ConfirmationScope()const
 }
 bool UProjectCaseRecords::ShouldConfirm(const FString& Category)const
 {
-    const FString Scope=ConfirmationScope();if(Scope.IsEmpty()||(Category!=TEXT("Draw")&&Category!=TEXT("Purchase")))return true;
+    const FString Scope=ConfirmationScope();if(Scope.IsEmpty()||(Category!=TEXT("Draw")&&Category!=TEXT("Purchase")&&Category!=TEXT("MissionReroll")&&Category!=TEXT("CosmeticApply")))return true;
     const FString Key=Scope+TEXT(".")+Category;FString Day;
     if(const auto* Saved=ConfirmationDays.Find(Key))Day=*Saved;
     else if(bPersistence&&GConfig)GConfig->GetString(Section,*Key,Day,GGameUserSettingsIni);
@@ -43,13 +43,13 @@ bool UProjectCaseRecords::ShouldConfirm(const FString& Category)const
 }
 void UProjectCaseRecords::SkipConfirmationToday(const FString& Category)
 {
-    const FString Scope=ConfirmationScope();if(Scope.IsEmpty()||(Category!=TEXT("Draw")&&Category!=TEXT("Purchase")))return;
+    const FString Scope=ConfirmationScope();if(Scope.IsEmpty()||(Category!=TEXT("Draw")&&Category!=TEXT("Purchase")&&Category!=TEXT("MissionReroll")&&Category!=TEXT("CosmeticApply")))return;
     const FString Key=Scope+TEXT(".")+Category,Day=FDateTime::Now().ToString(TEXT("%Y-%m-%d"));ConfirmationDays.Add(Key,Day);
     if(bPersistence&&GConfig){GConfig->SetString(Section,*Key,*Day,GGameUserSettingsIni);GConfig->Flush(false,GGameUserSettingsIni);}
 }
 void UProjectCaseRecordWidget::ConfirmAction(const FString& Category,const FString& Title,TFunction<void()> Action)
 {
-    auto* R=Records(this);if(!R||!R->IsAuthenticated()||R->IsBusy()||!TransactionLayer||TransactionLayer->GetChildren()->Num()>0)return;
+    auto* R=Records(this);if(!R||!R->IsAuthenticated()||R->IsWriting()||!TransactionLayer||TransactionLayer->GetChildren()->Num()>0)return;
     if(!R->ShouldConfirm(Category)){Action();return;}
     ConfirmationCategory=Category;ConfirmationAccount=R->ConfirmationScope();
     ConfirmationGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();ConfirmedAction=MoveTemp(Action);
@@ -71,6 +71,26 @@ void UProjectCaseRecordWidget::ResolveConfirmation(bool Accept,bool SkipToday)
 }
 void UProjectCaseRecordWidget::RequestPurchase(const FString& Id)
 {ConfirmAction(TEXT("Purchase"),TEXT("구매하시겠습니까?"),[this,Id]{if(auto* R=Records(this))R->Action(TEXT("Buy"),Id);});}
+void UProjectCaseRecordWidget::RequestCosmeticAction(const FString& Action,const FString& Id)
+{
+    if(Action!=TEXT("Equip")&&Action!=TEXT("ShowBanner")&&Action!=TEXT("HideBanner"))return;
+    ConfirmAction(TEXT("CosmeticApply"),TEXT("적용하시겠습니까?"),[this,Action,Id]{if(auto* R=Records(this))R->Action(Action,Id);});
+}
+void UProjectCaseRecordWidget::RequestMissionReroll(const FString& Id,const FString& Mode,int32 Count,const FString& Period)
+{
+    ConfirmAction(TEXT("MissionReroll"),TEXT("변경하시겠습니까?"),[this,Id,Mode,Count,Period]
+    {
+        auto* R=Records(this);if(!R)return;const TArray<TSharedPtr<FJsonValue>>* Missions=nullptr;
+        if(R->Snapshot&&R->Snapshot->TryGetArrayField(TEXT("missions"),Missions))for(const auto& Value:*Missions)
+        {
+            const auto Current=Value->AsObject();if(!Current)continue;FString CurrentId,CurrentMode,CurrentPeriod;double Rerolls=0;bool CanReroll=false;
+            Current->TryGetStringField(TEXT("id"),CurrentId);Current->TryGetStringField(TEXT("mode"),CurrentMode);Current->TryGetStringField(TEXT("period"),CurrentPeriod);
+            Current->TryGetNumberField(TEXT("rerolls"),Rerolls);Current->TryGetBoolField(TEXT("canReroll"),CanReroll);
+            if(CurrentId==Id&&CurrentMode==Mode&&CurrentPeriod==Period&&int32(Rerolls)==Count&&CanReroll){R->Action(TEXT("RerollMission"),Id,Mode,Count);return;}
+        }
+        R->Status=TEXT("미션이 변경되었습니다. 다시 확인하세요.");R->OnChanged.Broadcast();
+    });
+}
 void UProjectCaseRecordWidget::ShowReceipt()
 {
     auto* R=Records(this);if(!R||!R->IsAuthenticated()||!R->LastReceipt||!TransactionLayer)return;

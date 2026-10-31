@@ -49,6 +49,7 @@ private:
     bool bBlocksOnly=false;
     bool bRoomMemberProfile=false;
     FString Page;
+    FString RenderedListFingerprint;
     FString Filter, PartyInviteDraft, ThreadAccount, ModalKind, ModalTarget, DraftAccent=TEXT("Slate"), DraftTitle=TEXT("Rookie"), LastMessageId;
     TSet<FString> SeenInvites;
     TSet<FString> SeenFriendRequests;

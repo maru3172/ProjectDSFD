@@ -159,7 +159,7 @@ FReply UProjectProject01VoiceSettingsWidget::NativeOnKeyDown(const FGeometry& Ge
 void UProjectProject01VoiceSettingsWidget::AskReset()
 {
 	if(!ConfirmDialog&&GetOwningPlayer())
-	{ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog){ConfirmDialog->AddToViewport(995);ConfirmDialog->SetReturnFocus(this);}}
+	{ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog){ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder);ConfirmDialog->SetReturnFocus(this);}}
 	const TWeakObjectPtr<UProjectProject01VoiceSettingsWidget> Weak(this);
 	auto Run=[Weak]{if(auto* Self=Weak.Get())Self->Reset();};
 	if(ConfirmDialog)ConfirmDialog->Ask(TEXT("음성 설정을 초기화하시겠습니까?"),Run);else Run();

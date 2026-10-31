@@ -385,8 +385,9 @@ void UProjectProject01LobbySubsystem::RefreshLeaderboard(
 		ProjectProject01Lobby::RoleToString(Role), ProjectProject01Lobby::SortToString(Sort),
 		ProjectProject01Lobby::ScopeToString(Scope),
 		Category == EProjectProject01LeaderboardCategory::Bot ? TEXT("bot") : TEXT("pvp"));
+    const bool SameView=DesiredLeaderboardEndpoint==Endpoint;
     DesiredLeaderboardEndpoint=Endpoint;
-    LeaderboardEntries.Reset();OnLeaderboardChanged.Broadcast();
+    if(!SameView){LeaderboardEntries.Reset();OnLeaderboardChanged.Broadcast();}
     if(IsRequestInFlight()){bLeaderboardRefreshQueued=true;return;}
     bLeaderboardRefreshQueued=false;
 	SendRequest(EProjectProject01LobbyOperation::RefreshLeaderboard, TEXT("GET"), Endpoint, FString());
@@ -467,6 +468,9 @@ void UProjectProject01LobbySubsystem::ClearPendingLeaderboardRecord()
 {
 	PendingLeaderboardRecord = FProjectProject01PendingLeaderboardRecord();
 }
+
+bool UProjectProject01LobbySubsystem::IsStateChangeInFlight() const
+{return bEditorServerPreparationPending||bAwaitingPartyAdmission||(ActiveRequest&&ActiveRequest->GetVerb()!=TEXT("GET"));}
 
 void UProjectProject01LobbySubsystem::SendRequest(
 	const EProjectProject01LobbyOperation Operation,
@@ -993,6 +997,8 @@ bool UProjectProject01LobbySubsystem::ParseGameJoinTicket(
 	GameTicketRoomId = MoveTemp(ParsedRoomId);
 	GameTicketMatchId = MoveTemp(ParsedMatchId);
 	GameTicketRole = MoveTemp(ParsedRole);
+	const TSharedPtr<FJsonObject>* QuestUpdate=nullptr;
+	if(Json->TryGetObjectField(TEXT("questUpdate"),QuestUpdate))if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->ApplyMainQuestUpdate(*QuestUpdate);
 	OutError.Reset();
 	return true;
 }

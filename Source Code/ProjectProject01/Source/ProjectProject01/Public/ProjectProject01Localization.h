@@ -10,6 +10,7 @@ struct PROJECTPROJECT01_API FProjectProject01Localization
 	/** Korean source text is also the stable table key. Missing dynamic text safely falls back unchanged. */
 	static FText Text(const FString& SourceOrKey);
 	static FText Text(const TCHAR* SourceOrKey) { return Text(FString(SourceOrKey)); }
+    static FText StatusText(const FString& Message);
 	static bool SetCulture(const FString& CultureName);
 	static FString GetCulture();
 };

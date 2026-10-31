@@ -237,7 +237,7 @@ internal static partial class CommunityEndpoints
             default:return Error("지원하지 않는 요청입니다.");
         }
         await tx.CommitAsync(ct);
-        return Results.Ok(new {message="처리되었습니다."});
+        return Results.Ok(new {message=""});
     }
 
     private static async Task Notify(MySqlConnection c,MySqlTransaction tx,ulong user,string kind,string body,CancellationToken ct)

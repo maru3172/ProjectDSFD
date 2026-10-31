@@ -8,6 +8,8 @@
 #include "ProjectProject01LobbySubsystem.h"
 #include "ProjectProject01Localization.h"
 #include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -118,7 +120,7 @@ void UProjectProject01SocialWidget::NativeDestruct()
 }
 void UProjectProject01SocialWidget::ReleaseSlateResources(bool Children)
 {
-    Super::ReleaseSlateResources(Children);Panel.Reset();Modal.Reset();TargetInput.Reset();MessageInput.Reset();Feedback.Reset();MessageLog.Reset();BellDot.Reset();List.Reset();MessageScroll.Reset();
+    Super::ReleaseSlateResources(Children);Panel.Reset();Modal.Reset();TargetInput.Reset();MessageInput.Reset();Feedback.Reset();MessageLog.Reset();BellDot.Reset();List.Reset();MessageScroll.Reset();RenderedListFingerprint.Reset();
 }
 void UProjectProject01SocialWidget::Open(const FString& Name)
 {
@@ -161,7 +163,7 @@ void UProjectProject01SocialWidget::CloseRoomMemberProfile()
 }
 void UProjectProject01SocialWidget::BuildPanel()
 {
-    if(!Panel)return;Panel->ClearChildren();List.Reset();Feedback.Reset();MessageInput.Reset();MessageLog.Reset();MessageScroll.Reset();TargetInput.Reset();
+    if(!Panel)return;Panel->ClearChildren();List.Reset();Feedback.Reset();MessageInput.Reset();MessageLog.Reset();MessageScroll.Reset();TargetInput.Reset();RenderedListFingerprint.Reset();
     if(Page.IsEmpty())return;
     auto* S=SocialSubsystem();if(!S)return;
     auto Body=SNew(SVerticalBox);
@@ -184,7 +186,7 @@ void UProjectProject01SocialWidget::BuildPanel()
         Body->AddSlot().AutoHeight().Padding(0,8)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).Text(Txt(PartyInviteDraft)).HintText(Txt(TEXT("초대할 계정 아이디"))).ForegroundColor(ProjectDFSDUI::Text())
           .OnTextChanged_Lambda([this](const FText& Text){PartyInviteDraft=Text.ToString();})];
         Body->AddSlot().AutoHeight()[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle())
-          .IsEnabled_Lambda([this]{auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;const TSharedPtr<FJsonObject>* State=nullptr,*Party=nullptr;if(R&&R->Snapshot&&R->Snapshot->TryGetObjectField(TEXT("partyState"),State))(*State)->TryGetObjectField(TEXT("party"),Party);return R&&R->IsAuthenticated()&&!R->IsBusy()&&(!Party||(Flag(*Party,TEXT("isLeader"))&&Rows(*Party,TEXT("members")).Num()<3))&&!PartyInviteDraft.TrimStartAndEnd().IsEmpty();})
+          .IsEnabled_Lambda([this]{auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;const TSharedPtr<FJsonObject>* State=nullptr,*Party=nullptr;if(R&&R->Snapshot&&R->Snapshot->TryGetObjectField(TEXT("partyState"),State))(*State)->TryGetObjectField(TEXT("party"),Party);return R&&R->IsAuthenticated()&&!R->IsWriting()&&(!Party||(Flag(*Party,TEXT("isLeader"))&&Rows(*Party,TEXT("members")).Num()<3))&&!PartyInviteDraft.TrimStartAndEnd().IsEmpty();})
           .OnClicked_Lambda([this]{if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),PartyInviteDraft);return FReply::Handled();})[Label(TEXT("초대 보내기"))]];
     }
     if(Page==TEXT("Whispers"))
@@ -391,7 +393,7 @@ void UProjectProject01SocialWidget::ShowModal(const FString& Kind,const FString&
         Body->AddSlot().AutoHeight()[Btn(TEXT("수락"),[this]{if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(TEXT("Accept"),ModalTarget);})];
         Body->AddSlot().AutoHeight()[Btn(TEXT("거절"),[this]{if(auto* SocialPtr=SocialSubsystem())SocialPtr->Act(TEXT("Decline"),ModalTarget);})];
     }
-    Body->AddSlot().AutoHeight()[SNew(STextBlock).Text_Lambda([this]{const auto* SocialPtr=SocialSubsystem();return Txt(SocialPtr?SocialPtr->Status:FString());}).AutoWrapText(true).ColorAndOpacity(FLinearColor::White)];
+    Body->AddSlot().AutoHeight()[SNew(STextBlock).Text_Lambda([this]{const auto* SocialPtr=SocialSubsystem();return FProjectProject01Localization::StatusText(SocialPtr?SocialPtr->Status:FString());}).AutoWrapText(true).ColorAndOpacity(FLinearColor::White)];
     Body->AddSlot().AutoHeight()[Btn(TEXT("닫기"),[this]{CloseModal();RefreshView();})];
     Modal->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(18)[Body]];
 }
@@ -405,15 +407,15 @@ void UProjectProject01SocialWidget::RefreshView()
         PartyNoticeSnapshot=Records->Snapshot.Get();const TSharedPtr<FJsonObject>* State=nullptr;bool Removed=false;
         if(Records->Snapshot->TryGetObjectField(TEXT("partyState"),State)&&(*State)->TryGetBoolField(TEXT("removedFromParty"),Removed)&&Removed)
         {
-            if(!ConfirmDialog&&GetOwningPlayer()){ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog)ConfirmDialog->AddToViewport(980);}
+            if(!ConfirmDialog&&GetOwningPlayer()){ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog)ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder);}
             if(ConfirmDialog)ConfirmDialog->Notify(TEXT("파티에서 강제 퇴장되었습니다."));
         }
     }
     if(!S->IsAuthenticated()){PendingRoomMenu.Reset();Page.Reset();ThreadAccount.Reset();Filter.Reset();PartyInviteDraft.Reset();SeenInvites.Reset();SeenFriendRequests.Reset();CloseModal();if(Panel)Panel->ClearChildren();if(FSlateApplication::IsInitialized())FSlateApplication::Get().DismissAllMenus();return;}
-    if(Feedback)Feedback->SetText(Txt(S->Status));
+    if(Feedback)Feedback->SetText(FProjectProject01Localization::StatusText(S->Status));
     bool Unread=false;for(auto V:Rows(S->Snapshot,TEXT("notifications")))Unread|=Flag(V->AsObject(),TEXT("unread"));for(auto V:Rows(S->Snapshot,TEXT("conversations")))Unread|=Flag(V->AsObject(),TEXT("unread"));
     const auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;
-    if(Page==TEXT("PartyInvite")&&Feedback&&R)Feedback->SetText(Txt(R->Status));
+    if(Page==TEXT("PartyInvite")&&Feedback&&R)Feedback->SetText(FProjectProject01Localization::StatusText(R->Status));
     const TSharedPtr<FJsonObject>* PartyState=nullptr;if(R&&R->Snapshot)R->Snapshot->TryGetObjectField(TEXT("partyState"),PartyState);
     const int32 PartyInvites=PartyState?Rows(*PartyState,TEXT("invites")).Num():0;Unread|=PartyInvites>0;
     if(BellDot)BellDot->SetVisibility(Unread?EVisibility::Visible:EVisibility::Collapsed);
@@ -434,18 +436,31 @@ void UProjectProject01SocialWidget::RefreshView()
             if(!SeenFriendRequests.Contains(Key)){SeenFriendRequests.Add(Key);ShowModal(TEXT("FriendRequest"),A,Str(J,TEXT("displayName"))+TEXT(" [")+A+TEXT("]님이 친구를 요청했습니다."));ModalRequestKey=Key;break;}
         }
     }
+    // Keep list rows, input focus and scroll positions when only request/status metadata changed.
+    auto Visible=MakeShared<FJsonObject>();
+    auto Fields=[&Visible](const TSharedPtr<FJsonObject>& Source,std::initializer_list<const TCHAR*> Keys)
+    {if(Source)for(const TCHAR* Key:Keys)if(const auto* Value=Source->Values.Find(Key))Visible->SetField(Key,*Value);};
+    if(Page==TEXT("Friends")){Fields(S->Snapshot,{TEXT("friends"),TEXT("requests"),TEXT("statusMessages")});Fields(S->SearchResults,{TEXT("players")});}
+    else if(Page==TEXT("Blocks"))Fields(S->Snapshot,{TEXT("blocks")});
+    else if(Page==TEXT("Notifications")){Fields(S->Snapshot,{TEXT("notifications"),TEXT("invites")});if(PartyState)Visible->SetArrayField(TEXT("partyInvites"),Rows(*PartyState,TEXT("invites")));}
+    else if(Page==TEXT("PartyInvite")){if(PartyState)Fields(*PartyState,{TEXT("invites")});}
+    else if(Page==TEXT("Whispers"))Fields(S->Snapshot,{TEXT("conversations")});
+    else if(Page==TEXT("Thread"))Fields(S->Conversation,{TEXT("messages")});
+    else if(Page==TEXT("Profile")&&S->Profile)Visible->Values=S->Profile->Values;
+    if(Page==TEXT("Thread")){Visible->SetBoolField(TEXT("conversationLoaded"),S->Conversation.IsValid());Visible->SetBoolField(TEXT("lobbyVisible"),S->IsLobbyVisible());}
+    FString Fingerprint;FJsonSerializer::Serialize(Visible,TJsonWriterFactory<>::Create(&Fingerprint));Fingerprint=Page+TEXT("|")+Filter+TEXT("|")+Fingerprint;
+    if(Fingerprint==RenderedListFingerprint)return;RenderedListFingerprint=MoveTemp(Fingerprint);
     if(List)List->ClearChildren();
     auto Add=[this](const FString& T){if(List)List->AddSlot().AutoHeight().Padding(3)[Label(T)];};
     auto Action=[this](const FString& T,const FString& Op,const FString& A){if(List)List->AddSlot().AutoHeight().Padding(2)[Btn(T,[this,Op,A]{ActConfirmed(Op,A);})];};
     if(Page==TEXT("PartyInvite")&&List&&R)
     {
-        const bool Ready=R->IsAuthenticated()&&!R->IsBusy();
         for(const auto& Value:PartyState?Rows(*PartyState,TEXT("invites")):TArray<TSharedPtr<FJsonValue>>{})
         {
             const auto J=Value->AsObject();Add(Str(J,TEXT("leaderName"))+TEXT("님의 파티 초대"));
             auto Choices=SNew(SHorizontalBox);
             for(const FString Op:{FString(TEXT("Accept")),FString(TEXT("Decline"))})
-                Choices->AddSlot().FillWidth(1).Padding(2)[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).IsEnabled(Ready).OnClicked_Lambda([this,Op,Id=Str(J,TEXT("id"))]{if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->PartyAction(Op,Id);return FReply::Handled();})[Label(Op==TEXT("Accept")?TEXT("수락"):TEXT("거절"))]];
+                Choices->AddSlot().FillWidth(1).Padding(2)[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).IsEnabled_Lambda([this]{auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();return Records&&Records->IsAuthenticated()&&!Records->IsWriting();}).OnClicked_Lambda([this,Op,Id=Str(J,TEXT("id"))]{if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->PartyAction(Op,Id);return FReply::Handled();})[Label(Op==TEXT("Accept")?TEXT("수락"):TEXT("거절"))]];
             List->AddSlot().AutoHeight()[Choices];
         }
     }
@@ -509,7 +524,7 @@ void UProjectProject01SocialWidget::RefreshView()
 void UProjectProject01SocialWidget::AskThen(const FString& Question,TFunction<void()> OnYes,const FString& SkipKey)
 {
     if(!ConfirmDialog&&GetOwningPlayer())
-    {ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog)ConfirmDialog->AddToViewport(980);}
+    {ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog)ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder);}
     if(ConfirmDialog)ConfirmDialog->Ask(Question,MoveTemp(OnYes),SkipKey);else OnYes();
 }
 void UProjectProject01SocialWidget::ActConfirmed(const FString& Op,const FString& Account)

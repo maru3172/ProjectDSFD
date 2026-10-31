@@ -263,7 +263,7 @@ bool FProjectParcelLightTest::RunTest(const FString&)
 #endif
 void UProjectCaseRecordWidget::BuildCollection(const TSharedPtr<FJsonObject>& State)
 {
-    auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();const auto C=Obj(State,TEXT("collection"));const bool Ready=R->IsAuthenticated()&&!R->IsBusy();
+    auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();const auto C=Obj(State,TEXT("collection"));const bool Ready=R->IsAuthenticated();
     auto Header=SNew(SHorizontalBox);Header->AddSlot().FillWidth(1)[Text(TEXT("꾸미기 컬렉션"),24)];
     Header->AddSlot().AutoWidth()[Button(TEXT("시즌 뽑기"),[this]{Page=TEXT("Draw");RefreshPanel();},Ready)];Body->AddSlot().AutoHeight().Padding(4,8)[Header];
     auto Filters=SNew(SWrapBox).UseAllottedSize(true);
@@ -287,10 +287,10 @@ void UProjectCaseRecordWidget::BuildCollection(const TSharedPtr<FJsonObject>& St
         if(CosmeticSlot==TEXT("Banner"))
         {
             const bool Shown=Displayed.Contains(Id);auto Actions=SNew(SHorizontalBox);
-            Actions->AddSlot().FillWidth(1).Padding(0,0,4,0)[Button(Shown?TEXT("전시 해제"):TEXT("전시"),[R,Id,Shown]{R->Action(Shown?TEXT("HideBanner"):TEXT("ShowBanner"),Id);},Ready&&Has)];
-            Actions->AddSlot().FillWidth(1)[Button(Equipped?TEXT("대표"):TEXT("대표 지정"),[R,Id]{R->Action(TEXT("Equip"),Id);},Ready&&Has&&!Equipped)];Card->AddSlot().AutoHeight()[Actions];
+            Actions->AddSlot().FillWidth(1).Padding(0,0,4,0)[Button(Shown?TEXT("전시 해제"):TEXT("전시"),[this,Id,Shown]{RequestCosmeticAction(Shown?TEXT("HideBanner"):TEXT("ShowBanner"),Id);},Ready&&Has)];
+            Actions->AddSlot().FillWidth(1)[Button(Equipped?TEXT("대표"):TEXT("대표 지정"),[this,Id]{RequestCosmeticAction(TEXT("Equip"),Id);},Ready&&Has&&!Equipped)];Card->AddSlot().AutoHeight()[Actions];
         }
-        else Card->AddSlot().AutoHeight()[Button(Equipped?TEXT("장착 중"):TEXT("장착"),[R,Id]{R->Action(TEXT("Equip"),Id);},Ready&&Has&&!Equipped)];
+        else Card->AddSlot().AutoHeight()[Button(Equipped?TEXT("장착 중"):TEXT("장착"),[this,Id]{RequestCosmeticAction(TEXT("Equip"),Id);},Ready&&Has&&!Equipped)];
         Grid->AddSlot(I%PerPage,0)[SNew(SBorder).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(8)[Card]];
     }
     Body->AddSlot().AutoHeight()[Grid];auto Pager=SNew(SHorizontalBox);
@@ -300,7 +300,7 @@ void UProjectCaseRecordWidget::BuildCollection(const TSharedPtr<FJsonObject>& St
 }
 void UProjectCaseRecordWidget::RequestDrawAction(const FString& Operation,int32 Count)
 {
-    auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();if(!R||!R->IsAuthenticated()||R->IsBusy()||Count<1||Count>2000000)return;
+    auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();if(!R||!R->IsAuthenticated()||R->IsWriting()||Count<1||Count>2000000)return;
     const auto State=R->Snapshot,D=Obj(Obj(State,TEXT("collection")),TEXT("draw"));
     if(Operation==TEXT("Draw")&&!Flag(D,TEXT("active")))
     {DrawFeedback=TEXT("시즌 뽑기 상품·확률이 아직 공개되지 않았습니다.");DrawFeedbackAt=FPlatformTime::Seconds();return;}
@@ -342,7 +342,7 @@ void UProjectCaseRecordWidget::BuildDraw(const TSharedPtr<FJsonObject>& State)
     auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();const auto D=Obj(Obj(State,TEXT("collection")),TEXT("draw")),Pool=Obj(D,TEXT("pool"));
     if(Str(R->DrawResult,TEXT("operation"))==TEXT("EditorReset")&&LastDrawReceipt!=Str(R->DrawResult,TEXT("requestId")))
     {LastDrawReceipt=Str(R->DrawResult,TEXT("requestId"));bDrawRequestedHere=bDrawResultOpen=false;ParcelOpenTimes.Reset();RareRevealQueue.Reset();}
-    const bool Ready=R->IsAuthenticated()&&!R->IsBusy();
+    const bool Ready=R->IsAuthenticated();
     const auto Update=[this]{RenderedFingerprint.Reset();RefreshPanel();};
     auto Shelf=SNew(SVerticalBox);auto Header=SNew(SHorizontalBox);Header->AddSlot().FillWidth(1)[Text(Pool?Str(Pool,TEXT("title")):TEXT("시즌 뽑기"),24)];
 #if WITH_EDITOR

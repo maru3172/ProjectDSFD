@@ -1024,6 +1024,14 @@ internal static partial class LobbyEndpoints
                     if(await bind.ExecuteNonQueryAsync(ct)!=1)return Results.Unauthorized();
                 }
                 await transaction.CommitAsync(ct);
+                object? questUpdate=null;
+                try
+                {
+                    await using var questTransaction=await connection.BeginTransactionAsync(ct);
+                    questUpdate=await MainQuest.StartUpdateAsync(connection,questTransaction,user.Id,matchId,role,ct);
+                    await questTransaction.CommitAsync(ct);
+                }
+                catch(MySqlException ex){app.Logger.LogWarning("Main quest start update deferred; database error {Number}.",ex.Number);}
                 // 각 클라이언트 연결마다 서로 다른 256비트 키를 파생한다. 원본 키와 티켓은 DB에 저장하지 않는다.
                 var encryptionKey = Convert.ToBase64String(securityOptions.DeriveConnectionEncryptionKey(ticket));
                 await SecurityAudit.WriteAsync(database, request, "GameTicketIssue", "Success", user.Id,
@@ -1031,6 +1039,7 @@ internal static partial class LobbyEndpoints
                 return Results.Ok(new
                 {
                     message = "일회용 게임 접속 티켓을 발급했습니다.",
+                    questUpdate,
                     ticket,
                     encryptionKey,
                     roomId,

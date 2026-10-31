@@ -472,7 +472,7 @@ void UProjectProject01TransientNoticeWidget::ShowNotice(
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	if (IsValid(NoticeText))
 	{
-		NoticeText->SetText(FProjectProject01Localization::Text(Message));
+		NoticeText->SetText(FProjectProject01Localization::StatusText(Message));
 	}
 }
 
@@ -804,7 +804,7 @@ void UProjectProject01ServiceNoticeWidget::SetNotice(
 	}
 	if (IsValid(NoticeText))
 	{
-		NoticeText->SetText(FProjectProject01Localization::Text(Message));
+		NoticeText->SetText(FProjectProject01Localization::StatusText(Message));
 	}
 	if (IsValid(NoticeBackground))
 	{
@@ -1031,7 +1031,7 @@ void UProjectProject01SurveyWidget::ShowSurveyNotice(const FString& Message, con
 {
 	bSubmitted = bSubmissionSucceeded;
 	bAcknowledgementVisible = true;
-	if (IsValid(AcknowledgementText)) AcknowledgementText->SetText(FProjectProject01Localization::Text(Message));
+	if (IsValid(AcknowledgementText)) AcknowledgementText->SetText(FProjectProject01Localization::StatusText(Message));
 	if (IsValid(AcknowledgementPanel)) AcknowledgementPanel->SetVisibility(ESlateVisibility::Visible);
 	SetBusy(false);
 	if (IsInViewport() && IsValid(AcknowledgementButton)) AcknowledgementButton->SetKeyboardFocus();
@@ -1101,7 +1101,7 @@ void UProjectProject01SurveyWidget::SetBusy(
 	for (UMultiLineEditableTextBox* Input : TextInputs) if (IsValid(Input)) Input->SetIsReadOnly(bBusy || bSubmitted || bAcknowledgementVisible);
 	if (IsValid(StatusText))
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(Message));
+		StatusText->SetText(FProjectProject01Localization::StatusText(Message));
 		StatusText->SetColorAndOpacity(bIsError
 			? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(ProjectDFSDUI::Text()));
 	}
@@ -1865,7 +1865,7 @@ void UProjectProject01TitleWidget::HandleQuitClicked()
 		if (!IsValid(QuitConfirmDialog))
 		{
 			QuitConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(PlayerController, UProjectConfirmDialogWidget::StaticClass());
-			if (QuitConfirmDialog) { QuitConfirmDialog->AddToViewport(990); QuitConfirmDialog->SetReturnFocus(this); }
+			if (QuitConfirmDialog) { QuitConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder); QuitConfirmDialog->SetReturnFocus(this); }
 		}
 		if (IsValid(QuitConfirmDialog))
 		{
@@ -2472,7 +2472,7 @@ void UProjectProject01LoginWidget::SetStatus(const FString& Message, const bool 
 	{
 		return;
 	}
-	StatusText->SetText(FProjectProject01Localization::Text(Message));
+	StatusText->SetText(FProjectProject01Localization::StatusText(Message));
 	StatusText->SetColorAndOpacity(bIsError ? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(ProjectDFSDUI::Text()));
 }
 
@@ -3321,7 +3321,7 @@ void UProjectProject01SessionMenuWidget::AskThen(const FString& Question, TFunct
 	if (!IsValid(ConfirmDialog) && GetOwningPlayer())
 	{
 		ConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
-		if (ConfirmDialog) { ConfirmDialog->AddToViewport(990); ConfirmDialog->SetReturnFocus(this); } // Above this menu.
+		if (ConfirmDialog) { ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder); ConfirmDialog->SetReturnFocus(this); } // Above this menu.
 	}
 	if (IsValid(ConfirmDialog)) ConfirmDialog->Ask(Question, MoveTemp(OnYes), SkipKey);
 	else OnYes();
@@ -3539,7 +3539,7 @@ void UProjectProject01SessionMenuWidget::SetBusy(
 	if (IsValid(QuitGameButton)) QuitGameButton->SetIsEnabled(!bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(Message));
+		StatusText->SetText(FProjectProject01Localization::StatusText(Message));
 		StatusText->SetColorAndOpacity(bIsError
 			? FSlateColor(ProjectDFSDUI::Danger())
 			: FSlateColor(ProjectDFSDUI::Text()));
@@ -3799,7 +3799,7 @@ bool UProjectProject01MatchResultWidget::AskFirst(const FString& Question, const
 	if (!IsValid(ConfirmDialog) && GetOwningPlayer())
 	{
 		ConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
-		if (ConfirmDialog) { ConfirmDialog->AddToViewport(990); ConfirmDialog->SetReturnFocus(this); }
+		if (ConfirmDialog) { ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder); ConfirmDialog->SetReturnFocus(this); }
 	}
 	if (!IsValid(ConfirmDialog)) return false;
 	const TWeakObjectPtr<UProjectProject01MatchResultWidget> Weak(this);
@@ -4249,21 +4249,26 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	if (IsValid(TimelineFrame)) TimelineFrame->SetVisibility(bShowingTimeline ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(TimelineRows))
 	{
-		TimelineRows->ClearChildren();
+		const int32 Count=Result.Timeline.Num()+(Result.OmittedTimelineEvents>0?1:0);
+		bool Rebuild=TimelineRows->GetChildrenCount()!=Count;
+		if(!Rebuild)for(int32 I=0;I<Count;++I)if(!Cast<UTextBlock>(TimelineRows->GetChildAt(I))){Rebuild=true;break;}
+		if(Rebuild)TimelineRows->ClearChildren();
+		int32 Index=0;
 		if (Result.OmittedTimelineEvents > 0)
 		{
-			UTextBlock* Note = WidgetTree->ConstructWidget<UTextBlock>();
-			Note->SetText(FText::Format(NSLOCTEXT("MatchTimeline","Omitted","사건이 많아 중간 기록 {0}개를 생략했습니다."), FText::AsNumber(Result.OmittedTimelineEvents)));
+			UTextBlock* Note = Rebuild?WidgetTree->ConstructWidget<UTextBlock>():CastChecked<UTextBlock>(TimelineRows->GetChildAt(Index));++Index;
+			const FText Text=FText::Format(NSLOCTEXT("MatchTimeline","Omitted","사건이 많아 중간 기록 {0}개를 생략했습니다."), FText::AsNumber(Result.OmittedTimelineEvents));
+			if(Note->GetText().ToString()!=Text.ToString())Note->SetText(Text);
 			Note->SetColorAndOpacity(FSlateColor(FLinearColor::Yellow));
-			Note->SetAutoWrapText(true); TimelineRows->AddChildToVerticalBox(Note);
+			Note->SetAutoWrapText(true);if(Rebuild)TimelineRows->AddChildToVerticalBox(Note);
 		}
 		for (const FProjectMatchTimelineEvent& Event : Result.Timeline)
 		{
-			UTextBlock* Row = WidgetTree->ConstructWidget<UTextBlock>();
-			Row->SetText(ProjectProject01Timeline::FormatEvent(Event));
+			UTextBlock* Row = Rebuild?WidgetTree->ConstructWidget<UTextBlock>():CastChecked<UTextBlock>(TimelineRows->GetChildAt(Index));++Index;
+			const FText Text=ProjectProject01Timeline::FormatEvent(Event);if(Row->GetText().ToString()!=Text.ToString())Row->SetText(Text);
 			Row->SetColorAndOpacity(FSlateColor(FLinearColor::White)); Row->SetAutoWrapText(true);
 			FSlateFontInfo Font = Row->GetFont(); Font.Size = 18; Row->SetFont(Font);
-			TimelineRows->AddChildToVerticalBox(Row)->SetPadding(FMargin(6,4));
+			if(Rebuild)TimelineRows->AddChildToVerticalBox(Row)->SetPadding(FMargin(6,4));
 		}
 	}
 
@@ -4337,7 +4342,7 @@ void UProjectProject01MatchResultWidget::SetBusy(
 	if (IsValid(LogoutButton)) LogoutButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(StatusText) && !Message.IsEmpty())
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(Message));
+		StatusText->SetText(FProjectProject01Localization::StatusText(Message));
 		StatusText->SetColorAndOpacity(bIsError
 			? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(FLinearColor::White));
 	}
@@ -4676,7 +4681,7 @@ void UProjectProject01SettingsWidget::HandleDefaultsClicked()
 	if (!IsValid(DefaultsConfirmDialog) && GetOwningPlayer())
 	{
 		DefaultsConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
-		if (DefaultsConfirmDialog) { DefaultsConfirmDialog->AddToViewport(995); DefaultsConfirmDialog->SetReturnFocus(this); }
+		if (DefaultsConfirmDialog) { DefaultsConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder); DefaultsConfirmDialog->SetReturnFocus(this); }
 	}
 	if (IsValid(DefaultsConfirmDialog)) DefaultsConfirmDialog->Ask(TEXT("설정을 초기화하시겠습니까?"), Reset);
 	else Reset();
@@ -5082,7 +5087,7 @@ void UProjectProject01SettingsWidget::SetStatus(const FString& Message, const bo
 {
 	if (IsValid(StatusText))
 	{
-		StatusText->SetText(FProjectProject01Localization::Text(Message));
+		StatusText->SetText(FProjectProject01Localization::StatusText(Message));
 		StatusText->SetColorAndOpacity(bIsError ? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(ProjectDFSDUI::Text()));
 	}
 }
@@ -5490,7 +5495,7 @@ void UProjectProject01LobbyWidget::NativeConstruct()
     // A desertion from an earlier match: its result is shown once on coming into the lobby.
     if(!IsValid(DesertionNotice)&&GetOwningPlayer()){DesertionNotice=CreateWidget<UProjectDesertionNoticeWidget>(GetOwningPlayer(),UProjectDesertionNoticeWidget::StaticClass());if(DesertionNotice)DesertionNotice->AddToViewport(960);}
     if(IsValid(DesertionNotice))DesertionNotice->Check();
-    if(!IsValid(ConfirmDialog)&&GetOwningPlayer()){ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog){ConfirmDialog->AddToViewport(970);ConfirmDialog->SetVisibility(ESlateVisibility::Collapsed);ConfirmDialog->SetReturnFocus(this);}}
+    if(!IsValid(ConfirmDialog)&&GetOwningPlayer()){ConfirmDialog=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(),UProjectConfirmDialogWidget::StaticClass());if(ConfirmDialog){ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder);ConfirmDialog->SetVisibility(ESlateVisibility::Collapsed);ConfirmDialog->SetReturnFocus(this);}}
     bLogoutConfirmed=bTransferHostConfirmed=false;
 	if (IsValid(LobbySurveyButton)) LobbySurveyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01LobbyWidget::HandleLobbySurveyClicked);
 	LobbySurvey = FProjectProject01SurveyDefinition();
@@ -5723,7 +5728,7 @@ void UProjectProject01LobbyWidget::HandleBotMatchClicked()
 void UProjectProject01LobbyWidget::HandleBotMatchCreateClicked()
 {
     if(!BotMatchRole||!BotMatchDifficulty)return;
-    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsBusy())return;
+    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsWriting())return;
     if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))
     {
         if(Lobby->HasCurrentRoom())
@@ -5800,19 +5805,33 @@ void UProjectProject01LobbyWidget::HandleMatchRoleChanged(FString Item,ESelectIn
     if(SelectionType==ESelectInfo::Direct)return;
     auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
-    if(!Records||!Lobby||Records->IsBusy()||Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||bTravelRequested||bGameStartFadeActive)return;
+    if(!Records||!Records->IsAuthenticated()||!Lobby||(Records->IsWriting()&&!bRoleWritePending)||Lobby->IsMatchmaking()||Lobby->IsStateChangeInFlight()||bTravelRequested||bGameStartFadeActive)return;
     const auto& Room=Lobby->GetCurrentRoom();
     if(Lobby->HasCurrentRoom()&&(Room.bStarting||Room.bServerPreparing||Room.bStarted||Room.bIsObserver))return;
-    bRoleWritePending=true;
-    Records->PartyAction(TEXT("Role"),FString(),FString(),Item==TEXT("마네킹")?TEXT("Mannequin"):Item==TEXT("생존자")?TEXT("Survivor"):TEXT("Any"));
+    DesiredMatchRole=Item==TEXT("마네킹")?TEXT("Mannequin"):Item==TEXT("생존자")?TEXT("Survivor"):TEXT("Any");
+    if(bRoleWritePending)return;
+    bRoleWritePending=true;SubmittedMatchRole=DesiredMatchRole;
+    Records->PartyAction(TEXT("Role"),FString(),FString(),SubmittedMatchRole);
 }
 void UProjectProject01LobbyWidget::RefreshRoleSelection()
 {
     auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);if(!Lobby)return;
     const auto& Room=Lobby->GetCurrentRoom();
-    const bool Busy=Records&&Records->IsBusy();
-    const bool Editable=!Busy&&!Lobby->IsRequestInFlight()&&!Lobby->IsMatchmaking()&&!bTravelRequested&&!bGameStartFadeActive&&
+    if(!Records||!Records->IsAuthenticated()){bRoleWritePending=false;DesiredMatchRole.Reset();SubmittedMatchRole.Reset();}
+    if(bRoleWritePending&&!Records->IsWriting())
+    {
+        if(!Records->Status.IsEmpty())SetStatus(Records->Status,true);
+        else if(DesiredMatchRole!=SubmittedMatchRole)
+        {
+            SubmittedMatchRole=DesiredMatchRole;
+            Records->PartyAction(TEXT("Role"),FString(),FString(),SubmittedMatchRole);return;
+        }
+        bRoleWritePending=false;DesiredMatchRole.Reset();SubmittedMatchRole.Reset();
+        if(Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight())Lobby->RefreshCurrentRoom();
+    }
+    const bool Busy=Records&&Records->IsWriting();
+    const bool Editable=(!Busy||bRoleWritePending)&&!Lobby->IsStateChangeInFlight()&&!Lobby->IsMatchmaking()&&!bTravelRequested&&!bGameStartFadeActive&&
         (!Lobby->HasCurrentRoom()||(!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted&&!Room.bIsObserver));
     if(RandomMatchRole)RandomMatchRole->SetIsEnabled(Editable);
     if(RoomMatchRole)
@@ -5826,16 +5845,16 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
         }
     }
     if(RoomRoleRow)RoomRoleRow->SetVisibility(Lobby->HasCurrentRoom()&&!Room.bRandomParty&&!Room.bRandomMatch&&!Room.bIsObserver?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
-    if(Records&&Records->Snapshot&&!Busy)
+    if(bRoleWritePending)
+    {
+        const FString Selected=DesiredMatchRole==TEXT("Mannequin")?TEXT("마네킹"):DesiredMatchRole==TEXT("Survivor")?TEXT("생존자"):TEXT("무작위");
+        for(auto* Combo:{RandomMatchRole.Get(),RoomMatchRole.Get()})if(Combo&&Combo->GetSelectedOption()!=Selected)Combo->SetSelectedOption(Selected);
+    }
+    if(Records&&Records->Snapshot&&!Busy&&!bRoleWritePending)
     {
         const TSharedPtr<FJsonObject>* PartyState=nullptr;FString Role;
         if(Records->Snapshot->TryGetObjectField(TEXT("partyState"),PartyState)&&(*PartyState)->TryGetStringField(TEXT("role"),Role))
-            for(auto* Combo:{RandomMatchRole.Get(),RoomMatchRole.Get()})if(Combo)Combo->SetSelectedOption(Role==TEXT("Mannequin")?TEXT("마네킹"):Role==TEXT("Survivor")?TEXT("생존자"):TEXT("무작위"));
-        if(bRoleWritePending)
-        {
-            bRoleWritePending=false;SetStatus(Records->Status,false);
-            if(Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight())Lobby->RefreshCurrentRoom();
-        }
+            for(auto* Combo:{RandomMatchRole.Get(),RoomMatchRole.Get()})if(Combo){const FString Selected=Role==TEXT("Mannequin")?TEXT("마네킹"):Role==TEXT("Survivor")?TEXT("생존자"):TEXT("무작위");if(Combo->GetSelectedOption()!=Selected)Combo->SetSelectedOption(Selected);}
     }
     bool CanEnterBot=!Lobby->HasCurrentRoom()&&Editable,TwoPlayerParty=false;
     if(Records&&Records->Snapshot)
@@ -5849,8 +5868,8 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
         }
     }
     if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(CanEnterBot);
-    if(BotMatchRole){BotMatchRole->SetIsEnabled(!Lobby->HasCurrentRoom()&&Editable&&!TwoPlayerParty);if(TwoPlayerParty)BotMatchRole->SetSelectedOption(TEXT("생존자"));}
-    if(RoomMatchRole&&Room.bBotMatch&&Room.Members.Num()==2){RoomMatchRole->SetSelectedOption(TEXT("생존자"));RoomMatchRole->SetIsEnabled(false);}
+    if(BotMatchRole){BotMatchRole->SetIsEnabled(!Lobby->HasCurrentRoom()&&Editable&&!TwoPlayerParty);if(TwoPlayerParty&&BotMatchRole->GetSelectedOption()!=TEXT("생존자"))BotMatchRole->SetSelectedOption(TEXT("생존자"));}
+    if(RoomMatchRole&&Room.bBotMatch&&Room.Members.Num()==2){if(RoomMatchRole->GetSelectedOption()!=TEXT("생존자"))RoomMatchRole->SetSelectedOption(TEXT("생존자"));RoomMatchRole->SetIsEnabled(false);}
     if(Busy)
         for(auto* Button:{MatchStartButton.Get(),ReadyButton.Get(),StartRoomButton.Get()})if(Button)Button->SetIsEnabled(false);
     RefreshBotMatchView();
@@ -5982,7 +6001,7 @@ void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
 }
 void UProjectProject01LobbyWidget::HandleMatchStartClicked()
 {
-    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsBusy())return;
+    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsWriting())return;
     if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this))Lobby->JoinMatchmaking();
     RefreshMatchmakingView();
 }
@@ -6589,9 +6608,10 @@ void UProjectProject01LobbyWidget::UpdateLobbyChoiceHighlight(const TArray<TObje
     for(const auto& B:Bindings)
     {
         const bool Chosen=B->Key==Selected;
-        B->Label->SetText(FText::FromString((Chosen?TEXT("✓ 선택됨: "):TEXT(""))+B->Caption));
-        ProjectDFSDUI::Apply(B->Button,Chosen);
-        if(B->bHost)ProjectProject01LoginUI::CompactControls(B->Button);
+        const FString Caption=(Chosen?TEXT("✓ 선택됨: "):TEXT(""))+B->Caption;
+        if(B->Label->GetText().ToString()!=Caption)B->Label->SetText(FText::FromString(Caption));
+        if(!B->bStyled||B->bSelected!=Chosen)
+        {ProjectDFSDUI::Apply(B->Button,Chosen);if(B->bHost)ProjectProject01LoginUI::CompactControls(B->Button);B->bSelected=Chosen;B->bStyled=true;}
     }
 }
 
@@ -6663,10 +6683,20 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
         for(const auto& M:Members)if(M.bIsHost)SelfId=M.UserId;
     Keys.Add(TEXT("self:")+SelfId);
     Keys.Add(DuoBot?TEXT("duo-bot"):TEXT("open-or-solo"));
-	for(const auto& M:Members)Keys.Add(FString::Printf(TEXT("%s:%d:%s:%d%d%d%d:%d:%s"),*M.UserId,M.DisplayName.Len(),*M.DisplayName,
-		M.bIsHost,M.bIsReady,M.bReturnedToRoom,M.bIsObserver,bRevealRoles,*M.AssignedRole)+TEXT(":")+M.BannerId);
+	for(const auto& M:Members)Keys.Add(M.UserId+FString::FromInt(M.bIsObserver)+TEXT(":")+M.BannerId);
+	auto Caption=[DuoBot,bRevealRoles](const FProjectProject01RoomMember& M)
+	{
+		const FString Role=bRevealRoles&&!M.AssignedRole.IsEmpty()?TEXT(" [")+M.AssignedRole+TEXT("]"):FString();
+		const FString Ready=M.bIsBot?FString(TEXT("준비")):M.bIsHost&&!DuoBot?FString(TEXT("시작 대기")):M.bIsReady?FString(TEXT("준비")):FString(TEXT("대기"));
+		return M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+(M.bIsObserver?FString(TEXT("관전 · "))+Ready:Ready)+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""));
+	};
 	// Keep live buttons stable across the room's periodic refresh (including mouse-down/up).
-	if(Keys==MemberProfileRowKeys)return;
+	if(Keys==MemberProfileRowKeys&&MemberProfileBindings.Num()==Members.Num())
+	{
+		for(int32 I=0;I<Members.Num();++I)if(auto* Label=MemberProfileBindings[I]->Label.Get())
+		{const FString Text=Caption(Members[I]);if(Label->GetText().ToString()!=Text){Label->SetText(FText::FromString(Text));Label->SetToolTipText(Label->GetText());}}
+		return;
+	}
 	MemberProfileRowKeys=MoveTemp(Keys);if(RoomRoleRow)RoomRoleRow->RemoveFromParent();MemberProfilePanel->ClearChildren();if(ObserverProfilePanel)ObserverProfilePanel->ClearChildren();MemberProfileBindings.Reset();
 	for(const auto& M:Members)
 	{
@@ -6677,10 +6707,7 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
             auto* BannerSlot=Row->AddChildToHorizontalBox(Banner);BannerSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));BannerSlot->SetVerticalAlignment(VAlign_Center);BannerSlot->SetPadding(FMargin(0,0,8,0));
         }
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
-		const FString Role=bRevealRoles&&!M.AssignedRole.IsEmpty()?TEXT(" [")+M.AssignedRole+TEXT("]"):FString();
-        const FString ReadyStatus=M.bIsBot?FString(TEXT("준비")):M.bIsHost&&!DuoBot?FString(TEXT("시작 대기")):M.bIsReady?FString(TEXT("준비")):FString(TEXT("대기"));
-		Label->SetText(FText::FromString(M.DisplayName+(M.bIsHost?TEXT(" [방장]"):TEXT(""))+FString(TEXT(" — "))+
-			(M.bIsObserver?FString(TEXT("관전 · "))+ReadyStatus:ReadyStatus)+Role+(M.bReturnedToRoom?TEXT(" [방 복귀]"):TEXT(""))));
+		Label->SetText(FText::FromString(Caption(M)));
 		FSlateFontInfo Font=Label->GetFont();Font.Size=18;Label->SetFont(Font);Label->SetAutoWrapText(false);Label->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);Label->SetToolTipText(Label->GetText());Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		Label->SetClipping(EWidgetClipping::ClipToBounds);
 		auto* LabelSlot=Row->AddChildToHorizontalBox(Label);LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));LabelSlot->SetVerticalAlignment(VAlign_Center);
@@ -6691,7 +6718,7 @@ void UProjectProject01LobbyWidget::PopulateRoomMemberProfiles(const TArray<FProj
             RoleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));RoleSlot->SetVerticalAlignment(VAlign_Center);
         }
         auto* Contents=WidgetTree->ConstructWidget<USizeBox>();Contents->SetHeightOverride(28);Contents->AddChild(Row);
-		auto* Binding=NewObject<UProjectProject01RoomProfileBinding>(this);Binding->Owner=this;Binding->UserId=M.UserId;
+		auto* Binding=NewObject<UProjectProject01RoomProfileBinding>(this);Binding->Owner=this;Binding->UserId=M.UserId;Binding->Label=Label;
 		MemberProfileBindings.Add(Binding);
 		auto* Background=WidgetTree->ConstructWidget<UBorder>();
         Background->SetBrush(FSlateRoundedBoxBrush(FLinearColor(.070f,.070f,.070f),2.f,FLinearColor(.21f,.21f,.21f),1.f));
@@ -7597,7 +7624,7 @@ void UProjectProject01LobbyWidget::SetStatus(const FString& Message, const bool 
 	{
 		return;
 	}
-	LobbyStatusText->SetText(FProjectProject01Localization::Text(Message));
+	LobbyStatusText->SetText(FProjectProject01Localization::StatusText(Message));
 	LobbyStatusText->SetColorAndOpacity(bIsError ? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(ProjectDFSDUI::Text()));
 }
 
@@ -7868,7 +7895,7 @@ void UProjectProject01LeaderboardWidget::HandleSubmitRecordClicked()
 	if (!IsValid(ConfirmDialog) && GetOwningPlayer())
 	{
 		ConfirmDialog = CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer(), UProjectConfirmDialogWidget::StaticClass());
-		if (ConfirmDialog) { ConfirmDialog->AddToViewport(980); ConfirmDialog->SetVisibility(ESlateVisibility::Collapsed); }
+		if (ConfirmDialog) { ConfirmDialog->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder); ConfirmDialog->SetVisibility(ESlateVisibility::Collapsed); }
 	}
 	if (IsValid(ConfirmDialog)) ConfirmDialog->Ask(TEXT("리더보드에 등록하시겠습니까?"), Submit, TEXT("LeaderboardRegister"));
 	else Submit();
@@ -8276,7 +8303,7 @@ void UProjectProject01LeaderboardWidget::SetStatus(const FString& Message, const
 	{
 		return;
 	}
-	LeaderboardStatusText->SetText(FProjectProject01Localization::Text(Message));
+	LeaderboardStatusText->SetText(FProjectProject01Localization::StatusText(Message));
 	LeaderboardStatusText->SetColorAndOpacity(
 		bIsError ? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(ProjectDFSDUI::Text()));
 }

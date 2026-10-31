@@ -9,6 +9,11 @@
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "Engine/GameViewportClient.h"
+#include "ProjectAnnouncementSubsystem.h"
+#include "Widgets/SOverlay.h"
+#include "Widgets/SWindow.h"
+#include "Widgets/Text/STextBlock.h"
 #include "Serialization/BufferArchive.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
@@ -23,6 +28,32 @@ bool FProjectCaseRecordsTest::RunTest(const FString&)
     if(!TestNotNull(TEXT("Campaign records exist without an online account"),R))return false;
     TestFalse(TEXT("Editor tests cannot overwrite packaged campaign achievements"),R->bPersistence);
     TestFalse(TEXT("Offline has no authenticated wallet or account state"),R->IsAuthenticated());
+    {
+        auto* Viewport=NewObject<UGameViewportClient>(GEngine);
+        auto Canvas=SNew(SOverlay);auto Window=SNew(SWindow).ClientSize(FVector2D(1280,720));
+        // Isolated routing fixture: no real scene viewport, window, RHI, or HTTP connection.
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+        Viewport->SetViewportOverlayWidget(Window,Canvas);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+        Instance->GetWorldContext()->GameViewport=Viewport;
+        ON_SCOPE_EXIT{Instance->GetWorldContext()->GameViewport=nullptr;Viewport->RemoveAllViewportWidgets();};
+        auto Quest=MakeShared<FJsonObject>();Quest->SetNumberField(TEXT("revision"),5);
+        auto Old=MakeShared<FJsonObject>();Old->SetNumberField(TEXT("revision"),4);Old->SetStringField(TEXT("kind"),TEXT("Condition"));Old->SetStringField(TEXT("questName"),TEXT("탐사"));Old->SetStringField(TEXT("stepTitle"),TEXT("과거 조건"));
+        auto Completed=MakeShared<FJsonObject>();Completed->SetNumberField(TEXT("revision"),5);Completed->SetStringField(TEXT("kind"),TEXT("Stage"));Completed->SetStringField(TEXT("questName"),TEXT("탐사"));Completed->SetStringField(TEXT("stepTitle"),TEXT("생존자 튜토리얼 완료"));
+        Quest->SetArrayField(TEXT("notices"),{MakeShared<FJsonValueObject>(Old),MakeShared<FJsonValueObject>(Completed)});
+        R->Snapshot=MakeShared<FJsonObject>();R->Snapshot->SetStringField(TEXT("userId"),TEXT("notice-fixture"));R->Snapshot->SetObjectField(TEXT("mainQuest"),Quest);
+        auto Response=MakeShared<FJsonObject>();Response->SetArrayField(TEXT("questNotices"),{MakeShared<FJsonValueObject>(Completed)});
+        R->ObserveMainQuest(Response);
+        bool Stage=false,Detail=false,Historical=false;
+        TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> W){if(W->GetType()==FName(TEXT("STextBlock"))){const auto T=StaticCastSharedRef<STextBlock>(W)->GetText().ToString();Stage|=T==TEXT("- 탐사 퀘스트 단계 완료 -");Detail|=T==TEXT("생존자 튜토리얼 완료");Historical|=T.Contains(TEXT("과거 조건"));}if(auto* C=W->GetChildren())for(int32 I=0;I<C->Num();++I)Inspect(C->GetChildAt(I));};Inspect(Canvas);
+        TestTrue(TEXT("First tutorial completion response reaches the actual game viewport with its condition"),Stage&&Detail&&!Historical&&Canvas->GetChildren()->Num()==2);
+        TestEqual(TEXT("Fresh completion is consumed once rather than mistaken for login history"),R->SeenQuestRevision,int64(5));
+        R->ObserveMainQuest(Response);TestEqual(TEXT("Repeated completion does not attach duplicate overlay slots"),Canvas->GetChildren()->Num(),2);
+        Viewport->RemoveAllViewportWidgets();
+        Instance->GetSubsystem<UProjectAnnouncementSubsystem>()->NotifyQuest(TEXT("탐사"),TEXT("Complete"),TEXT("탐사"),TEXT("reattach-fixture"));
+        TestEqual(TEXT("Tutorial UI cleanup cannot permanently detach completion notifications"),Canvas->GetChildren()->Num(),2);
+        R->PendingTutorialRole=TEXT("Survivor");R->ClearSession();TestTrue(TEXT("Logging out clears pending tutorial completion and notification cursor"),R->PendingTutorialRole.IsEmpty()&&R->QuestAccount.IsEmpty()&&R->SeenQuestRevision==0);
+    }
     TestTrue(TEXT("Checkpoint achievement earns offline"),R->RecordCampaignAchievement(TEXT("campaign_checkpoint")));
     TestTrue(TEXT("Escape achievement earns offline"),R->RecordCampaignAchievement(TEXT("campaign_escape")));
     TestTrue(TEXT("Repeated checkpoint event is safe"),R->RecordCampaignAchievement(TEXT("campaign_checkpoint")));

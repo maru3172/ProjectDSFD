@@ -24,6 +24,13 @@ FText FProjectProject01Localization::Text(const FString& SourceOrKey)
 	return FText::FromString(SourceOrKey);
 }
 
+FText FProjectProject01Localization::StatusText(const FString& Message)
+{
+    const FString Clean=Message.TrimStartAndEnd();
+    if(Clean==TEXT("처리되었습니다.")||Clean==TEXT("처리되었습니다"))return FText::GetEmpty();
+    return Text(Message);
+}
+
 bool FProjectProject01Localization::SetCulture(const FString& CultureName)
 {
 	return !CultureName.IsEmpty() && FInternationalization::Get().SetCurrentCulture(CultureName);

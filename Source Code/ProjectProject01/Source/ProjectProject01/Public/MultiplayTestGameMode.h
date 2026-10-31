@@ -266,6 +266,8 @@ private:
 	void CheckForMatchCompletion();
 	/** Bot match with human survivors, all of whom are eliminated (ends the match; blocks level travel). */
 	bool AreAllHumanSurvivorsEliminatedInBotMatch() const;
+	/** Bot match with human survivors, all of whom are caught or escaped (ends the match). */
+	bool AreAllHumanSurvivorsOutInBotMatch() const;
 	virtual void FinishAuthoritativeMatch(const FString& Reason);
 	void SubmitAuthoritativeResults();
 	void HandleResultSubmissionComplete(

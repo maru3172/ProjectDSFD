@@ -176,6 +176,10 @@ bool FProjectActualBotMatchEditorTest::RunTest(const FString& Parameter)
             // The only human taking the exit moves everyone on; the bot survivors still in play come along.
             for(auto& Pair:Mode->MatchPlayerRecords)if(!Pair.Value.bServerBot)Pair.Value.SurvivorState=EMultiplayTestSurvivorState::TransitionWaiting;
             TestTrue(TEXT("When the only human takes the exit, everyone travels"),Mode->CanCommitLevelTransition());
+            // The player escaping for good also ends it: the bot survivors left decide nothing for anyone.
+            for(auto& Pair:Mode->MatchPlayerRecords)if(!Pair.Value.bServerBot)Pair.Value.SurvivorState=EMultiplayTestSurvivorState::Escaped;
+            TestTrue(TEXT("The escaped player is out of the bot match"),Mode->AreAllHumanSurvivorsOutInBotMatch());
+            TestFalse(TEXT("Escaping is not an elimination"),Mode->AreAllHumanSurvivorsEliminatedInBotMatch());
             APlayerCharacter* BotSurvivor=nullptr;
             for(auto& Pair:Mode->MatchPlayerRecords)
             {

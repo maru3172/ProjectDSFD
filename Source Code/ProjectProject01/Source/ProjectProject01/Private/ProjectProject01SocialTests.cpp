@@ -112,6 +112,16 @@ bool FProjectSocialWidgetLayoutTest::RunTest(const FString&)
     PartyState->SetArrayField(TEXT("invites"),{MakeShared<FJsonValueObject>(Received)});Widget->RefreshView();Render(TEXT("PartyInvite"));
     TestTrue(TEXT("Received party invitation has a name and acceptance controls in the overlay"),Widget->List->GetChildren()->Num()>=2);
     Widget->Open(TEXT("Friends"));Render(TEXT("Friends"));
+    {
+        const auto OriginalRow=Widget->List->GetChildren()->GetChildAt(0);
+        Social->Status=TEXT("처리되었습니다.");Widget->RefreshView();
+        TestTrue(TEXT("Status-only updates preserve friend rows and scroll context"),Widget->List->GetChildren()->GetChildAt(0)==OriginalRow);
+        Records->Snapshot->SetNumberField(TEXT("credits"),501);Widget->RefreshView();
+        TestTrue(TEXT("An unrelated account update cannot rebuild the open friends list"),Widget->List->GetChildren()->GetChildAt(0)==OriginalRow);
+        Person->SetStringField(TEXT("displayName"),TEXT("갱신된 친구"));Widget->RefreshView();
+        TestTrue(TEXT("Actual friend data changes still update the visible list"),Widget->List->GetChildren()->GetChildAt(0)!=OriginalRow);
+        Person->SetStringField(TEXT("displayName"),TEXT("함께하는 친구"));Records->Snapshot->SetNumberField(TEXT("credits"),500);Social->Status.Reset();Widget->RefreshView();
+    }
     TestTrue(TEXT("Switching to friends replaces the party input without replacing the screen"),Widget->Page==TEXT("Friends")&&Widget->ModalKind.IsEmpty());
     const auto& G=Widget->Panel->GetCachedGeometry();
     TestTrue(TEXT("Friends panel is on right-hand side"),G.GetAbsolutePosition().X>640);

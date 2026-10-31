@@ -9,10 +9,11 @@ internal static class MainQuest
     internal sealed record Configure(long Revision,Plan Plan);
     internal sealed record ClientAction(string Action,string ExpectedStep,string? Role=null);
     internal sealed record FloorEvent(string MatchId,string UserId,string Map,int ServerPort,DateTimeOffset ObservedAtUtc);
+    internal sealed record ProgressEvent(string MatchId,string UserId,string Kind,int Count,int ServerPort,DateTimeOffset ObservedAtUtc);
     internal static readonly JsonSerializerOptions Json=new(JsonSerializerDefaults.Web);
     internal static readonly Plan Default=new("탐사","",[
         new("survivor_tutorial","생존자 튜토리얼 완료",[new("tutorial","SurvivorTutorial","생존자 튜토리얼 완료")]),
-        new("first_match","어떤 매칭이든 게임 1번 플레이",[new("play","Match","경기 1회 플레이")]),
+        new("first_match","어떤 매칭이든 생존자로 게임 1번 플레이",[new("play","SurvivorMatch","생존자로 경기 1회 플레이")]),
         new("third_floor","3층 맵 탈출하기",[new("escape","ThirdFloor","3층 탈출")]),
         new("second_floor","2층 맵 탈출하기",[new("escape","SecondFloor","2층 탈출")]),
         new("department_escape","백화점을 무사히 탈출하기",[new("escape","Escape","최종 탈출")]),
@@ -31,9 +32,12 @@ internal static class MainQuest
     {
         var rows=await CommunityEndpoints.Rows(c,tx,"SELECT revision,plan_json FROM main_quest_config WHERE id=1",ct);
         var plan=rows[0]["plan_json"] is string encoded?JsonSerializer.Deserialize<Plan>(encoded,Json):null;
-        return(Convert.ToInt64(rows[0]["revision"]),plan??Default);
+        return(Convert.ToInt64(rows[0]["revision"]),UpgradePlan(plan??Default));
     }
-    internal static bool Valid(Plan? p)=>p is not null&&!string.IsNullOrWhiteSpace(p.Name)&&p.Name.Length<=100&&p.BaseStory is not null&&p.BaseStory.Length<=16000&&p.Steps is {Length:8}&&p.Steps.Select(s=>s?.Id).SequenceEqual(Default.Steps.Select(s=>s.Id))&&p.Steps.All(s=>s is not null&&!string.IsNullOrWhiteSpace(s.Title)&&s.Title.Length<=180&&s.Story is not null&&s.Story.Length<=16000&&s.Goals is {Length:>0 and <=8}&&s.Goals.All(g=>g is not null&&!string.IsNullOrWhiteSpace(g.Id)&&g.Id.Length<=40&&g.Id.All(ch=>char.IsAsciiLetterOrDigit(ch)||ch=='_')&&g.Metric is "SurvivorTutorial" or "MannequinTutorial" or "Match" or "ThirdFloor" or "SecondFloor" or "Escape" or "Capture" or "MannequinWin"&&g.Label is not null&&g.Label.Length<=180&&g.Target is >0 and <=100)&&s.Goals.Select(g=>g.Id).Distinct().Count()==s.Goals.Length);
+    internal static Plan UpgradePlan(Plan plan)=>plan with{Steps=plan.Steps.Select(s=>s.Id!="first_match"?s:s with{
+        Title=s.Title=="어떤 매칭이든 게임 1번 플레이"?"어떤 매칭이든 생존자로 게임 1번 플레이":s.Title,
+        Goals=s.Goals.Select(g=>g.Metric=="Match"?g with{Metric="SurvivorMatch",Label=g.Label=="경기 1회 플레이"?"생존자로 경기 1회 플레이":g.Label}:g).ToArray()}).ToArray()};
+    internal static bool Valid(Plan? p)=>p is not null&&!string.IsNullOrWhiteSpace(p.Name)&&p.Name.Length<=100&&p.BaseStory is not null&&p.BaseStory.Length<=16000&&p.Steps is {Length:8}&&p.Steps.Select(s=>s?.Id).SequenceEqual(Default.Steps.Select(s=>s.Id))&&p.Steps.All(s=>s is not null&&!string.IsNullOrWhiteSpace(s.Title)&&s.Title.Length<=180&&s.Story is not null&&s.Story.Length<=16000&&s.Goals is {Length:>0 and <=8}&&s.Goals.All(g=>g is not null&&!string.IsNullOrWhiteSpace(g.Id)&&g.Id.Length<=40&&g.Id.All(ch=>char.IsAsciiLetterOrDigit(ch)||ch=='_')&&g.Metric is "SurvivorTutorial" or "MannequinTutorial" or "Match" or "MatchComplete" or "SurvivorMatch" or "ThirdFloor" or "SecondFloor" or "Escape" or "Capture" or "MannequinWin"&&g.Label is not null&&g.Label.Length<=180&&g.Target is >0 and <=100)&&s.Goals.Select(g=>g.Id).Distinct().Count()==s.Goals.Length);
     internal static async Task<object> SnapshotAsync(MySqlConnection c,MySqlTransaction tx,ulong user,CancellationToken ct)
     {
         var (_,plan)=await ReadPlan(c,tx,ct);await CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO main_quest_state(user_id) VALUES(@u)",ct,("u",user));
@@ -64,8 +68,30 @@ internal static class MainQuest
         else if(completedConditions.Count>0)await Notice("Condition",string.Join(" · ",completedConditions));
         await CommunityEndpoints.Exec(c,tx,"UPDATE main_quest_state SET stage=@s,revision=@r WHERE user_id=@u",ct,("s",index),("r",revision),("u",user));
     }
-    internal static Task VerifiedAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,string role,bool success,int captures,double escape,CancellationToken ct)=>
-        AdvanceAsync(c,tx,user,"Match:"+match,new Dictionary<string,int>{{"Match",1},{"Escape",role=="Survivor"&&success&&escape>0?1:0},{"Capture",role=="Mannequin"?captures:0},{"MannequinWin",role=="Mannequin"&&success?1:0}},ct);
+    internal static Task StartedAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,string role,CancellationToken ct)=>
+        AdvanceAsync(c,tx,user,"Start:"+match,new Dictionary<string,int>{{"Match",1},{"SurvivorMatch",role=="Survivor"?1:0}},ct);
+    internal static async Task<object?> StartUpdateAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,string role,CancellationToken ct)
+    {
+        if(role is not("Survivor" or "Mannequin")||await CustomRoomRules.IsCustomAsync(c,tx,match,ct))return null;
+        await CaseRecords.LockAccountAsync(c,tx,user,ct);
+        var rows=await CommunityEndpoints.Rows(c,tx,"SELECT revision FROM main_quest_state WHERE user_id=@u",ct,("u",user));long before=rows.Count==0?0:Convert.ToInt64(rows[0]["revision"]);
+        await StartedAsync(c,tx,user,match,role,ct);
+        return new{userId=user.ToString(),mainQuest=await SnapshotAsync(c,tx,user,ct),questNotices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u AND revision>@r ORDER BY revision",ct,("u",user),("r",before))};
+    }
+    internal static async Task CaptureAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,int captures,CancellationToken ct)
+    {
+        // Cumulative server counters tolerate retries/out-of-order delivery without counting a capture twice.
+        for(int i=1;i<=Math.Clamp(captures,0,100);i++)await AdvanceAsync(c,tx,user,$"Capture:{match}:{i}",new Dictionary<string,int>{{"Capture",1}},ct);
+    }
+    internal static Task EscapeAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,CancellationToken ct)=>AdvanceAsync(c,tx,user,"Escape:"+match,new Dictionary<string,int>{{"Escape",1}},ct);
+    internal static async Task VerifiedAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,string role,bool success,int captures,double escape,CancellationToken ct)
+    {
+        // Recovery for a result whose earlier real-time reports were delayed or sent by an older server.
+        await StartedAsync(c,tx,user,match,role,ct);
+        if(role=="Mannequin")await CaptureAsync(c,tx,user,match,captures,ct);
+        if(role=="Survivor"&&success&&escape>0)await EscapeAsync(c,tx,user,match,ct);
+        await AdvanceAsync(c,tx,user,"Result:"+match,new Dictionary<string,int>{{"MatchComplete",1},{"MannequinWin",role=="Mannequin"&&success?1:0}},ct);
+    }
     internal static void Map(WebApplication app)
     {
         app.MapPost("/api/case-records/main-quest",async(ClientAction body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
@@ -75,8 +101,12 @@ internal static class MainQuest
             string metric=body.ExpectedStep=="survivor_tutorial"?"SurvivorTutorial":"MannequinTutorial";
             if(body.Action=="TutorialComplete"&&body.Role!=(metric=="SurvivorTutorial"?"Survivor":"Mannequin"))return Results.BadRequest();
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
+            await CaseRecords.LockAccountAsync(c,tx,user.Id,ct);
+            var previous=await CommunityEndpoints.Rows(c,tx,"SELECT revision FROM main_quest_state WHERE user_id=@u",ct,("u",user.Id));
+            long before=previous.Count==0?0:Convert.ToInt64(previous[0]["revision"]);
             await AdvanceAsync(c,tx,user.Id,"Tutorial:"+body.ExpectedStep,new Dictionary<string,int>{{metric,1}},ct,body.Action=="SkipTutorial",body.ExpectedStep);
-            var snapshot=await CaseRecords.Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{snapshot});
+            var questNotices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u AND revision>@r ORDER BY revision",ct,("u",user.Id),("r",before));
+            var snapshot=await CaseRecords.Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{snapshot,questNotices});
         }).RequireRateLimiting("social");
         app.MapPost("/api/server/main-quest/floor",async(FloorEvent body,HttpRequest request,AuthDatabase db,ProjectSecurityOptions security,CancellationToken ct)=>
         {
@@ -90,6 +120,19 @@ internal static class MainQuest
             var admission=await CommunityEndpoints.Rows(c,tx,"SELECT p.user_id FROM authoritative_match_players p JOIN authoritative_matches a ON a.match_id=p.match_id JOIN case_match_servers s ON s.match_id=p.match_id WHERE p.match_id=@m AND p.user_id=@u AND p.role='Survivor' AND s.port=@port AND a.created_at_utc<=@at AND (a.ended_at_utc IS NULL OR a.ended_at_utc>=@at)",ct,("m",match.ToString()),("u",user),("port",body.ServerPort),("at",body.ObservedAtUtc.UtcDateTime));
             if(admission.Count!=1)return Results.StatusCode(403);
             await AdvanceAsync(c,tx,user,"Floor:"+match+":"+metric,new Dictionary<string,int>{{metric,1}},ct);await tx.CommitAsync(ct);return Results.Ok(new{message="확인되었습니다."});
+        }).RequireRateLimiting("game-server");
+        app.MapPost("/api/server/main-quest/event",async(ProgressEvent body,HttpRequest request,AuthDatabase db,ProjectSecurityOptions security,CancellationToken ct)=>
+        {
+            if(!security.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))return Results.Unauthorized();
+            if(!Guid.TryParse(body.MatchId,out var match)||!ulong.TryParse(body.UserId,out var user)||body.ServerPort is <1 or >65535||body.Kind is not("Capture" or "Escape")||body.Count is <1 or >100||body.Kind=="Escape"&&body.Count!=1)return Results.BadRequest();
+            var now=DateTimeOffset.UtcNow;if(body.ObservedAtUtc>now.AddMinutes(1)||body.ObservedAtUtc<now.AddHours(-48))return Results.BadRequest();
+            await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
+            if(await CustomRoomRules.IsCustomAsync(c,tx,match.ToString(),ct))return Results.Conflict();await CaseInvestigation.CaptureServerAsync(c,tx,match.ToString(),ct);
+            var role=body.Kind=="Capture"?"Mannequin":"Survivor";
+            var admission=await CommunityEndpoints.Rows(c,tx,"SELECT p.user_id FROM authoritative_match_players p JOIN authoritative_matches a ON a.match_id=p.match_id JOIN case_match_servers s ON s.match_id=p.match_id WHERE p.match_id=@m AND p.user_id=@u AND p.role=@role AND s.port=@port AND a.created_at_utc<=@at AND (a.ended_at_utc IS NULL OR a.ended_at_utc>=@at)",ct,("m",match.ToString()),("u",user),("role",role),("port",body.ServerPort),("at",body.ObservedAtUtc.UtcDateTime));
+            if(admission.Count!=1)return Results.StatusCode(403);
+            if(body.Kind=="Capture")await CaptureAsync(c,tx,user,match.ToString(),body.Count,ct);else await EscapeAsync(c,tx,user,match.ToString(),ct);
+            await tx.CommitAsync(ct);return Results.Ok(new{message="확인되었습니다."});
         }).RequireRateLimiting("game-server");
         app.MapGet("/api/admin/main-quest",async(HttpRequest request,AuthDatabase db,AdministratorOptions admin,CancellationToken ct)=>
         {if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();await using var c=await db.OpenConnectionAsync(ct);var p=await ReadPlan(c,null,ct);return Results.Ok(new{revision=p.Revision,plan=p.Plan});}).RequireRateLimiting("admin");

@@ -132,7 +132,7 @@ void UProjectProject01SocialSubsystem::Send(bool bRead,const FString& Body,bool 
         if(!Ok&&!Req->GetHeader(TEXT("X-ProjectProject01-Party-Admission")).IsEmpty())
             if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->AnswerPartyAdmission(TEXT("Cancel"),Req->GetHeader(TEXT("X-ProjectProject01-Party-Admission")));
         if(Ok&&bRead)Snapshot=Json;
-        if(!bPresence&&(!bRead||!Ok)){Status=Ok?TEXT("처리되었습니다."):TEXT("서버 요청에 실패했습니다.");if(Json.IsValid())Json->TryGetStringField(TEXT("message"),Status);}
+        if(!bPresence&&(!bRead||!Ok)){Status=Ok?FString():TEXT("서버 요청에 실패했습니다.");if(Json.IsValid())Json->TryGetStringField(TEXT("message"),Status);if(Ok&&Status==TEXT("처리되었습니다."))Status.Reset();}
         if(Ok&&!bRead&&!bPresence)
         {
             TSharedPtr<FJsonObject> Sent;

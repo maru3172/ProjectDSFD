@@ -6,6 +6,7 @@
 #include "ProjectMatchReplay.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01AuthSubsystem.h"
+#include "ProjectProject01Localization.h"
 #include "ProjectProject01SocialSubsystem.h"
 #include "ProjectProject01SocialWidget.h"
 #include "ProjectProject01LobbySubsystem.h"
@@ -209,9 +210,14 @@ TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
            +SVerticalBox::Slot().AutoHeight().Padding(0,5)[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Visible:EVisibility::Collapsed;}).Text(FText::FromString(TEXT("(~ 정식 출시 전까지)"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Muted())]]
           +SVerticalBox::Slot().AutoHeight()[Tabs]
           +SVerticalBox::Slot().AutoHeight()[GrowthTabs]
-          +SVerticalBox::Slot().FillHeight(1).Padding(0,14)[SAssignNew(RecordsScroll,SScrollBox)+SScrollBox::Slot()[SAssignNew(Body,SVerticalBox)]]
+          +SVerticalBox::Slot().FillHeight(1).Padding(0,14)[SAssignNew(RecordsScroll,SScrollBox)+SScrollBox::Slot()
+            [SNew(SOverlay)+SOverlay::Slot()[SAssignNew(Body,SVerticalBox)]
+             +SOverlay::Slot()[SAssignNew(RequestShield,SBorder).Padding(0).BorderImage(FCoreStyle::Get().GetBrush(TEXT("NoBrush"))).Visibility(EVisibility::Collapsed)
+                .OnMouseButtonDown_Lambda([](const FGeometry&,const FPointerEvent&){return FReply::Handled();})
+                .OnMouseButtonUp_Lambda([](const FGeometry&,const FPointerEvent&){return FReply::Handled();})
+                .OnMouseDoubleClick_Lambda([](const FGeometry&,const FPointerEvent&){return FReply::Handled();})]]]
           +SVerticalBox::Slot().AutoHeight()[SNew(SBox).HeightOverride(20).Visibility_Lambda([this]{return Page==TEXT("Shop")?EVisibility::Collapsed:EVisibility::Visible;})[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),14)).OverflowPolicy(ETextOverflowPolicy::Ellipsis)
-            .Text_Lambda([this]{const auto* R=Records(this);return FText::FromString(R&&!InsufficientPoints(R->Status)?R->Status:FString());}).ToolTipText_Lambda([this]{const auto* R=Records(this);return FText::FromString(R&&!InsufficientPoints(R->Status)?R->Status:FString());}).ColorAndOpacity(ProjectDFSDUI::Muted())]]
+            .Text_Lambda([this]{const auto* R=Records(this);return FProjectProject01Localization::StatusText(R&&!InsufficientPoints(R->Status)?R->Status:FString());}).ToolTipText_Lambda([this]{const auto* R=Records(this);return FProjectProject01Localization::StatusText(R&&!InsufficientPoints(R->Status)?R->Status:FString());}).ColorAndOpacity(ProjectDFSDUI::Muted())]]
           +SVerticalBox::Slot().AutoHeight().Padding(0,8)[Button(TEXT("돌아가기"),[this]{Close();})]];
     return SNew(SBorder).Padding(0).OnMouseButtonDown_Lambda([](const FGeometry&,const FPointerEvent&){return FReply::Handled();})
         [SNew(SOverlay)+SOverlay::Slot()[ProjectDFSDUI::FrameSlate(Content,Page==TEXT("Track")?1180:1080)]
@@ -220,7 +226,7 @@ TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
 }
 void UProjectCaseRecordWidget::NativeConstruct(){Super::NativeConstruct();SetIsFocusable(true);if(auto* R=Records(this)){bOpenedOnline=R->IsAuthenticated();bShopFundsMessageHandled=InsufficientPoints(R->Status);R->OnChanged.AddUObject(this,&ThisClass::RefreshPanel);R->OnReceipt.AddUObject(this,&ThisClass::ShowReceipt);R->Refresh();R->RefreshStoryArchives();}if(auto* GI=GetGameInstance())if(auto* R=GI->GetSubsystem<UProjectMatchReplay>())R->OnChanged.AddUObject(this,&ThisClass::RefreshPanel);RefreshPanel();}
 void UProjectCaseRecordWidget::NativeDestruct(){if(auto* R=Records(this)){R->OnChanged.RemoveAll(this);R->OnReceipt.RemoveAll(this);}ConfirmedAction=nullptr;if(auto* GI=GetGameInstance())if(auto* R=GI->GetSubsystem<UProjectMatchReplay>())R->OnChanged.RemoveAll(this);Super::NativeDestruct();}
-void UProjectCaseRecordWidget::ReleaseSlateResources(bool Children){Super::ReleaseSlateResources(Children);Body.Reset();RecordsScroll.Reset();ShopFundsNotice.Reset();RarePresentationLayer.Reset();TransactionLayer.Reset();ConfirmedAction=nullptr;RenderedFingerprint.Reset();}
+void UProjectCaseRecordWidget::ReleaseSlateResources(bool Children){Super::ReleaseSlateResources(Children);Body.Reset();RequestShield.Reset();RecordsScroll.Reset();ShopFundsNotice.Reset();RarePresentationLayer.Reset();TransactionLayer.Reset();ConfirmedAction=nullptr;RenderedFingerprint.Reset();}
 void UProjectCaseRecordWidget::Close()
 {
     auto* Player=GetOwningPlayer();if(auto* Return=ReturnWidget.Get()){Return->SetVisibility(ESlateVisibility::Visible);if(Player){FInputModeGameAndUI Input;Input.SetWidgetToFocus(Return->TakeWidget());Player->SetInputMode(Input);}}
@@ -229,24 +235,35 @@ void UProjectCaseRecordWidget::Close()
 void UProjectCaseRecordWidget::RefreshPanel()
 {
     if(!Body)return;auto* R=Records(this);if(!R)return;
+    if(RequestShield)RequestShield->SetVisibility(R->IsWriting()?EVisibility::Visible:EVisibility::Collapsed);
     if(Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements"))R->RefreshAchievementRates();
     const bool FundsError=InsufficientPoints(R->Status);
     if(Page!=TEXT("Shop")){if(ShopFundsNotice)ShopFundsNotice->Clear();bShopFundsMessageHandled=FundsError;}
     else if(R->IsBusy()||!FundsError){bShopFundsMessageHandled=false;if(!FundsError&&!R->Status.IsEmpty()&&ShopFundsNotice)ShopFundsNotice->Clear();}
     else if(!bShopFundsMessageHandled){bShopFundsMessageHandled=true;if(ShopFundsNotice)ShopFundsNotice->Show();}
     if(bOpenedOnline&&!R->IsAuthenticated()){ReturnWidget.Reset();RemoveFromParent();return;}
-    FString Encoded;if(R->Snapshot)FJsonSerializer::Serialize(R->Snapshot.ToSharedRef(),TJsonWriterFactory<>::Create(&Encoded));
-    FString RateFingerprint;if(Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements"))if(const auto Rates=R->GetAchievementRates())FJsonSerializer::Serialize(Rates.ToSharedRef(),TJsonWriterFactory<>::Create(&RateFingerprint));Encoded+=RateFingerprint;
+    FString Encoded;
+    if(R->Snapshot)
+    {
+        auto Visible=MakeShared<FJsonObject>();
+        if(Page==TEXT("Quest")){if(const auto Quest=Obj(R->Snapshot,TEXT("mainQuest")))Visible->SetObjectField(TEXT("mainQuest"),Quest);}
+        else {Visible->Values=R->Snapshot->Values;Visible->RemoveField(TEXT("partyState"));Visible->RemoveField(TEXT("mainQuest"));}
+        FJsonSerializer::Serialize(Visible,TJsonWriterFactory<>::Create(&Encoded));
+    }
+    FString RateFingerprint;if(Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements"))if(const auto Rates=R->GetAchievementRates())
+    {auto VisibleRates=MakeShared<FJsonObject>();VisibleRates->Values=Rates->Values;VisibleRates->RemoveField(TEXT("updatedAtUtc"));FJsonSerializer::Serialize(VisibleRates,TJsonWriterFactory<>::Create(&RateFingerprint));}Encoded+=RateFingerprint;
     TArray<FString> Local=R->GetLocalAchievements().Array();Local.Sort();
-    Encoded+=FString::Printf(TEXT("/%p/%d/%d/%d"),R->GetStoryArchives().Get(),InvestigationStage,InvestigationPiece,ArchiveIndex);
+    if(Page==TEXT("Archive"))if(const auto Archives=R->GetStoryArchives()){FString Json;FJsonSerializer::Serialize(Archives.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));Encoded+=Json;}
+    Encoded+=FString::Printf(TEXT("/%d/%d/%d"),InvestigationStage,InvestigationPiece,ArchiveIndex);
     if(R->DrawResult){FString ResultJson;FJsonSerializer::Serialize(R->DrawResult.ToSharedRef(),TJsonWriterFactory<>::Create(&ResultJson));Encoded+=ResultJson;}
+    if(Page==TEXT("Draw"))Encoded+=R->Status; // Draw errors create inline feedback; ordinary success is silent.
     FString ReplayFingerprint;
     if(Page==TEXT("Replays"))if(const auto* Replays=GetGameInstance()->GetSubsystem<UProjectMatchReplay>())
     {ReplayFingerprint=Replays->GetStatus()+FString::FromInt(Replays->IsBusy()*2+Replays->IsRecordingEnabled());for(const auto& E:Replays->GetEntries())ReplayFingerprint+=E.Name;}
-    const FString Fingerprint=Page+TEXT("|")+FString::FromInt(R->IsAuthenticated()*2+R->IsBusy())+TEXT("|")+FString::Join(Local,TEXT(","))+Encoded+ReplayFingerprint;
+    const FString Fingerprint=Page+TEXT("|")+Str(R->Snapshot,TEXT("userId"))+FString::FromInt(R->IsAuthenticated())+TEXT("|")+FString::Join(Local,TEXT(","))+Encoded+ReplayFingerprint;
     if(Fingerprint==RenderedFingerprint)return;RenderedFingerprint=Fingerprint;Body->ClearChildren();
     auto Add=[&](const FString& Text,int32 Size=18){Body->AddSlot().AutoHeight().Padding(6,7)[Label(Text,Size)];};
-    const auto State=R->Snapshot;const bool Online=R->IsAuthenticated(),Ready=Online&&!R->IsBusy();
+    const auto State=R->Snapshot;const bool Online=R->IsAuthenticated(),Ready=Online;
     if(Page==TEXT("Quest")){BuildMainQuest(State);return;}
     if(Page==TEXT("Import"))
     {
@@ -371,7 +388,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
             if(Flag(Reward,TEXT("claimed")))continue;
             Add(FString::Printf(TEXT("레벨 %s · %.0f 포인트%s"),*Id,Num(Reward,TEXT("credits")),Item.IsEmpty()?TEXT(""):*(TEXT(" + ")+ProjectCasePresentation::ItemName(Item))));
             auto Actions=SNew(SHorizontalBox);Actions->AddSlot().FillWidth(1)[Button(Flag(Reward,TEXT("claimed"))?TEXT("수령 완료"):TEXT("레벨 보상 받기"),[R,Id]{R->Action(TEXT("ClaimLevelReward"),Id);},Ready&&Flag(Reward,TEXT("available")))];
-            if(!Item.IsEmpty())Actions->AddSlot().AutoWidth()[Button(TEXT("테두리 장착"),[R,Item]{R->Action(TEXT("Equip"),Item);},Ready&&Flag(Reward,TEXT("claimed")))];Body->AddSlot().AutoHeight()[Actions];
+            if(!Item.IsEmpty())Actions->AddSlot().AutoWidth()[Button(TEXT("테두리 장착"),[this,Item]{RequestCosmeticAction(TEXT("Equip"),Item);},Ready&&Flag(Reward,TEXT("claimed")))];Body->AddSlot().AutoHeight()[Actions];
             break;
         }
         Add(TEXT("현재 장착한 꾸미기"),22);
@@ -396,7 +413,8 @@ void UProjectCaseRecordWidget::RefreshPanel()
             Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)[SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[Name]
                 +SVerticalBox::Slot().AutoHeight()[Progress]];
             auto Claim=Button(Flag(M,TEXT("claimed"))?TEXT("수령 완료"):TEXT("보상 받기"),[R,Id=Str(M,TEXT("id")),Mode=Page]{R->Action(TEXT("ClaimMission"),Id,Mode);},Ready&&!Flag(M,TEXT("claimed"))&&Num(M,TEXT("progress"))>=Num(M,TEXT("target"))&&(!M->HasField(TEXT("canClaim"))||Flag(M,TEXT("canClaim"))));
-            auto Change=Button(FString::Printf(TEXT("변경 · %.0f P"),Num(M,TEXT("rerollCost"))),[R,Id=Str(M,TEXT("id")),Mode=Page,Count=int32(Num(M,TEXT("rerolls")))]{R->Action(TEXT("RerollMission"),Id,Mode,Count);},Ready&&Flag(M,TEXT("canReroll"))&&Num(State,TEXT("credits"))>=Num(M,TEXT("rerollCost")));
+            auto Change=Button(FString::Printf(TEXT("변경 · %.0f P"),Num(M,TEXT("rerollCost"))),[this,Id=Str(M,TEXT("id")),Mode=Page,Count=int32(Num(M,TEXT("rerolls"))),Period=Str(M,TEXT("period"))]
+            {RequestMissionReroll(Id,Mode,Count,Period);},Ready&&Flag(M,TEXT("canReroll"))&&Num(State,TEXT("credits"))>=Num(M,TEXT("rerollCost")));
             for(auto Control:{Claim,Change})Compact(Control,14);
             Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(6,0)[SNew(SBox).WidthOverride(92)[Claim]];
             Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(118)[Change]];
@@ -408,7 +426,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
         Add(FString::Printf(TEXT("보관소 상점 / 기록 포인트 %.0f"),Num(State,TEXT("credits"))),24);
         Body->AddSlot().AutoHeight().Padding(6,0,6,8)[SNew(SBox).HeightOverride(24)[SNew(SOverlay)+SOverlay::Slot()[ShopFundsNotice.ToSharedRef()]
           +SOverlay::Slot()[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Muted()).OverflowPolicy(ETextOverflowPolicy::Ellipsis)
-            .Text_Lambda([this]{auto* Record=Records(this);return FText::FromString(Record&&!InsufficientPoints(Record->Status)?Record->Status:FString());}).ToolTipText_Lambda([this]{auto* Record=Records(this);return FText::FromString(Record&&!InsufficientPoints(Record->Status)?Record->Status:FString());})]]];
+            .Text_Lambda([this]{auto* Record=Records(this);return FProjectProject01Localization::StatusText(Record&&!InsufficientPoints(Record->Status)?Record->Status:FString());}).ToolTipText_Lambda([this]{auto* Record=Records(this);return FProjectProject01Localization::StatusText(Record&&!InsufficientPoints(Record->Status)?Record->Status:FString());})]]];
         TSet<FString> Owned;for(const auto& V:Rows(State,TEXT("inventory")))Owned.Add(Str(V->AsObject(),TEXT("itemId")));
         auto Catalogue=Rows(State,TEXT("catalogue"));
         // Older level rewards leave the progression panel, but their owned cosmetics remain usable.
@@ -419,7 +437,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
         for(const auto& Value:Catalogue)
         {
             auto I=Value->AsObject();const FString Id=Str(I,TEXT("id"));
-            auto Buy=Button(Owned.Contains(Id)?TEXT("장착"):TEXT("구매"),[this,R,Id,Has=Owned.Contains(Id)]{if(Has)R->Action(TEXT("Equip"),Id);else RequestPurchase(Id);},Ready);
+            auto Buy=Button(Owned.Contains(Id)?TEXT("장착"):TEXT("구매"),[this,Id,Has=Owned.Contains(Id)]{if(Has)RequestCosmeticAction(TEXT("Equip"),Id);else RequestPurchase(Id);},Ready);
             Compact(Buy,16);
             auto Name=Label(Str(I,TEXT("name")),16);Name->SetLineHeightPercentage(1.f);Name->SetAutoWrapText(false);Name->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);Name->SetToolTipText(Name->GetText());
             auto Price=Label(Owned.Contains(Id)?FString(TEXT("보유 중")):FString::Printf(TEXT("%.0f 포인트"),Num(I,TEXT("price"))),14);Price->SetLineHeightPercentage(1.f);
@@ -492,9 +510,9 @@ void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Inv
     Body->AddSlot().AutoHeight()[Spread];
     if(!Archived)
     {
-        const bool Ready=R->IsAuthenticated()&&!R->IsBusy();const FString Id=Str(Selected,TEXT("id"));auto Rewards=SNew(SHorizontalBox);
+        const bool Ready=R->IsAuthenticated();const FString Id=Str(Selected,TEXT("id"));auto Rewards=SNew(SHorizontalBox);
         auto PieceReward=Button(Flag(Selected,TEXT("claimed"))?TEXT("조각 보상 수령 완료"):FString::Printf(TEXT("%d번 조각 · %.0f 포인트 받기"),InvestigationPiece,Num(Selected,TEXT("points"))),[R,Id]{R->Action(TEXT("ClaimRecord"),Id);},Ready&&Flag(Selected,TEXT("discovered"))&&!Flag(Selected,TEXT("claimed")));
-        auto PartReward=Button(Flag(Stage,TEXT("claimed"))?TEXT("완성 봉인 장착"):TEXT("파트 완성 보상 받기"),[R,Stage,Part=InvestigationStage]{R->Action(Flag(Stage,TEXT("claimed"))?TEXT("Equip"):TEXT("ClaimInvestigationStage"),Flag(Stage,TEXT("claimed"))?Str(Stage,TEXT("rareItem")):FString::FromInt(Part));},Ready&&Flag(Stage,TEXT("complete")));
+        auto PartReward=Button(Flag(Stage,TEXT("claimed"))?TEXT("완성 봉인 장착"):TEXT("파트 완성 보상 받기"),[this,R,Stage,Part=InvestigationStage]{if(Flag(Stage,TEXT("claimed")))RequestCosmeticAction(TEXT("Equip"),Str(Stage,TEXT("rareItem")));else R->Action(TEXT("ClaimInvestigationStage"),FString::FromInt(Part));},Ready&&Flag(Stage,TEXT("complete")));
         Compact(PieceReward,16);Compact(PartReward,16);
         Rewards->AddSlot().FillWidth(1).Padding(0,10,10,0)[PieceReward];
         Rewards->AddSlot().FillWidth(1).Padding(10,10,0,0)[PartReward];
@@ -527,7 +545,7 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
       {auto* R=Records(this);if(E.GetEffectingButton()==EKeys::RightMouseButton&&R&&SocialOverlay.IsValid()&&SocialOverlay->ShowPartyMemberMenu(Str(R->Snapshot,TEXT("userId")),E.GetScreenSpacePosition()))return FReply::Handled();return FReply::Unhandled();})[SNew(SBox).HeightOverride(64)[Profile]]];
     auto Leave=Button(TEXT("파티 나가기"),[this]{if(auto* R=Records(this))R->PartyAction(TEXT("Leave"));});Compact(Leave,13);Leave->SetContentPadding(FMargin(8,1));
     Leave->SetVisibility(TAttribute<EVisibility>::CreateLambda([Party]{return Party()?EVisibility::Visible:EVisibility::Collapsed;}));
-    Leave->SetEnabled(TAttribute<bool>::CreateLambda([this]{auto* R=Records(this);return R&&!R->IsBusy();}));SelfColumn->AddSlot().AutoHeight().Padding(0,3,0,0)[Leave];
+    Leave->SetEnabled(TAttribute<bool>::CreateLambda([this]{auto* R=Records(this);return R&&!R->IsWriting();}));SelfColumn->AddSlot().AutoHeight().Padding(0,3,0,0)[Leave];
     auto Members=SNew(SHorizontalBox);
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(185)[SelfColumn]];
     for(int32 Index=0;Index<2;++Index)
@@ -542,7 +560,7 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
         Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(185).HeightOverride(64).Visibility_Lambda([Other,Index]{return Other(Index)?EVisibility::Visible:EVisibility::Collapsed;})[Hit]];
     }
     auto Invite=SNew(SButton).ButtonStyle(&DockStyle).ContentPadding(6).ToolTipText(FText::FromString(TEXT("파티 초대")))
-      .IsEnabled_Lambda([this,Party]{auto* R=Records(this);auto P=Party();return R&&!R->IsBusy()&&(!P||(Flag(P,TEXT("isLeader"))&&Rows(P,TEXT("members")).Num()<3));})
+      .IsEnabled_Lambda([this,Party]{auto* R=Records(this);auto P=Party();return R&&!R->IsWriting()&&(!P||(Flag(P,TEXT("isLeader"))&&Rows(P,TEXT("members")).Num()<3));})
       .OnClicked_Lambda([this]{if(SocialOverlay.IsValid())SocialOverlay->OpenPartyInvite();return FReply::Handled();})[ProjectDFSDUI::Icon(ProjectDFSDUI::EIcon::Add,24)];
     auto InviteVisibility=TAttribute<EVisibility>::CreateLambda([Party]{return Rows(Party(),TEXT("members")).Num()<3?EVisibility::Visible:EVisibility::Collapsed;});
     Invite->SetVisibility(InviteVisibility);

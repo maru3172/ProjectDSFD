@@ -743,6 +743,12 @@ int32 UProjectMatchBots::TeamPlays(const FString& Role,const FString& Except)con
 void UProjectMatchBots::TrackRelief(double Now)
 {
     auto* GM=Mode();
+    // One human with a bot partner (in balance runs, "SimHelper" is that partner): its catch is the human's setback too.
+    int32 Total=0,Humans=0,MannequinLevel=0;
+    for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++Total;Humans+=!Pair.Value.bServerBot;}
+    for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))MannequinLevel=Spec.Difficulty;
+    const bool Solo=ProjectBots::HumanTeamOverride()||(Humans==1&&Total==2);
+    const float PartnerRelief=MannequinLevel>0?ProjectBots::SoloPartnerCaughtRelief(ProjectBots::Difficulty::For(MannequinLevel)):0.f;
     for(const auto& Pair:GM->MatchPlayerRecords)
     {
         const auto& Record=Pair.Value;auto& Watch=RecordWatch.FindOrAdd(Record.UserId);
@@ -755,6 +761,8 @@ void UProjectMatchBots::TrackRelief(double Now)
             if(Watch.Deaths>=0&&Deaths<Watch.Deaths)MannequinRelief.Add(Now,1.f);
             if(Watch.State==Active&&Record.SurvivorState==EMultiplayTestSurvivorState::Eliminated)MannequinRelief.Add(Now,1.5f);
         }
+        if(Solo&&Record.bServerBot&&Record.Role==TEXT("Survivor")&&(!ProjectBots::HumanTeamOverride()||Record.DisplayName==TEXT("SimHelper"))&&
+            Watch.State==Active&&Record.SurvivorState==EMultiplayTestSurvivorState::Eliminated)MannequinRelief.Add(Now,PartnerRelief);
         if(Record.bServerBot&&Record.Role==TEXT("Survivor")&&Watch.State==Active&&
             (Record.SurvivorState==EMultiplayTestSurvivorState::Escaped||Record.SurvivorState==EMultiplayTestSurvivorState::TransitionWaiting))
             SurvivorRelief.Add(Now,1.2f); // A bot survivor got away from the human mannequin.
@@ -800,8 +808,8 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Sim stand-in for one human + bot partner: only the partner (tagged by the simulation) is a helper; the other bot
     // plays the human. The helper treats that bot as its human partner in full (follows it, pings exits to it, reads
     // nothing from its memory), as it would beside a real player.
-    if(HumanTeamOverride()&&Spec.DisplayName==TEXT("SimHelper")&&Buddy){HumanAlly=true;BotBuddy=false;BuddyBotId.Reset();}
-    bool HumanTeam=HumanAlly||(HumanTeamOverride()&&Spec.DisplayName==TEXT("SimHelper"));
+    if(HumanTeamOverride()&&SoloDiagnostic()!=1&&Spec.DisplayName==TEXT("SimHelper")&&Buddy){HumanAlly=true;BotBuddy=false;BuddyBotId.Reset();}
+    bool HumanTeam=HumanAlly||(HumanTeamOverride()&&SoloDiagnostic()!=1&&Spec.DisplayName==TEXT("SimHelper"));
     for(const auto& Pair:GM->MatchPlayerRecords)HumanTeam|=Pair.Key.Get()!=PC&&Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bServerBot;
     // Level-scaled team tactics and psychological plays only when no human is on this team.
     // Beside a human, bots stay helpers (see Policy: no deception, short cover).
@@ -1385,7 +1393,8 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* GM=Mode();auto* World=GM->GetWorld();const double Now=World->GetTimeSeconds();TArray<AMannequinAICharacter*> Bodies;
     for(TActorIterator<AMannequinAICharacter> It(World);It&&Bodies.Num()<10;++It)if(!It->IsHidden())Bodies.Add(*It);
     // Today's form: a small swing inside the level's band (never reaching a neighbouring level).
-    const Difficulty Level=Difficulty::For(Spec.Difficulty,ConditionOf(Spec));const float ReliefNow=MannequinRelief.Value(Now,Level);
+    const Difficulty Level=[&]{Difficulty D=Difficulty::For(Spec.Difficulty,ConditionOf(Spec));D.Opening=MannequinOpening(D);return D;}();
+    const float ReliefNow=MannequinRelief.Value(Now,Level);
     auto& Mine=Plays.FindOrAdd(Spec.BotId);LoadExperience(Mine,Spec,Level);auto& Dir=Mine.Director;Dir.Update(Level,Now,ReliefNow);
     // Play style decides how readily this bot reaches for each play; the Director still enforces level, tells and cooldowns.
     const uint8 StyleId=static_cast<uint8>(StyleFor(Persona::From(GetTypeHash(Spec.BotId)*2654435761u+1u),Spec.Role==TEXT("Mannequin")));

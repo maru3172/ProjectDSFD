@@ -66,7 +66,7 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
             using var json=JsonDocument.Parse(payload);var item=json.RootElement;
             if(item.GetProperty("schema").GetInt32()!=1)throw new InvalidDataException("Journal schema");
             string route=item.GetProperty("route").GetString()??"";
-            if(route is not("/api/server/matches/results" or "/api/server/matches/complete" or "/api/server/case-records/visit" or "/api/server/main-quest/floor"))throw new InvalidDataException("Journal route");
+            if(route is not("/api/server/matches/results" or "/api/server/matches/complete" or "/api/server/case-records/visit" or "/api/server/main-quest/floor" or "/api/server/main-quest/event"))throw new InvalidDataException("Journal route");
             using var body=JsonDocument.Parse(item.GetProperty("body").GetString()??"");
             string matchId=body.RootElement.GetProperty("matchId").GetString()??"";
             if(!Guid.TryParse(matchId,out _))

@@ -32,7 +32,7 @@ internal static class CaseRecordChecks
             Check(imported.GetProperty("inventory").GetArrayLength()==0,"달성·병합·목록 조회만으로 업적 보상을 자동 지급하지 않음");
             await Expect(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimAchievement",id="campaign_complete"}),HttpStatusCode.Conflict,"미달성 업적 보상 차단");
             var claimedAchievement=await Read(client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimAchievement",id="campaign_checkpoint"}));
-            Check(claimedAchievement.GetProperty("receipt").GetProperty("title").GetString()=="획득하셨습니다"&&claimedAchievement.GetProperty("receipt").GetProperty("items")[0].GetProperty("itemId").GetString()=="stamp_checkpoint","수령 성공 응답에 실제 획득 보상 표시");
+            Check(claimedAchievement.GetProperty("message").GetString()==""&&claimedAchievement.GetProperty("receipt").GetProperty("title").GetString()=="획득하셨습니다"&&claimedAchievement.GetProperty("receipt").GetProperty("items")[0].GetProperty("itemId").GetString()=="stamp_checkpoint","일반 처리 완료 문구 없이 실제 획득 보상 확인은 유지");
             foreach(var task in await Task.WhenAll(Enumerable.Range(0,5).Select(_=>client.PostAsJsonAsync("/api/case-records/action",new{action="ClaimAchievement",id="campaign_checkpoint"})))){Check(task.IsSuccessStatusCode,"동시 업적 보상 요청 멱등 처리");task.Dispose();}
             var claimedAgain=await Read(client.GetAsync("/api/case-records"));Check(claimedAgain.GetProperty("inventory").EnumerateArray().Count(i=>i.GetProperty("itemId").GetString()=="stamp_checkpoint")==1&&claimedAgain.GetProperty("achievementRewards").EnumerateArray().Single(r=>r.GetProperty("code").GetString()=="campaign_checkpoint").GetProperty("claimed").GetBoolean(),"업적 보상은 정확히 한 번 보유되며 수령 완료 유지");
             CaseAchievementRates.Invalidate(db);

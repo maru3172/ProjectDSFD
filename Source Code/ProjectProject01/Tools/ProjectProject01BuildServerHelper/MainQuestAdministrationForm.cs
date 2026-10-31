@@ -19,7 +19,7 @@ internal sealed class MainQuestAdministrationForm:Form
         var title=new TextBox{Dock=DockStyle.Fill,MaxLength=180};editor.Controls.Add(title,0,1);
         var goals=new DataGridView{Dock=DockStyle.Fill,AutoGenerateColumns=false,AllowUserToAddRows=true,AllowUserToDeleteRows=true,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill,RowHeadersVisible=false};editor.Controls.Add(goals,0,2);
         goals.Columns.Add(new DataGridViewTextBoxColumn{Name="id",Visible=false});
-        var metrics=new[]{new{Id="SurvivorTutorial",Name="생존자 튜토리얼"},new{Id="MannequinTutorial",Name="마네킹 튜토리얼"},new{Id="Match",Name="경기 플레이"},new{Id="ThirdFloor",Name="3층 탈출"},new{Id="SecondFloor",Name="2층 탈출"},new{Id="Escape",Name="최종 탈출"},new{Id="Capture",Name="마네킹 포획"},new{Id="MannequinWin",Name="마네킹 승리"}};
+        var metrics=new[]{new{Id="SurvivorTutorial",Name="생존자 튜토리얼"},new{Id="MannequinTutorial",Name="마네킹 튜토리얼"},new{Id="Match",Name="경기 시작"},new{Id="MatchComplete",Name="경기 완료"},new{Id="SurvivorMatch",Name="생존자로 경기 플레이"},new{Id="ThirdFloor",Name="3층 탈출"},new{Id="SecondFloor",Name="2층 탈출"},new{Id="Escape",Name="최종 탈출"},new{Id="Capture",Name="마네킹 포획"},new{Id="MannequinWin",Name="마네킹 승리"}};
         goals.Columns.Add(new DataGridViewComboBoxColumn{Name="metric",HeaderText="조건",DataSource=metrics,DisplayMember="Name",ValueMember="Id"});
         goals.Columns.Add(new DataGridViewTextBoxColumn{Name="label",HeaderText="표시할 조건명",FillWeight=150});goals.Columns.Add(new DataGridViewTextBoxColumn{Name="target",HeaderText="필요 횟수",FillWeight=55});
         var story=new TextBox{Dock=DockStyle.Fill,Multiline=true,AcceptsReturn=true,ScrollBars=ScrollBars.Vertical,MaxLength=16000};editor.Controls.Add(story,0,3);
