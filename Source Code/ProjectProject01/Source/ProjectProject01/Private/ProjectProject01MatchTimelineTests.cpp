@@ -111,6 +111,9 @@ bool FProjectMatchTimelineWidgetTest::RunTest(const FString&)
     TestTrue(TEXT("History row contains real timestamp"),Row&&Row->GetText().ToString().Contains(TEXT("01:10")));
     TestEqual(TEXT("Repeated verification refresh does not duplicate rows"),Widget->TimelineRows->GetChildrenCount(),1);
     Widget->ConfigureResult(Result);TestEqual(TEXT("Server verification update replaces history"),Widget->TimelineRows->GetChildrenCount(),1);
+      TestTrue(TEXT("A verification refresh preserves existing history rows instead of clearing the visible panel"),Widget->TimelineRows->GetChildAt(0)==Row);
+      Result.Timeline[0].Seconds=75;Widget->ConfigureResult(Result);
+      TestTrue(TEXT("Changed timeline text updates the same row"),Widget->TimelineRows->GetChildAt(0)==Row&&Row->GetText().ToString().Contains(TEXT("01:15")));
     // This fixture is not attached to a viewport: ConfigureResult prepares a fresh reveal.
     // Verify the fade guard, then advance real widget time before testing the next user click.
     Widget->HandleTimelineClicked();TestTrue(TEXT("Timeline stays open while the result reveal blocks input"),Widget->bShowingTimeline);

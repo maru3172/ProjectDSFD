@@ -5,6 +5,7 @@
 #include "ProjectAnnouncementSubsystem.h"
 #include "MultiplayTestPlayerController.h"
 #include "ProjectProject01ResultOutbox.h"
+#include "Interfaces/IHttpRequest.h"
 #include "ProjectDFSDUITheme.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
@@ -38,37 +39,63 @@ namespace
 }
 void UProjectCaseRecords::MainQuestAction(const FString& Action,const FString& Role)
 {
+    if(!IsAuthenticated())return;
+    const bool Tutorial=Action==TEXT("TutorialComplete");
+    if(Tutorial)
+    {
+        if(Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))return;
+        PendingTutorialRole=Role;PendingTutorialGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();
+    }
     const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const auto Steps=Rows(Quest,TEXT("steps"));const int32 Index=int32(Num(Quest,TEXT("stage")));
-    if(!Steps.IsValidIndex(Index)||!PrepareWrite())return;const FString Id=Str(Steps[Index]->AsObject(),TEXT("id"));
+    if(!Tutorial&&!Steps.IsValidIndex(Index))return;
+    if(!PrepareWrite())return;
+    const FString Id=Tutorial?(Role==TEXT("Survivor")?TEXT("survivor_tutorial"):TEXT("mannequin_tutorial")):Str(Steps[Index]->AsObject(),TEXT("id"));
     if(Id!=TEXT("survivor_tutorial")&&Id!=TEXT("mannequin_tutorial"))return;
-    if(Action==TEXT("TutorialComplete")&&Role!=(Id==TEXT("survivor_tutorial")?TEXT("Survivor"):TEXT("Mannequin")))return;
+    ObserveMainQuest(); // Establish the pre-write baseline before a completion can be returned.
     auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("action"),Action);J->SetStringField(TEXT("expectedStep"),Id);J->SetStringField(TEXT("role"),Role);
+    TutorialRetryAt=FPlatformTime::Seconds()+5;
     FString Body;FJsonSerializer::Serialize(J,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/main-quest"),Body);
 }
-void UProjectCaseRecords::ObserveMainQuest()
+void UProjectCaseRecords::ApplyMainQuestUpdate(const TSharedPtr<FJsonObject>& Update)
+{
+    if(!IsAuthenticated()||!Update)return;const auto Quest=Obj(Update,TEXT("mainQuest"));const FString User=Str(Update,TEXT("userId"));if(!Quest||User.IsEmpty())return;
+    const FString PreviousUser=Str(Snapshot,TEXT("userId"));if(!PreviousUser.IsEmpty()&&PreviousUser!=User)return;
+    if(Num(Quest,TEXT("revision"))<Num(Obj(Snapshot,TEXT("mainQuest")),TEXT("revision")))return;
+    if(Request&&Request->GetVerb()==TEXT("GET")){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
+    if(!Snapshot)Snapshot=MakeShared<FJsonObject>();Snapshot->SetStringField(TEXT("userId"),User);Snapshot->SetObjectField(TEXT("mainQuest"),Quest);
+    ObserveMainQuest(Update);PollIn=0;OnChanged.Broadcast();
+}
+void UProjectCaseRecords::ObserveMainQuest(const TSharedPtr<FJsonObject>& Response)
 {
     const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const FString Account=Str(Snapshot,TEXT("userId"));if(!Quest||Account.IsEmpty())return;
     const int64 Revision=int64(Num(Quest,TEXT("revision")));
-    if(QuestAccount!=Account){QuestAccount=Account;SeenQuestRevision=Revision;return;}
-    auto Notices=Rows(Quest,TEXT("notices"));Notices.Sort([](const auto& L,const auto& R){return Num(L->AsObject(),TEXT("revision"))<Num(R->AsObject(),TEXT("revision"));});
+    const bool Mutation=Response&&Response->HasTypedField<EJson::Array>(TEXT("questNotices"));
+    if(QuestAccount!=Account){QuestAccount=Account;SeenQuestRevision=Mutation?0:Revision;if(!Mutation)return;}
+    auto* UI=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>();if(!UI)return;
+    auto Notices=Rows(Mutation?Response:Quest,Mutation?TEXT("questNotices"):TEXT("notices"));Notices.Sort([](const auto& L,const auto& R){return Num(L->AsObject(),TEXT("revision"))<Num(R->AsObject(),TEXT("revision"));});
     for(const auto& Value:Notices)
     {
         const auto Notice=Value->AsObject();const int64 At=int64(Num(Notice,TEXT("revision")));if(At<=SeenQuestRevision)continue;
-        if(auto* UI=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>())UI->NotifyQuest(Str(Notice,TEXT("questName")),Str(Notice,TEXT("kind")),Str(Notice,TEXT("stepTitle")),Account+TEXT(":Main:")+FString::Printf(TEXT("%lld"),At));
+        UI->NotifyQuest(Str(Notice,TEXT("questName")),Str(Notice,TEXT("kind")),Str(Notice,TEXT("stepTitle")),Account+TEXT(":Main:")+FString::Printf(TEXT("%lld"),At));
         SeenQuestRevision=At;
     }
     SeenQuestRevision=FMath::Max(SeenQuestRevision,Revision);
 }
 void UProjectProject01GameInstance::ReportMainQuestFloor(const FString& MatchId,const FString& UserId,const FString& Map)
+{ReportMainQuestEvent(MatchId,UserId,TEXT("Floor"),1,Map);}
+void UProjectProject01GameInstance::ReportMainQuestEvent(const FString& MatchId,const FString& UserId,const FString& Kind,int32 Count,const FString& Map)
 {
     if(!FProjectResultOutbox::IsProductionMatchId(MatchId)||UserId.IsEmpty()||!GetWorld()||GetWorld()->GetNetMode()==NM_Client||!IsBackendUrlAllowed())return;
     for(TCHAR Ch:UserId)if(!FChar::IsDigit(Ch))return;
-    if(Map!=TEXT("/Game/MyProject/Level/MultiplayTest")&&Map!=TEXT("/Game/MyProject/Level/MultiplayTest1"))return;
+    const bool Floor=Kind==TEXT("Floor");
+    if(Floor){if(Map!=TEXT("/Game/MyProject/Level/MultiplayTest")&&Map!=TEXT("/Game/MyProject/Level/MultiplayTest1"))return;}
+    else if((Kind!=TEXT("Capture")&&Kind!=TEXT("Escape"))||Count<1)return;
     const FString Secret=LoadGameServerSharedSecret();if(Secret.Len()<32)return;
     auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("matchId"),MatchId);J->SetStringField(TEXT("userId"),UserId);J->SetStringField(TEXT("map"),Map);J->SetNumberField(TEXT("serverPort"),GetWorld()->URL.Port);J->SetStringField(TEXT("observedAtUtc"),FDateTime::UtcNow().ToIso8601());
+    if(!Floor){J->SetStringField(TEXT("kind"),Kind);J->SetNumberField(TEXT("count"),FMath::Clamp(Count,1,100));}
     FString Body;FJsonSerializer::Serialize(J,TJsonWriterFactory<>::Create(&Body));
     const TWeakObjectPtr<UProjectProject01GameInstance> Weak(this);
-    FProjectResultOutbox::Submit(SecurityApiBaseUrl,TEXT("/api/server/main-quest/floor"),Body,Secret,[Weak,UserId](bool Success)
+    FProjectResultOutbox::Submit(SecurityApiBaseUrl,Floor?TEXT("/api/server/main-quest/floor"):TEXT("/api/server/main-quest/event"),Body,Secret,[Weak,UserId](bool Success)
     {
         if(!Success||!Weak.IsValid()||!Weak->GetWorld())return;
         for(auto It=Weak->GetWorld()->GetPlayerControllerIterator();It;++It)if(auto* PC=Cast<AMultiplayTestPlayerController>(It->Get());PC&&PC->GetAuthenticatedUserId()==UserId)PC->ClientRefreshCaseProgress();
@@ -97,7 +124,7 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
     for(const auto& V:Rows(Selected,TEXT("goals"))){const auto G=V->AsObject();Details->AddSlot().AutoHeight().Padding(0,4)[Text(FString::Printf(TEXT("%s · %.0f/%.0f"),*Str(G,TEXT("label")),Num(G,TEXT("progress")),Num(G,TEXT("target"))),16)];}
     if(Flag(Selected,TEXT("canSkip")))
     {
-        auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();const bool Ready=R->IsAuthenticated()&&!R->IsBusy()&&Lobby&&!Lobby->HasCurrentRoom()&&!Lobby->IsMatchmaking();
+        auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();const bool Ready=R->IsAuthenticated()&&Lobby&&!Lobby->HasCurrentRoom()&&!Lobby->IsMatchmaking();
         const bool Mannequin=Str(Selected,TEXT("id"))==TEXT("mannequin_tutorial");
         Details->AddSlot().AutoHeight().Padding(0,10)[SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1).Padding(0,0,8,0)[Button(TEXT("튜토리얼 시작"),[this,Mannequin]
         {
@@ -108,7 +135,14 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
     }
     if(Flag(Quest,TEXT("completed")))Details->AddSlot().AutoHeight().Padding(0,10)[Text(TEXT("탐사 퀘스트 완료"),20)];
     FString Story=Str(Quest,TEXT("baseStory"));for(const auto& V:Steps){const FString Part=Str(V->AsObject(),TEXT("story"));if(!Part.IsEmpty())Story+=(Story.IsEmpty()?TEXT(""):TEXT("\n\n"))+Part;}
-    if(!Story.IsEmpty())Details->AddSlot().AutoHeight().Padding(0,18)[Text(Story,16)];
+    TSharedRef<SWidget> Right=SNew(SScrollBox)+SScrollBox::Slot()[Details];
+    if(!Story.IsEmpty())
+    {
+        auto StoryText=Text(Story,16);StoryText->SetLineHeightPercentage(1.3f);
+        Right=SNew(SVerticalBox)
+            +SVerticalBox::Slot().AutoHeight()[SNew(SBox).MaxDesiredHeight(150)[SNew(SScrollBox)+SScrollBox::Slot()[Details]]]
+            +SVerticalBox::Slot().FillHeight(1).Padding(0,12,0,0)[SNew(SScrollBox)+SScrollBox::Slot()[StoryText]];
+    }
     Body->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(300)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,18,0)[SNew(SBox).WidthOverride(260)[List]]
-        +SHorizontalBox::Slot().FillWidth(1)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Canvas()).Padding(18)[SNew(SScrollBox)+SScrollBox::Slot()[Details]]]]];
+        +SHorizontalBox::Slot().FillWidth(1)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Canvas()).Padding(18)[Right]]]];
 }

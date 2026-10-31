@@ -418,6 +418,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending || bAwaitingPartyAdmission; }
+    bool IsStateChangeInFlight() const;
     bool IsAwaitingPartyAdmission()const{return bAwaitingPartyAdmission;}
 
 	const TArray<FProjectProject01RoomSummary>& GetRooms() const { return Rooms; }

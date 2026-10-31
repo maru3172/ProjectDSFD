@@ -217,7 +217,7 @@ internal static class CaseRecords
                     }
                 }
             }
-            var snapshot=await Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{message="처리되었습니다.",snapshot,receipt});
+            var snapshot=await Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{message="",snapshot,receipt});
         }).RequireRateLimiting("social");
         app.MapPost("/api/case-records/import-campaign",async(ImportRequest body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {

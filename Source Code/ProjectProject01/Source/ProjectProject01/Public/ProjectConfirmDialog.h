@@ -23,6 +23,8 @@ public:
     /** Today's opt-out for one question (local, kept in the user settings file). */
     static bool IsSkippedToday(const FString& SkipKey);
     static void SkipToday(const FString& SkipKey);
+    /** Viewport layer for every dialog: above any screen it is asked from (the match result sits at 1200). */
+    static constexpr int32 ViewportZOrder=5000;
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual FReply NativeOnKeyDown(const FGeometry& Geometry,const FKeyEvent& Event) override;

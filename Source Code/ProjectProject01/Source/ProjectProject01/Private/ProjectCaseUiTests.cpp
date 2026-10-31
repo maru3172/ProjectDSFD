@@ -12,6 +12,7 @@
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 #include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
 #include "Slate/WidgetRenderer.h"
 #include "RenderingThread.h"
 #include "ImageUtils.h"
@@ -82,7 +83,7 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     for(const FString Mode:{FString(TEXT("Pvp")),FString(TEXT("Bot"))})for(int32 I=0;I<4;++I)
     {
         auto M=MakeShared<FJsonObject>();M->Values=R->Snapshot->GetArrayField(TEXT("missions"))[I%2]->AsObject()->Values;
-        M->SetStringField(TEXT("mode"),Mode);M->SetStringField(TEXT("id"),FString::FromInt(I));M->SetBoolField(TEXT("weekly"),I>=2);
+        M->SetStringField(TEXT("mode"),Mode);M->SetStringField(TEXT("id"),FString::FromInt(I));M->SetBoolField(TEXT("weekly"),I>=2);M->SetStringField(TEXT("period"),I>=2?TEXT("fixture-week"):TEXT("fixture-day"));
         FullMissions.Add(MakeShared<FJsonValueObject>(M));
     }
     R->Snapshot->SetArrayField(TEXT("missions"),FullMissions);
@@ -105,6 +106,10 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     R->Request.Reset(); // Construction completed without HTTP; the synchronous render does not run the core ticker.
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("CaseRecordUIQA");IFileManager::Get().MakeDirectory(*Directory,true);FWidgetRenderer Renderer(false);
     R->bPersistence=false;R->ConfirmationDays.Reset();
+    R->Request=FHttpModule::Get().CreateRequest();R->Request->SetVerb(TEXT("POST"));
+    R->MainQuestAction(TEXT("TutorialComplete"),TEXT("Survivor"));
+    TestTrue(TEXT("Finishing a tutorial during another account request retains the completion for this session"),R->PendingTutorialRole==TEXT("Survivor")&&R->PendingTutorialGeneration==Auth->GetSessionGeneration());
+    R->Request.Reset();R->PendingTutorialRole.Reset();
     const auto CaptureTransaction=[&](const FString& Name)
     {
         for(const FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
@@ -133,6 +138,43 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
     TestTrue(TEXT("Yesterday's preference expires at the calendar-day boundary"),R->ShouldConfirm(TEXT("Draw")));
     Widget->ConfirmAction(TEXT("Draw"),TEXT("계속 진행하시겠습니까?"),[&]{++Confirmed;});R->Snapshot->SetStringField(TEXT("userId"),TEXT("other"));Widget->ResolveConfirmation(true,true);
     TestTrue(TEXT("Account changes invalidate a pending confirmation and do not copy daily preferences"),Confirmed==3&&R->ShouldConfirm(TEXT("Draw")));R->Snapshot->SetStringField(TEXT("userId"),TEXT("1"));
+    {
+        int32 Requests=0;FString LastBody;R->ReviewRequestSink=[&](const FString& Path,const FString& Body){if(Path==TEXT("/api/case-records/action")){++Requests;LastBody=Body;}};
+        ON_SCOPE_EXIT{R->ReviewRequestSink=nullptr;if(R->Request){R->Request->OnProcessRequestComplete().Unbind();R->Request.Reset();}};
+        for(const FString Mode:{FString(TEXT("Pvp")),FString(TEXT("Bot"))})for(const bool Weekly:{false,true})
+        {
+            Widget->Page=Mode;Widget->RefreshPanel();
+            const FString Id=Weekly?TEXT("3"):TEXT("1"),Period=Weekly?TEXT("fixture-week"):TEXT("fixture-day");const int32 Before=Requests;
+            Widget->RequestMissionReroll(Id,Mode,2,Period);TestTrue(TEXT("Every PvP/bot daily/weekly reroll opens its confirmation before sending HTTP"),Widget->TransactionLayer->GetChildren()->Num()==1&&Requests==Before);
+            if(Mode==TEXT("Pvp")&&!Weekly)CaptureTransaction(TEXT("MissionRerollConfirmation"));
+            Widget->ResolveConfirmation(false,false);TestEqual(TEXT("No cancels a mission reroll without spending"),Requests,Before);
+            Widget->RequestMissionReroll(Id,Mode,2,Period);Widget->ResolveConfirmation(true,false);
+            TestTrue(TEXT("Yes sends exactly one mission reroll and preserves the selected slot revision"),Requests==Before+1&&R->Request.IsValid()&&LastBody.Contains(TEXT("expectedRerolls")));
+            R->Request->OnProcessRequestComplete().Unbind();R->Request.Reset();
+        }
+        Widget->RequestMissionReroll(TEXT("1"),TEXT("Pvp"),2,TEXT("fixture-day"));
+        auto Mission=FullMissions[1]->AsObject();Mission->SetStringField(TEXT("period"),TEXT("next-day"));const int32 Before=Requests;Widget->ResolveConfirmation(true,false);
+        TestTrue(TEXT("A reset while the confirmation is open cannot reroll a new period's mission"),Requests==Before&&!R->Request.IsValid());Mission->SetStringField(TEXT("period"),TEXT("fixture-day"));R->Status.Reset();
+        Widget->RequestMissionReroll(TEXT("1"),TEXT("Pvp"),2,TEXT("fixture-day"));Widget->ResolveConfirmation(false,true);
+        TestTrue(TEXT("The daily checkbox suppresses mission reroll questions without executing No"),Requests==Before&&!R->ShouldConfirm(TEXT("MissionReroll")));
+        Widget->RequestMissionReroll(TEXT("3"),TEXT("Bot"),2,TEXT("fixture-week"));TestTrue(TEXT("Daily suppression covers both mission periods and modes"),Requests==Before+1&&Widget->TransactionLayer->GetChildren()->Num()==0);
+        R->Request->OnProcessRequestComplete().Unbind();R->Request.Reset();R->ConfirmationDays.Add(R->ConfirmationScope()+TEXT(".MissionReroll"),(FDateTime::Now()-FTimespan::FromDays(1)).ToString(TEXT("%Y-%m-%d")));
+        TestTrue(TEXT("Mission reroll confirmation returns on the next day"),R->ShouldConfirm(TEXT("MissionReroll")));
+        Widget->Page=TEXT("Collection");Widget->RefreshPanel();
+        for(const FString Action:{FString(TEXT("Equip")),FString(TEXT("ShowBanner")),FString(TEXT("HideBanner"))})
+        {
+            const int32 BeforeCosmetic=Requests;Widget->RequestCosmeticAction(Action,TEXT("frame_silver"));
+            TestTrue(TEXT("Applying or changing cosmetic display asks before sending the operation"),Widget->TransactionLayer->GetChildren()->Num()==1&&Requests==BeforeCosmetic);
+            if(Action==TEXT("Equip"))CaptureTransaction(TEXT("CosmeticApplyConfirmation"));
+            Widget->ResolveConfirmation(false,false);TestEqual(TEXT("No leaves equipped cosmetics and displayed banners unchanged"),Requests,BeforeCosmetic);
+            Widget->RequestCosmeticAction(Action,TEXT("frame_silver"));Widget->ResolveConfirmation(true,false);
+            TestTrue(TEXT("Yes submits the chosen cosmetic action exactly once"),Requests==BeforeCosmetic+1&&LastBody.Contains(Action));R->Request->OnProcessRequestComplete().Unbind();R->Request.Reset();
+        }
+        const int32 BeforeSkip=Requests;Widget->RequestCosmeticAction(TEXT("Equip"),TEXT("frame_silver"));Widget->ResolveConfirmation(false,true);
+        TestTrue(TEXT("Cosmetic confirmation has an independent daily checkbox"),!R->ShouldConfirm(TEXT("CosmeticApply"))&&R->ShouldConfirm(TEXT("MissionReroll"))&&Requests==BeforeSkip);
+        Widget->RequestCosmeticAction(TEXT("Equip"),TEXT("frame_crimson"));TestTrue(TEXT("Checked cosmetic preference applies without another modal today"),Requests==BeforeSkip+1&&Widget->TransactionLayer->GetChildren()->Num()==0);R->Request->OnProcessRequestComplete().Unbind();R->Request.Reset();
+        R->ConfirmationDays.Add(R->ConfirmationScope()+TEXT(".CosmeticApply"),(FDateTime::Now()-FTimespan::FromDays(1)).ToString(TEXT("%Y-%m-%d")));TestTrue(TEXT("Cosmetic confirmation returns the following day"),R->ShouldConfirm(TEXT("CosmeticApply")));
+    }
     for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("구매하셨습니다"),TEXT("frame_silver")},{TEXT("획득하셨습니다"),TEXT("stamp_checkpoint")}})
     {
         R->LastReceipt=MakeShared<FJsonObject>();R->LastReceipt->SetStringField(TEXT("title"),Entry.Key);auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("itemId"),Entry.Value);Item->SetStringField(TEXT("name"),Entry.Value==TEXT("frame_silver")?TEXT("은빛 기록 테두리"):TEXT("첫 기록 인장"));Item->SetNumberField(TEXT("count"),1);
@@ -140,9 +182,46 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         CaptureTransaction(Entry.Key==TEXT("구매하셨습니다")?TEXT("PurchaseReceipt"):TEXT("AchievementReceipt"));Widget->TransactionLayer->ClearChildren();R->LastReceipt.Reset();
     }
     auto Quest=MakeShared<FJsonObject>();Quest->SetStringField(TEXT("name"),TEXT("탐사"));Quest->SetStringField(TEXT("baseStory"),TEXT("폐점 안내가 끝난 뒤, 조사 기록의 첫 장을 펼쳤다."));Quest->SetNumberField(TEXT("stage"),0);Quest->SetBoolField(TEXT("completed"),false);
-    TArray<TSharedPtr<FJsonValue>> QuestSteps;const TArray<FString> QuestTitles{TEXT("생존자 튜토리얼 완료"),TEXT("어떤 매칭이든 게임 1번 플레이"),TEXT("3층 맵 탈출하기"),TEXT("2층 맵 탈출하기"),TEXT("백화점을 무사히 탈출하기"),TEXT("마네킹 튜토리얼 완료"),TEXT("마네킹으로 플레이어 1명 잡기"),TEXT("마네킹으로 승리하기")};
-    for(int32 I=0;I<8;++I){auto S=MakeShared<FJsonObject>();S->SetStringField(TEXT("id"),I==0?TEXT("survivor_tutorial"):I==5?TEXT("mannequin_tutorial"):FString::FromInt(I));S->SetStringField(TEXT("title"),QuestTitles[I]);S->SetBoolField(TEXT("active"),I==0);S->SetBoolField(TEXT("completed"),false);S->SetBoolField(TEXT("canSkip"),I==0);auto G=MakeShared<FJsonObject>();G->SetStringField(TEXT("label"),QuestTitles[I]);G->SetNumberField(TEXT("progress"),0);G->SetNumberField(TEXT("target"),1);S->SetArrayField(TEXT("goals"),{MakeShared<FJsonValueObject>(G)});QuestSteps.Add(MakeShared<FJsonValueObject>(S));}
+    TArray<TSharedPtr<FJsonValue>> QuestSteps;const TArray<FString> QuestTitles{TEXT("생존자 튜토리얼 완료"),TEXT("어떤 매칭이든 생존자로 게임 1번 플레이"),TEXT("3층 맵 탈출하기"),TEXT("2층 맵 탈출하기"),TEXT("백화점을 무사히 탈출하기"),TEXT("마네킹 튜토리얼 완료"),TEXT("마네킹으로 플레이어 1명 잡기"),TEXT("마네킹으로 승리하기")};
+    for(int32 I=0;I<8;++I){auto S=MakeShared<FJsonObject>();S->SetStringField(TEXT("id"),I==0?TEXT("survivor_tutorial"):I==5?TEXT("mannequin_tutorial"):FString::FromInt(I));S->SetStringField(TEXT("title"),QuestTitles[I]);S->SetBoolField(TEXT("active"),I==0);S->SetBoolField(TEXT("completed"),false);S->SetBoolField(TEXT("canSkip"),I==0);auto G=MakeShared<FJsonObject>();G->SetStringField(TEXT("label"),I==1?TEXT("생존자로 경기 1회 플레이"):QuestTitles[I]);G->SetNumberField(TEXT("progress"),0);G->SetNumberField(TEXT("target"),1);S->SetArrayField(TEXT("goals"),{MakeShared<FJsonValueObject>(G)});QuestSteps.Add(MakeShared<FJsonValueObject>(S));}
     Quest->SetArrayField(TEXT("steps"),QuestSteps);R->Snapshot->SetObjectField(TEXT("mainQuest"),Quest);
+    {
+        auto Started=MakeShared<FJsonObject>();Started->Values=Quest->Values;Started->SetNumberField(TEXT("stage"),1);Started->SetNumberField(TEXT("revision"),1);
+        auto Update=MakeShared<FJsonObject>();Update->SetStringField(TEXT("userId"),TEXT("1"));Update->SetObjectField(TEXT("mainQuest"),Started);Update->SetArrayField(TEXT("questNotices"),{});
+        R->Request=FHttpModule::Get().CreateRequest();R->Request->SetVerb(TEXT("GET"));R->PollIn=15;R->Refresh();
+        TestTrue(TEXT("A server event during an older request schedules a fresh read without a duplicate HTTP request"),R->PollIn==0&&R->Request.IsValid());
+        R->ApplyMainQuestUpdate(Update);
+        TestTrue(TEXT("Game admission applies quest progress immediately and cancels the older account poll"),!R->Request.IsValid()&&R->Snapshot->GetObjectField(TEXT("mainQuest"))->GetNumberField(TEXT("stage"))==1&&R->Snapshot->HasField(TEXT("credits")));
+        Update->SetStringField(TEXT("userId"),TEXT("other-account"));auto Wrong=MakeShared<FJsonObject>();Wrong->SetNumberField(TEXT("revision"),2);Update->SetObjectField(TEXT("mainQuest"),Wrong);R->ApplyMainQuestUpdate(Update);
+        TestEqual(TEXT("Admission updates cannot replace another account's quest state"),R->Snapshot->GetObjectField(TEXT("mainQuest"))->GetNumberField(TEXT("stage")),1.0);
+        R->Snapshot->SetObjectField(TEXT("mainQuest"),Quest);R->QuestAccount.Reset();R->SeenQuestRevision=0;
+    }
+    {
+        Widget->Page=TEXT("Quest");Widget->RenderedFingerprint.Reset();Widget->RefreshPanel();
+        const auto OriginalContent=Widget->Body->GetChildren()->GetChildAt(0);
+        R->Request=FHttpModule::Get().CreateRequest();R->Request->SetVerb(TEXT("GET"));Widget->RefreshPanel();
+        TestTrue(TEXT("A background account read preserves quest widgets and leaves their controls usable"),Widget->Body->GetChildren()->GetChildAt(0)==OriginalContent&&Widget->Body->IsEnabled());
+        auto* RequestTarget=ProjectUIRenderCapture::Create(FIntPoint(1280,720));const float RequestDpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(FIntPoint(1280,720));
+        TArray<FColor> BeforeRequest,DuringRequest;for(int32 I=0;I<3;++I)Renderer.DrawWidget(RequestTarget,Slate,RequestDpi,FVector2D(1280,720),0);FlushRenderingCommands();ProjectUIRenderCapture::Read(RequestTarget,BeforeRequest);
+        R->Request->SetVerb(TEXT("POST"));Widget->RefreshPanel();
+        TestTrue(TEXT("A write blocks duplicate clicks without dimming or recreating the page"),Widget->Body->GetChildren()->GetChildAt(0)==OriginalContent&&Widget->Body->IsEnabled()&&Widget->RequestShield->GetVisibility()==EVisibility::Visible);
+        for(int32 I=0;I<3;++I)Renderer.DrawWidget(RequestTarget,Slate,RequestDpi,FVector2D(1280,720),0);FlushRenderingCommands();ProjectUIRenderCapture::Read(RequestTarget,DuringRequest);RequestTarget->ReleaseResource();
+        TestTrue(TEXT("A write's transparent input shield leaves the rendered page pixels unchanged"),!BeforeRequest.IsEmpty()&&BeforeRequest==DuringRequest);
+        R->Request.Reset();R->Status=TEXT("처리되었습니다.");Widget->RefreshPanel();
+        TestTrue(TEXT("Status-only completion unlocks the same content rather than resetting reading position"),Widget->Body->GetChildren()->GetChildAt(0)==OriginalContent&&Widget->Body->IsEnabled());
+        R->Snapshot->SetNumberField(TEXT("credits"),501);Widget->RefreshPanel();
+        TestTrue(TEXT("Unrelated wallet updates do not rebuild the quest reading pane"),Widget->Body->GetChildren()->GetChildAt(0)==OriginalContent);
+        R->Snapshot->SetNumberField(TEXT("credits"),500);R->Status.Reset();Widget->RenderedFingerprint.Reset();
+    }
+    {
+        R->LastAchievementRateFetchAt=FPlatformTime::Seconds();Widget->Page=TEXT("Achievements");Widget->RefreshPanel();
+        const auto OriginalContent=Widget->Body->GetChildren()->GetChildAt(0);
+        R->AchievementRates->SetStringField(TEXT("updatedAtUtc"),TEXT("2030-01-01T00:00:00Z"));Widget->RefreshPanel();
+        TestTrue(TEXT("Refreshing the statistics timestamp alone preserves achievement widgets"),Widget->Body->GetChildren()->GetChildAt(0)==OriginalContent);
+        RateRows[0]->AsObject()->SetNumberField(TEXT("percentage"),76);Widget->RefreshPanel();
+        TestTrue(TEXT("Changed achievement percentages still rebuild the displayed values"),Widget->Body->GetChildren()->GetChildAt(0)!=OriginalContent);
+        RateRows[0]->AsObject()->SetNumberField(TEXT("percentage"),75);Widget->RenderedFingerprint.Reset();
+    }
     const auto PartyState=R->Snapshot->GetObjectField(TEXT("partyState")),Party=PartyState->GetObjectField(TEXT("party"));
     const auto OriginalMembers=Party->GetArrayField(TEXT("members"));
     for(int32 Count:{1,3,2,0})
@@ -183,7 +262,7 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         if(TestTrue(TEXT("Equipped banner renders inside the existing profile dock"),ProjectUIRenderCapture::Read(Target,Pixels))){TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("DockBanner_%dx%d.png"),Size.X,Size.Y)));}Target->ReleaseResource();
     }
     R->Snapshot->SetArrayField(TEXT("loadout"),OriginalLoadout);
-    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("ProfileEdit")),FString(TEXT("Collection")),FString(TEXT("CollectionBanner")),FString(TEXT("CollectionFrame")),FString(TEXT("Draw")),FString(TEXT("DrawReset")),FString(TEXT("DrawInactive")),FString(TEXT("DrawNoFunds")),FString(TEXT("DrawRates")),FString(TEXT("DrawResult")),FString(TEXT("DrawRare")),FString(TEXT("Events")),FString(TEXT("Achievements")),FString(TEXT("OnlineAchievements")),FString(TEXT("Quest")),FString(TEXT("QuestAll")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive"))})
+    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("ProfileEdit")),FString(TEXT("Collection")),FString(TEXT("CollectionBanner")),FString(TEXT("CollectionFrame")),FString(TEXT("Draw")),FString(TEXT("DrawReset")),FString(TEXT("DrawInactive")),FString(TEXT("DrawNoFunds")),FString(TEXT("DrawRates")),FString(TEXT("DrawResult")),FString(TEXT("DrawRare")),FString(TEXT("Events")),FString(TEXT("Achievements")),FString(TEXT("OnlineAchievements")),FString(TEXT("Quest")),FString(TEXT("QuestStory")),FString(TEXT("QuestAll")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive"))})
     {
         Auth->AuthState=Page==TEXT("Archive")?EProjectProject01AuthState::SignedOut:EProjectProject01AuthState::SignedIn;
         if(Page==TEXT("TrackComplete")||Page==TEXT("TrackUnclaimed")||Page==TEXT("Archive"))
@@ -223,6 +302,13 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
             Widget->LastDrawReceipt=TEXT("render-only");Widget->bDrawResultOpen=true;
         }
         Widget->CollectionCategory=Page==TEXT("CollectionBanner")?TEXT("Banner"):Page==TEXT("CollectionFrame")?TEXT("Frame"):TEXT("All");
+        if(Page==TEXT("QuestStory"))
+        {
+            Quest->SetNumberField(TEXT("stage"),1);
+            QuestSteps[0]->AsObject()->SetBoolField(TEXT("completed"),true);QuestSteps[0]->AsObject()->SetBoolField(TEXT("active"),false);QuestSteps[0]->AsObject()->SetBoolField(TEXT("canSkip"),false);
+            QuestSteps[0]->AsObject()->SetStringField(TEXT("story"),TEXT("닫힌 매장 사이를 지나 첫 번째 기록을 찾았다.\n\n마네킹은 시선을 돌린 사이에만 움직였다. 다음 층으로 향하기 전, 동료와 함께 주변을 살폈다."));
+            QuestSteps[1]->AsObject()->SetBoolField(TEXT("active"),true);
+        }
         if(Page==TEXT("QuestAll"))
         {
             Quest->SetNumberField(TEXT("stage"),7);
@@ -276,6 +362,13 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
             const auto G=Widget->RecordsScroll->GetCachedGeometry();TestTrue(TEXT("Record scroll viewport fits inside the screen"),G.GetAbsolutePosition().X>=0&&G.GetAbsolutePosition().Y>=0&&G.GetAbsolutePosition().X+G.GetAbsoluteSize().X<=Size.X+1&&G.GetAbsolutePosition().Y+G.GetAbsoluteSize().Y<=Size.Y+1);
             if(Page.StartsWith(TEXT("Track"))||Page.StartsWith(TEXT("Draw"))||Page.StartsWith(TEXT("Profile"))||Page.StartsWith(TEXT("Collection"))||Page==TEXT("Events")||Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements")||Page.StartsWith(TEXT("Quest"))||Page==TEXT("Archive")||Page==TEXT("Pvp")||Page==TEXT("Bot")||Page==TEXT("Shop"))
                 TestTrue(FString::Printf(TEXT("Page fits without scrolling: %s %dx%d desired %.1f available %.1f"),*Page,Size.X,Size.Y,Widget->Body->GetDesiredSize().Y,G.GetLocalSize().Y),Widget->Body->GetDesiredSize().Y<=G.GetLocalSize().Y+1);
+            if(Page==TEXT("QuestStory"))
+            {
+                const FString Expected=Quest->GetStringField(TEXT("baseStory"))+TEXT("\n\n")+QuestSteps[0]->AsObject()->GetStringField(TEXT("story"));TSharedPtr<SWidget> Story;
+                TFunction<void(TSharedRef<SWidget>)> Find=[&](TSharedRef<SWidget> W){if(W->GetType()==FName(TEXT("STextBlock"))&&StaticCastSharedRef<STextBlock>(W)->GetText().ToString()==Expected)Story=W;if(auto* C=W->GetChildren())for(int32 I=0;I<C->Num();++I)Find(C->GetChildAt(I));};Find(Slate);
+                TestTrue(TEXT("Quest shows the base story plus the completed Korean chapter, preserving paragraph breaks"),Story.IsValid());
+                if(Story){auto Parent=Story->GetParentWidget();while(Parent&&Parent->GetType()!=FName(TEXT("SScrollBox")))Parent=Parent->GetParentWidget();TestTrue(TEXT("Story keeps a visible reading region below objectives at both resolutions"),Parent&&Parent->GetCachedGeometry().GetLocalSize().Y>=60);}
+            }
             if(Page==TEXT("TrackUnclaimed")||Page==TEXT("TrackComplete"))
             {
                 bool Clue=false,Story=false;

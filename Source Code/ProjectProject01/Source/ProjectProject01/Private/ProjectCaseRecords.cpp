@@ -60,17 +60,28 @@ void UProjectCaseRecords::ClearSession()
     if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     Snapshot.Reset();DrawResult.Reset();LastReceipt.Reset();PendingDrawId.Reset();PendingDrawOperation.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
     AchievementAccount.Reset();SeenOnlineAchievements.Reset();
-    QuestAccount.Reset();SeenQuestRevision=0;
+    QuestAccount.Reset();SeenQuestRevision=0;PendingTutorialRole.Reset();PendingTutorialGeneration=0;TutorialRetryAt=0;
 }
 bool UProjectCaseRecords::IsAuthenticated()const{const auto* A=Auth(this);return A&&A->IsSignedIn();}
 bool UProjectCaseRecords::Tick(float Delta)
 {
     if(!IsAuthenticated()){if(Snapshot)ClearSession();return true;}
+    if(!PendingTutorialRole.IsEmpty())
+    {
+        if(Auth(this)->GetSessionGeneration()!=PendingTutorialGeneration)PendingTutorialRole.Reset();
+        else if(!IsWriting()&&FPlatformTime::Seconds()>=TutorialRetryAt){MainQuestAction(TEXT("TutorialComplete"),PendingTutorialRole);return true;}
+    }
     TickPartyAdmission(Delta);
     if(!Request&&!bImportAttempted&&CanImport()){bImportAttempted=true;ImportCampaign();return true;}
     PollIn-=Delta;if(PollIn<=0){PollIn=15;Refresh();}return true;
 }
-void UProjectCaseRecords::Refresh(){if(IsAuthenticated()&&!Request)Send(TEXT("/api/case-records"));}
+void UProjectCaseRecords::Refresh()
+{
+    if(!IsAuthenticated())return;
+    // A server event arriving during an older request must get a fresh read when it completes.
+    if(Request){PollIn=0;return;}
+    Send(TEXT("/api/case-records"));
+}
 void UProjectCaseRecords::ApplyDrawResponse(const TSharedPtr<FJsonObject>& Response)
 {
     if(!Response)return;
@@ -240,10 +251,11 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
             else if(Path.EndsWith(TEXT("import-campaign")))
             {if(Snapshot)Snapshot->TryGetStringField(TEXT("userId"),Local->BoundAccountId);PersistLocal();PollIn=0;}
             else {const TSharedPtr<FJsonObject>* State=nullptr;if(Json->TryGetObjectField(TEXT("snapshot"),State))Snapshot=*State;}
-            Status=Path==TEXT("/api/case-records")?FString():TEXT("처리되었습니다.");
+            Status.Reset();
             if(Path==TEXT("/api/case-records/draw")){FString Operation;if(DrawResult&&DrawResult->TryGetStringField(TEXT("operation"),Operation)&&Operation==TEXT("EditorReset"))Status=TEXT("이 계정의 뽑기 획득 기록을 초기화했습니다.");}
             ObserveAchievements();
-            ObserveMainQuest();
+            if(Path==TEXT("/api/case-records/main-quest"))PendingTutorialRole.Reset();
+            ObserveMainQuest(Json);
             const TSharedPtr<FJsonObject>* Receipt=nullptr;
             if(Json->TryGetObjectField(TEXT("receipt"),Receipt)&&Receipt&&Receipt->IsValid())
             {LastReceipt=*Receipt;OnReceipt.Broadcast();}
@@ -260,6 +272,7 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
         }
         else
         {
+            if(Path==TEXT("/api/case-records/main-quest"))TutorialRetryAt=FPlatformTime::Seconds()+5;
             if(Path==TEXT("/api/case-records/draw"))
             {if(Response&&Response->GetResponseCode()>=400&&Response->GetResponseCode()<500){PendingDrawId.Reset();PendingDrawOperation.Reset();}}
             Status=TEXT("서버 응답을 확인하지 못했습니다. 다시 시도하세요.");if(Response&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json)&&Json)Json->TryGetStringField(TEXT("message"),Status);
@@ -268,6 +281,9 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
         OnChanged.Broadcast();
     });
     if(!Body.IsEmpty())OnChanged.Broadcast();
+#if WITH_DEV_AUTOMATION_TESTS
+    if(ReviewRequestSink){ReviewRequestSink(Path,Body);return;}
+#endif
     if(!Pending->ProcessRequest()){Request.Reset();Status=TEXT("요청을 시작하지 못했습니다.");OnChanged.Broadcast();}
 }
 bool UProjectCaseRecords::RecordCampaignAchievement(FName Code)

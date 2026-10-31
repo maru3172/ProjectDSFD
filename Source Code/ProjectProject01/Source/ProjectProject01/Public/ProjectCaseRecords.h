@@ -27,6 +27,7 @@ class PROJECTPROJECT01_API UProjectCaseRecords final : public UGameInstanceSubsy
     GENERATED_BODY()
     friend class FProjectCaseRecordsTest;
     friend class FProjectCaseUiRenderTest;
+    friend class FProjectFrontendBehaviorTest;
     friend class FProjectPartyAdmissionStateTest;
     friend class FProjectPartyAdmissionWidgetTest;
 public:
@@ -66,6 +67,7 @@ public:
     bool ShouldConfirm(const FString& Category)const;
     void SkipConfirmationToday(const FString& Category);
     void MainQuestAction(const FString& Action,const FString& Role=FString());
+    void ApplyMainQuestUpdate(const TSharedPtr<class FJsonObject>& Update);
 private:
     void ClearSession();
     bool Tick(float Delta);
@@ -75,6 +77,9 @@ private:
     void PersistLocal();
     UPROPERTY() TObjectPtr<UProjectCampaignAchievementSave> Local;
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> Request;
+#if WITH_DEV_AUTOMATION_TESTS
+    TFunction<void(const FString&,const FString&)> ReviewRequestSink;
+#endif
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> ArchiveRequest;
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> AchievementRateRequest;
     TSharedPtr<class FJsonObject> AchievementRates;
@@ -94,9 +99,12 @@ private:
     FString AchievementAccount;
     TSet<FString> SeenOnlineAchievements;
     void ObserveAchievements();
-    void ObserveMainQuest();
+    void ObserveMainQuest(const TSharedPtr<class FJsonObject>& Response=nullptr);
     FString QuestAccount;
     int64 SeenQuestRevision=0;
+    FString PendingTutorialRole;
+    uint64 PendingTutorialGeneration=0;
+    double TutorialRetryAt=0;
     void TickPartyAdmission(float Delta);
     void ReadPartyAdmission(const TSharedPtr<class FJsonObject>& Json);
     void SendPartyAdmission(const FString& Body=FString());
@@ -131,6 +139,8 @@ private:
     void RequestDrawAction(const FString& Operation,int32 Count);
     void ExecuteDrawAction(const FString& Operation,int32 Count);
     void RequestPurchase(const FString& Id);
+    void RequestCosmeticAction(const FString& Action,const FString& Id);
+    void RequestMissionReroll(const FString& Id,const FString& Mode,int32 Count,const FString& Period);
     void ConfirmAction(const FString& Category,const FString& Title,TFunction<void()> Action);
     void ResolveConfirmation(bool Accept,bool SkipToday);
     void ShowReceipt();
@@ -164,6 +174,7 @@ private:
     FString BioDraft;
     TSharedPtr<class SProjectShopFundsNotice> ShopFundsNotice;
     TSharedPtr<class SVerticalBox> Body;
+    TSharedPtr<class SBorder> RequestShield;
     TSharedPtr<class SScrollBox> RecordsScroll;
     TWeakObjectPtr<UUserWidget> ReturnWidget;
 };

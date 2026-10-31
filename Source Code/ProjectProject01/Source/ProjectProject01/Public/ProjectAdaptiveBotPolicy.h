@@ -959,6 +959,9 @@ inline int& ParkOverride(){static int Value=-1;return Value;}
 // Balance runs only: one survivor bot (the simulation's "SimHelper") behaves as if a human were on its team (helper
 // mode) and the mannequin treats the match as one human with a bot partner; the other survivor bot plays the human.
 inline bool& HumanTeamOverride(){static bool Value=false;return Value;}
+// Balance runs only (-BotSimSoloDiag=1): in the solo stand-in the "SimHelper" plays as an ordinary bot partner instead
+// of a helper, to measure how much of the solo gap the deliberately weaker helper accounts for.
+inline int& SoloDiagnostic(){static int Value=0;return Value;}
 inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,5,0},E[]={8,8,6,5,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 // One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
 // values apply only then (two humans and bot-only teams keep the plain tables).
@@ -967,6 +970,12 @@ inline float SoloAttackScale(const Difficulty& D,bool SoloHuman){static constexp
 // With a lone human, the helper falling must not turn the whole mannequin on that human: lower levels keep their
 // ordinary hunt (no endgame push, no extra bodies woken), higher levels still close the match.
 inline float SoloEndgameScale(const Difficulty& D,bool SoloHuman){static constexpr float S[]={0,0,0,1,1};return SoloHuman?S[std::max(1,std::min(5,D.Level))-1]:1.f;}
+// With a lone human, the helper being caught is a setback for that human too: easy mannequins ease off for a while
+// (same relief as a human's own loss: longer tells, slower rhythm, more openings), so the pair is not taken together.
+inline float SoloPartnerCaughtRelief(const Difficulty& D){static constexpr float S[]={3,0,0,0,0};return S[std::max(1,std::min(5,D.Level))-1];}
+// Mannequin-only openings (a moment of searching elsewhere): hard keeps a few so it stays beatable; survivor bots of
+// the same level keep the plain table.
+inline float MannequinOpening(const Difficulty& D){return D.Level==3?.15f:D.Opening;}
 
 // Stalemate: no survivor has got closer to an exit and nobody was caught or got out for this long. Then both
 // sides break it: survivors drop deliberate holds and move, the mannequin settles on one body and sends the

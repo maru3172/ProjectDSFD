@@ -47,6 +47,7 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
     const int32 SurvivorLevel=Ladder?FMath::Clamp(FCString::Atoi(*Parameter.Mid(10,1)),1,5):Level;
     ProjectBots::ParkOverride()=Parameter.StartsWith(TEXT("Ladder.H"))?0:-1;
     ProjectBots::HumanTeamOverride()=Parameter.StartsWith(TEXT("Ladder.P"));
+    {int32 Diag=0;FParse::Value(FCommandLine::Get(),TEXT("BotSimSoloDiag="),Diag);ProjectBots::SoloDiagnostic()=Diag;}
     // -BotSimProbe=N: masters take one expert value (1 reaction, 2 sharing, 3 coordination, 4 skill) or one expert
     // table group (5 watch discipline, 6 combo book, 7 play tuning, 8 map/mood/ping tables).
     int32 Probe=0;FParse::Value(FCommandLine::Get(),TEXT("BotSimProbe="),Probe);ProjectBots::Difficulty::Probe()=Probe;

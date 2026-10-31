@@ -1033,6 +1033,7 @@ class PROJECTPROJECT01_API UProjectProject01RoomProfileBinding final : public UO
     GENERATED_BODY()
 public:
     UPROPERTY(Transient) TObjectPtr<UProjectProject01LobbyWidget> Owner;
+    UPROPERTY(Transient) TObjectPtr<class UTextBlock> Label;
     FString UserId;
     UFUNCTION() FEventReply HandleMouseButtonDown(FGeometry Geometry,const FPointerEvent& MouseEvent);
 };
@@ -1047,6 +1048,7 @@ public:
     UPROPERTY(Transient) TObjectPtr<class UTextBlock> Label;
     FString Key, Caption;
     bool bHost=false;
+    bool bSelected=false,bStyled=false;
     UFUNCTION() void HandleClicked();
 };
 
@@ -1100,6 +1102,7 @@ private:
     UFUNCTION() void HandleMatchRoleChanged(FString Item, ESelectInfo::Type SelectionType);
     void RefreshRoleSelection();
     bool bRoleWritePending=false;
+    FString DesiredMatchRole,SubmittedMatchRole;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
     UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCreateButton;
     UPROPERTY(Transient) TObjectPtr<class UTextBlock> BotMatchParticipantsText;

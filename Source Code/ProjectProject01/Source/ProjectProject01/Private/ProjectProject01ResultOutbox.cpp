@@ -73,7 +73,7 @@ bool FProjectResultOutbox::IsProductionMatchId(const FString& MatchId)
 bool FProjectResultOutbox::Persist(const FString& Root,const FString& Backend,const FString& Route,const FString& Body,FString& OutPath)
 {
     OutPath.Reset();
-    if(Route!=TEXT("/api/server/matches/results")&&Route!=TEXT("/api/server/matches/complete")&&Route!=TEXT("/api/server/case-records/visit")&&Route!=TEXT("/api/server/main-quest/floor"))return false;
+    if(Route!=TEXT("/api/server/matches/results")&&Route!=TEXT("/api/server/matches/complete")&&Route!=TEXT("/api/server/case-records/visit")&&Route!=TEXT("/api/server/main-quest/floor")&&Route!=TEXT("/api/server/main-quest/event"))return false;
     TSharedPtr<FJsonObject> ParsedBody;FString MatchId;
     if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),ParsedBody)||!ParsedBody.IsValid()||
         !ParsedBody->TryGetStringField(TEXT("matchId"),MatchId)||!IsProductionMatchId(MatchId))return false;

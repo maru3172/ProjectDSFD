@@ -355,6 +355,7 @@ public:
 	/** 경기 접속을 끝내거나 취소할 때 메모리에 남은 일회용 티켓과 키를 제거합니다. */
 	void ClearPendingGameConnection();
     void ReportMainQuestFloor(const FString& MatchId,const FString& UserId,const FString& Map);
+    void ReportMainQuestEvent(const FString& MatchId,const FString& UserId,const FString& Kind,int32 Count=1,const FString& Map=FString());
 
 	/** PreLogin이 암호화 핸드셰이크에서 검증된 claim을 한 번 가져옵니다. */
 	bool ConsumeValidatedJoinClaim(

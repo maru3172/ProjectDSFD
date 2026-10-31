@@ -22,7 +22,7 @@ namespace ProjectAnnouncement
     {
         FPhase P;const float Travel=(Width+TextWidth)/Speed,End=Fade+Travel;
         if(Time<Fade){P.Alpha=FMath::SmoothStep(0.f,Fade,Time);return P;}
-        P.Text=Time<End;P.X=-TextWidth+FMath::Clamp(Time-Fade,0.f,Travel)*Speed;
+        P.Text=Time<End;P.X=FMath::Lerp(-TextWidth,Width,FMath::Clamp((Time-Fade)/Travel,0.f,1.f));
         P.Alpha=1-FMath::SmoothStep(Fade+FMath::Max(0.f,Travel-FadeOut),End,Time);
         P.Finished=Time>=End;return P;
     }
@@ -31,7 +31,7 @@ class SProjectAnnouncementTicker final:public SLeafWidget
 {
 public:
     SLATE_BEGIN_ARGS(SProjectAnnouncementTicker){} SLATE_END_ARGS()
-    void Construct(const FArguments&){SetCanTick(true);ForceVolatile(true);SetVisibility(EVisibility::Collapsed);}
+    void Construct(const FArguments&){SetFlowDirectionPreference(EFlowDirectionPreference::LeftToRight);SetCanTick(true);ForceVolatile(true);SetVisibility(EVisibility::Collapsed);}
     void ResetForHost(){Current.Reset();Pending.Reset();Tag.Reset();PendingTag.Reset();Remaining=0;Deadline=-1;Elapsed=0;Active=false;SetVisibility(EVisibility::Collapsed);}
     void SetRemainingLifetime(double Seconds){Deadline=Seconds>=0?FPlatformTime::Seconds()+Seconds:-1;}
     void Publish(const FString& Notice,const FString& Label=FString(),int32 Repeats=1)
@@ -108,25 +108,33 @@ void UProjectAnnouncementSubsystem::Deinitialize()
 }
 void UProjectAnnouncementSubsystem::NotifyAchievement(const FString& Code)
 {
+    EnsurePresentation();
     if(!AchievementOverlay)AchievementOverlay=ProjectAchievementToast::Create();ProjectAchievementToast::Show(AchievementOverlay.ToSharedRef(),Code);
 }
 void UProjectAnnouncementSubsystem::NotifyQuest(const FString& Name,const FString& Kind,const FString& Detail,const FString& EventId)
 {
+    EnsurePresentation();
     if(!AchievementOverlay)AchievementOverlay=ProjectAchievementToast::Create();
     ProjectAchievementToast::ShowQuest(AchievementOverlay.ToSharedRef(),Name,Kind,Detail,EventId);
 }
-bool UProjectAnnouncementSubsystem::Poll(float)
+void UProjectAnnouncementSubsystem::EnsurePresentation()
 {
-    auto* V=GetGameInstance()->GetGameViewportClient();if(!V)return true;
+    auto* V=GetGameInstance()->GetGameViewportClient();if(!V)return;
     if(Viewport.Get()!=V)
     {
         if(Viewport.IsValid()&&Overlay)Viewport->RemoveViewportWidgetContent(Overlay.ToSharedRef());
         if(Viewport.IsValid()&&AchievementOverlay)Viewport->RemoveViewportWidgetContent(AchievementOverlay.ToSharedRef());
-        if(!Overlay)Overlay=SNew(SProjectAnnouncementTicker);
-        if(!AchievementOverlay)AchievementOverlay=ProjectAchievementToast::Create();
-        V->AddViewportWidgetContent(Overlay.ToSharedRef(),1000002);Viewport=V;
-        V->AddViewportWidgetContent(AchievementOverlay.ToSharedRef(),1000003);
+        Viewport=V;
     }
+    if(!Overlay)Overlay=SNew(SProjectAnnouncementTicker);
+    if(!AchievementOverlay)AchievementOverlay=ProjectAchievementToast::Create();
+    if(!Overlay->GetParentWidget().IsValid())V->AddViewportWidgetContent(Overlay.ToSharedRef(),1000002);
+    if(!AchievementOverlay->GetParentWidget().IsValid())V->AddViewportWidgetContent(AchievementOverlay.ToSharedRef(),1000003);
+}
+bool UProjectAnnouncementSubsystem::Poll(float)
+{
+    if(!GetGameInstance()->GetGameViewportClient())return true;
+    EnsurePresentation();
     if(FPlatformTime::Seconds()>=NextPoll){NextPoll=FPlatformTime::Seconds()+5;if(auto* A=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>())A->CheckMultiplayerServiceStatus();}
     return true;
 }
@@ -172,6 +180,21 @@ bool FProjectAnnouncementPresentationTest::RunTest(const FString&)
     Renderer.DrawWidget(Target,Widget,FVector2D(1280,720),0);
     const float Mid=Fade+(Widget->TextWidth+1216)*.5f/Speed,End=Fade+(Widget->TextWidth+1216)/Speed;
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("FeatureChecks/AnnouncementUI");IFileManager::Get().MakeDirectory(*Directory,true);
+    {
+        auto Direction=SNew(SProjectAnnouncementTicker);Direction->Publish(TEXT("공지 방향 확인"));Renderer.DrawWidget(Target,Direction,FVector2D(1280,720),0);
+        TestTrue(TEXT("Announcement direction stays screen-left to screen-right regardless of inherited culture"),Direction->GetFlowDirectionPreference()==EFlowDirectionPreference::LeftToRight);
+        TArray<double> Centers;
+        for(const float X:{120.f,460.f})
+        {
+            Direction->Elapsed=Fade+(Direction->TextWidth+X)/Speed;Renderer.DrawWidget(Target,Direction,FVector2D(1280,720),0);FlushRenderingCommands();
+            TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags);
+            double Sum=0;int32 Count=0;for(int32 Y=64;Y<110;++Y)for(int32 Column=32;Column<1248;++Column)
+            {const auto& Pixel=Pixels[Y*1280+Column];if(Pixel.A>100&&Pixel.R>180&&Pixel.G>180&&Pixel.B>180){Sum+=Column;++Count;}}
+            TestTrue(TEXT("Directional sample contains the actual rendered announcement letters"),Count>0);Centers.Add(Count?Sum/Count:-1);
+            TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(1280,720,Pixels,Png);FFileHelper::SaveArrayToFile(Png,*(Directory/(X==120.f?TEXT("Direction-01-Left.png"):TEXT("Direction-02-Right.png"))));
+        }
+        TestTrue(TEXT("Rendered letters move right across successive frames"),Centers.Num()==2&&Centers[1]>Centers[0]+300);
+    }
     for(const auto& Sample:TArray<TPair<FString,float>>{{TEXT("Appearing"),.25f},{TEXT("Moving"),Mid},{TEXT("Disappearing"),End-FadeOut*.5f}})
     {
         Widget->Elapsed=Sample.Value;Renderer.DrawWidget(Target,Widget,FVector2D(1280,720),0);FlushRenderingCommands();TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);

@@ -2563,6 +2563,8 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 		if (Pair.Value.Role == TEXT("Mannequin") && bCaughtByMannequin)
 		{
 			++Pair.Value.CaptureCount;
+			if(auto* Controller=Pair.Key.Get())if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
+				Instance->ReportMainQuestEvent(Controller->GetAuthenticatedMatchId(),Pair.Value.UserId,TEXT("Capture"),Pair.Value.CaptureCount);
 			if (Pair.Value.FirstCaptureSeconds <= 0.0)
 			{
 				Pair.Value.FirstCaptureSeconds = CaptureSeconds;
@@ -2654,6 +2656,8 @@ bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 	Record->SurvivorState = EMultiplayTestSurvivorState::Escaped;
 	Record->EscapeSeconds = GetElapsedMatchSeconds();
 	RecordTimeline(EProjectMatchEvent::Escaped, Record->DisplayName);
+	if(auto* Controller=Cast<AMultiplayTestPlayerController>(Survivor->GetController()))if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
+		Instance->ReportMainQuestEvent(Controller->GetAuthenticatedMatchId(),Record->UserId,TEXT("Escape"));
 	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
 	{
 		Movement->StopMovementImmediately();
@@ -2959,6 +2963,26 @@ bool AMultiplayTestGameMode::AreAllHumanSurvivorsEliminatedInBotMatch() const
 	return HumanSurvivors > 0 && HumansStillPlaying == 0 && HumansEliminated > 0;
 }
 
+bool AMultiplayTestGameMode::AreAllHumanSurvivorsOutInBotMatch() const
+{
+	// Every human survivor of a bot match is caught or escaped: the survivor bots left decide nothing for anyone.
+	if (!MatchBots || !MatchBots->HasRoster())
+	{
+		return false;
+	}
+	int32 HumanSurvivors = 0, HumansStillPlaying = 0;
+	auto Count = [&](const FMultiplayTestServerPlayerRecord& Record)
+	{
+		if (Record.Role != TEXT("Survivor") || Record.bServerBot) return;
+		++HumanSurvivors;
+		HumansStillPlaying += Record.SurvivorState == EMultiplayTestSurvivorState::Active ||
+			Record.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting;
+	};
+	for (const auto& Pair : MatchPlayerRecords) Count(Pair.Value);
+	for (const auto& Pair : DisconnectedMatchRecords) Count(Pair.Value);
+	return HumanSurvivors > 0 && HumansStillPlaying == 0;
+}
+
 void AMultiplayTestGameMode::CheckForMatchCompletion()
 {
 	// A stand-in only holds a place beside a human teammate still playing. With none left, whoever it stands in
@@ -3001,11 +3025,12 @@ void AMultiplayTestGameMode::CheckForMatchCompletion()
 		Summary.SurvivorCount, Summary.ResolvedCount, Summary.EliminatedCount,
 		Summary.ResolvedCount - Summary.EliminatedCount);
 
-	// Bot match played as a survivor: once every human survivor is eliminated, end right away instead of
-	// letting the bots carry on (and travel) without the player.
-	if (!Summary.IsComplete() && AreAllHumanSurvivorsEliminatedInBotMatch())
+	// Bot match played as a survivor: once every human survivor is caught or has escaped, end right away instead
+	// of leaving the player to watch the bots carry on (and travel) without them.
+	if (!Summary.IsComplete() && AreAllHumanSurvivorsOutInBotMatch())
 	{
-		FinishAuthoritativeMatch(TEXT("HumanSurvivorsEliminated"));
+		FinishAuthoritativeMatch(AreAllHumanSurvivorsEliminatedInBotMatch()
+			? TEXT("HumanSurvivorsEliminated") : TEXT("HumanSurvivorsOut"));
 		return;
 	}
 	if (Summary.IsComplete())
