@@ -105,6 +105,8 @@ foreach($selected in $TargetAsset){$selections[$selected]='Target'}
 if($SelectionFile){
     $entries=Get-Content -LiteralPath $SelectionFile -Raw -Encoding utf8|ConvertFrom-Json
     foreach($item in $entries){
+        Validate-AssetPath ([string]$item.path)
+        if(-not $decisions.Find([Predicate[object]]{param($entry)$entry.path -ceq $item.path})){throw "에셋 비교 목록에 없는 경로입니다: $($item.path)"}
         if($item.choice -notin @('Source','Target','Automatic')){throw '올바르지 않은 에셋 선택입니다.'}
         if($item.choice -eq 'Automatic'){[void]$selections.Remove([string]$item.path)}else{$selections[[string]$item.path]=[string]$item.choice}
     }

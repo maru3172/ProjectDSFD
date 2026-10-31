@@ -58,9 +58,22 @@ internal static class SelfTests
             Run("remote", "add", "origin", bare); Run("push", "--set-upstream", "origin", "HEAD:refs/heads/source");
             Run("fetch", "--prune", "origin"); Run("pull", "--ff-only", "origin", "source");
             Check(Await(git.Branches()).Any(x => x.Remote && x.Name == "origin/source"), "로컬 원격 저장소 push·fetch·pull");
+            var clone = Path.Combine(root, "cloned repository");
+            Await(GitService.RunProcess("git", root, ["clone", "-b", "source", "--", bare, clone]));
+            Check(Await(new GitService(clone).CurrentBranch()) == "source", "저장소 복제");
+            var cloned = new GitService(clone); Await(cloned.Git("config", "user.name", "Other fixture")); Await(cloned.Git("config", "user.email", "other@example.invalid")); Await(cloned.Git("config", "commit.gpgsign", "false"));
+            File.WriteAllText(Path.Combine(clone, "remote-update.txt"), "remote update"); Await(cloned.Git("add", "--all")); Await(cloned.Git("commit", "-m", "remote update")); Await(cloned.Git("push"));
+            Check(Await(git.Git(new[] { "push", "--force-with-lease", "origin", "HEAD:refs/heads/source" }, false)).Code != 0, "원격이 앞서면 안전 강제 push도 덮어쓰기를 거부");
+            Run("fetch", "origin"); Run("pull", "--ff-only", "origin", "source"); Check(File.Exists(Path.Combine(fixture, "remote-update.txt")), "실제 원격 새 커밋을 pull로 반영");
             Check(GitService.ParseArguments("log --format=\"%h %s\" -5").SequenceEqual(new[] { "log", "--format=%h %s", "-5" }), "추가 명령은 셸 없이 인수 경계 보존");
+            Put("Content/공백 [1].umap", "UI preview revision"); Save("UI preview asset");
             using var form = new ManagerForm(fixture) { SuppressInitialRefresh = true };
             form.Show(); Wait(form.RefreshRepository(fixture)); Wait(form.CompareForTest("source", "destination"));
+            while (form.Busy) { Application.DoEvents(); Thread.Sleep(5); }
+            Put("dirty-check.txt", "preserve local change"); var rejected = false;
+            try { Wait(form.CheckoutForTest("destination")); } catch (InvalidOperationException error) { rejected = error.Message.Contains("미커밋"); }
+            Check(rejected && Await(git.CurrentBranch()) == "source", "미커밋 변경을 지닌 브랜치 전환 차단");
+            File.Delete(Path.Combine(fixture, "dirty-check.txt"));
             Check(form.ActionNames.Count >= 55 && form.Pages.TabPages.Count == 8, "관리 기능과 8개 분류 탭 구성");
             for (int i = 0; i < form.Pages.TabPages.Count; i++)
             {
@@ -68,6 +81,9 @@ internal static class SelfTests
                 using var bitmap = new Bitmap(form.Width, form.Height); form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
                 bitmap.Save(Path.Combine(root, $"tab-{i + 1}.png"));
             }
+            var unborn = Path.Combine(root, "unborn"); Directory.CreateDirectory(unborn); Await(GitService.RunProcess("git", unborn, ["init", "-b", "main"]));
+            using (var emptyForm = new ManagerForm(unborn) { SuppressInitialRefresh = true }) { emptyForm.Show(); Wait(emptyForm.RefreshRepository(unborn)); emptyForm.Close(); }
+            Check(true, "첫 커밋이 없는 새 저장소도 정상 표시");
             form.Size = form.MinimumSize; Application.DoEvents(); using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size)); bitmap.Save(Path.Combine(root, "minimum-size.png")); }
             Check(true, "실제 Windows 폼 렌더링 및 최소 창 크기 검사"); form.Close();
             File.WriteAllText(Path.Combine(root, "results.json"), JsonSerializer.Serialize(new { Success = true, Checks = checks.Count, Actions = form.ActionNames.Count, Names = checks, Root = root }, GitService.Json)); return 0;

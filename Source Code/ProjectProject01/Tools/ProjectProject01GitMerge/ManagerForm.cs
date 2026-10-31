@@ -6,16 +6,16 @@ namespace ProjectDFSDGitManager;
 internal sealed class ManagerForm : Form
 {
     private readonly TextBox repository = new() { Dock = DockStyle.Fill };
-    private readonly Label location = new() { AutoSize = true };
+    private readonly Label location = new() { AutoSize = false, Dock = DockStyle.Fill, AutoEllipsis = true, MinimumSize = new Size(0, 38) };
     private readonly Label status = new() { Dock = DockStyle.Fill, Text = "저장소를 선택하세요.", AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
-    private readonly TabControl tabs = new() { Dock = DockStyle.Fill };
+    private readonly TabControl tabs = new() { Dock = DockStyle.Fill, Multiline = true };
     private readonly TextBox output = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
     private readonly ComboBox source = Combo(), target = Combo(), historyRef = Combo(), remote = Combo();
     private readonly DataGridView assets = Grid(), changes = Grid(), history = Grid(), branches = Grid(), stashes = Grid(), worktrees = Grid();
     private readonly TextBox commitMessage = new() { Multiline = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical };
     private readonly TextBox details = new() { Multiline = true, Dock = DockStyle.Fill, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
     private readonly TextBox assetReason = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true };
-    private readonly Label mergeSummary = new() { Dock = DockStyle.Fill, AutoEllipsis = true };
+    private readonly Label mergeSummary = new() { Dock = DockStyle.Fill, AutoEllipsis = true, MinimumSize = new Size(0, 38) };
     private readonly Label remoteDetails = new() { AutoSize = true, MaximumSize = new Size(1100, 0) };
     private readonly Button prepare;
     private readonly TextBox advanced = new() { Width = 740, PlaceholderText = "예: log --oneline --all --graph -30" };
@@ -28,28 +28,35 @@ internal sealed class ManagerForm : Form
     internal List<string> ActionNames { get; } = [];
     internal TabControl Pages => tabs;
     internal bool SuppressInitialRefresh { get; set; }
+    internal bool Busy => busy;
 
     public ManagerForm(string? initialRepository)
     {
         Text = "ProjectDFSD · Git 관리"; StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(1360, 900); MinimumSize = new Size(1080, 740); AutoScaleMode = AutoScaleMode.Dpi;
+        Size = new Size(1360, 900); MinimumSize = new Size(1080, 740); AutoScaleMode = AutoScaleMode.None;
         Font = new Font("맑은 고딕", 9.5f);
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(14) };
-        root.RowStyles.Add(new(SizeType.Absolute, 46)); root.RowStyles.Add(new(SizeType.Absolute, 30));
-        root.RowStyles.Add(new(SizeType.Percent, 100)); root.RowStyles.Add(new(SizeType.Absolute, 108)); root.RowStyles.Add(new(SizeType.Absolute, 32));
-        var top = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
-        top.ColumnStyles.Add(new(SizeType.Absolute, 68)); top.ColumnStyles.Add(new(SizeType.Percent, 100));
-        top.ColumnStyles.Add(new(SizeType.Absolute, 95)); top.ColumnStyles.Add(new(SizeType.Absolute, 110));
+        root.ColumnStyles.Add(new(SizeType.Percent, 100));
+        root.RowStyles.Add(new(SizeType.AutoSize)); root.RowStyles.Add(new(SizeType.AutoSize));
+        root.RowStyles.Add(new(SizeType.Percent, 100)); root.RowStyles.Add(new(SizeType.Absolute, 108)); root.RowStyles.Add(new(SizeType.AutoSize));
+        var top = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6 };
+        top.AutoSize = true; top.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        top.ColumnStyles.Add(new(SizeType.AutoSize)); top.ColumnStyles.Add(new(SizeType.Percent, 100));
+        top.ColumnStyles.Add(new(SizeType.AutoSize)); top.ColumnStyles.Add(new(SizeType.AutoSize));
+        top.ColumnStyles.Add(new(SizeType.AutoSize)); top.ColumnStyles.Add(new(SizeType.AutoSize));
         top.Controls.Add(new Label { Text = "저장소", AutoSize = true, Anchor = AnchorStyles.Left }); top.Controls.Add(repository);
         top.Controls.Add(Button("찾아보기", Browse)); top.Controls.Add(Button("새로고침", () => RefreshRepository(repository.Text)));
+        top.Controls.Add(Button("복제", CloneRepository)); top.Controls.Add(Button("새 저장소", InitRepository));
         root.Controls.Add(top, 0, 0); root.Controls.Add(location, 0, 1); root.Controls.Add(tabs, 0, 2);
 
         var merge = Page("에셋 보호 병합");
-        var mergeLayout = PageLayout(4); mergeLayout.RowStyles.Add(new(SizeType.Absolute, 76)); mergeLayout.RowStyles.Add(new(SizeType.Percent, 100));
-        mergeLayout.RowStyles.Add(new(SizeType.Absolute, 62)); mergeLayout.RowStyles.Add(new(SizeType.Absolute, 54));
+        var mergeLayout = PageLayout(5); mergeLayout.RowStyles.Add(new(SizeType.AutoSize)); mergeLayout.RowStyles.Add(new(SizeType.Percent, 100));
+        mergeLayout.RowStyles.Add(new(SizeType.Absolute, 62)); mergeLayout.RowStyles.Add(new(SizeType.AutoSize)); mergeLayout.RowStyles.Add(new(SizeType.AutoSize));
         var selectors = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 2 };
-        selectors.ColumnStyles.Add(new(SizeType.Percent, 50)); selectors.ColumnStyles.Add(new(SizeType.Absolute, 65));
-        selectors.ColumnStyles.Add(new(SizeType.Percent, 50)); selectors.ColumnStyles.Add(new(SizeType.Absolute, 120)); selectors.ColumnStyles.Add(new(SizeType.Absolute, 120));
+        selectors.AutoSize = true; selectors.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        selectors.RowStyles.Add(new(SizeType.AutoSize)); selectors.RowStyles.Add(new(SizeType.AutoSize));
+        selectors.ColumnStyles.Add(new(SizeType.Percent, 50)); selectors.ColumnStyles.Add(new(SizeType.AutoSize));
+        selectors.ColumnStyles.Add(new(SizeType.Percent, 50)); selectors.ColumnStyles.Add(new(SizeType.AutoSize)); selectors.ColumnStyles.Add(new(SizeType.AutoSize));
         selectors.Controls.Add(new Label { Text = "가져올 브랜치", AutoSize = true }, 0, 0);
         selectors.Controls.Add(new Label { Text = "병합 대상 브랜치", AutoSize = true }, 2, 0);
         source.Dock = target.Dock = DockStyle.Fill; selectors.Controls.Add(source, 0, 1); selectors.Controls.Add(target, 2, 1);
@@ -71,12 +78,11 @@ internal sealed class ManagerForm : Form
         var mergeActions = Flow(); prepare = Button("선택대로 병합 준비", Prepare); prepare.Enabled = false;
         mergeActions.Controls.Add(prepare); mergeActions.Controls.Add(Button("검토 폴더 열기", () => { OpenPath(previewPath); return Task.CompletedTask; }));
         mergeActions.Controls.Add(Button("검토 폴더를 관리 대상으로 열기", () => RefreshRepository(previewPath ?? throw new InvalidOperationException("먼저 병합을 준비하세요."))));
-        mergeSummary.Width = 560; mergeSummary.Dock = DockStyle.None; mergeSummary.Height = 42; mergeActions.Controls.Add(mergeSummary);
-        mergeLayout.Controls.Add(mergeActions, 0, 3); merge.Controls.Add(mergeLayout);
+        mergeLayout.Controls.Add(mergeActions, 0, 3); mergeLayout.Controls.Add(mergeSummary, 0, 4); merge.Controls.Add(mergeLayout);
         source.SelectedIndexChanged += (_, _) => InvalidatePlan(); target.SelectedIndexChanged += (_, _) => InvalidatePlan();
 
         var changePage = Page("변경 · 커밋"); var changeLayout = PageLayout(3);
-        changeLayout.RowStyles.Add(new(SizeType.Percent, 100)); changeLayout.RowStyles.Add(new(SizeType.Absolute, 50)); changeLayout.RowStyles.Add(new(SizeType.Absolute, 140));
+        changeLayout.RowStyles.Add(new(SizeType.Percent, 100)); changeLayout.RowStyles.Add(new(SizeType.AutoSize)); changeLayout.RowStyles.Add(new(SizeType.Absolute, 140));
         changes.Columns.Add("Index", "스테이지"); changes.Columns[0].FillWeight = 10;
         changes.Columns.Add("Work", "작업 폴더"); changes.Columns[1].FillWeight = 10; changes.Columns.Add("Path", "파일 경로"); changes.Columns[2].FillWeight = 80;
         changeLayout.Controls.Add(changes, 0, 0);
@@ -88,7 +94,7 @@ internal sealed class ManagerForm : Form
         fileActions.Controls.Add(Button("선택 작업 변경 버리기", Discard));
         changeLayout.Controls.Add(fileActions, 0, 1);
         var commitLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        commitLayout.ColumnStyles.Add(new(SizeType.Percent, 100)); commitLayout.ColumnStyles.Add(new(SizeType.Absolute, 260));
+        commitLayout.ColumnStyles.Add(new(SizeType.Percent, 100)); commitLayout.ColumnStyles.Add(new(SizeType.AutoSize));
         commitMessage.PlaceholderText = "커밋 메시지"; commitLayout.Controls.Add(commitMessage);
         var commitActions = Flow(); commitActions.FlowDirection = FlowDirection.TopDown; commitActions.Controls.Add(amend);
         commitActions.Controls.Add(Button("커밋 만들기 / 수정", Commit));
@@ -96,20 +102,21 @@ internal sealed class ManagerForm : Form
         commitLayout.Controls.Add(commitActions); changeLayout.Controls.Add(commitLayout, 0, 2); changePage.Controls.Add(changeLayout);
 
         var historyPage = Page("커밋 이력"); var historyLayout = PageLayout(3);
-        historyLayout.RowStyles.Add(new(SizeType.Absolute, 50)); historyLayout.RowStyles.Add(new(SizeType.Percent, 50)); historyLayout.RowStyles.Add(new(SizeType.Percent, 50));
+        historyLayout.RowStyles.Add(new(SizeType.AutoSize)); historyLayout.RowStyles.Add(new(SizeType.Percent, 50)); historyLayout.RowStyles.Add(new(SizeType.Percent, 50));
         var historyActions = Flow(); historyRef.Width = 245; historyActions.Controls.Add(historyRef);
         historyActions.Controls.Add(Button("이력 보기", LoadHistory)); historyActions.Controls.Add(Button("선택 커밋 revert", Revert));
         historyActions.Controls.Add(Button("cherry-pick", CherryPick)); historyActions.Controls.Add(Button("이 커밋으로 reset", Reset));
         historyActions.Controls.Add(Button("커밋 메시지 수정", Reword)); historyActions.Controls.Add(Button("커밋 삭제", DropCommit));
-        historyActions.Controls.Add(Button("태그 만들기", CreateTag));
+        historyActions.Controls.Add(Button("태그 만들기", CreateTag)); historyActions.Controls.Add(Button("그래프", () => ReadCommand(["log", "--oneline", "--graph", "--all", "--decorate", "-80"])));
+        historyActions.Controls.Add(Button("커밋 변경 비교", async () => ShowText("커밋 변경", (await Service.Git("show", "--no-ext-diff", SelectedCommit().Hash, "--")).Output)));
         historyLayout.Controls.Add(historyActions, 0, 0);
         history.Columns.Add("Hash", "커밋"); history.Columns[0].FillWeight = 12; history.Columns.Add("Date", "일시"); history.Columns[1].FillWeight = 23;
         history.Columns.Add("Author", "작성자"); history.Columns[2].FillWeight = 15; history.Columns.Add("Subject", "내용"); history.Columns[3].FillWeight = 50;
-        history.SelectionChanged += async (_, _) => { if (!busy && history.CurrentRow?.Tag is CommitInfo selected) await Guard(() => ShowCommit(selected.Hash)); };
+        history.SelectionChanged += async (_, _) => { if (!busy && !loading && history.CurrentRow?.Tag is CommitInfo selected) await ReadSelectedCommit(selected.Hash); };
         historyLayout.Controls.Add(history, 0, 1); historyLayout.Controls.Add(details, 0, 2); historyPage.Controls.Add(historyLayout);
 
         var branchPage = Page("브랜치"); var branchLayout = PageLayout(2);
-        branchLayout.RowStyles.Add(new(SizeType.Absolute, 92)); branchLayout.RowStyles.Add(new(SizeType.Percent, 100));
+        branchLayout.RowStyles.Add(new(SizeType.AutoSize)); branchLayout.RowStyles.Add(new(SizeType.Percent, 100));
         var branchActions = Flow();
         branchActions.Controls.Add(Button("선택 체크아웃", Checkout)); branchActions.Controls.Add(Button("새 브랜치", CreateBranch));
         branchActions.Controls.Add(Button("이름 변경", RenameBranch)); branchActions.Controls.Add(Button("브랜치 삭제", DeleteBranch));
@@ -125,7 +132,7 @@ internal sealed class ManagerForm : Form
         branchLayout.Controls.Add(branches, 0, 1); branchPage.Controls.Add(branchLayout);
 
         var stashPage = Page("스태시"); var stashLayout = PageLayout(2);
-        stashLayout.RowStyles.Add(new(SizeType.Absolute, 50)); stashLayout.RowStyles.Add(new(SizeType.Percent, 100));
+        stashLayout.RowStyles.Add(new(SizeType.AutoSize)); stashLayout.RowStyles.Add(new(SizeType.Percent, 100));
         var stashActions = Flow(); stashActions.Controls.Add(Button("변경 임시 보관", StashSave));
         stashActions.Controls.Add(Button("선택 내용 보기", StashShow)); stashActions.Controls.Add(Button("적용 · 보관 유지", () => StashAction("apply")));
         stashActions.Controls.Add(Button("적용 · 보관 제거", () => StashAction("pop"))); stashActions.Controls.Add(Button("선택 보관 삭제", () => StashAction("drop")));
@@ -145,9 +152,10 @@ internal sealed class ManagerForm : Form
         lfsActions.Controls.Add(Button("LFS pull", () => Execute("현재 체크아웃의 LFS 객체를 내려받아 작업 파일에 반영합니다.", ["lfs", "pull"])));
         lfsActions.Controls.Add(Button("LFS checkout", () => Execute("로컬에 있는 LFS 객체를 작업 파일로 복원합니다.", ["lfs", "checkout"])));
         lfsActions.Controls.Add(Button("객체 무결성 검사", () => ReadCommand(["fsck", "--no-reflogs"]))); remoteLayout.Controls.Add(lfsActions); remotePage.Controls.Add(remoteLayout);
+        remoteLayout.SizeChanged += (_, _) => { foreach (Control child in remoteLayout.Controls) if (child is FlowLayoutPanel) child.Width = Math.Max(600, remoteLayout.ClientSize.Width - 28); };
 
         var treePage = Page("작업 폴더 · 복구"); var treeLayout = PageLayout(2);
-        treeLayout.RowStyles.Add(new(SizeType.Absolute, 92)); treeLayout.RowStyles.Add(new(SizeType.Percent, 100));
+        treeLayout.RowStyles.Add(new(SizeType.AutoSize)); treeLayout.RowStyles.Add(new(SizeType.Percent, 100));
         var treeActions = Flow(); treeActions.Controls.Add(Button("worktree 추가", AddWorktree));
         treeActions.Controls.Add(Button("선택 폴더 열기", () => { OpenPath(SelectedWorktree().Path); return Task.CompletedTask; }));
         treeActions.Controls.Add(Button("선택 폴더 관리", () => RefreshRepository(SelectedWorktree().Path)));
@@ -162,7 +170,7 @@ internal sealed class ManagerForm : Form
         advancedLayout.Controls.Add(new Label { Text = "git", Width = 28, TextAlign = ContentAlignment.MiddleLeft }); advancedLayout.Controls.Add(advanced);
         advancedLayout.Controls.Add(Button("명령 실행", Advanced)); advancedPage.Controls.Add(advancedLayout);
         root.Controls.Add(output, 0, 3); var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        footer.ColumnStyles.Add(new(SizeType.Percent, 100)); footer.ColumnStyles.Add(new(SizeType.Absolute, 120)); footer.Controls.Add(status);
+        footer.ColumnStyles.Add(new(SizeType.Percent, 100)); footer.ColumnStyles.Add(new(SizeType.AutoSize)); footer.Controls.Add(status);
         footer.Controls.Add(Button("로그 복사", () => { if (output.TextLength > 0) Clipboard.SetText(output.Text); return Task.CompletedTask; })); root.Controls.Add(footer, 0, 4);
         Controls.Add(root); ApplyTheme(this);
         FormClosing += (_, e) => { if (busy) { e.Cancel = true; status.Text = "진행 중인 작업이 끝난 뒤 창을 닫을 수 있습니다."; } };
@@ -174,9 +182,13 @@ internal sealed class ManagerForm : Form
     private static ComboBox Combo() => new() { DropDownStyle = ComboBoxStyle.DropDownList, IntegralHeight = false, DropDownHeight = 360 };
     private static DataGridView Grid() => new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
         RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        MultiSelect = false, BackgroundColor = Color.FromArgb(29, 34, 40), BorderStyle = BorderStyle.None, RowTemplate = { Height = 30 } };
-    private static FlowLayoutPanel Flow() => new() { Dock = DockStyle.Fill, AutoSize = false, Height = 50, Width = 1170, WrapContents = true, Padding = new Padding(0, 5, 0, 0) };
-    private static TableLayoutPanel PageLayout(int rows) => new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = rows, Padding = new Padding(8) };
+        MultiSelect = false, BackgroundColor = Color.FromArgb(29, 34, 40), BorderStyle = BorderStyle.None, ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize, RowTemplate = { Height = 40 } };
+    private static FlowLayoutPanel Flow() => new() { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Padding = new Padding(0, 5, 0, 0) };
+    private static TableLayoutPanel PageLayout(int rows)
+    {
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = rows, Padding = new Padding(8) };
+        panel.ColumnStyles.Add(new(SizeType.Percent, 100)); return panel;
+    }
     private TabPage Page(string name) { var page = new TabPage(name); tabs.TabPages.Add(page); return page; }
     private Button Button(string text, Func<Task> action)
     {
@@ -218,12 +230,32 @@ internal sealed class ManagerForm : Form
         using var folder = new FolderBrowserDialog { Description = "Git 저장소 폴더 선택", UseDescriptionForTitle = true };
         if (folder.ShowDialog(this) == DialogResult.OK) await RefreshRepository(folder.SelectedPath);
     }
+    private async Task CloneRepository()
+    {
+        var answer = Ask("저장소 복제", ("원격 주소 / 원본 경로", ""), ("복제할 새 폴더 전체 경로", Path.Combine(Directory.GetParent(git?.Repository ?? AppContext.BaseDirectory)!.FullName, "GitRepository")));
+        if (answer == null) return;
+        if (string.IsNullOrWhiteSpace(answer[0])) throw new InvalidOperationException("원본 주소를 입력하세요.");
+        var path = Path.GetFullPath(answer[1]); var parent = Directory.GetParent(path)?.FullName ?? throw new InvalidOperationException("대상 폴더를 확인하세요.");
+        if (Directory.Exists(path) || !Directory.Exists(parent)) throw new InvalidOperationException("기존 상위 폴더 안의 새 폴더 경로를 지정하세요.");
+        if (!Confirm($"원본: {answer[0]}\n새 폴더: {path}\n\n이 위치에 저장소를 복제합니다.")) return;
+        Append((await GitService.RunProcess("git", parent, ["clone", "--", answer[0], path], timeoutSeconds: 900)).Display);
+        await RefreshRepository(path);
+    }
+    private async Task InitRepository()
+    {
+        var answer = Ask("새 Git 저장소", ("폴더 전체 경로", ""), ("최초 브랜치 이름", "main")); if (answer == null) return;
+        var path = Path.GetFullPath(answer[0]); var branch = ValidBranch(answer[1]);
+        if (Directory.Exists(Path.Combine(path, ".git")) || File.Exists(Path.Combine(path, ".git"))) throw new InvalidOperationException("이미 Git 저장소인 폴더입니다.");
+        if (!Confirm($"폴더: {path}\n최초 브랜치: {branch}\n\nGit 저장소를 초기화합니다. 기존 파일은 유지됩니다.")) return;
+        Directory.CreateDirectory(path); Append((await GitService.RunProcess("git", path, ["init", "-b", branch])).Display); await RefreshRepository(path);
+    }
     internal async Task RefreshRepository(string directory)
     {
         if (!Directory.Exists(directory)) throw new DirectoryNotFoundException("저장소 폴더를 확인하세요.");
         var root = await new GitService(directory).ResolveRoot(); var changed = git?.Repository != root;
         git = new GitService(root); repository.Text = root;
-        if (changed) { planFile = previewPath = null; InvalidatePlan(); }
+        if (changed) previewPath = null;
+        InvalidatePlan();
         branchData = await Service.Branches(); loading = true;
         try
         {
@@ -242,7 +274,8 @@ internal sealed class ManagerForm : Form
         {
             var fields = line.TrimEnd('\r').Split('\t'); if (fields.Length < 4) continue;
             var item = branchData.FirstOrDefault(x => GitService.Ref(x) == fields[0]); if (item == null) continue;
-            branches.Rows[branches.Rows.Add(item.Name, item.Current ? "현재" : item.Remote ? "원격" : "로컬", fields[1], fields[2], fields[3])].Tag = item;
+            var date = DateTimeOffset.TryParse(fields[2], out var at) ? at.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : fields[2];
+            branches.Rows[branches.Rows.Add(item.Name, item.Current ? "현재" : item.Remote ? "원격" : "로컬", fields[1], date, fields[3])].Tag = item;
         }
         stashes.Rows.Clear(); var stashText = (await Service.Git("stash", "list", "--format=%gd%x09%s")).Output;
         foreach (var line in stashText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) { var p = line.TrimEnd('\r').Split('\t', 2); stashes.Rows.Add(p[0], p.Length > 1 ? p[1] : ""); }
@@ -251,6 +284,7 @@ internal sealed class ManagerForm : Form
         foreach (var name in (await Service.Git("remote")).Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)) remote.Items.Add(name.Trim());
         remote.SelectedIndex = remote.Items.Contains(oldRemote ?? "origin") ? remote.Items.IndexOf(oldRemote ?? "origin") : remote.Items.Count > 0 ? 0 : -1;
         remoteDetails.Text = (await Service.Git("remote", "-v")).Output.Trim();
+        await LoadHistory();
         location.Text = $"현재 작업 브랜치: {await Service.CurrentBranch()}    ·    {root}";
         var operation = await PendingOperation(); status.Text = operation.Length > 0 ? $"{operation} 진행 중 · 충돌 해결 후 계속 / 중단" : $"파일 {changes.Rows.Count}개 변경 · 로컬 브랜치 {branchData.Count(x => !x.Remote)}개";
     }
@@ -274,6 +308,7 @@ internal sealed class ManagerForm : Form
         if (GitService.Ref(a) == GitService.Ref(b)) throw new InvalidOperationException("서로 다른 브랜치를 선택하세요.");
         var result = await Service.Review(GitService.Ref(a), b.Name); planFile = result.PlanFile; plan = GitService.ReadPlan(planFile);
         assets.Rows.Clear(); foreach (var item in plan.Assets) assets.Rows[assets.Rows.Add(item.Path, KindName(item.Kind), item.Choice == "Source" ? "가져올 브랜치" : "대상 브랜치", "자동 판정")].Tag = item;
+        assetReason.Text = assets.CurrentRow?.Tag is AssetDecision selected ? selected.Reason : "서로 다른 에셋이 없습니다.";
         prepare.Enabled = true; UpdateMergeSummary(); status.Text = $"비교 완료 · {a.Name} → {b.Name}"; Append($"에셋 비교: {a.Name} → {b.Name}\r\n{planFile}");
     }
     internal async Task CompareForTest(string from, string to)
@@ -281,6 +316,12 @@ internal sealed class ManagerForm : Form
         source.SelectedItem = branchData.Single(x => x.Name == from && !x.Remote);
         target.SelectedItem = branchData.Single(x => x.Name == to && !x.Remote);
         await Compare();
+    }
+    internal Task CheckoutForTest(string name)
+    {
+        foreach (DataGridViewRow row in branches.Rows) if (row.Tag is BranchInfo branch && branch.Name == name && !branch.Remote)
+        { branches.CurrentCell = row.Cells[0]; return Checkout(); }
+        throw new InvalidOperationException("시험 브랜치를 찾지 못했습니다.");
     }
     private static string KindName(string kind) => kind switch { "NewAsset" => "새 에셋", "NewRevision" => "이후 버전", "OlderRevision" => "이전 버전", "TargetOnly" => "대상 전용", "Review" => "검토 필요", _ => "대상 유지" };
     private void UpdateMergeSummary()
@@ -326,7 +367,8 @@ internal sealed class ManagerForm : Form
     private async Task Unstage()
     {
         var paths = SelectedChanges().SelectMany(x => x.Original == null ? new[] { x.Path } : new[] { x.Path, x.Original }).Distinct();
-        await Execute("선택 파일의 스테이지만 취소합니다. 작업 파일은 유지됩니다.", new[] { "--literal-pathspecs", "restore", "--staged", "--" }.Concat(paths).ToArray(), confirmation: false);
+        var hasHead = (await Service.Git(new[] { "rev-parse", "--verify", "HEAD" }, false)).Code == 0;
+        await Execute("선택 파일의 스테이지만 취소합니다. 작업 파일은 유지됩니다.", (hasHead ? new[] { "--literal-pathspecs", "restore", "--staged", "--" } : new[] { "--literal-pathspecs", "rm", "--cached", "--ignore-unmatch", "--" }).Concat(paths).ToArray(), confirmation: false);
     }
     private async Task Discard()
     {
@@ -350,10 +392,25 @@ internal sealed class ManagerForm : Form
     private async Task LoadHistory()
     {
         var reference = historyRef.SelectedItem is BranchInfo branch ? GitService.Ref(branch) : "HEAD";
-        history.Rows.Clear(); foreach (var item in await Service.History(reference)) history.Rows[history.Rows.Add(item.Hash[..10], item.Date, item.Author, item.Subject)].Tag = item;
+        history.Rows.Clear();
+        if ((await Service.Git(new[] { "rev-parse", "--verify", "HEAD" }, false)).Code != 0) { details.Text = "아직 커밋이 없습니다."; return; }
+        var wasLoading = loading; loading = true;
+        try { foreach (var item in await Service.History(reference)) history.Rows[history.Rows.Add(item.Hash[..10], item.Date, item.Author, item.Subject)].Tag = item; }
+        finally { loading = wasLoading; }
         if (history.CurrentRow?.Tag is CommitInfo selected) await ShowCommit(selected.Hash); status.Text = "최근 커밋 100개까지 표시";
     }
     private async Task ShowCommit(string hash) => details.Text = (await Service.Git("show", "--no-ext-diff", "--stat", "--format=fuller", hash, "--")).Output.Replace("\n", "\r\n");
+    private async Task ReadSelectedCommit(string hash)
+    {
+        var service = git; if (service == null) return;
+        try
+        {
+            var text = (await service.Git("show", "--no-ext-diff", "--stat", "--format=fuller", hash, "--")).Output;
+            if (!IsDisposed && ReferenceEquals(service, git) && history.CurrentRow?.Tag is CommitInfo selected && selected.Hash == hash)
+                details.Text = text.Replace("\n", "\r\n");
+        }
+        catch (Exception error) { if (!IsDisposed && ReferenceEquals(service, git)) { status.Text = "커밋 상세 조회 실패"; Append(error.Message); } }
+    }
     private Task CherryPick() => Execute("선택한 커밋 변경을 현재 브랜치에 적용합니다.", ["cherry-pick", SelectedCommit().Hash]);
     private Task Revert() => Execute("선택한 커밋을 취소하는 새 커밋을 현재 브랜치에 추가합니다.", ["revert", "--no-edit", SelectedCommit().Hash]);
     private async Task Reset()
@@ -382,10 +439,13 @@ internal sealed class ManagerForm : Form
         await Execute($"커밋 {selected.Hash[..10]} ({selected.Subject})을 이력에서 빼고 이후 커밋을 다시 적용합니다.\n공개한 브랜치 이력이 변경됩니다. 다른 사람이 사용하는 이력은 revert를 권장합니다.", ["rebase", "--onto", parents[1], selected.Hash], true);
     }
     private BranchInfo SelectedBranch() => branches.CurrentRow?.Tag as BranchInfo ?? throw new InvalidOperationException("브랜치를 선택하세요.");
-    private Task Checkout()
+    private async Task Checkout()
     {
-        var branch = SelectedBranch(); if (!branch.Remote) return Execute("선택한 로컬 브랜치로 전환합니다. 사용 중인 에디터·테스트가 있으면 해당 파일 전환이 실패할 수 있습니다.", ["switch", branch.Name]);
-        return TrackRemote(branch);
+        var branch = SelectedBranch();
+        if (branch.Current) { status.Text = "이미 체크아웃된 브랜치입니다."; return; }
+        if ((await Service.Changes()).Count > 0) throw new InvalidOperationException("미커밋 변경이 다른 브랜치로 따라가지 않도록 전환을 중단했습니다. 변경을 커밋하거나 스태시에 보관한 뒤 전환하세요.");
+        if (!branch.Remote) await Execute("선택한 로컬 브랜치로 전환합니다. 사용 중인 에디터·테스트가 있으면 해당 파일 전환이 실패할 수 있습니다.", ["switch", branch.Name]);
+        else await TrackRemote(branch);
     }
     private async Task TrackRemote(BranchInfo branch)
     {
@@ -450,8 +510,11 @@ internal sealed class ManagerForm : Form
     private Task RemoveRemote() => Execute("원격 설정과 원격 추적 참조를 제거합니다. 서버의 저장소는 삭제하지 않습니다.", ["remote", "remove", SelectedRemote()], true);
     private async Task DeleteRemoteBranch()
     {
-        var branch = branches.CurrentRow?.Tag as BranchInfo; var defaultName = branch?.Remote == true ? branch.Name[(branch.Name.IndexOf('/') + 1)..] : "";
-        var answer = Ask("원격 브랜치 삭제", ("원격 이름", remote.SelectedItem as string ?? "origin"), ("삭제할 원격 브랜치", defaultName)); if (answer == null) return;
+        var branch = branches.CurrentRow?.Tag as BranchInfo;
+        var remoteName = branch?.Remote == true ? remote.Items.Cast<string>().Where(x => branch.Name.StartsWith(x + "/", StringComparison.Ordinal)).OrderByDescending(x => x.Length).FirstOrDefault() : null;
+        remoteName ??= remote.SelectedItem as string ?? "origin";
+        var defaultName = branch?.Remote == true && branch.Name.StartsWith(remoteName + "/", StringComparison.Ordinal) ? branch.Name[(remoteName.Length + 1)..] : "";
+        var answer = Ask("원격 브랜치 삭제", ("원격 이름", remoteName), ("삭제할 원격 브랜치", defaultName)); if (answer == null) return;
         await Execute("서버의 원격 브랜치를 삭제합니다.", ["push", ValidBranch(answer[0]), "--delete", ValidBranch(answer[1])], true);
     }
     private async Task CreateTag() { var commit = SelectedCommit(); var answer = Ask("태그 만들기", ("태그 이름", ""), ("태그 메시지", commit.Subject)); if (answer == null) return; await Execute("선택 커밋에 로컬 주석 태그를 만듭니다.", ["tag", "-a", ValidBranch(answer[0]), commit.Hash, "-m", answer[1]]); }
