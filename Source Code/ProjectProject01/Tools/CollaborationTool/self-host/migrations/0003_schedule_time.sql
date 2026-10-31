@@ -1,0 +1,2 @@
+ALTER TABLE repeat_rules ADD COLUMN local_time TEXT NOT NULL DEFAULT '09:00';
+ALTER TABLE user_preferences ADD COLUMN alert_interval INTEGER NOT NULL DEFAULT 1;

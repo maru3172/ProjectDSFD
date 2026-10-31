@@ -9,6 +9,7 @@
 #include "ProjectProject01MatchTimeline.h"
 #include "ProjectProject01VoiceAudibility.h"
 #include "ProjectLoadingScreenSubsystem.h"
+#include "ProjectAffixes.h"
 #include "MultiplayTestPlayerController.generated.h"
 
 struct FProjectProject01ValidatedJoinClaim;
@@ -52,6 +53,16 @@ struct FMultiplaySurvivorSpectatorView
 	UPROPERTY() TObjectPtr<class APlayerCharacter> Target;
 	UPROPERTY() bool bFadeTransition = false;
 	UPROPERTY() uint32 RequestId = 0;
+};
+
+/** The match affixes (ProjectAffixes.h), replicated as one unit so mode and ids never arrive apart. */
+USTRUCT()
+struct FMultiplayReplicatedAffixes
+{
+	GENERATED_BODY()
+	UPROPERTY() uint8 Mode = 0;
+	UPROPERTY() TArray<FString> Ids;
+	UPROPERTY() FString WeekName;
 };
 
 /** Final match-only statistics for the separately admitted observer; never a rating submission. */
@@ -134,6 +145,15 @@ public:
     friend class UProjectMatchBots;
     friend class AProjectOpenObserverController;
     void AdjustObserverViewStream(int32 Delta);
+    /** Server: the match affixes this player sees (loading screen, notices). */
+    void SetMatchAffixes(const FProjectMatchAffixes& Affixes);
+    FProjectMatchAffixes GetMatchAffixes()const;
+    /** Affix event shown to this player (C-group notices such as the C05 rush). */
+    UFUNCTION(Client,Reliable) void ClientShowAffixNotice(const FString& Message,float HoldSeconds);
+    /** A short light at a place (B02 dust, B04 exit sign, B05 falling dust). Shadowed, so walls hide it. */
+    UFUNCTION(Client,Unreliable) void ClientAffixPulse(FVector_NetQuantize Location,FColor Color,float Seconds,float Radius);
+    /** C10: footsteps sound muffled for this long. */
+    UFUNCTION(Client,Reliable) void ClientSetAffixMuffle(float Seconds);
     FRotator GetObserverViewRotation()const{return ObserverViewRotation;}
     UFUNCTION(Client,Reliable) void ClientObserverViewStream(bool Enabled);
     UFUNCTION(Server,Unreliable) void ServerObserverViewRotation(FRotator Rotation);
@@ -361,6 +381,17 @@ private:
 
 	UFUNCTION()
 	void OnRep_ViewedMannequin();
+
+	UPROPERTY(ReplicatedUsing = OnRep_MatchAffixes)
+	FMultiplayReplicatedAffixes ReplicatedAffixes;
+	// Local affix presentation: place lights and C03 afterimages, kept in a small pool.
+	struct FAffixLight { TWeakObjectPtr<class UPointLightComponent> Light; double Until = 0; float Peak = 0; };
+	TArray<FAffixLight> AffixLights;
+	double AffixTrailAt = 0;
+	void AddAffixLight(const FVector& Location, const FLinearColor& Color, float Seconds, float Radius, float Intensity, bool bShadows);
+	void TickAffixPresentation();
+	UFUNCTION()
+	void OnRep_MatchAffixes();
 
 	void ApplyViewedMannequinCamera(class AMannequinAICharacter* Mannequin);
 	bool AllowServerRequest(uint8 RequestType, int32 MaximumCalls, float WindowSeconds);

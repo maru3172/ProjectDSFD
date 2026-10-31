@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "ProjectCustomMatchRules.h"
+#include "ProjectAffixes.h"
 #include "ProjectProject01LobbySubsystem.generated.h"
 
 UENUM(BlueprintType)
@@ -218,6 +219,7 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 {
 	GENERATED_BODY()
     FProjectCustomMatchRules CustomRules;
+    FProjectMatchAffixes Affixes; // Bot match affixes (ProjectAffixes.h).
 	UPROPERTY(BlueprintReadOnly) FString MatchId;
     UPROPERTY(BlueprintReadOnly) bool bRandomMatch=false;
     UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;
@@ -317,6 +319,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void RefreshRooms();
+	/** This week's affix set (name + three ids), refreshed with the room list. Empty until the first refresh. */
+	const FProjectMatchAffixes& GetWeeklyAffixes() const { return WeeklyAffixes; }
     void JoinMatchmaking();
     void CreateMatchParty();
     void PollMatchmaking();
@@ -332,7 +336,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void CreateRoom(const FString& RoomName, bool bIsPublic, const FString& Password);
-    void CreateBotMatch(const FString& Role,int32 Difficulty);
+    void CreateBotMatch(const FString& Role,int32 Difficulty,EProjectAffixMode AffixMode=EProjectAffixMode::None,const TArray<FString>& Affixes={});
     void EditRoomBot(const FString& Action,const FString& BotId,int32 Difficulty);
     void EditRoomParticipant(const FString& Action,const FString& UserId=FString());
 
@@ -493,6 +497,7 @@ private:
 
 	UPROPERTY(Transient)
 	FProjectProject01RoomState CurrentRoom;
+	FProjectMatchAffixes WeeklyAffixes;
 
 	UPROPERTY(Transient)
 	TArray<FProjectProject01LeaderboardEntry> LeaderboardEntries;

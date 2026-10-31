@@ -3,6 +3,7 @@
 #include "HAL/CriticalSection.h"
 #include "Misc/ScopeLock.h"
 #include "ProjectLoadingScreenSubsystem.h"
+#include "ProjectAffixes.h"
 
 /** Slate/MoviePlayer may read this on their loading thread. Never stores UObjects. */
 struct FProjectLoadingScreenState
@@ -19,6 +20,10 @@ struct FProjectLoadingScreenState
 	mutable FCriticalSection Mutex;
 	FSnapshot Data;
 	FSnapshot Read() const {FScopeLock Lock(&Mutex);return Data;}
+	// Kept across Begin(): the lobby sets it before loading starts, the match controller confirms it after.
+	FProjectMatchAffixes Affixes;
+	void SetAffixes(const FProjectMatchAffixes& Value){FScopeLock Lock(&Mutex);Affixes=Value;}
+	FProjectMatchAffixes ReadAffixes() const {FScopeLock Lock(&Mutex);return Affixes;}
 	void Begin(bool Multiplayer,double Now)
 	{FScopeLock Lock(&Mutex);Data={};Data.Active=true;Data.Multiplayer=Multiplayer;Data.Released=!Multiplayer;Data.Expected=Multiplayer?3:1;Data.Started=Now;}
 	void Advance(uint8 Progress,const FString& Stage)

@@ -99,6 +99,12 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
             // Solo stand-in: bot 3 is the helper partner (named so the bot code can tell), bot 2 plays the human.
             for(int32 I=0;I<3;++I)Specs.Add({FGuid::NewGuid().ToString(),I==2&&ProjectBots::HumanTeamOverride()?FString(TEXT("SimHelper")):FString::Printf(TEXT("봇 %d"),I+1),I==0?TEXT("Mannequin"):TEXT("Survivor"),I==0?Level:SurvivorLevel});
             FString Error;if(!Mode->MatchBots->AcceptRoster(Room,State->Match,Specs,Error)){AddError(Error);End();return true;}
+            // -BotSimAffixes=A02,B09,C05: run the match with these affixes (custom affix mode).
+            if(FString List;FParse::Value(FCommandLine::Get(),TEXT("BotSimAffixes="),List,false)&&!List.IsEmpty())
+            {
+                FProjectMatchAffixes Affixes;Affixes.Mode=EProjectAffixMode::Custom;List.ParseIntoArray(Affixes.Ids,TEXT(","));
+                if(!Mode->AcceptMatchAffixes(State->Match,Affixes,Error)){AddError(Error);End();return true;}
+            }
             State->Initialized=true;return false;
         }
         const auto Phase=Mode->AuthoritativeMatchPhase;

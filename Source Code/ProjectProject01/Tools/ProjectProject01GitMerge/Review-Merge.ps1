@@ -119,7 +119,8 @@ foreach($selected in $selections.Keys){
     if($chosen -and $chosen.Mode -eq '120000'){throw '심볼릭 링크 에셋은 선택할 수 없습니다.'}
     $entry.choice=$selections[$selected];$entry.reviewRequired=$false;$entry.explicitSelection=$true;$entry.reason='사용자가 사용할 에셋 버전을 명시적으로 선택했습니다.'
 }
-if(-not $ReportRoot){$ReportRoot=Join-Path $PSScriptRoot '../../Saved/GitMergeReviews'}
+# Reports go to the project's Saved folder when this tool sits in <project>/Tools; anywhere else, inside .git.
+if(-not $ReportRoot){$saved=Join-Path $PSScriptRoot '../../Saved';$ReportRoot=if(Test-Path -LiteralPath $saved){Join-Path $saved 'GitMergeReviews'}else{Join-Path $script:Repo '.git/git-manager/GitMergeReviews'}}
 $ReportRoot=[IO.Path]::GetFullPath($ReportRoot)
 $id=(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
 [IO.Directory]::CreateDirectory($ReportRoot)|Out-Null

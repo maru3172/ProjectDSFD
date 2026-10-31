@@ -77,6 +77,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Multiplayer|Mannequin")
 	EMultiplayMannequinCommand GetMultiplayCommand() const { return MultiplayCommand; }
 
+	/** Affixes (ProjectAffixRuntime): one combined speed scale, a coloured glow cue, and A02 heat (0..1). Server sets them. */
+	void SetAffixSpeedScale(float Scale);
+	float GetAffixSpeedScale() const { return AffixSpeedScale; }
+	float GetBaseWalkSpeed() const { return MannequinWalkSpeed; }
+	void SetAffixCue(const FLinearColor& Color, float Strength);
+	void SetAffixHeat(float Heat) { AffixHeat = FMath::Clamp(Heat, 0.0f, 1.0f); }
+	float GetAffixHeat() const { return AffixHeat; }
+	/** A08: a floor beam the length of this body's detection reach, pointing where it faces. */
+	void SetAffixBeam(bool bOn, float Radius);
+
 	/** 마네킹 플레이어 HUD에 표시할 서버 권한 현재 행동입니다. */
 	void SetMultiplayActivity(EMultiplayMannequinActivity NewActivity);
 
@@ -135,6 +145,19 @@ private:
 		Category = "Multiplayer|Mannequin", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float MannequinWalkSpeed = 600.0f;
 
+	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed)
+	float AffixSpeedScale = 1.0f;
+	// RGB colour, A = strength. Zero alpha: no cue.
+	UPROPERTY(ReplicatedUsing = OnRep_AffixCue)
+	FColor AffixCue = FColor(0, 0, 0, 0);
+	UPROPERTY(Transient)
+	TObjectPtr<class UPointLightComponent> AffixCueLight;
+	float AffixHeat = 0.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_AffixBeam)
+	float AffixBeamRadius = 0.0f;
+	UPROPERTY(Transient)
+	TObjectPtr<class USpotLightComponent> AffixBeamLight;
+
 	UPROPERTY(ReplicatedUsing=OnRep_ManualControlEnabled, VisibleInstanceOnly, Category = "Multiplayer|Mannequin")
 	bool bManualControlEnabled = false;
 	UFUNCTION()
@@ -188,6 +211,11 @@ private:
 
 	UFUNCTION()
 	void OnRep_MannequinWalkSpeed();
+
+	UFUNCTION()
+	void OnRep_AffixCue();
+	UFUNCTION()
+	void OnRep_AffixBeam();
 
 	UFUNCTION()
 	void OnRep_ControlSlot();

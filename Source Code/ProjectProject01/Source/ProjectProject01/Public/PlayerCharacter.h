@@ -73,6 +73,15 @@ public:
 	/** Only the active local survivor hears their own ambient breathing, never title/results/spectating. */
 	bool CanPlayTensionBreathing() const;
 	bool IsSprintingForBreathing() const { return bIsSprinting && GetVelocity().SizeSquared2D() > 400.0f; }
+	/** Affixes (ProjectAffixRuntime): scales the multiplayer sprint stamina cost. Server only. */
+	void SetAffixStaminaDrainScale(float Scale) { AffixStaminaDrainScale = FMath::Clamp(Scale, 0.0f, 2.0f); }
+	void SetAffixStaminaRecoveryScale(float Scale) { AffixStaminaRecoveryScale = FMath::Clamp(Scale, 0.0f, 3.0f); }
+	/** Walk and sprint speed scale (replicated so the owner predicts it). */
+	void SetAffixSpeedScale(float Scale);
+	/** C04: sprinting is not possible while set. */
+	void SetAffixSprintBlocked(bool bBlocked);
+	/** A glow on this survivor (A10 breath, B03 alarm, B07 face light, ...); zero strength removes it. */
+	void SetAffixCue(const FLinearColor& Color, float Strength);
 	/** Local player currently seeing this pawn, including a dead free-look observer. */
 	APlayerController* GetLocalPresentationController() const;
 	bool IsLocallyObserved() const;
@@ -264,6 +273,17 @@ private:
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Player|Stamina", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float StaminaDrainPerSecond = 5.0f;
+	float AffixStaminaDrainScale = 1.0f;
+	float AffixStaminaRecoveryScale = 1.0f;
+	bool bAffixSprintBlocked = false;
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerWalkSpeed)
+	float AffixSpeedScale = 1.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_AffixCue)
+	FColor AffixCue = FColor(0, 0, 0, 0);
+	UPROPERTY(Transient)
+	TObjectPtr<class UPointLightComponent> AffixCueLight;
+	UFUNCTION()
+	void OnRep_AffixCue();
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Player|Stamina", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float StaminaRecoveryPerSecond = 3.0f;

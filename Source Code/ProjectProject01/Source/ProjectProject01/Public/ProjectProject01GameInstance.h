@@ -13,6 +13,7 @@
 #include "ProjectRequestCircuit.h"
 #include "ProjectMatchBotTypes.h"
 #include "ProjectCustomMatchRules.h"
+#include "ProjectAffixes.h"
 #include "ProjectProject01GameInstance.generated.h"
 
 class SBorder;
@@ -266,6 +267,7 @@ private:
 struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim
 {
     FProjectCustomMatchRules CustomRules;
+    FProjectMatchAffixes Affixes; // Bot match affixes (ProjectAffixes.h).
     TArray<FProjectMatchBotSpec> Bots;
 	FString UserId;
 	FString DisplayName;

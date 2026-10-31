@@ -1,0 +1,8 @@
+import {createReadStream,createWriteStream} from 'node:fs';
+import {open,readFile,stat,rename,unlink} from 'node:fs/promises';
+import {createDecipheriv} from 'node:crypto';
+import {pipeline} from 'node:stream/promises';
+import {DatabaseSync} from 'node:sqlite';
+import path from 'node:path';
+const [source,keyPath,destination]=process.argv.slice(2);if(!source||!keyPath||!destination)throw new Error('사용법: node schema-recovery.mjs <.protected 파일> <schema-recovery-key.txt> <새 복구 DB 파일>');
+const size=(await stat(source)).size,fd=await open(source,'r'),header=Buffer.alloc(20),tag=Buffer.alloc(16);try{await fd.read(header,0,20,0);await fd.read(tag,0,16,size-16)}finally{await fd.close()}if(header.subarray(0,8).toString()!=='DBSCHEMA')throw new Error('구조 변경 보호 복사본이 아닙니다.');const key=Buffer.from((await readFile(keyPath,'utf8')).trim(),'hex');if(key.length!==32)throw new Error('복구 키가 올바르지 않습니다.');const decipher=createDecipheriv('aes-256-gcm',key,header.subarray(8));decipher.setAuthTag(tag);const temporary=path.resolve(destination)+'.recovery-'+crypto.randomUUID();try{await pipeline(createReadStream(source,{start:20,end:size-17}),decipher,createWriteStream(temporary,{flags:'wx',mode:0o600}));const db=new DatabaseSync(temporary,{readOnly:true});try{if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw new Error('DB 무결성 오류')}finally{db.close()}try{await stat(destination);throw new Error('기존 파일은 덮어쓰지 않습니다. 새 파일 이름을 선택하세요.')}catch(e){if(e.code!=='ENOENT')throw e}await rename(temporary,destination);console.log('검증된 복구 DB를 저장했습니다. 실행 중인 자료를 직접 덮어쓰지 마세요.')}finally{await unlink(temporary).catch(()=>{})}

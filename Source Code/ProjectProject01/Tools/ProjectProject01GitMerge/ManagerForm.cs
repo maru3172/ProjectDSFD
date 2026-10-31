@@ -32,7 +32,7 @@ internal sealed class ManagerForm : Form
 
     public ManagerForm(string? initialRepository)
     {
-        Text = "ProjectDFSD · Git 관리"; StartPosition = FormStartPosition.CenterScreen;
+        Text = initialRepository is { Length: > 0 } repo && Directory.Exists(repo) ? $"{ProjectLayout.DisplayName(repo)} · Git 관리" : "Git 관리"; StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1360, 900); MinimumSize = new Size(1080, 740); AutoScaleMode = AutoScaleMode.None;
         Font = new Font("맑은 고딕", 9.5f);
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(14) };

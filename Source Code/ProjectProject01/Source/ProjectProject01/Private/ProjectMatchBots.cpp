@@ -14,6 +14,7 @@
 #include "ProjectProject01LevelTransitionTrigger.h"
 #include "ProjectProject01Elevator.h"
 #include "MultiplayTestPlayerController.h"
+#include "ProjectAffixRuntime.h"
 
 namespace
 {
@@ -556,13 +557,15 @@ bool UProjectMatchBots::ChooseTacticPoint(APawn* Pawn,FProjectMatchBotBrain& B,P
 bool UProjectMatchBots::Hear(APawn* Listener,AActor* Source,float Mistake,FVector& Heard)const
 {
     if(!Listener||!IsValid(Source)||Source->IsHidden())return false;
-    const float Speed=Source->GetVelocity().Size2D(),Open=ProjectBots::HearingRadius(Speed,false);
+    // C10: the broadcast drowns footsteps for bots as it does for players.
+    const float Muffle=Mode()->GetAffixRuntime()?Mode()->GetAffixRuntime()->HearingScale():1.f;
+    const float Speed=Source->GetVelocity().Size2D(),Open=ProjectBots::HearingRadius(Speed,false)*Muffle;
     if(Open<=0)return false;
     const FVector From=Listener->GetActorLocation(),At=Source->GetActorLocation();const float Distance=FVector::Dist(From,At);
     if(Distance>Open)return false;
     FCollisionQueryParams Query(SCENE_QUERY_STAT(MatchBotHearing),false,Listener);Query.AddIgnoredActor(Source);FHitResult Hit;
     // Walls muffle footsteps: only trace when the occluded radius would make a difference.
-    if(Distance>ProjectBots::HearingRadius(Speed,true)&&Mode()->GetWorld()->LineTraceSingleByChannel(Hit,From,At,ECC_Visibility,Query))return false;
+    if(Distance>ProjectBots::HearingRadius(Speed,true)*Muffle&&Mode()->GetWorld()->LineTraceSingleByChannel(Hit,From,At,ECC_Visibility,Query))return false;
     // Sound gives a direction, not a position: rougher far away and for flustered players.
     const float Error=(60.f+240.f*Mistake)*(.5f+Distance/Open);
     Heard=At+FVector(FMath::FRandRange(-Error,Error),FMath::FRandRange(-Error,Error),0);
@@ -658,6 +661,10 @@ float UProjectMatchBots::ConditionOf(const FProjectMatchBotSpec& Spec)const
 void UProjectMatchBots::HearPing(AMultiplayTestPlayerController* Sender,uint8 Type,const FVector& Location)
 {
     auto* GM=Mode();if(!GM||!Sender)return;
+    // C07: a mannequin bot sees the marker as a human mannequin would, and goes to check it (some markers are bait).
+    if(GM->GetMatchAffixes().Has(TEXT("C07")))for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))
+        if(auto* PC=Controllers.FindRef(Spec.BotId).Get())if(auto* Body=PC->GetViewedMannequin())if(auto* B=Brains.Find(Body);B&&B->Initialized&&FMath::FRand()<.6f)
+        {B->LostCheck=Location;B->LostCheckUntil=GM->GetWorld()->GetTimeSeconds()+6.0;}
     ScanObjectives();
     const double Now=GM->GetWorld()->GetTimeSeconds();const APawn* From=Sender->GetPawn();
     for(const auto& Spec:Specs)if(Spec.Role==TEXT("Survivor"))
@@ -743,12 +750,6 @@ int32 UProjectMatchBots::TeamPlays(const FString& Role,const FString& Except)con
 void UProjectMatchBots::TrackRelief(double Now)
 {
     auto* GM=Mode();
-    // One human with a bot partner (in balance runs, "SimHelper" is that partner): its catch is the human's setback too.
-    int32 Total=0,Humans=0,MannequinLevel=0;
-    for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++Total;Humans+=!Pair.Value.bServerBot;}
-    for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))MannequinLevel=Spec.Difficulty;
-    const bool Solo=ProjectBots::HumanTeamOverride()||(Humans==1&&Total==2);
-    const float PartnerRelief=MannequinLevel>0?ProjectBots::SoloPartnerCaughtRelief(ProjectBots::Difficulty::For(MannequinLevel)):0.f;
     for(const auto& Pair:GM->MatchPlayerRecords)
     {
         const auto& Record=Pair.Value;auto& Watch=RecordWatch.FindOrAdd(Record.UserId);
@@ -761,8 +762,6 @@ void UProjectMatchBots::TrackRelief(double Now)
             if(Watch.Deaths>=0&&Deaths<Watch.Deaths)MannequinRelief.Add(Now,1.f);
             if(Watch.State==Active&&Record.SurvivorState==EMultiplayTestSurvivorState::Eliminated)MannequinRelief.Add(Now,1.5f);
         }
-        if(Solo&&Record.bServerBot&&Record.Role==TEXT("Survivor")&&(!ProjectBots::HumanTeamOverride()||Record.DisplayName==TEXT("SimHelper"))&&
-            Watch.State==Active&&Record.SurvivorState==EMultiplayTestSurvivorState::Eliminated)MannequinRelief.Add(Now,PartnerRelief);
         if(Record.bServerBot&&Record.Role==TEXT("Survivor")&&Watch.State==Active&&
             (Record.SurvivorState==EMultiplayTestSurvivorState::Escaped||Record.SurvivorState==EMultiplayTestSurvivorState::TransitionWaiting))
             SurvivorRelief.Add(Now,1.2f); // A bot survivor got away from the human mannequin.
@@ -1355,7 +1354,10 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             *Spec.BotId.Left(8),Level.Level,HumanTeam,static_cast<int32>(Tactic),Knows,Watching,Danger,Holding,PlayHold,Listening,Lurking,Moving,HasGoal,FVector::Dist2D(Here,Goal)/100.f,
             *GetNameSafe(Mine.Objective.Get()),Dir.ActiveCount(),C.Stamina);
     }
-    Pawn->SetBotSprint(Moving&&!B.Recovering&&(PlayRun||(!WatchRetreating&&!(Progress&&Watching)&&((Knows&&Tactic!=Action::Search&&!Progress)||Dash))));
+    // B09: a held mannequin wakes when someone sprints past it, so walk by unless fleeing.
+    const bool PassingDisplay=!Danger&&GM->GetMatchAffixes().Has(TEXT("B09"))&&[&]{for(TActorIterator<AMannequinAICharacter> It(World);It;++It)
+        if(It->GetMultiplayCommand()==EMultiplayMannequinCommand::HoldPosition&&!It->IsManualControlEnabled()&&FVector::DistSquared2D(It->GetActorLocation(),Here)<FMath::Square(750.f))return true;return false;}();
+    Pawn->SetBotSprint(!PassingDisplay&&Moving&&!B.Recovering&&(PlayRun||(!WatchRetreating&&!(Progress&&Watching)&&((Knows&&Tactic!=Action::Search&&!Progress)||Dash))));
     FVector Look=Pawn->GetVelocity();
     if(Now<B.PauseUntil)Look=B.PeekDirection;
     else if(!Knows&&Now<B.GlanceUntil)Look=B.GlanceDirection;
@@ -1391,9 +1393,9 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
 {
     using namespace ProjectBots;
     auto* GM=Mode();auto* World=GM->GetWorld();const double Now=World->GetTimeSeconds();TArray<AMannequinAICharacter*> Bodies;
-    for(TActorIterator<AMannequinAICharacter> It(World);It&&Bodies.Num()<10;++It)if(!It->IsHidden())Bodies.Add(*It);
+    for(TActorIterator<AMannequinAICharacter> It(World);It&&Bodies.Num()<10;++It)if(!It->IsHidden()&&(!GM->GetAffixRuntime()||GM->GetAffixRuntime()->CanCommand(*It)))Bodies.Add(*It); // C09: cracked bodies cannot be steered.
     // Today's form: a small swing inside the level's band (never reaching a neighbouring level).
-    const Difficulty Level=[&]{Difficulty D=Difficulty::For(Spec.Difficulty,ConditionOf(Spec));D.Opening=MannequinOpening(D);return D;}();
+    const Difficulty Level=Difficulty::For(Spec.Difficulty,ConditionOf(Spec));
     const float ReliefNow=MannequinRelief.Value(Now,Level);
     auto& Mine=Plays.FindOrAdd(Spec.BotId);LoadExperience(Mine,Spec,Level);auto& Dir=Mine.Director;Dir.Update(Level,Now,ReliefNow);
     // Play style decides how readily this bot reaches for each play; the Director still enforces level, tells and cooldowns.
@@ -1536,6 +1538,8 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             }
         }
     }
+    // A02: a body glowing hot is handed off before it overheats (higher levels read their own heat earlier).
+    if(Body&&GM->GetMatchAffixes().Has(TEXT("A02"))&&Body->GetAffixHeat()>.85f-.25f*Level.Skill&&!Dir.BodyBusy())SwitchBodyAt=FMath::Min(SwitchBodyAt,Now);
     // Move off the current body only when it is held or its turn is up, so settling does not flicker either.
     const bool SettleSwitch=Settle&&Settle!=Body&&!Dir.BodyBusy()&&(!Body||Body->IsFrozenBySurvivorVision()||Now>=SwitchBodyAt);
     if(!Body||(Now>=SwitchBodyAt&&!Dir.BodyBusy()&&!Stalled)||(StuckFrozen&&!Dir.BodyBusy()&&!Stalled)||SettleSwitch)
@@ -1878,7 +1882,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* Target=Cast<APlayerCharacter>(B.Target.Get());
     if(Target&&B.Visible&&!Target->IsGameOver()&&Tactic!=Action::Lure&&!Decoy&&Now>=B.AttackAt)
     {
-        B.AttackAt=Now+FMath::Lerp(Level.Level==1?1.75f:Level.Level==2?1.6f:2.1f,.33f,B.Policy.Profile.Skill)*SoloAttackScale(Level,SoloHuman)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
+        B.AttackAt=Now+FMath::Lerp(Level.Level==1?1.75f:Level.Level==2?1.6f:2.1f,.33f,B.Policy.Profile.Skill)*SoloAttackScale(Level,SoloHuman)*(GM->GetAffixRuntime()?GM->GetAffixRuntime()->BotAttackIntervalScale():1.f)*FMath::FRandRange(.85f,1.3f)*(1+.3f*ReliefNow)*(1-.25f*Urgency);const FVector Offset=Target->GetActorLocation()-Body->GetActorLocation();
         bool Watched=false;for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.IsValid()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)Watched|=GM->CanSurvivorSeeMannequin(Pair.Key.Get(),Body);
         if(!Watched&&!Body->IsFrozenBySurvivorVision()&&Offset.SizeSquared()<=FMath::Square(GM->MultiplayerManualAttackRange)&&FVector::DotProduct(Body->GetActorForwardVector(),Offset.GetSafeNormal())>=.25f&&AI->LineOfSightTo(Target)&&Target->HandleMannequinCatch(Body))
         {

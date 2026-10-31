@@ -74,7 +74,7 @@ internal static class IntegrationChecks
         app.MapGuideProgress();
         app.MapProjectProject01ServiceAdministration();
         app.MapCommunity();
-        app.MapCaseRecords();
+        // Case records and the other game modules are mapped by MapProjectProject01Lobby (BackendModules), as in Program.cs.
         app.MapClientLiveness();
         app.MapAccountRestrictions();app.MapRoomCapacity();
         app.MapGameServerDemand();

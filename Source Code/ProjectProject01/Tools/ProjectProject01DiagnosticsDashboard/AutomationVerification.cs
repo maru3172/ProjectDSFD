@@ -28,7 +28,9 @@ internal static class AutomationVerification
         System.IO.Directory.CreateDirectory(directory);
         return new(id, Path.GetFullPath(runDirectory), directory, DateTimeOffset.UtcNow);
     }
-    internal static string[] Arguments(string projectFile, VerificationAttempt attempt, string filter = "Group:ProjectDFSDGeneral") =>
+    internal static string[] Arguments(string projectFile, VerificationAttempt attempt, string? filter = null) =>
+        ArgumentsFor(projectFile, attempt, filter ?? UnrealProject.Load(projectFile).GeneralTestGroup);
+    private static string[] ArgumentsFor(string projectFile, VerificationAttempt attempt, string filter) =>
         [projectFile, "-unattended", "-nop4", "-nosplash", "-RenderOffscreen", "-TestExit=Automation Test Queue Empty",
          "-ExecCmds=Automation RunTests " + filter,
          "-ReportExportPath=" + attempt.ReportDirectory, "-abslog=" + attempt.EngineLog,

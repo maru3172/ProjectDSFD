@@ -28,6 +28,8 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 	void BeginLoading(bool bMultiplayer);
+	/** Affixes shown on the loading screen (bot affix modes). Survives BeginLoading; an empty set hides the panel. */
+	void SetMatchAffixes(const struct FProjectMatchAffixes& Affixes);
 	/** Lobby allocation and ticket checks stay in this same loading presentation. */
 	void ShowSessionPreparation(const FString& Stage,uint8 Progress,bool bCanCancel,FSimpleDelegate OnCancel=FSimpleDelegate());
 	void BeginServerTravel();

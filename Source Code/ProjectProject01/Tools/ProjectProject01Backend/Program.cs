@@ -258,7 +258,6 @@ app.MapGet("/api/compatibility", (VersionCompatibilityOptions contract) =>
 app.MapProjectProject01ClientUpdates();
 app.MapBackendDiagnostics();
 app.MapCommunity();
-app.MapCaseRecords();
 app.MapProjectProject01ServiceAdministration();
 app.MapProjectProject01Surveys();
 app.MapProjectProject01Voice();
@@ -800,15 +799,8 @@ internal sealed class AuthDatabase
         await ServiceAnnouncementDelivery.EnsureAsync(connection,cancellationToken);
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
         await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
-        await LobbyEndpoints.EnsureMatchBotSchemaAsync(connection, cancellationToken);
-        await CaseRecords.EnsureAsync(connection,cancellationToken);
-        await CaseCollection.EnsureAsync(connection,cancellationToken);
-        await MainQuest.EnsureAsync(connection,cancellationToken);
-        await CaseDraw.EnsureAsync(connection,cancellationToken);
-        await CustomRoomRules.EnsureAsync(connection,cancellationToken);
-        await CaseMissionSlots.EnsureAsync(connection,cancellationToken);
-        await CaseInvestigation.EnsureAsync(connection,cancellationToken);
-        await CaseMissionBudget.EnsureAsync(connection,cancellationToken);
+        // Game modules (Game/GameModules.cs) after the platform's own tables.
+        await BackendModules.EnsureSchemasAsync(connection, cancellationToken);
         await OpenParties.EnsureAsync(connection,cancellationToken);
     }
 

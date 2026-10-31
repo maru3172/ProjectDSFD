@@ -2,6 +2,7 @@
 // Build target: ProjectProject01Server / ProjectProject01
 
 #include "MultiplayTestGameMode.h"
+#include "ProjectAffixRuntime.h"
 
 #include "MannequinAICharacter.h"
 #include "MannequinAIController.h"
@@ -310,6 +311,7 @@ AMultiplayTestGameMode::AMultiplayTestGameMode()
 {
 	PrimaryActorTick.bCanEverTick = true;
     MatchBots=CreateDefaultSubobject<UProjectMatchBots>(TEXT("ServerMatchBots"));
+    AffixRuntime=CreateDefaultSubobject<UProjectAffixRuntime>(TEXT("ServerAffixRuntime"));
 	// 맵 구간 이동 때 접속을 끊거나 일회용 티켓을 다시 소비하지 않고 컨트롤러를 넘긴다.
 	bUseSeamlessTravel = true;
 
@@ -346,7 +348,8 @@ void AMultiplayTestGameMode::BeginPlay()
 	Super::BeginPlay();
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();Instance&&Instance->ServerMatchCarryover)
-    {FString Error;AcceptCustomRules(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->CustomRules,Error);}
+    {FString Error;AcceptCustomRules(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->CustomRules,Error);
+        AcceptMatchAffixes(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Affixes,Error);}
 	InitializeRoleSpawnPoints();
 	if (!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) BindEscapeTriggers();
 	if (UWorld* World = GetWorld(); IsValid(World))
@@ -584,6 +587,21 @@ bool AMultiplayTestGameMode::AcceptCustomRules(const FString& Match,const FProje
     MatchTimeLimitSeconds=Rules.bEnabled?float(Rules.TimeLimitSeconds):StandardTimeLimit;
     // Tickets arrive after BeginPlay; configure the world before admitting the first pawn.
     if(bServerWorldInitialized&&Rules.bEnabled)InitializeMannequinSpawns();
+    return true;
+}
+
+bool AMultiplayTestGameMode::AcceptMatchAffixes(const FString& Match,const FProjectMatchAffixes& Affixes,FString& Error)
+{
+    if(!Affixes.IsValid()){Error=TEXT("Invalid match affixes.");return false;}
+    if(AffixesMatchId==Match)
+    {
+        if(MatchAffixes==Affixes)return true;
+        Error=TEXT("Match affixes changed after admission.");return false;
+    }
+    if(AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::Waiting||!AffixesMatchId.IsEmpty())
+    {Error=TEXT("Another match already owns these affixes.");return false;}
+    AffixesMatchId=Match;MatchAffixes=Affixes;
+    for(const auto& Pair:MatchPlayerRecords)if(auto* Controller=Pair.Key.Get())Controller->SetMatchAffixes(MatchAffixes);
     return true;
 }
 
@@ -1334,6 +1352,7 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
 
     if(MatchBots)MatchBots->Tick(DeltaSeconds);
 	if(TickLoadingGate(DeltaSeconds))return;
+    if(AffixRuntime&&AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)AffixRuntime->Tick(this,DeltaSeconds);
 	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		MatchTimeLimitSeconds > 0.0f && GetElapsedMatchSeconds() >= MatchTimeLimitSeconds)
 	{
@@ -1496,6 +1515,7 @@ void AMultiplayTestGameMode::PreLogin(
 	}
 
     if(!AcceptCustomRules(Claim.MatchId,Claim.CustomRules,ErrorMessage))return;
+    if(!AcceptMatchAffixes(Claim.MatchId,Claim.Affixes,ErrorMessage))return;
     if(MatchBots&&!MatchBots->AcceptRoster(Claim.RoomId,Claim.MatchId,Claim.Bots,ErrorMessage))return;
 	PendingValidatedJoinClaims.Add(Ticket, MoveTemp(Claim));
 }
@@ -1949,6 +1969,7 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 	{
 		return;
 	}
+    Controller->SetMatchAffixes(MatchAffixes);
 
 	FMultiplayTestServerPlayerRecord Record;
     Record.bServerBot=Controller->IsServerControlledBot();
@@ -2515,6 +2536,9 @@ bool AMultiplayTestGameMode::TryBroadcastSurvivorPing(
 		{
 			Target->ClientReceiveTeamPing(Type, Location, SenderName);
 		}
+		// C07: the mannequin player sees the marker too (the place, never the sender).
+		else if (IsValid(Target) && MatchAffixes.Has(TEXT("C07")) && Pair.Value.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) && !Target->IsServerControlledBot())
+			Target->ClientReceiveTeamPing(Type, Location, FString());
 	}
 	// Server-owned bot teammates have no client to show the marker; they hear the ping here.
 	if (MatchBots) MatchBots->HearPing(RequestingController, static_cast<uint8>(Type), Location);
@@ -2871,7 +2895,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
     {
         auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
-        Carry->CustomRules=CustomMatchRules;
+        Carry->CustomRules=CustomMatchRules;Carry->Affixes=MatchAffixes;
         if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();Carry->BotLearning=MatchBots->ExportLearning();
             Carry->StandIns=MatchBots->GetStandIns();Carry->StandInOwners=MatchBots->GetStandInOwners();}
         Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
@@ -3393,6 +3417,8 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 	{
 		return true;
 	}
+    // Affixes: a cracked body (C09) is never taken over; during a shift (C04) the current body is kept.
+    if(AffixRuntime&&(!AffixRuntime->CanCommand(TargetMannequin)||(IsValid(PreviousViewedMannequin)&&!AffixRuntime->CanPossess(TargetMannequin))))return false;
 
 	if (APlayerController* ExistingPlayerController = Cast<APlayerController>(TargetMannequin->GetController());
 		IsValid(ExistingPlayerController) && ExistingPlayerController != RequestingController)
@@ -3530,7 +3556,9 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 void AMultiplayTestGameMode::AssignMannequinCommand(AMannequinAICharacter* Target,EMultiplayMannequinCommand Command)
 {
 	if (!HasAuthority() || !IsValid(Target)) return;
+    if(AffixRuntime&&!AffixRuntime->CanCommand(Target))return; // C09: cracked bodies follow nobody's orders.
 	Target->SetMultiplayCommand(Command);
+    if(AffixRuntime)AffixRuntime->OnCommand(Target,Command);
 	MultiplayerPatrolTargets.Remove(Target);
 	MultiplayerPatrolNextTargets.Remove(Target);
 	MultiplayerObservationRemainingSeconds.Remove(Target);
@@ -3590,6 +3618,7 @@ bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* 
 	AMannequinAICharacter* Controlled = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
 	if (!IsValid(Controlled) || !Controlled->IsManualControlEnabled() ||
 		Controlled != RequestingController->GetViewedMannequin()) return false;
+    if(AffixRuntime&&!AffixRuntime->CanManualAttack(Controlled))return false; // A04 recovery, C02 slower attacks.
 	APlayerCharacter* Target = nullptr;
 	double BestDistance = FMath::Square(static_cast<double>(MultiplayerManualAttackRange));
 	for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
@@ -3604,7 +3633,9 @@ bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* 
 			FVector::DotProduct(Controlled->GetActorForwardVector(), Offset.GetSafeNormal()) >= 0.25f &&
 			RequestingController->LineOfSightTo(Survivor)) { Target=Survivor; BestDistance=Distance; }
 	}
-	return IsValid(Target) && Target->HandleMannequinCatch(Controlled);
+	const bool bHit = IsValid(Target) && Target->HandleMannequinCatch(Controlled);
+    if(AffixRuntime)AffixRuntime->OnManualAttack(Controlled,bHit);
+	return bHit;
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const
@@ -3895,6 +3926,7 @@ void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
 		}
 
 		bool bObservedByAnySurvivor = false;
+		TArray<APlayerCharacter*> Watchers; // Affixes read who is looking (A09, A10, B07, C01).
 		APlayerCharacter* ClosestObservingSurvivor = nullptr;
 		double ClosestObservingDistanceSquared = TNumericLimits<double>::Max();
 		for (const APlayerController* SurvivorController : SurvivorControllers)
@@ -3903,6 +3935,7 @@ void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
 			{
 				bObservedByAnySurvivor = true;
 				APlayerCharacter* ObservingSurvivor = Cast<APlayerCharacter>(SurvivorController->GetPawn());
+				if (IsValid(ObservingSurvivor)) Watchers.Add(ObservingSurvivor);
 				if (IsActiveSurvivorTarget(ObservingSurvivor))
 				{
 					const double DistanceSquared = FVector::DistSquared2D(
@@ -3928,6 +3961,7 @@ void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
 			}
 		}
 
+		if (AffixRuntime) bObservedByAnySurvivor = AffixRuntime->OnWatched(Mannequin, Watchers, bObservedByAnySurvivor);
 		Mannequin->SetFrozenBySurvivorVision(bObservedByAnySurvivor);
 	}
 }

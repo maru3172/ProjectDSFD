@@ -87,7 +87,7 @@ internal sealed partial class LauncherForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         settingsPath = installationRoot is not null?Path.Combine(installRoot,"launcher-test-settings.json"):Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ProjectProject01", "ClientLauncher.json");
+            LauncherProfile.Current.SettingsFolder, "ClientLauncher.json");
         BuildUi();
         LoadSettings();
         InitializeAnnouncement();
@@ -518,7 +518,7 @@ internal sealed partial class LauncherForm : Form
         if (!IPAddress.TryParse(address, out IPAddress? parsed) ||
             parsed.AddressFamily != AddressFamily.InterNetwork || !IsSupportedAddress(parsed))
             throw new InvalidOperationException("서버 PC의 올바른 25.x, 사설 또는 로컬 IPv4 주소를 입력하세요.");
-        return $"http://{address}:5080";
+        return $"http://{address}:{LauncherProfile.Current.BackendPort}";
     }
 
     private static bool IsSupportedAddress(IPAddress address)
@@ -625,8 +625,7 @@ internal sealed partial class LauncherForm : Form
 
     private void EnsureGameIsNotRunning(string executablePath)
     {
-        string processName = Path.GetFileNameWithoutExtension(executablePath);
-        foreach(string name in new[]{processName,"ProjectDFSD","ProjectDFSD-Win64-Shipping","ProjectProject01","ProjectProject01-Win64-Shipping"}.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach(string name in LauncherProfile.Current.RunningProcessNames(executablePath))
         {
             var processes=Process.GetProcessesByName(name);
             try{if(processes.Length>0)throw new InvalidOperationException("게임이 실행 중입니다. 게임을 완전히 종료한 뒤 업데이트하세요.");}
@@ -646,7 +645,7 @@ internal sealed partial class LauncherForm : Form
             Process.Start(new ProcessStartInfo(gamePath)
             {
                 WorkingDirectory = Path.GetDirectoryName(gamePath)!,
-                Arguments = $"-ProjectProject01Server={address}",
+                Arguments = LauncherProfile.Current.GameArguments(address),
                 UseShellExecute = true
             });
             Close();
@@ -667,13 +666,10 @@ internal sealed partial class LauncherForm : Form
                     ? JsonSerializer.Deserialize<ClientUpdateManifest>(
                         File.ReadAllText(ResolveInsideRoot(installRoot, LocalManifestFileName)), JsonOptions)
                     : null;
-                resolvedExecutable = local?.ExecutablePath ?? Directory
-                    .EnumerateFiles(installRoot, "ProjectDFSD.exe", SearchOption.TopDirectoryOnly)
-                    .Concat(Directory.EnumerateFiles(installRoot, "ProjectProject01.exe", SearchOption.TopDirectoryOnly))
-                    .Select(path=>Path.GetRelativePath(installRoot,path)).FirstOrDefault();
+                resolvedExecutable = local?.ExecutablePath ?? LauncherProfile.Current.FindExecutable(installRoot);
             }
             if (string.IsNullOrWhiteSpace(resolvedExecutable))
-                throw new FileNotFoundException("ProjectDFSD.exe를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
+                throw new FileNotFoundException($"{LauncherProfile.Current.GameExecutables.FirstOrDefault() ?? "게임 실행 파일"}를 찾지 못했습니다. 먼저 업데이트를 실행하세요.");
             string gamePath = ResolveInsideRoot(installRoot, NormalizeRelativePath(resolvedExecutable));
             if (!File.Exists(gamePath)) throw new FileNotFoundException("게임 실행 파일이 없습니다.", gamePath);
             return gamePath;

@@ -6,7 +6,7 @@ internal static class SelfTests
 {
     internal static int Run(string? repository)
     {
-        var root = Path.Combine(repository ?? Path.GetTempPath(), "Source Code", "ProjectProject01", "Saved", "GitManagerChecks", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(repository == null ? Path.GetTempPath() : ProjectLayout.SavedDirectory(repository), "GitManagerChecks", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root); var checks = new List<string>();
         void Check(bool ok, string name) { if (!ok) throw new InvalidOperationException(name); checks.Add(name); }
         T Await<T>(Task<T> task) { while (!task.IsCompleted) { Application.DoEvents(); Thread.Sleep(5); } return task.GetAwaiter().GetResult(); }

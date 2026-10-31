@@ -1,0 +1,10 @@
+import {build} from 'esbuild';
+import {mkdir,writeFile,cp} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),output=path.join(root,'self-host','build');
+await mkdir(path.join(output,'public'),{recursive:true});
+await build({entryPoints:[path.join(root,'self-host','routes.ts')],bundle:true,platform:'node',format:'esm',packages:'external',outfile:path.join(output,'legacy-routes.mjs'),plugins:[{name:'local-runtime',setup(plugin){plugin.onResolve({filter:/^cloudflare:workers$/},()=>({path:'../runtime.mjs',external:true}));plugin.onResolve({filter:/chatgpt-auth$/},()=>({path:'../auth-bridge.mjs',external:true}))}}]});
+await build({entryPoints:[path.join(root,'self-host','client.tsx')],bundle:true,platform:'browser',format:'esm',minify:true,jsx:'automatic',target:['chrome120','edge120'],outfile:path.join(output,'public','app.js'),define:{'process.env.NODE_ENV':'"production"'}});
+await writeFile(path.join(output,'public','index.html'),'<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Daybook · 팀 기록실</title><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>');
+console.log('독립 실행 빌드 완료: self-host/build (외부 호스팅·유료 API 사용 없음)');

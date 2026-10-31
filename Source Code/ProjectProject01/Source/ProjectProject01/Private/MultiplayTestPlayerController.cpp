@@ -22,6 +22,8 @@
 #include "Components/SynthComponent.h"
 #include "InputKeyEventArgs.h"
 #include "EngineUtils.h"
+#include "FootstepSynthComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/LevelStreaming.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -214,6 +216,7 @@ void AMultiplayTestPlayerController::PostSeamlessTravel()
 
 void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
+    TickAffixPresentation();
 	Super::PlayerTick(DeltaTime);
 	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if (!IsLocalController() || bLocalMatchResultRequested) return;
@@ -469,7 +472,8 @@ void AMultiplayTestPlayerController::ClientReceiveTeamPing_Implementation(
 	const FVector_NetQuantize Location,
 	const FString& SenderName)
 {
-	if (!IsLocalController() || SurvivorState != EMultiplayTestSurvivorState::Active || !IsValid(GetWorld())) return;
+	const bool bSharedPing = IsLocalMannequinPlayer() && GetMatchAffixes().Has(TEXT("C07"));
+	if (!IsLocalController() || (SurvivorState != EMultiplayTestSurvivorState::Active && !bSharedPing) || !IsValid(GetWorld())) return;
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	const FVector MarkerLocation = FVector(Location) + FVector(0, 0, 60);
@@ -1893,9 +1897,84 @@ void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetime
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, ViewedMannequin, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, ReplicatedAffixes, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, MatchPhase, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorState, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bLeavingForfeits, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorSpectatorView, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bManualMannequinCommandIssued, COND_OwnerOnly);
+}
+
+void AMultiplayTestPlayerController::SetMatchAffixes(const FProjectMatchAffixes& Affixes)
+{
+    if(!HasAuthority())return;
+    ReplicatedAffixes.Mode=uint8(Affixes.Mode);ReplicatedAffixes.Ids=Affixes.Ids;ReplicatedAffixes.WeekName=Affixes.WeekName;
+    if(IsLocalController())OnRep_MatchAffixes();
+}
+
+FProjectMatchAffixes AMultiplayTestPlayerController::GetMatchAffixes()const
+{
+    FProjectMatchAffixes Affixes;
+    Affixes.Mode=ReplicatedAffixes.Mode<=uint8(EProjectAffixMode::Custom)?EProjectAffixMode(ReplicatedAffixes.Mode):EProjectAffixMode::None;
+    Affixes.Ids=ReplicatedAffixes.Ids;Affixes.WeekName=ReplicatedAffixes.WeekName;
+    return Affixes.IsValid()?Affixes:FProjectMatchAffixes();
+}
+
+void AMultiplayTestPlayerController::OnRep_MatchAffixes()
+{
+    if(!IsLocalController())return;
+    if(auto* Instance=GetGameInstance())if(auto* Loading=Instance->GetSubsystem<UProjectLoadingScreenSubsystem>())Loading->SetMatchAffixes(GetMatchAffixes());
+}
+
+void AMultiplayTestPlayerController::ClientShowAffixNotice_Implementation(const FString& Message,float HoldSeconds)
+{
+    if(!IsLocalController()||Message.IsEmpty())return;
+    if(auto* Notice=CreateWidget<UProjectProject01TransientNoticeWidget>(this,UProjectProject01TransientNoticeWidget::StaticClass()))
+    {Notice->AddToViewport(170);Notice->ShowNotice(Message,FMath::Clamp(HoldSeconds,.5f,15.f),1.f);}
+}
+
+void AMultiplayTestPlayerController::ClientAffixPulse_Implementation(FVector_NetQuantize Location,FColor Color,float Seconds,float Radius)
+{
+    if(!IsLocalController())return;
+    AddAffixLight(Location,FLinearColor::FromSRGBColor(Color),FMath::Clamp(Seconds,.1f,3.f),FMath::Clamp(Radius,50.f,600.f),2500.f,true);
+}
+
+void AMultiplayTestPlayerController::ClientSetAffixMuffle_Implementation(float Seconds)
+{
+    if(IsLocalController())UFootstepSynthComponent::AffixMuffleUntil=FPlatformTime::Seconds()+FMath::Clamp(Seconds,0.f,30.f);
+}
+
+void AMultiplayTestPlayerController::AddAffixLight(const FVector& Location,const FLinearColor& Color,float Seconds,float Radius,float Intensity,bool bShadows)
+{
+    UWorld* World=GetWorld();if(!World||World->GetNetMode()==NM_DedicatedServer)return;
+    const double Now=World->GetTimeSeconds();
+    AffixLights.RemoveAll([](const FAffixLight& L){return !L.Light.IsValid();});
+    FAffixLight* Slot=AffixLights.FindByPredicate([Now](const FAffixLight& L){return L.Until<=Now;});
+    if(!Slot)
+    {
+        if(AffixLights.Num()>=48)return; // Pool limit: afterimages and place lights never pile up.
+        auto* Light=NewObject<UPointLightComponent>(this);Light->SetMobility(EComponentMobility::Movable);Light->RegisterComponentWithWorld(World);
+        Slot=&AffixLights.Add_GetRef({Light,0,0});
+    }
+    UPointLightComponent* Light=Slot->Light.Get();
+    Light->SetWorldLocation(Location);Light->SetLightColor(Color);Light->SetAttenuationRadius(Radius);Light->SetCastShadows(bShadows);
+    Light->SetIntensity(Intensity);Light->SetVisibility(true);Slot->Until=Now+Seconds;Slot->Peak=Intensity;
+}
+
+void AMultiplayTestPlayerController::TickAffixPresentation()
+{
+    UWorld* World=GetWorld();if(!World||!IsLocalController()||World->GetNetMode()==NM_DedicatedServer)return;
+    const double Now=World->GetTimeSeconds();
+    for(FAffixLight& L:AffixLights)if(UPointLightComponent* Light=L.Light.Get())
+    {
+        if(Now>=L.Until){if(Light->IsVisible())Light->SetVisibility(false);continue;}
+        Light->SetIntensity(L.Peak*FMath::Clamp(float(L.Until-Now)/.4f,0.f,1.f)); // Fades out over the last 0.4 s.
+    }
+    // C03 잔상: anything moving leaves a faint, short-lived mark where it was; drawn here, never sent over the network.
+    if(!GetMatchAffixes().Has(TEXT("C03"))||Now<AffixTrailAt)return;
+    AffixTrailAt=Now+.3;
+    const APawn* Self=GetPawn();
+    auto Mark=[&](const AActor* Actor){if(Actor&&Actor!=Self&&!Actor->IsHidden()&&Actor->GetVelocity().Size2D()>150.f)AddAffixLight(Actor->GetActorLocation(),FLinearColor(.6f,.7f,.85f),1.5f,90.f,600.f,false);};
+    for(TActorIterator<AMannequinAICharacter> It(World);It;++It)Mark(*It);
+    for(TActorIterator<APlayerCharacter> It(World);It;++It)Mark(*It);
 }

@@ -1,0 +1,5 @@
+import type {Entry} from "./types";
+export type DraftRecord={format:"daybook-draft";version:1;savedAt:string;draft:Partial<Entry>;fileNames:string[]};
+export function draftKey(user:string,workspace:string,draft:Partial<Entry>){return `daybook-draft:${encodeURIComponent(user)}:${encodeURIComponent(workspace)}:${encodeURIComponent(draft.id??"new:"+(draft.custom_type_id??draft.kind??"note"))}`}
+export function parseDraft(value:string|null):DraftRecord|null{if(!value)return null;try{const data=JSON.parse(value);if(data.format!=="daybook-draft"||data.version!==1||!data.draft||typeof data.draft!=="object"||typeof data.draft.body!=="string"||data.draft.body.length>200000||typeof data.savedAt!=="string"||!Array.isArray(data.fileNames))return null;return data as DraftRecord}catch{return null}}
+export function saveDraft(storage:Pick<Storage,"setItem">,key:string,draft:Partial<Entry>,fileNames:string[]){const data:DraftRecord={format:"daybook-draft",version:1,savedAt:new Date().toISOString(),draft,fileNames};storage.setItem(key,JSON.stringify(data));return data}

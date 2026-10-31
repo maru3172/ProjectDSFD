@@ -43,7 +43,7 @@ internal static class BackendMetricFiles
 
 internal sealed class BackendDiagnosticsPanel:UserControl
 {
-    private readonly TextBox address=new(){Width=210,Text="http://127.0.0.1:5080"};
+    private readonly TextBox address=new(){Width=210,Text=UnrealProject.Current.BackendAddress};
     private readonly TextBox key=new(){Width=210,MaxLength=512,UseSystemPasswordChar=true,PlaceholderText="운영자 API 키 (저장하지 않음)"};
     private readonly Label status=new(){AutoSize=true,Text="수집 꺼짐 · 운영자 인증 필요 · 5초 간격 / 최대 720표본 표시"};
     private readonly TextBox scope=new(){Dock=DockStyle.Bottom,Height=76,ReadOnly=true,Multiline=true,ScrollBars=ScrollBars.Vertical};
@@ -104,11 +104,11 @@ internal sealed class BackendDiagnosticsPanel:UserControl
             if(capture.HasValue)
             {
                 using var command=new HttpRequestMessage(HttpMethod.Post,new Uri(origin,"/api/admin/diagnostics?enabled="+capture.Value.ToString().ToLowerInvariant()));
-                command.Headers.Add("X-ProjectProject01-Admin-Key",key.Text);
+                command.Headers.Add(UnrealProject.Current.AdminKeyHeader,key.Text);
                 using var result=await client.SendAsync(command,HttpCompletionOption.ResponseHeadersRead,token);result.EnsureSuccessStatusCode();
             }
             using var request=new HttpRequestMessage(HttpMethod.Get,new Uri(origin,"/api/admin/diagnostics"));
-            request.Headers.Add("X-ProjectProject01-Admin-Key",key.Text);
+            request.Headers.Add(UnrealProject.Current.AdminKeyHeader,key.Text);
             using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);response.EnsureSuccessStatusCode();
             if(response.Content.Headers.ContentLength>131072)throw new InvalidDataException();
             await using var stream=await response.Content.ReadAsStreamAsync(token);

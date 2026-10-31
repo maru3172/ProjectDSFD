@@ -5737,9 +5737,16 @@ void UProjectProject01LobbyWidget::HandleBotMatchCreateClicked()
             if(Room.bBotMatch&&Room.Members.Num()==2&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted&&!Lobby->IsRequestInFlight())HandleReadyClicked();
             return;
         }
+        const EProjectAffixMode Mode=SelectedBotAffixMode();
+        TArray<FString> Picked;
+        if(Mode==EProjectAffixMode::Custom)
+        {
+            for(int32 I=0;I<BotCustomAffixChecks.Num();++I)if(BotCustomAffixChecks[I]&&BotCustomAffixChecks[I]->IsChecked())Picked.Add(ProjectAffixes::All()[I].Id);
+            if(Picked.IsEmpty()){if(BotWeeklyAffixText){BotWeeklyAffixText->SetText(FText::FromString(TEXT("어픽스를 하나 이상 고르세요.")));BotWeeklyAffixText->SetVisibility(ESlateVisibility::Visible);}return;}
+        }
         bAutoStartBotMatch=true;
         const FString Choice=BotMatchRole->GetSelectedOption();
-        Lobby->CreateBotMatch(Choice==TEXT("마네킹")?TEXT("Mannequin"):Choice==TEXT("생존자")?TEXT("Survivor"):TEXT("Any"),BotMatchDifficulty->GetSelectedIndex()+1);
+        Lobby->CreateBotMatch(Choice==TEXT("마네킹")?TEXT("Mannequin"):Choice==TEXT("생존자")?TEXT("Survivor"):TEXT("Any"),FMath::Min(BotMatchDifficulty->GetSelectedIndex()+1,5),Mode,Picked);
     }
     RefreshLobbyState();
 }
@@ -5790,7 +5797,16 @@ void UProjectProject01LobbyWidget::RefreshBotMatchView()
     if(BotMatchDifficulty)
     {
         BotMatchDifficulty->SetIsEnabled(!Bot&&!Busy);
-        if(Bot&&!Room.Bots.IsEmpty())BotMatchDifficulty->SetSelectedIndex(FMath::Clamp(Room.Bots[0].Difficulty-1,0,4));
+        if(Bot&&!Room.Bots.IsEmpty())BotMatchDifficulty->SetSelectedIndex(Room.Affixes.Mode==EProjectAffixMode::MasterPlus?5:Room.Affixes.Mode==EProjectAffixMode::MasterPlusPlus?6:FMath::Clamp(Room.Bots[0].Difficulty-1,0,4));
+    }
+    if(BotMatchMode)
+    {
+        BotMatchMode->SetIsEnabled(!Bot&&!Busy);
+        if(Bot)BotMatchMode->SetSelectedIndex(Room.Affixes.Mode==EProjectAffixMode::Weekly?1:Room.Affixes.Mode==EProjectAffixMode::Custom?2:0);
+        if(BotCustomAffixList)BotCustomAffixList->SetIsEnabled(!Bot&&!Busy);
+        RefreshBotModePanel();
+        // The difficulty list changes with the mode, so the room's level is selected again after it.
+        if(Bot&&!Room.Bots.IsEmpty()&&BotMatchDifficulty)BotMatchDifficulty->SetSelectedIndex(Room.Affixes.Mode==EProjectAffixMode::MasterPlus?5:Room.Affixes.Mode==EProjectAffixMode::MasterPlusPlus?6:FMath::Clamp(Room.Bots[0].Difficulty-1,0,4));
     }
     if(BotMatchCancelButton)
     {
@@ -5880,6 +5896,8 @@ namespace
     {
         for(int32 Level=1;Level<=5;++Level)
             if(Item==UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Level)))return FText::FromString(UTF8_TO_TCHAR(ProjectBots::Difficulty::Description(Level)));
+        if(Item==TEXT("마스터+"))return FText::FromString(TEXT("마스터 봇에 환경 어픽스 1개가 무작위로 붙습니다. 마스터보다 보상이 많습니다."));
+        if(Item==TEXT("마스터++"))return FText::FromString(TEXT("마스터 봇에 생존자 유리·마네킹 유리·환경 어픽스가 1개씩 무작위로 붙습니다. 마스터+보다 보상이 많습니다."));
         return FText::GetEmpty();
     }
     // Larger than the engine's default tooltip text: a themed panel with an 18pt label.
@@ -7557,14 +7575,36 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     auto* BotRoleGroup=WidgetTree->ConstructWidget<UVerticalBox>();BotSetup->AddChildToVerticalBox(BotRoleGroup);
     ProjectProject01LoginUI::AddLabel(WidgetTree,BotRoleGroup,TEXT("플레이할 역할"),20);
     BotMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();BotMatchRole->AddOption(TEXT("생존자"));BotMatchRole->AddOption(TEXT("마네킹"));BotMatchRole->AddOption(TEXT("무작위"));BotMatchRole->SetSelectedIndex(2);BotRoleGroup->AddChildToVerticalBox(BotMatchRole);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇전 모드"),20);
+    BotMatchMode=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();
+    BotMatchMode->AddOption(TEXT("일반"));BotMatchMode->AddOption(TEXT("주간 어픽스"));BotMatchMode->AddOption(TEXT("사용자 지정 어픽스"));
+    BotMatchMode->SetSelectedIndex(0);BotMatchMode->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleBotModeChanged);
+    BotSetup->AddChildToVerticalBox(BotMatchMode);
     ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT("봇 난이도"),20);
     BotMatchDifficulty=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();
     // Hover help: each option in the open list explains its level; the closed box explains the current pick.
     BotMatchDifficulty->OnGenerateWidgetEvent.BindUFunction(this,GET_FUNCTION_NAME_CHECKED(ThisClass,GenerateBotDifficultyItem));
     BotMatchDifficulty->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleBotDifficultyChanged);
     for(int32 Level=1;Level<=5;++Level)BotMatchDifficulty->AddOption(UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Level)));
+    // Master bots with affixes (ProjectAffixes.h); indexes 5 and 6 map to difficulty 5 plus the affix mode.
+    BotMatchDifficulty->AddOption(TEXT("마스터+"));BotMatchDifficulty->AddOption(TEXT("마스터++"));
     BotMatchDifficulty->SetSelectedIndex(1);BotSetup->AddChildToVerticalBox(BotMatchDifficulty);
     HandleBotDifficultyChanged(BotMatchDifficulty->GetSelectedOption(),ESelectInfo::Direct);
+    // Weekly: this week's name and three affixes. Custom: any of the affixes, ticked freely (no reward).
+    BotWeeklyAffixText=ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT(""),18);BotWeeklyAffixText->SetAutoWrapText(true);
+    BotCustomAffixList=WidgetTree->ConstructWidget<UVerticalBox>();BotSetup->AddChildToVerticalBox(BotCustomAffixList);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,BotCustomAffixList,TEXT("고른 어픽스가 모두 걸립니다. 사용자 지정 어픽스 판은 보상이 없습니다."),16);
+    for(const auto& Info:ProjectAffixes::All())
+    {
+        auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();
+        auto* Check=WidgetTree->ConstructWidget<UCheckBox>();Check->SetIsEnabled(Info.bPlayable);Row->AddChildToHorizontalBox(Check);
+        auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
+        Label->SetText(FText::FromString(FString::Printf(TEXT("%s %s · %s%s\n%s"),Info.Id,Info.Name,ProjectAffixes::GroupName(Info.Group),Info.bPlayable?TEXT(""):TEXT(" (준비 중)"),Info.Summary)));
+        Label->SetColorAndOpacity(FSlateColor(ProjectAffixes::GroupColor(Info.Group)));auto Font=Label->GetFont();Font.Size=15;Label->SetFont(Font);Label->SetAutoWrapText(true);
+        if(auto* LabelSlot=Row->AddChildToHorizontalBox(Label))LabelSlot->SetPadding(FMargin(8,0,0,6));
+        BotCustomAffixList->AddChildToVerticalBox(Row);BotCustomAffixChecks.Add(Check);
+    }
+    RefreshBotModePanel();
     BotMatchParticipantsText=ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT(""),20);
     BotMatchParticipantsText->SetVisibility(ESlateVisibility::Collapsed);
     BotMatchCreateButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("게임 시작"));BotMatchCreateButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchCreateClicked);
@@ -8306,4 +8346,51 @@ void UProjectProject01LeaderboardWidget::SetStatus(const FString& Message, const
 	LeaderboardStatusText->SetText(FProjectProject01Localization::StatusText(Message));
 	LeaderboardStatusText->SetColorAndOpacity(
 		bIsError ? FSlateColor(ProjectDFSDUI::Danger()) : FSlateColor(ProjectDFSDUI::Text()));
+}
+
+EProjectAffixMode UProjectProject01LobbyWidget::SelectedBotAffixMode() const
+{
+    const int32 Mode=BotMatchMode?BotMatchMode->GetSelectedIndex():0;
+    if(Mode==1)return EProjectAffixMode::Weekly;
+    if(Mode==2)return EProjectAffixMode::Custom;
+    const int32 Pick=BotMatchDifficulty?BotMatchDifficulty->GetSelectedIndex():0;
+    return Pick==5?EProjectAffixMode::MasterPlus:Pick==6?EProjectAffixMode::MasterPlusPlus:EProjectAffixMode::None;
+}
+
+void UProjectProject01LobbyWidget::HandleBotModeChanged(FString,ESelectInfo::Type)
+{
+    RefreshBotModePanel();
+}
+
+void UProjectProject01LobbyWidget::RefreshBotModePanel()
+{
+    // Master+ and Master++ are offered only in the plain mode; weekly and custom pick among the five levels.
+    if(BotMatchMode&&BotMatchDifficulty)
+    {
+        const bool Plain=BotMatchMode->GetSelectedIndex()==0;const bool Listed=BotMatchDifficulty->FindOptionIndex(TEXT("마스터+"))!=INDEX_NONE;
+        if(!Plain&&Listed)
+        {
+            if(BotMatchDifficulty->GetSelectedIndex()>4)BotMatchDifficulty->SetSelectedIndex(4);
+            BotMatchDifficulty->RemoveOption(TEXT("마스터++"));BotMatchDifficulty->RemoveOption(TEXT("마스터+"));
+        }
+        else if(Plain&&!Listed){BotMatchDifficulty->AddOption(TEXT("마스터+"));BotMatchDifficulty->AddOption(TEXT("마스터++"));}
+    }
+    const EProjectAffixMode Mode=SelectedBotAffixMode();
+    if(BotCustomAffixList)BotCustomAffixList->SetVisibility(Mode==EProjectAffixMode::Custom?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+    if(!BotWeeklyAffixText)return;
+    if(Mode!=EProjectAffixMode::Weekly){BotWeeklyAffixText->SetVisibility(ESlateVisibility::Collapsed);return;}
+    BotWeeklyAffixText->SetVisibility(ESlateVisibility::Visible);
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    const FProjectMatchAffixes Weekly=Lobby?Lobby->GetWeeklyAffixes():FProjectMatchAffixes();
+    if(!Weekly.IsActive())
+    {
+        BotWeeklyAffixText->SetText(FText::FromString(TEXT("이번 주 어픽스를 불러오는 중입니다.")));
+        const double Now=FPlatformTime::Seconds();
+        if(Lobby&&!Lobby->IsRequestInFlight()&&Now-WeeklyAffixRequestedAt>10.0){WeeklyAffixRequestedAt=Now;Lobby->RefreshRooms();}
+        return;
+    }
+    FString Text=FString::Printf(TEXT("이번 주: %s\n주간 보너스가 붙고, 난이도가 높을수록 보상이 많습니다."),*Weekly.WeekName);
+    for(const FString& Id:Weekly.Ids)if(const auto* Info=ProjectAffixes::Find(Id))
+        Text+=FString::Printf(TEXT("\n· %s (%s) — %s"),Info->Name,ProjectAffixes::GroupName(Info->Group),Info->Summary);
+    BotWeeklyAffixText->SetText(FText::FromString(Text));
 }

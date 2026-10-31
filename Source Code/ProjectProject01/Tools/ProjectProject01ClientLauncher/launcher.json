@@ -1,0 +1,9 @@
+{
+  "GameName": "ProjectDFSD",
+  "GameExecutables": [ "ProjectDFSD.exe", "ProjectProject01.exe" ],
+  "ProcessNames": [ "ProjectDFSD", "ProjectDFSD-Win64-Shipping", "ProjectProject01", "ProjectProject01-Win64-Shipping" ],
+  "ServerArgument": "-ProjectProject01Server={address}",
+  "BackendPort": 5080,
+  "SettingsFolder": "ProjectProject01",
+  "CacheFolders": [ ".update-cache", "ProjectProject01/Saved/DerivedDataCache", "ProjectProject01/Saved/Shaders" ]
+}

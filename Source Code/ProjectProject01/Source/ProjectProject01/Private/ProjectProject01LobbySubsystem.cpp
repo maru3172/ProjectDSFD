@@ -2,6 +2,7 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01LobbySubsystem.h"
+#include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectProject01VersionContract.h"
 #include "ProjectHttpDiagnostics.h"
 #include "ProjectRequestProtection.h"
@@ -199,13 +200,17 @@ bool UProjectProject01LobbySubsystem::ParseMatchmaking(const TSharedPtr<FJsonObj
     OnCurrentRoomChanged.Broadcast();return true;
 }
 
-void UProjectProject01LobbySubsystem::CreateBotMatch(const FString& Role,int32 Difficulty)
+void UProjectProject01LobbySubsystem::CreateBotMatch(const FString& Role,int32 Difficulty,EProjectAffixMode AffixMode,const TArray<FString>& Affixes)
 {
     if(HasCurrentRoom()||IsMatchmaking()||IsRequestInFlight())return;
-    if((Role!=TEXT("Any")&&Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))||Difficulty<1||Difficulty>5)
+    const bool MasterMode=AffixMode==EProjectAffixMode::MasterPlus||AffixMode==EProjectAffixMode::MasterPlusPlus;
+    if((Role!=TEXT("Any")&&Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))||Difficulty<1||Difficulty>5||(MasterMode&&Difficulty!=5))
     {Complete(EProjectProject01LobbyOperation::CreateBotMatch,false,TEXT("역할과 1~5단계 난이도를 선택하세요."));return;}
     ClearGameJoinTicket();
     TSharedRef<FJsonObject> Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("role"),Role);Json->SetNumberField(TEXT("difficulty"),Difficulty);
+    // Master+/Master++ and the weekly set are rolled by the backend; only a custom pick sends ids.
+    Json->SetStringField(TEXT("affixMode"),FProjectMatchAffixes::ModeKey(AffixMode));
+    if(AffixMode==EProjectAffixMode::Custom){TArray<TSharedPtr<FJsonValue>> Ids;for(const FString& Id:Affixes)Ids.Add(MakeShared<FJsonValueString>(Id));Json->SetArrayField(TEXT("affixes"),Ids);}
     FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
     SendRequest(EProjectProject01LobbyOperation::CreateBotMatch,TEXT("POST"),TEXT("/api/bot-matches"),Body);
 }
@@ -785,6 +790,8 @@ bool UProjectProject01LobbySubsystem::ParseRoomList(const TSharedPtr<FJsonObject
 		Room.MaxPlayers = FMath::Max(1, FMath::RoundToInt(MaxPlayers));
 		ParsedRooms.Add(MoveTemp(Room));
 	}
+    const TSharedPtr<FJsonObject>* WeeklyJson=nullptr;FProjectMatchAffixes Weekly;
+    if(Json->TryGetObjectField(TEXT("weeklyAffixes"),WeeklyJson)&&FProjectMatchAffixes::Parse(*WeeklyJson,Weekly)&&Weekly.Mode==EProjectAffixMode::Weekly)WeeklyAffixes=MoveTemp(Weekly);
 	Rooms = MoveTemp(ParsedRooms);
 	OnRoomListChanged.Broadcast();
 	OutError.Reset();
@@ -804,6 +811,9 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
     const TSharedPtr<FJsonObject>* Rules=nullptr;
     if(StateJson->HasField(TEXT("customRules"))&&(!StateJson->TryGetObjectField(TEXT("customRules"),Rules)||!FProjectCustomMatchRules::Parse(*Rules,Parsed.CustomRules)))
     {OutError=TEXT("방 규칙 응답이 올바르지 않습니다.");return false;}
+    const TSharedPtr<FJsonObject>* AffixJson=nullptr;
+    if(StateJson->HasTypedField<EJson::Object>(TEXT("affixes"))&&(!StateJson->TryGetObjectField(TEXT("affixes"),AffixJson)||!FProjectMatchAffixes::Parse(*AffixJson,Parsed.Affixes)))
+    {OutError=TEXT("방 어픽스 응답이 올바르지 않습니다.");return false;}
 	if (!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("roomId"), Parsed.RoomId) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("joinCode"), Parsed.JoinCode) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("name"), Parsed.Name) ||
@@ -898,6 +908,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
 	if (CurrentRoom.RoomId != Parsed.RoomId || CurrentRoom.MatchId != Parsed.MatchId ||
 		!Parsed.bStarted || Parsed.bReturnedToRoom) ClearGameJoinTicket();
 	CurrentRoom = MoveTemp(Parsed);
+	if(auto* Loading=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectLoadingScreenSubsystem>():nullptr)Loading->SetMatchAffixes(CurrentRoom.Affixes);
     bMatchmaking=CurrentRoom.bRandomParty&&!CurrentRoom.MatchSearchId.IsEmpty();
     if(bMatchmaking)MatchSearchId=CurrentRoom.MatchSearchId;else bCancelMatchmaking=false;
     if(bPreviouslyConfirmed&&!CurrentRoom.bRandomMatch&&!bMatchmaking)MatchmakingMessage.Reset();

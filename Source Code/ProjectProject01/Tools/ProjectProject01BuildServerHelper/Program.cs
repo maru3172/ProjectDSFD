@@ -26,7 +26,7 @@ internal sealed partial class MainForm : Form
     private readonly TextBox engineRoot = new() { Dock = DockStyle.Fill };
     private readonly TextBox projectFile = new() { Dock = DockStyle.Fill };
     private readonly TextBox archiveRoot = new() { Dock = DockStyle.Fill };
-    private readonly TextBox serverArgs = new() { Dock = DockStyle.Fill, Text = "MultiplayTest -log -port=7777" };
+    private readonly TextBox serverArgs = new() { Dock = DockStyle.Fill, Text = "" };
     private readonly RichTextBox output = new() { Dock = DockStyle.Fill, ReadOnly = true, BackColor = Color.FromArgb(24, 24, 24), ForeColor = Color.Gainsboro };
     private readonly Label status = new() { AutoSize = true, Text = "준비" };
     private readonly CancellationTokenSource lifetime = new();
@@ -42,12 +42,14 @@ internal sealed partial class MainForm : Form
 
     public MainForm()
     {
-        Text = "ProjectDFSD Build + Server Helper";
+        Text = "Build + Server Helper";
         Width = 1160;
         Height = 760;
         MinimumSize = new Size(900, 620);
         engineRoot.Text = FindPreferredEngineRoot();
-        projectFile.Text = FindProjectFile() ?? @"C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\ProjectDFSD.uproject";
+        projectFile.Text = FindProjectFile() ?? "";
+        // Everything game-specific follows the chosen .uproject (HelperProject), so this helper works in any project.
+        projectFile.TextChanged += (_, _) => UseProject();UseProject();
         archiveRoot.Text = Path.Combine(Path.GetDirectoryName(projectFile.Text) ?? Environment.CurrentDirectory, "Builds");
         LoadHelperSettings();
         BuildUi();
@@ -155,7 +157,7 @@ internal sealed partial class MainForm : Form
         string project=Path.Combine(root,"Tools","ProjectProject01DiagnosticsDashboard","ProjectProject01DiagnosticsDashboard.csproj");
         if(!File.Exists(project))throw new FileNotFoundException("진단 대시보드 프로젝트를 찾지 못했습니다.",project);
         string outputDirectory=Path.Combine(root,"Saved","DiagnosticsDashboardBuild");
-        string executable=Path.Combine(outputDirectory,"ProjectDFSDDiagnosticsDashboard.exe");
+        string executable=Path.Combine(outputDirectory,HelperProject.Current.ToolExecutable("DiagnosticsDashboard"));
         if(TryFocusDiagnosticsDashboard(executable)){Append("[정보] 이미 실행 중인 진단 대시보드를 표시합니다.");return;}
         // Incremental tool build only, never game packaging or client publishing.
         int result=await RunCapturedAsync("dotnet",$"build \"{project}\" -c Release -o \"{outputDirectory}\"",root);
@@ -171,7 +173,7 @@ internal sealed partial class MainForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool ShowWindowAsync(IntPtr window,int command);
     private static bool TryFocusDiagnosticsDashboard(string executable)
     {
-        foreach(var running in Process.GetProcessesByName("ProjectDFSDDiagnosticsDashboard"))
+        foreach(var running in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(HelperProject.Current.ToolExecutable("DiagnosticsDashboard"))))
         using(running)
         {
             try
@@ -235,17 +237,17 @@ internal sealed partial class MainForm : Form
         string uat = Path.Combine(engineRoot.Text.Trim(), "Build", "BatchFiles", "RunUAT.bat");
         if (!File.Exists(uat)) issues.Add("RunUAT.bat 없음: UE Engine 경로를 확인하세요.");
         if (!File.Exists(projectFile.Text.Trim())) issues.Add("uproject 파일을 찾지 못했습니다.");
-        if (!File.Exists(Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend", "ProjectProject01Backend.csproj"))) issues.Add("백엔드 프로젝트가 없습니다.");
+        if (HelperProject.Current.BackendProject is null) issues.Add("백엔드 프로젝트가 없습니다.");
         bool installedBuild = File.Exists(Path.Combine(engineRoot.Text.Trim(), "Build", "InstalledBuild.txt"));
         Append(installedBuild
             ? "[주의] Launcher Installed Build입니다. 클라이언트는 가능하지만 전용 서버 패키징은 소스 빌드 UE가 필요할 수 있습니다."
             : "[OK] 소스 빌드 형태의 UE Engine 경로입니다.");
-        Append(IsPortListening(3307) ? "[OK] MySQL 3307 포트 사용 중" : "[정보] MySQL 3307 포트가 아직 열리지 않았습니다.");
-        Append(IsPortListening(7777) ? "[주의] 7777 포트가 이미 사용 중" : "[OK] 게임 서버 7777 포트 사용 가능");
+        Append(IsPortListening(HelperProject.Current.MySqlPort) ? $"[OK] MySQL {HelperProject.Current.MySqlPort} 포트 사용 중" : $"[정보] MySQL {HelperProject.Current.MySqlPort} 포트가 아직 열리지 않았습니다.");
+        Append(IsPortListening(HelperProject.Current.GamePort) ? $"[주의] {HelperProject.Current.GamePort} 포트가 이미 사용 중" : $"[OK] 게임 서버 {HelperProject.Current.GamePort} 포트 사용 가능");
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            using var response = await http.GetAsync("http://127.0.0.1:5080/health", lifetime.Token);
+            using var response = await http.GetAsync($"http://127.0.0.1:{HelperProject.Current.BackendPort}/health", lifetime.Token);
             Append(response.IsSuccessStatusCode ? "[OK] 백엔드 /health 정상" : $"[주의] 백엔드 HTTP {(int)response.StatusCode}");
             if (response.IsSuccessStatusCode)
             {
@@ -257,7 +259,7 @@ internal sealed partial class MainForm : Form
                     : "[실패] EOS 음성 토큰 서비스가 준비되지 않았습니다. 백엔드의 EOS 로그를 확인하세요.");
             }
         }
-        catch { Append("[정보] 백엔드 5080은 현재 실행 중이 아닙니다."); }
+        catch { Append($"[정보] 백엔드 {HelperProject.Current.BackendPort}은 현재 실행 중이 아닙니다."); }
         Append(LoadGameServerSharedSecret() is { Length: >= 32 }
             ? "[OK] 게임 서버 서명 비밀키가 로컬 보안 설정에 존재합니다."
             : "[주의] 게임 서버 서명 비밀키가 없습니다. MySQL 초기화/시작을 먼저 실행하세요.");
@@ -267,7 +269,7 @@ internal sealed partial class MainForm : Form
         Append(Environment.GetEnvironmentVariable("PROJECTPROJECT01_EOS_VOICE_SERVER_CLIENT_SECRET") is { Length: > 0 }
             ? "[OK] EOS 보이스 서버 자격 증명이 구성되었습니다."
             : "[주의] EOS 보이스 서버 비밀키가 없습니다. 'EOS 보이스 자격 증명'을 실행하세요.");
-        string backendDirectory = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string backendDirectory = HelperProject.Current.BackendFolder;
         var directAddresses = GetDirectConnectionAddresses(backendDirectory);
         if (directAddresses.Count == 0)
         {
@@ -277,7 +279,7 @@ internal sealed partial class MainForm : Form
         {
             foreach (var (address, interfaceName, _) in directAddresses)
             {
-                Append($"[OK] IP 직접 입력 주소: {address} ({interfaceName}) / 백엔드 {address}:5080 / 게임 서버 {address}:7777");
+                Append($"[OK] IP 직접 입력 주소: {address} ({interfaceName}) / 백엔드 {address}:{HelperProject.Current.BackendPort} / 게임 서버 {address}:{HelperProject.Current.GamePort}");
             }
         }
         foreach (string issue in issues) Append("[실패] " + issue);
@@ -356,7 +358,7 @@ internal sealed partial class MainForm : Form
     {
         string clientArchive = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string? gameExecutable = Directory.Exists(clientArchive)
-            ? EnumerateSafePackageFiles(clientArchive).Where(path=>Path.GetFileName(path).Equals("ProjectDFSD.exe",StringComparison.OrdinalIgnoreCase))
+            ? EnumerateSafePackageFiles(clientArchive).Where(path=>Path.GetFileName(path).Equals(HelperProject.Current.ClientExecutable,StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault()
             : null;
@@ -369,8 +371,7 @@ internal sealed partial class MainForm : Form
 
         string publishedRoot = Path.GetDirectoryName(gameExecutable)!;
         InvalidateClientUpdateManifests(publishedRoot);
-        string launcherProject = Path.Combine(
-            ProjectRoot(), "Tools", "ProjectProject01ClientLauncher", "ProjectProject01ClientLauncher.csproj");
+        string launcherProject = (HelperProject.Current.ToolProject("ClientLauncher") ?? "");
         if (!File.Exists(launcherProject))
         {
             Append("[실패] 클라이언트 업데이트 런처 프로젝트가 없습니다.");
@@ -392,18 +393,18 @@ internal sealed partial class MainForm : Form
             return;
         }
 
-        string launcherSource = Path.Combine(launcherPublish, "ProjectDFSDClientLauncher.exe");
+        string launcherSource = Path.Combine(launcherPublish, HelperProject.Current.ToolExecutable("ClientLauncher"));
         if (!File.Exists(launcherSource))
         {
             Append("[실패] 게시된 런처 실행 파일을 찾지 못했습니다.");
             SetStatus("업데이트 런처 준비 실패");
             return;
         }
-        string launcherTarget = Path.Combine(publishedRoot, "ProjectDFSDClientLauncher.exe");
+        string launcherTarget = Path.Combine(publishedRoot, HelperProject.Current.ToolExecutable("ClientLauncher"));
         bool launcherUpdated = await TryUpdatePublishedLauncherAsync(launcherSource, launcherTarget);
         await File.WriteAllTextAsync(
             Path.Combine(publishedRoot, "업데이트_실행방법.txt"),
-            "ProjectDFSDClientLauncher.exe를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
+            HelperProject.Current.ToolExecutable("ClientLauncher") + "를 실행하고 서버 PC의 IPv4 주소를 입력한 뒤 " +
             "'업데이트 및 실행'을 누르세요.\r\n게임 실행 파일을 직접 실행하면 자동 업데이트를 확인하지 않습니다.\r\n" +
             "게임 실행에는 Unreal Engine 설치가 필요하지 않습니다. Windows 폴더 전체를 유지하세요.\r\n" +
             "새 PC에서 VC++ 런타임 오류가 나면 Engine\\Extras\\Redist\\en-us\\vc_redist.x64.exe를 설치한 뒤 다시 실행하세요.\r\n" +
@@ -469,9 +470,9 @@ internal sealed partial class MainForm : Form
         Append($"[OK] 클라이언트 업데이트 게시 완료: {releaseId}");
         Append($"[정보] 파일 {files.Count}개 / {FormatBytes(totalBytes)} / 위치: {publishedRoot}");
         foreach (var (address, _, _) in GetDirectConnectionAddresses(
-            Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend")))
+            HelperProject.Current.BackendFolder))
         {
-            Append($"[안내] 런처 업데이트 주소: http://{address}:5080/api/client-updates/manifest");
+            Append($"[안내] 런처 업데이트 주소: http://{address}:{HelperProject.Current.BackendPort}/api/client-updates/manifest");
         }
         Append("[안내] 최초 배포 때는 이 폴더 전체를 한 번 전달하고, 이후 사용자는 런처만 실행하면 됩니다.");
         if (!launcherUpdated)
@@ -592,6 +593,8 @@ internal sealed partial class MainForm : Form
             relative.StartsWith(".update-backup/", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith("ProjectProject01ClientLauncher", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith("ProjectDFSDClientLauncher", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains("ClientLauncher", StringComparison.OrdinalIgnoreCase) ||
+            relative.Equals("launcher.json", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith("Manifest_DebugFiles_", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".pdb", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".map", StringComparison.OrdinalIgnoreCase);
@@ -675,7 +678,7 @@ internal sealed partial class MainForm : Form
 
     private Task RunMySqlAsync(string action)
     {
-        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string backend = HelperProject.Current.BackendFolder;
         string script = Path.Combine(backend, "ProjectProject01MySql.ps1");
         return RunCapturedAsync("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -Action {action}", backend);
     }
@@ -683,7 +686,7 @@ internal sealed partial class MainForm : Form
     private async Task StartBackend()
     {
         if (backendProcess is { HasExited: false }) { Append("[정보] 백엔드가 이미 실행 중입니다."); return; }
-        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string backend = HelperProject.Current.BackendFolder;
         string? serverSecret = LoadGameServerSharedSecret();
         if (serverSecret is not { Length: >= 32 })
         {
@@ -721,7 +724,7 @@ internal sealed partial class MainForm : Form
 
     private Task OpenEosVoiceSetupAsync()
     {
-        string script = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend", "ConfigureProjectProject01EosVoice.ps1");
+        string script = (HelperProject.Current.EosScript ?? Path.Combine(HelperProject.Current.BackendFolder, "ConfigureEosVoice.ps1"));
         if (!File.Exists(script))
         {
             Append("[실패] EOS 보이스 설정 스크립트를 찾지 못했습니다.");
@@ -744,9 +747,9 @@ internal sealed partial class MainForm : Form
 
     internal static string BuildBackendListenUrls(IEnumerable<string> lan,string? configuredVpn,Func<string,bool> assigned)
     {
-        var urls = new List<string> { "http://127.0.0.1:5080" };
+        var urls = new List<string> { $"http://127.0.0.1:{HelperProject.Current.BackendPort}" };
         foreach(string host in lan.Concat(configuredVpn is null?Array.Empty<string>():new[]{configuredVpn}))
-            if(IPAddress.TryParse(host,out var ip)&&ip.AddressFamily==AddressFamily.InterNetwork&&assigned(host))urls.Add($"http://{ip}:5080");
+            if(IPAddress.TryParse(host,out var ip)&&ip.AddressFamily==AddressFamily.InterNetwork&&assigned(host))urls.Add($"http://{ip}:{HelperProject.Current.BackendPort}");
         return string.Join(';', urls.Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
@@ -796,8 +799,7 @@ internal sealed partial class MainForm : Form
 
     private static string? GetConfiguredVpnHost(string backendDirectory)
     {
-        string localConfigurationPath = Path.Combine(
-            backendDirectory, "LocalMySql", "ProjectProject01Backend.local.json");
+        string localConfigurationPath = HelperProject.Current.LocalMySqlConfig;
         if (!File.Exists(localConfigurationPath)) return null;
         try
         {
@@ -822,7 +824,7 @@ internal sealed partial class MainForm : Form
     private async Task ConfigureDirectIpFirewallAsync()
     {
         string serverPortRange=GetServerPortRange();
-        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string backend = HelperProject.Current.BackendFolder;
         var addresses = GetDirectConnectionAddresses(backend);
         if (addresses.Count == 0)
         {
@@ -830,7 +832,7 @@ internal sealed partial class MainForm : Form
             return;
         }
         string? serverExecutable = Directory.Exists(archiveRoot.Text.Trim())
-            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectDFSDServer.exe", SearchOption.AllDirectories)
+            ? Directory.GetFiles(archiveRoot.Text.Trim(), HelperProject.Current.ServerExecutable, SearchOption.AllDirectories)
                 .FirstOrDefault()
             : null;
         var script = new StringBuilder("$ErrorActionPreference='Stop';");
@@ -844,7 +846,7 @@ internal sealed partial class MainForm : Form
             // dotnet run은 실제 수신 소켓을 dotnet.exe가 아니라 생성된 Backend apphost EXE에서
             // 열 수 있다. 프로그램 경로로 제한하면 같은 PC 검사만 성공하고 외부 요청은
             // 방화벽에서 거부될 수 있으므로 주소·인터페이스·원격 대역·포트로 제한한다.
-            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5080 -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Profile Any | Out-Null;");
+            script.Append($"New-NetFirewallRule -DisplayName '{backendName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {HelperProject.Current.BackendPort} -LocalAddress '{address}' -RemoteAddress '{remoteAddress}' -InterfaceAlias '{interfaceName.Replace("'", "''")}' -Profile Any | Out-Null;");
             if (serverExecutable is not null)
             {
                 script.Append($"Get-NetFirewallRule -DisplayName '{serverName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule;");
@@ -870,7 +872,7 @@ internal sealed partial class MainForm : Form
                 Append($"[실패] IP 직접 연결 방화벽 설정이 종료 코드 {process.ExitCode}로 실패했습니다.");
                 return;
             }
-            Append($"[OK] IP 직접 연결용 백엔드 TCP 5080을 허용했습니다: {string.Join(", ", addresses.Select(item => item.Address))}");
+            Append($"[OK] IP 직접 연결용 백엔드 TCP {HelperProject.Current.BackendPort}을 허용했습니다: {string.Join(", ", addresses.Select(item => item.Address))}");
             Append(serverExecutable is null
                 ? "[안내] 패키징된 데디케이티드 서버가 없어 UDP 7777 규칙은 만들지 않았습니다. 서버 패키징 후 다시 실행하세요."
                 : $"[OK] IP 직접 연결용 게임 서버 UDP {serverPortRange}을 해당 연결 대역에 허용했습니다.");
@@ -883,7 +885,7 @@ internal sealed partial class MainForm : Form
 
     private async Task ValidateDirectIpConnectivityAsync(bool waitForBackendStartup = false)
     {
-        string backend = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend");
+        string backend = HelperProject.Current.BackendFolder;
         var addresses = GetDirectConnectionAddresses(backend);
         if (addresses.Count == 0)
         {
@@ -900,7 +902,7 @@ internal sealed partial class MainForm : Form
             {
                 try
                 {
-                    using var response = await http.GetAsync($"http://{address}:5080/health", lifetime.Token);
+                    using var response = await http.GetAsync($"http://{address}:{HelperProject.Current.BackendPort}/health", lifetime.Token);
                     succeeded = response.IsSuccessStatusCode;
                     lastFailure = succeeded ? string.Empty : $"HTTP {(int)response.StatusCode}";
                     if (succeeded) break;
@@ -920,10 +922,10 @@ internal sealed partial class MainForm : Form
                 if (attempt < attempts) await Task.Delay(750, lifetime.Token);
             }
             Append(succeeded
-                ? $"[OK] IP 직접 연결 주소 http://{address}:5080 ({interfaceName}) 응답 확인"
-                : $"[실패] {address}:5080 연결 실패: {lastFailure}");
+                ? $"[OK] IP 직접 연결 주소 http://{address}:{HelperProject.Current.BackendPort} ({interfaceName}) 응답 확인"
+                : $"[실패] {address}:{HelperProject.Current.BackendPort} 연결 실패: {lastFailure}");
         }
-        Append(IsUdpPortBound(7777)
+        Append(IsUdpPortBound(HelperProject.Current.GamePort)
             ? "[OK] 게임 서버 UDP 7777 수신 중"
             : "[정보] 게임 서버 UDP 7777은 아직 수신 중이 아닙니다.");
         Append("[안내] 외부 PC의 환경설정에 위 IPv4 주소 중 실제로 공유할 주소를 직접 입력하세요.");
@@ -953,8 +955,8 @@ internal sealed partial class MainForm : Form
             return;
         }
         string[] candidates = Directory.Exists(archiveRoot.Text.Trim())
-            ? Directory.GetFiles(archiveRoot.Text.Trim(), "ProjectDFSDServer.exe", SearchOption.AllDirectories) : [];
-        if (candidates.Length == 0) { Append("[실패] 패키징된 ProjectDFSDServer.exe가 없습니다."); return; }
+            ? Directory.GetFiles(archiveRoot.Text.Trim(), HelperProject.Current.ServerExecutable, SearchOption.AllDirectories) : [];
+        if (candidates.Length == 0) { Append($"[실패] 패키징된 {HelperProject.Current.ServerExecutable}가 없습니다."); return; }
         if (!ValidatePackagedNetworkCompatibility()) return;
         string arguments = serverArgs.Text.Trim();
         int requestedCount=(int)serverCount.Value;
@@ -1023,7 +1025,7 @@ internal sealed partial class MainForm : Form
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            using var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:5080/api/server/offline");
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{HelperProject.Current.BackendPort}/api/server/offline");
             request.Headers.Add("X-ProjectProject01-Server-Secret", serverSecret);
             request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
             using HttpResponseMessage response = await http.SendAsync(request, lifetime.Token);
@@ -1045,7 +1047,7 @@ internal sealed partial class MainForm : Form
         string serverRoot = Path.GetFullPath(Path.Combine(archiveRoot.Text.Trim(), "Server"));
         string rootWithSeparator = Path.TrimEndingDirectorySeparator(serverRoot) + Path.DirectorySeparatorChar;
         var result = new List<Process>();
-        foreach (Process process in Process.GetProcessesByName("ProjectDFSDServer"))
+        foreach (Process process in Process.GetProcessesByName(HelperProject.Current.ServerProcess))
         {
             try
             {
@@ -1071,12 +1073,12 @@ internal sealed partial class MainForm : Form
         string clientRoot = Path.Combine(archiveRoot.Text.Trim(), "Client");
         string serverRoot = Path.Combine(archiveRoot.Text.Trim(), "Server");
         string? clientBinary = Directory.Exists(clientRoot)
-            ? Directory.EnumerateFiles(clientRoot, "ProjectDFSD.exe", SearchOption.AllDirectories)
+            ? Directory.EnumerateFiles(clientRoot, HelperProject.Current.ClientExecutable, SearchOption.AllDirectories)
                 .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar))
                 .FirstOrDefault()
             : null;
         string? serverBinary = Directory.Exists(serverRoot)
-            ? Directory.EnumerateFiles(serverRoot, "ProjectDFSDServer.exe", SearchOption.AllDirectories)
+            ? Directory.EnumerateFiles(serverRoot, HelperProject.Current.ServerExecutable, SearchOption.AllDirectories)
                 .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar))
                 .FirstOrDefault()
             : null;
@@ -1104,7 +1106,7 @@ internal sealed partial class MainForm : Form
             Append("[실패] 전체 흐름 스모크 테스트 프로젝트가 없습니다.");
             return;
         }
-        if (!IsPortListening(3307) || !IsPortListening(5080))
+        if (!IsPortListening(HelperProject.Current.MySqlPort) || !IsPortListening(HelperProject.Current.BackendPort))
         {
             Append("[차단] MySQL 초기화/시작과 백엔드 시작을 먼저 실행하세요.");
             return;
@@ -1163,8 +1165,7 @@ internal sealed partial class MainForm : Form
         string? environment = Environment.GetEnvironmentVariable("PROJECTPROJECT01_GAME_SERVER_SECRET")?.Trim();
         if (!string.IsNullOrWhiteSpace(environment)) return environment;
 
-        string localConfigurationPath = Path.Combine(ProjectRoot(), "Tools", "ProjectProject01Backend",
-            "LocalMySql", "ProjectProject01Backend.local.json");
+        string localConfigurationPath = HelperProject.Current.LocalMySqlConfig;
         if (!File.Exists(localConfigurationPath)) return null;
         try
         {
@@ -1206,11 +1207,7 @@ internal sealed partial class MainForm : Form
         string? configured = Environment.GetEnvironmentVariable("UE_ENGINE_ROOT")?.Trim();
         if (!string.IsNullOrWhiteSpace(configured)) return configured;
 
-        string[] candidates =
-        [
-            @"C:\UE\UnrealEngine\UnrealEngine\Engine",
-            @"C:\Program Files\Epic Games\UE_5.8\Engine"
-        ];
+        string[] candidates = [@"C:\UE\UnrealEngine\UnrealEngine\Engine", .. HelperProject.For(FindProjectFile() ?? "").EngineCandidates(), @"C:\Program Files\Epic Games\UE_5.8\Engine"];
         return candidates.FirstOrDefault(path =>
             File.Exists(Path.Combine(path, "Build", "BatchFiles", "RunUAT.bat"))) ?? candidates[^1];
     }
@@ -1226,8 +1223,8 @@ internal sealed partial class MainForm : Form
             if (!string.IsNullOrWhiteSpace(settings?.ProjectFile))
             {
                 string configured = settings.ProjectFile;
-                string renamed = Path.Combine(Path.GetDirectoryName(configured) ?? "", "ProjectDFSD.uproject");
-                projectFile.Text = !File.Exists(configured) && File.Exists(renamed) ? renamed : configured;
+                string? renamed = Directory.Exists(Path.GetDirectoryName(configured) ?? "") ? HelperProject.FindUp(Path.GetDirectoryName(configured)!) : null;
+                projectFile.Text = !File.Exists(configured) && renamed is not null ? renamed : configured;
             }
             if (!string.IsNullOrWhiteSpace(settings?.ArchiveRoot)) archiveRoot.Text = settings.ArchiveRoot;
             if (!string.IsNullOrWhiteSpace(settings?.ServerArguments)) serverArgs.Text = settings.ServerArguments;
@@ -1278,13 +1275,18 @@ internal sealed partial class MainForm : Form
         if (InvokeRequired) { BeginInvoke(() => SetStatus(text)); return; }
         status.Text = text;
     }
+    private void UseProject()
+    {
+        HelperProject.Current = HelperProject.For(projectFile.Text.Trim());
+        Text = $"{HelperProject.Current.Name} Build + Server Helper";
+        if (string.IsNullOrWhiteSpace(serverArgs.Text)) serverArgs.Text = HelperProject.Current.DefaultServerArguments;
+    }
     private static string? FindProjectFile()
     {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory != null)
         {
-            string candidate = Path.Combine(directory.FullName, "ProjectDFSD.uproject");
-            if (File.Exists(candidate)) return candidate;
+            if (directory.GetFiles("*.uproject").OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault() is { } candidate) return candidate.FullName;
             directory = directory.Parent;
         }
         return null;

@@ -3,7 +3,7 @@
 param([string]$OutputRoot='')
 $ErrorActionPreference='Stop'
 $tool=Join-Path $PSScriptRoot 'Review-Merge.ps1'
-if(-not $OutputRoot){$OutputRoot=Join-Path $PSScriptRoot '../../Saved/GitMergeTests'}
+if(-not $OutputRoot){$saved=Join-Path $PSScriptRoot '../../Saved';$OutputRoot=if(Test-Path -LiteralPath $saved){Join-Path $saved 'GitMergeTests'}else{Join-Path ([IO.Path]::GetTempPath()) 'GitMergeTests'}}
 $root=Join-Path ([IO.Path]::GetFullPath($OutputRoot)) ([Guid]::NewGuid().ToString('N'))
 $fixture=Join-Path $root 'fixture';[void][IO.Directory]::CreateDirectory($fixture)
 $checks=[Collections.Generic.List[string]]::new()

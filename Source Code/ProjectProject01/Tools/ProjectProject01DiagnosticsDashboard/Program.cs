@@ -125,7 +125,7 @@ internal static class DashboardSelfTest
             try{task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();return 14;}
             catch(OperationCanceledException){}
         }
-        Console.WriteLine("ProjectProject01 diagnostics dashboard self-test passed.");
+        Console.WriteLine("Diagnostics dashboard self-test passed.");
         return 0;
     }
 }
@@ -426,7 +426,7 @@ internal sealed class DashboardForm : Form
 
     private void SelectRootFolder()
     {
-        using var dialog = new FolderBrowserDialog { Description = "Select ProjectProject01/Saved/Diagnostics" };
+        using var dialog = new FolderBrowserDialog { Description = "Select <project>/Saved/Diagnostics" };
         if (dialog.ShowDialog(this) == DialogResult.OK) LoadReports(dialog.SelectedPath);
     }
 
@@ -965,10 +965,11 @@ internal sealed class DashboardForm : Form
             MessageBox.Show(this, "The selected record has no .utrace file.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        const string insights = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealInsights.exe";
+        var engine = FindProjectRoot(rootPath.Text) is { } root && UnrealProject.FindProjectFile(root) is { } file ? UnrealProject.Load(file) : UnrealProject.Current;
+        var insights = engine.EngineBinary("UnrealInsights.exe");
         if (!File.Exists(insights))
         {
-            MessageBox.Show(this, "언리얼 5.8 엔진 폴더에서 추적 분석 프로그램을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, $"{engine.EngineLabel} 엔진 폴더에서 추적 분석 프로그램을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         Process.Start(new ProcessStartInfo { FileName = insights, Arguments = $"\"{trace}\"", UseShellExecute = true });
@@ -979,7 +980,7 @@ internal sealed class DashboardForm : Form
         var summary = SelectedRun();
         if (summary is null) return Task.CompletedTask;
         var projectRoot = FindProjectRoot(rootPath.Text);
-        var projectFile = projectRoot is null ? null : Path.Combine(projectRoot, "ProjectDFSD.uproject");
+        var projectFile = projectRoot is null ? null : UnrealProject.FindProjectFile(projectRoot);
         if (projectFile is null || !File.Exists(projectFile))
         {
             MessageBox.Show(this, "진단 폴더의 상위 경로에서 게임 프로젝트 파일을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1017,11 +1018,12 @@ internal sealed class DashboardForm : Form
         {
             attempt=AutomationVerification.CreateAttempt(plan.Simulation ? Path.Combine(summary.RunDirectory, "BotSimulation") : summary.RunDirectory);
             AutomationVerification.Save(attempt,summary.TestRunId,"Running",null,new("Running","이번 실행의 빌드를 진행 중입니다."),roleOutcomesPass);
-            const string buildTool = @"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat";
-            const string editorCmd = @"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe";
+            var project = UnrealProject.Load(projectFile);
+            var buildTool = project.BuildTool;
+            var editorCmd = project.EngineBinary("UnrealEditor-Cmd.exe");
             progress.Report("에디터 빌드 중…");
             File.WriteAllText(Path.Combine(attempt.Directory, "Selection.txt"), $"{plan.Name}\n{plan.Filter}\n제한 시간: {plan.Timeout.TotalMinutes:0}분", Encoding.UTF8);
-            var build = await RunProcessAsync(buildTool, ["ProjectDFSDEditor", "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReloadFromIDE"],cancellationToken,
+            var build = await RunProcessAsync(buildTool, [project.EditorTarget, "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReloadFromIDE"],cancellationToken,
                 outputFile: Path.Combine(attempt.Directory, "Build.log"));
             buildExitCode=build.ExitCode; buildStatus=build.ExitCode==0?"Succeeded":"Failed";
             AutomationVerdict verdict=new("NotRun","빌드 실패로 자동 검사를 실행하지 않았습니다.");
@@ -1478,7 +1480,7 @@ internal sealed class DashboardForm : Form
         var directory = new DirectoryInfo(diagnosticsPath);
         while (directory is not null)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "ProjectDFSD.uproject"))) return directory.FullName;
+            if (directory.Exists && directory.GetFiles("*.uproject").Length > 0) return directory.FullName;
             directory = directory.Parent;
         }
         return null;

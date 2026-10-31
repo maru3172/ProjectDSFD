@@ -42,6 +42,7 @@ struct FMultiplayTestServerPlayerRecord
 struct FMultiplayTestMatchCarryover
 {
     FProjectCustomMatchRules CustomRules;
+    FProjectMatchAffixes Affixes;
     FString MatchId;
     FString BotRoomId;
     TArray<FProjectMatchBotSpec> Bots;
@@ -70,6 +71,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectSurvivorPresentationTest;
 	friend class AProjectProject01TutorialGameMode;
     friend class UProjectMatchBots;
+    friend class UProjectAffixRuntime;
     friend class FProjectMatchBotsRuntimeTest;
     friend class FProjectCustomRulesTest;
     friend class FProjectActualBotMatchEditorTest;
@@ -90,6 +92,10 @@ public:
 	void ApplyMannequinTuning(const FMannequinAITuningRow& Tuning);
     bool AcceptCustomRules(const FString& Match,const FProjectCustomMatchRules& Rules,FString& Error);
     const FProjectCustomMatchRules& GetCustomMatchRules()const{return CustomMatchRules;}
+    /** Affixes the match ticket carried (ProjectAffixes.h). Fixed for the whole match, floors included. */
+    bool AcceptMatchAffixes(const FString& Match,const FProjectMatchAffixes& Affixes,FString& Error);
+    const FProjectMatchAffixes& GetMatchAffixes()const{return MatchAffixes;}
+    class UProjectAffixRuntime* GetAffixRuntime()const{return AffixRuntime;}
 	void GetDiagnosticSurvivorVisionTuning(float& OutIntervalSeconds, float& OutHalfAngleDegrees) const
 	{
 		OutIntervalSeconds = SurvivorVisionCheckIntervalSeconds;
@@ -170,6 +176,7 @@ protected:
 
 private:
     UPROPERTY(Transient) TObjectPtr<class UProjectMatchBots> MatchBots;
+    UPROPERTY(Transient) TObjectPtr<class UProjectAffixRuntime> AffixRuntime;
 	void UpdateVoiceAudibility();
 	float VoiceAudibilityAccumulator=0;
 	void RecordTimeline(EProjectMatchEvent Kind, const FString& PlayerName = {}, const FString& Detail = {});
@@ -411,6 +418,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
     int32 MannequinSpawnCount = 10;
     FProjectCustomMatchRules CustomMatchRules;
+    FProjectMatchAffixes MatchAffixes;FString AffixesMatchId;
     FString CustomRulesMatchId;
     int32 StandardMannequinCount=10;
     float StandardTimeLimit=1800;

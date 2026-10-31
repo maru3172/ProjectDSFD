@@ -36,6 +36,9 @@ public:
 
 	void Configure(EProjectProject01FootstepStyle NewStyle, float NewVolumeScale, bool bNewAutomaticCadence);
 	void UpdateFootsteps(float DeltaTime);
+	/** C10 (대피 방송): every footstep on this client is muffled until this platform time. */
+	static double AffixMuffleUntil;
+	static float AffixMuffle() { return FPlatformTime::Seconds() < AffixMuffleUntil ? 0.25f : 1.0f; }
 	/** Accepted contacts on the game thread, also when SFX is muted. No new network traffic. */
 	FProjectProject01FootContact OnFootContact;
 

@@ -1104,6 +1104,15 @@ private:
     bool bRoleWritePending=false;
     FString DesiredMatchRole,SubmittedMatchRole;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
+    // Bot match mode (plain / weekly affixes / custom affixes); Master+ and Master++ live in the difficulty list.
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchMode;
+    UPROPERTY(Transient) TObjectPtr<class UTextBlock> BotWeeklyAffixText;
+    UPROPERTY(Transient) TObjectPtr<class UVerticalBox> BotCustomAffixList;
+    UPROPERTY(Transient) TArray<TObjectPtr<class UCheckBox>> BotCustomAffixChecks;
+    UFUNCTION() void HandleBotModeChanged(FString Item, ESelectInfo::Type SelectionType);
+    void RefreshBotModePanel();
+    double WeeklyAffixRequestedAt=-100.0;
+    EProjectAffixMode SelectedBotAffixMode() const;
     UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCreateButton;
     UPROPERTY(Transient) TObjectPtr<class UTextBlock> BotMatchParticipantsText;
     UPROPERTY(Transient) TObjectPtr<class UButton> BotMatchCancelButton;

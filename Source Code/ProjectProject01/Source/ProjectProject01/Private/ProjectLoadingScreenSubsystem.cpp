@@ -69,7 +69,31 @@ namespace ProjectLoading
                 Row->AddSlot().AutoHeight().Padding(0,0,0,16)[SNew(SBox).HeightOverride(36)[Text([Other](){const auto P=Other();return P.IsSet()?FString(P->Progress==100?TEXT("준비 완료"):P->Progress>=70?TEXT("화면 준비 중"):TEXT("접속·맵 로딩 확인 대기")):FString();},12,true)]];
                 Peers->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(114)[Row]];
 			}
+            // Affix modes: the mode title and every affix of this match, each with its group-coloured badge.
+            TSharedRef<SVerticalBox> Affixes=SNew(SVerticalBox).Visibility_Lambda([this](){return State->ReadAffixes().IsActive()?EVisibility::Visible:EVisibility::Collapsed;});
+            Affixes->AddSlot().AutoHeight().Padding(0,0,0,12)[SNew(STextBlock).Tag(TEXT("ProjectLoadingAffixTitle")).Font(FCoreStyle::GetDefaultFontStyle("Bold",20))
+                .ColorAndOpacity(FLinearColor(.88f,.87f,.83f)).Text_Lambda([this](){return FText::FromString(State->ReadAffixes().ModeTitle());})];
+            for(int32 Index=0;Index<ProjectAffixes::All().Num();++Index)
+            {
+                auto Info=[this,Index]()->const ProjectAffixes::FInfo*{const auto A=State->ReadAffixes();return A.Ids.IsValidIndex(Index)?ProjectAffixes::Find(A.Ids[Index]):nullptr;};
+                Affixes->AddSlot().AutoHeight().Padding(0,0,0,10)
+                [SNew(SHorizontalBox).Visibility_Lambda([Info](){return Info()?EVisibility::Visible:EVisibility::Collapsed;})
+                    +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,12,0)
+                    [SNew(SBox).WidthOverride(44).HeightOverride(44)
+                        [SNew(SBorder).Tag(TEXT("ProjectLoadingAffixIcon")).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).HAlign(HAlign_Center).VAlign(VAlign_Center)
+                            .BorderBackgroundColor_Lambda([Info](){const auto* I=Info();return I?ProjectAffixes::GroupColor(I->Group):FLinearColor::Transparent;})
+                            [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",20)).ColorAndOpacity(FLinearColor(.06f,.06f,.06f))
+                                .Text_Lambda([Info](){const auto* I=Info();return FText::FromString(I?I->Glyph:TEXT(""));})]]]
+                    +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+                    [SNew(SVerticalBox)
+                        +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",17)).ColorAndOpacity(FLinearColor(.88f,.87f,.83f))
+                            .Text_Lambda([Info](){const auto* I=Info();return FText::FromString(I?FString::Printf(TEXT("%s · %s"),I->Name,ProjectAffixes::GroupName(I->Group)):FString());})]
+                        +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular",13)).ColorAndOpacity(FLinearColor(.7f,.69f,.66f))
+                            .AutoWrapText(true).Text_Lambda([Info](){const auto* I=Info();return FText::FromString(I?I->Summary:TEXT(""));})]]];
+            }
 			TSharedRef<SOverlay> Layout=SNew(SOverlay)
+				+SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(0,32,24,0)
+				[SNew(SBox).WidthOverride_Lambda([this](){return FOptionalSize(AffixWidth());})[Affixes]]
 				+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(24,0,0,0)
 				[SNew(SBox).WidthOverride_Lambda([this](){return FOptionalSize(PeerWidth());})[Peers]]
 				+SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
@@ -86,6 +110,7 @@ namespace ProjectLoading
 	private:
 		float ScreenWidth() const {const float Width=float(GetCachedGeometry().GetLocalSize().X);return Width>0?Width:1280.f;}
 		float PeerWidth() const {return FMath::Min(260.f,ScreenWidth()*.23f);}
+		float AffixWidth() const {return FMath::Min(380.f,ScreenWidth()*.3f);}
         float MessageWidth() const {return State->Read().Multiplayer?FMath::Min(600.f,ScreenWidth()*.42f):OwnWidth();}
 		float OwnWidth() const {return FMath::Min(900.f,FMath::Max(200.f,ScreenWidth()-48.f));}
 		TSharedPtr<FProjectLoadingScreenState,ESPMode::ThreadSafe> State;
@@ -112,6 +137,9 @@ void UProjectLoadingScreenSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 bool UProjectLoadingScreenSubsystem::IsLoading() const {return State && State->Read().Active;}
+void UProjectLoadingScreenSubsystem::SetMatchAffixes(const FProjectMatchAffixes& Affixes)
+{if(State)State->SetAffixes(Affixes.IsValid()?Affixes:FProjectMatchAffixes());}
+
 void UProjectLoadingScreenSubsystem::BeginLoading(bool Multiplayer)
 {
 	if(!State || IsRunningDedicatedServer() || (GetWorld() && GetWorld()->GetNetMode()==NM_DedicatedServer)) return;

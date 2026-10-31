@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793413517487,
+      "tag": "0000_first_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793413636218,
+      "tag": "0001_round_speedball",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793413795871,
+      "tag": "0002_ordinary_proteus",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793426071765,
+      "tag": "0003_colossal_gamma_corps",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793426461469,
+      "tag": "0004_light_cyclops",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793427142735,
+      "tag": "0005_rare_joystick",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793428114608,
+      "tag": "0006_slippery_doctor_faustus",
+      "breakpoints": true
+    }
+  ]
+}

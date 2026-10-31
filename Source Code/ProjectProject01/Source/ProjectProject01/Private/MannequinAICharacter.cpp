@@ -2,6 +2,8 @@
 
 
 #include "MannequinAICharacter.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -259,7 +261,7 @@ void AMannequinAICharacter::ApplyMannequinWalkSpeed()
 		return;
 	}
 
-	Movement->MaxWalkSpeed = FMath::Max(0.0f, MannequinWalkSpeed);
+	Movement->MaxWalkSpeed = FMath::Max(0.0f, MannequinWalkSpeed * AffixSpeedScale);
 }
 
 void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
@@ -567,6 +569,9 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
+	DOREPLIFETIME(AMannequinAICharacter, AffixSpeedScale);
+	DOREPLIFETIME(AMannequinAICharacter, AffixCue);
+	DOREPLIFETIME(AMannequinAICharacter, AffixBeamRadius);
 	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
 	DOREPLIFETIME(AMannequinAICharacter, MultiplayCommand);
 	DOREPLIFETIME(AMannequinAICharacter, MultiplayActivity);
@@ -657,9 +662,85 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 			this,
 			DefaultFootstepSound,
 			Hit.ImpactPoint+Hit.ImpactNormal*8.0f,
-			1.0f,
+			UFootstepSynthComponent::AffixMuffle(),
 			FMath::FRandRange(0.95f, 1.05f),
 			0.0f,
 			OccludedFootstepAttenuation);
 	}
+}
+
+void AMannequinAICharacter::SetAffixSpeedScale(const float Scale)
+{
+	if (!HasAuthority()) return;
+	const float Clamped = FMath::Clamp(Scale, 0.5f, 1.5f);
+	if (FMath::IsNearlyEqual(Clamped, AffixSpeedScale, 0.005f)) return;
+	AffixSpeedScale = Clamped;
+	ApplyMannequinWalkSpeed();
+}
+
+void AMannequinAICharacter::SetAffixCue(const FLinearColor& Color, const float Strength)
+{
+	if (!HasAuthority()) return;
+	// Quantised so a slowly growing glow does not replicate every frame.
+	const uint8 Alpha = uint8(FMath::RoundToInt(FMath::Clamp(Strength, 0.0f, 1.0f) * 10.0f) * 25);
+	const FColor Next = Alpha == 0 ? FColor(0, 0, 0, 0) : FColor(Color.ToFColor(false).R, Color.ToFColor(false).G, Color.ToFColor(false).B, Alpha);
+	if (Next == AffixCue) return;
+	AffixCue = Next;
+	if (GetNetMode() != NM_DedicatedServer) OnRep_AffixCue();
+}
+
+void AMannequinAICharacter::OnRep_AffixCue()
+{
+	// A small glow at the chest: visible only where the body itself is visible.
+	if (AffixCue.A == 0)
+	{
+		if (AffixCueLight) AffixCueLight->SetVisibility(false);
+		return;
+	}
+	if (!AffixCueLight)
+	{
+		AffixCueLight = NewObject<UPointLightComponent>(this, TEXT("AffixCueLight"));
+		AffixCueLight->SetupAttachment(GetRootComponent());
+		AffixCueLight->SetRelativeLocation(FVector(0, 0, 40));
+		AffixCueLight->SetAttenuationRadius(140.0f);
+		AffixCueLight->SetCastShadows(false);
+		AffixCueLight->RegisterComponent();
+	}
+	AffixCueLight->SetLightColor(FLinearColor(AffixCue.R / 255.0f, AffixCue.G / 255.0f, AffixCue.B / 255.0f));
+	AffixCueLight->SetIntensity(1500.0f * (AffixCue.A / 250.0f));
+	AffixCueLight->SetVisibility(true);
+}
+
+void AMannequinAICharacter::SetAffixBeam(const bool bOn, const float Radius)
+{
+	if (!HasAuthority()) return;
+	const float Next = bOn ? FMath::Max(0.0f, Radius) : 0.0f;
+	if (FMath::IsNearlyEqual(Next, AffixBeamRadius, 1.0f)) return;
+	AffixBeamRadius = Next;
+	if (GetNetMode() != NM_DedicatedServer) OnRep_AffixBeam();
+}
+
+void AMannequinAICharacter::OnRep_AffixBeam()
+{
+	if (AffixBeamRadius <= 0.0f)
+	{
+		if (AffixBeamLight) AffixBeamLight->SetVisibility(false);
+		return;
+	}
+	if (!AffixBeamLight)
+	{
+		// Shadowed, so the beam stops at walls and shelves the way the body's sight does.
+		AffixBeamLight = NewObject<USpotLightComponent>(this, TEXT("AffixBeamLight"));
+		AffixBeamLight->SetupAttachment(GetRootComponent());
+		AffixBeamLight->SetRelativeLocation(FVector(0, 0, 60));
+		AffixBeamLight->SetRelativeRotation(FRotator(-20, 0, 0));
+		AffixBeamLight->SetInnerConeAngle(30.0f);
+		AffixBeamLight->SetOuterConeAngle(42.0f);
+		AffixBeamLight->SetLightColor(FLinearColor(.7f, .85f, 1.0f));
+		AffixBeamLight->SetIntensity(2500.0f);
+		AffixBeamLight->SetCastShadows(true);
+		AffixBeamLight->RegisterComponent();
+	}
+	AffixBeamLight->SetAttenuationRadius(AffixBeamRadius);
+	AffixBeamLight->SetVisibility(true);
 }

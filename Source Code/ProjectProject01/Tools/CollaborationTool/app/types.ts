@@ -1,0 +1,14 @@
+export type Kind="task"|"meeting"|"note"|"log"|"decision"|"event"|"plan"|"goal"|"discussion"|"chat";
+export type Entry={unread?:number;id:string;workspace_id:string;project_id:string|null;topic_id:string|null;custom_type_id:string|null;summary:string|null;auto_summary:string;kind:Kind;title:string;body:string;author_id:string;assigned_id:string|null;day:string;due_day:string|null;status:"todo"|"inprogress"|"blocked"|"done";priority:"low"|"normal"|"high";parent_id:string|null;pinned:number;created_at:string;updated_at:string;version:number;deleted_at:string|null};
+export type Member={id:string;user_id:string;name:string;email:string;role:"owner"|"admin"|"member"|"viewer"};
+export type Project={id:string;name:string;color:string;archived:number};
+export type Topic={id:string;name:string;description:string;owner_id:string;color:string;archived:number};
+export type Workspace={id:string;name:string;role:string;created_at:string;archived?:number};
+export type Activity={id:string;entry_id:string|null;actor_id:string;action:string;created_at:string;before_json:string|null;after_json:string|null};
+export type Notice={id:string;title:string;entry_id:string|null;read_at:string|null;created_at:string};
+export type AttachedFile={id:string;entry_id:string;name:string;size:number;created_at:string;title:string};
+export type Data={people?:{user_id:string;name:string}[];workspace:Workspace;members:Member[];projects:Project[];topics:Topic[];recordTypes:Topic[];files:AttachedFile[];entries:Entry[];activity:Activity[];notifications:Notice[];hasMore:boolean;invites:{id:string;role:string;email:string|null;uses:number;expires_at:string;revoked_at:string|null}[]};
+export const kindLabels:Record<Kind,string>={task:"할 일",meeting:"회의록",note:"문서",log:"작업 로그",decision:"결정 사항",event:"일정",plan:"계획안",goal:"목표",discussion:"의논 사항",chat:"대화방"};
+export const statusLabels={todo:"예정",inprogress:"진행 중",blocked:"막힘",done:"완료"};
+export const actions:Record<string,string>={created:"기록을 남겼습니다",updated:"기록을 수정했습니다",deleted:"기록을 휴지통으로 옮겼습니다",restored:"기록을 복원했습니다",commented:"댓글을 남겼습니다",project:"프로젝트를 관리했습니다",member:"팀원 권한을 변경했습니다",joined:"팀에 참여했습니다",imported:"기록을 가져왔습니다",attached:"파일을 첨부했습니다",checklist:"체크리스트를 변경했습니다",dependency:"선후 관계를 변경했습니다",completion_override:"사유를 남겨 업무를 완료했습니다",revision_restored:"이전 본문을 복원했습니다",file_rename:"첨부 이름을 변경했습니다",file_delete:"첨부를 휴지통으로 옮겼습니다",file_restore:"첨부를 복원했습니다",file_replace:"첨부를 새 버전으로 교체했습니다",handover:"업무를 인계했습니다",ownership_transferred:"공간 소유권을 위임했습니다",workspace_archived:"공간을 보관했습니다",workspace_reopened:"공간을 다시 열었습니다",member_left:"공간에서 탈퇴했습니다",member_removed:"팀원을 제외했습니다"};
+export const dayOf=(d=new Date())=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(d);

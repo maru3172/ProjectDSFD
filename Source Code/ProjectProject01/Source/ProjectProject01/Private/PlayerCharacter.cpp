@@ -12,6 +12,7 @@
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
 #include "MultiplayTestGameMode.h"
+#include "MultiplayTestPlayerController.h"
 #include "ProjectProject01Tutorial.h"
 #include "ProjectPracticeGameModeBase.h"
 
@@ -37,6 +38,8 @@
 #include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "Net/UnrealNetwork.h"
+#include "Components/PointLightComponent.h"
+#include "ProjectAffixRuntime.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UObjectGlobals.h"
 #include "SceneView.h"
@@ -1040,8 +1043,9 @@ void APlayerCharacter::ClientCorrectSprinting_Implementation(const bool bAuthori
 	ApplySprintingState(bAuthoritativeSprinting);
 }
 
-void APlayerCharacter::ApplySprintingState(const bool bNewSprinting)
+void APlayerCharacter::ApplySprintingState(const bool bRequestedSprinting)
 {
+	const bool bNewSprinting = bRequestedSprinting && !bAffixSprintBlocked;
 	if (bIsSprinting == bNewSprinting)
 	{
 		return;
@@ -1210,7 +1214,7 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 	{
 		if (bActivelySprinting)
 		{
-			if (!TryConsumeFullStaminaUpdate(CurrentStamina, StaminaDrainPerSecond, DeltaTime))
+			if (!TryConsumeFullStaminaUpdate(CurrentStamina, StaminaDrainPerSecond * AffixStaminaDrainScale, DeltaTime))
 			{
 				// 현재 업데이트 전체 소모량을 낼 수 없으면 잔량을 부분 소모하지 않고 즉시 걷기로 돌아간다.
 				ApplySprintingState(false);
@@ -1219,7 +1223,7 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 		}
 		else
 		{
-			CurrentStamina = FMath::Min(MaxStamina, CurrentStamina + (StaminaRecoveryPerSecond * DeltaTime));
+			CurrentStamina = FMath::Min(MaxStamina, CurrentStamina + (StaminaRecoveryPerSecond * AffixStaminaRecoveryScale * DeltaTime));
 		}
 		return;
 	}
@@ -1388,7 +1392,7 @@ void APlayerCharacter::ApplyPlayerWalkSpeed()
 		return;
 	}
 
-	Movement->MaxWalkSpeed = bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed;
+	Movement->MaxWalkSpeed = (bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed) * AffixSpeedScale;
 }
 
 void APlayerCharacter::OnRep_PlayerWalkSpeed()
@@ -1504,10 +1508,15 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 		{
 			if (*It != this && !It->IsGameOver()) { PartnerDistance = FVector::Dist2D(GetActorLocation(), It->GetActorLocation()); }
 		}
-		UE_LOG(LogTemp, Display, TEXT("[CatchBy] Activity=%s Command=%s Frozen=%d CatcherSpeed=%.0f VictimSpeed=%.0f Victim=%s Second=%.0f PartnerDistance=%.0f"),
+		// Viewed: the body a mannequin player (or bot) is looking through, even while its AI drives it.
+		bool bViewed = false;
+		for (TActorIterator<AMultiplayTestPlayerController> It(GetWorld()); It; ++It) bViewed |= It->GetViewedMannequin() == Catcher;
+		UE_LOG(LogTemp, Display, TEXT("[CatchBy] Activity=%s Command=%s Frozen=%d Viewed=%d CatcherSpeed=%.0f VictimSpeed=%.0f Victim=%s Second=%.0f PartnerDistance=%.0f"),
 			*UEnum::GetValueAsString(Catcher->GetMultiplayActivity()), *UEnum::GetValueAsString(Catcher->GetMultiplayCommand()),
-			Catcher->IsFrozenBySurvivorVision(), Catcher->GetVelocity().Size2D(), GetVelocity().Size2D(), *Victim, Second, PartnerDistance);
+			Catcher->IsFrozenBySurvivorVision(), bViewed, Catcher->GetVelocity().Size2D(), GetVelocity().Size2D(), *Victim, Second, PartnerDistance);
 	}
+	if (const auto* AffixMode = GetWorld() ? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr)
+		if (UProjectAffixRuntime* Affixes = AffixMode->GetAffixRuntime()) Affixes->OnCatch(CatchingMannequin);
 	return true;
 }
 
@@ -2103,6 +2112,8 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, DirectChaseRadius);
 	DOREPLIFETIME(APlayerCharacter, RoamingOuterRadius);
 	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
+	DOREPLIFETIME(APlayerCharacter, AffixSpeedScale);
+	DOREPLIFETIME(APlayerCharacter, AffixCue);
 	DOREPLIFETIME(APlayerCharacter, PlayerSprintSpeed);
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 	DOREPLIFETIME_CONDITION(APlayerCharacter, CurrentStamina, COND_OwnerOnly);
@@ -2387,4 +2398,54 @@ void APlayerCharacter::UpdateDebugCursorAim()
     const FRotator AimRotation(0.0f, AimDirection.Rotation().Yaw, 0.0f);
     PlayerController->SetControlRotation(AimRotation);
     SetActorRotation(AimRotation);
+}
+
+void APlayerCharacter::SetAffixSpeedScale(const float Scale)
+{
+	if (!HasAuthority()) return;
+	const float Clamped = FMath::Clamp(Scale, 0.5f, 1.5f);
+	if (FMath::IsNearlyEqual(Clamped, AffixSpeedScale, 0.005f)) return;
+	AffixSpeedScale = Clamped;
+	ApplyPlayerWalkSpeed();
+}
+
+void APlayerCharacter::SetAffixSprintBlocked(const bool bBlocked)
+{
+	if (!HasAuthority() || bAffixSprintBlocked == bBlocked) return;
+	bAffixSprintBlocked = bBlocked;
+	// The owner predicts sprinting; tell it right away so it does not run ahead of the server.
+	if (bBlocked && bIsSprinting) { ApplySprintingState(false); ClientCorrectSprinting(false); }
+}
+
+void APlayerCharacter::SetAffixCue(const FLinearColor& Color, const float Strength)
+{
+	if (!HasAuthority()) return;
+	const uint8 Alpha = uint8(FMath::RoundToInt(FMath::Clamp(Strength, 0.0f, 1.0f) * 10.0f) * 25);
+	const FColor Rgb = Color.ToFColor(false);
+	const FColor Next = Alpha == 0 ? FColor(0, 0, 0, 0) : FColor(Rgb.R, Rgb.G, Rgb.B, Alpha);
+	if (Next == AffixCue) return;
+	AffixCue = Next;
+	if (GetNetMode() != NM_DedicatedServer) OnRep_AffixCue();
+}
+
+void APlayerCharacter::OnRep_AffixCue()
+{
+	// A small glow at head height: seen where this survivor is seen.
+	if (AffixCue.A == 0)
+	{
+		if (AffixCueLight) AffixCueLight->SetVisibility(false);
+		return;
+	}
+	if (!AffixCueLight)
+	{
+		AffixCueLight = NewObject<UPointLightComponent>(this, TEXT("AffixCueLight"));
+		AffixCueLight->SetupAttachment(GetRootComponent());
+		AffixCueLight->SetRelativeLocation(FVector(0, 0, 70));
+		AffixCueLight->SetAttenuationRadius(120.0f);
+		AffixCueLight->SetCastShadows(false);
+		AffixCueLight->RegisterComponent();
+	}
+	AffixCueLight->SetLightColor(FLinearColor(AffixCue.R / 255.0f, AffixCue.G / 255.0f, AffixCue.B / 255.0f));
+	AffixCueLight->SetIntensity(1200.0f * (AffixCue.A / 250.0f));
+	AffixCueLight->SetVisibility(true);
 }

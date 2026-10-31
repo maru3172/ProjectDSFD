@@ -9,4 +9,8 @@
     <Product>백화점 화재사건</Product>
     <Company>Team DSFD</Company>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Game-specific values; without this file the launcher uses generic defaults (LauncherProfile.cs). -->
+    <None Update="launcher.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

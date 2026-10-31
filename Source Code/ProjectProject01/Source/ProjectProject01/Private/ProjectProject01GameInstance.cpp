@@ -1700,6 +1700,9 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
             const TSharedPtr<FJsonObject>* CustomRules=nullptr;
             if(JsonResponse->HasField(TEXT("customRules"))&&(!JsonResponse->TryGetObjectField(TEXT("customRules"),CustomRules)||!FProjectCustomMatchRules::Parse(*CustomRules,Claim.CustomRules)))
             {ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid custom rules."));return;}
+            const TSharedPtr<FJsonObject>* AffixJson=nullptr;
+            if(JsonResponse->HasTypedField<EJson::Object>(TEXT("affixes"))&&(!JsonResponse->TryGetObjectField(TEXT("affixes"),AffixJson)||!FProjectMatchAffixes::Parse(*AffixJson,Claim.Affixes)))
+            {ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid match affixes."));return;}
 			if (!FProjectProject01VersionContract::Matches(
 				Claim.ClientBuildVersion, Claim.DedicatedServerBuildVersion, Claim.ApiVersion, Claim.GameDataVersion,
 				Claim.NetworkProtocolVersion, VersionError))

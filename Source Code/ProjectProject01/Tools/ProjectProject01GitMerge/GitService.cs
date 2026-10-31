@@ -126,7 +126,7 @@ internal sealed class GitService
         }
         if (path.Length > 0) list.Add(new(path, branch, head)); return list;
     }
-    public string ReportDirectory => System.IO.Path.Combine(Repository, "Source Code", "ProjectProject01", "Saved", "GitMergeReviews");
+    public string ReportDirectory => System.IO.Path.Combine(ProjectLayout.SavedDirectory(Repository), "GitMergeReviews");
     public async Task<MergeResult> Review(string source, string target, string? planFile = null, string? selectionFile = null)
     {
         var args = new List<string> { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
@@ -151,4 +151,39 @@ internal sealed class GitService
         try { return Enumerable.Range(1, count - 1).Select(i => Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer, i * IntPtr.Size)) ?? "").ToArray(); }
         finally { LocalFree(pointer); }
     }
+}
+
+/// <summary>
+/// Where this tool keeps its files inside any repository, so it works outside this project too. An Unreal project in the
+/// repository (the first *.uproject found, up to four folders deep) keeps them in its Saved folder; any other repository
+/// keeps them inside .git, which is never committed. GITMANAGER_SAVED overrides both.
+/// </summary>
+internal static class ProjectLayout
+{
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> Found = new(StringComparer.OrdinalIgnoreCase);
+    public static string? FindUnrealProject(string repository) => Found.GetOrAdd(System.IO.Path.GetFullPath(repository), Search);
+    private static string? Search(string repository)
+    {
+        var pending = new Queue<(string Dir, int Depth)>();pending.Enqueue((repository, 0));
+        while (pending.Count > 0)
+        {
+            var (dir, depth) = pending.Dequeue();
+            string[] found;try { found = Directory.GetFiles(dir, "*.uproject"); } catch (Exception) { continue; }
+            if (found.Length > 0) return found.OrderBy(f => f, StringComparer.OrdinalIgnoreCase).First();
+            if (depth >= 4) continue;
+            try { foreach (var sub in Directory.GetDirectories(dir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+                if (System.IO.Path.GetFileName(sub) is not (".git" or "Saved" or "Intermediate" or "Binaries" or "DerivedDataCache" or "node_modules" or "bin" or "obj")) pending.Enqueue((sub, depth + 1)); }
+            catch (Exception) { }
+        }
+        return null;
+    }
+    public static string SavedDirectory(string repository)
+    {
+        if (Environment.GetEnvironmentVariable("GITMANAGER_SAVED") is { Length: > 0 } custom) return System.IO.Path.GetFullPath(custom);
+        return FindUnrealProject(repository) is { } project ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(project)!, "Saved")
+            : System.IO.Path.Combine(repository, ".git", "git-manager");
+    }
+    /// <summary>The Unreal project name, else the repository folder name.</summary>
+    public static string DisplayName(string repository) =>
+        FindUnrealProject(repository) is { } project ? System.IO.Path.GetFileNameWithoutExtension(project) : new DirectoryInfo(repository).Name;
 }
