@@ -83,5 +83,39 @@ try{
  await req('/api/data',{workspace:w,action:'create',kind:'task',title:'조명 검수',body:'',day:'2026-11-01',assigned_id:people.artist.id});
  as('artist');check('배정 같은 알림도 함께 전달',(await pulse()).notifications.some(n=>n.title.includes('조명 검수')));
  as('owner');check('아직 1:1이 있었던 사람 목록과 마지막 시각',(await pulse()).conversations.map(c=>c.peer).sort().join()===[people.artist.id,people.guest.id].sort().join());
+ // Editing and removing: only your own messages; an admin may remove anyone's room message.
+ as('artist');await req('/api/data',{workspace:w,action:'comment',entry:room,body:'오타 있는 메시지'});
+ const typo=q("SELECT id FROM comments WHERE body='오타 있는 메시지'").id;
+ as('owner');await post('messageEdit',{id:typo,body:'남의 글 고치기'},403);
+ as('artist');await post('messageEdit',{id:typo,body:'고친 메시지'});
+ const edited=q('SELECT body,edited_at FROM comments WHERE id=?',typo);
+ check('대화방 메시지: 쓴 사람만 고칠 수 있고 수정 시각이 남음',edited.body==='고친 메시지'&&!!edited.edited_at);
+ await post('messageEdit',{id:typo,body:'   '},400);checks.push('빈 내용으로는 고칠 수 없음');
+ as('owner');await post('messageDelete',{id:typo});
+ check('공간 관리자는 다른 사람의 대화방 메시지를 지울 수 있음',!q('SELECT id FROM comments WHERE id=?',typo));
+ as('artist');await req('/api/data',{workspace:w,action:'comment',entry:room,body:'관리자 메시지 지우기 시도'});
+ const ownerNote=(as('owner'),await req('/api/data',{workspace:w,action:'comment',entry:room,body:'관리자가 쓴 메시지'}),q("SELECT id FROM comments WHERE body='관리자가 쓴 메시지'").id);
+ as('artist');await post('messageDelete',{id:ownerNote},403);checks.push('일반 팀원은 남의 메시지를 지울 수 없음');
+ as('guest');await post('messageEdit',{id:ownerNote,body:'읽기 전용'},403);checks.push('읽기 전용 팀원은 대화방 메시지를 고칠 수 없음');
+ as('owner');const fileForm=new FormData();fileForm.set('file',new File([png],'방 사진.png'));fileForm.set('entry',room);fileForm.set('comment','true');
+ const roomFile=await (await fetch(app.origin+'/api/file',{method:'POST',headers:{Cookie:cookie,Origin:app.origin},body:fileForm})).json();
+ const fileComment=q('SELECT id FROM comments WHERE attachment_id=?',roomFile.id).id;
+ await post('messageEdit',{id:fileComment,body:'이름 바꾸기'},400);await post('messageDelete',{id:fileComment});
+ check('파일 메시지는 고치지 못하고, 지우면 파일은 휴지통으로',!q('SELECT id FROM comments WHERE id=?',fileComment)&&!!q('SELECT deleted_at FROM attachments WHERE id=?',roomFile.id).deleted_at);
+
+ as('artist');await post('dmSend',{peer:owner.userId,body:'1:1 오타'});const dm=(await thread(owner.userId)).messages.at(-1);
+ as('owner');await post('dmEdit',{peer:people.artist.id,id:dm.id,body:'남의 1:1 고치기'},404);await post('dmDelete',{peer:people.artist.id,id:dm.id},404);
+ as('artist');await post('dmEdit',{peer:owner.userId,id:dm.id,body:'1:1 고침'});
+ as('owner');const seen=(await thread(people.artist.id)).messages.find(m=>m.id===dm.id);
+ check('1:1 메시지: 보낸 사람만 고치고, 상대에게도 고친 내용과 수정 표시',seen.body==='1:1 고침'&&!!seen.edited_at);
+ as('artist');await post('dmDelete',{peer:owner.userId,id:dm.id});
+ as('owner');check('1:1 메시지를 지우면 상대 대화에서도 사라짐',!(await thread(people.artist.id)).messages.some(m=>m.id===dm.id));
+ as('artist');const sentFile=(await thread(owner.userId)).messages.find(m=>m.attachment_name==='메모.txt');
+ await post('dmEdit',{peer:owner.userId,id:sentFile.id,body:''});
+ check('1:1 파일 메시지는 설명을 비워도 됨',(await thread(owner.userId)).messages.find(m=>m.id===sentFile.id)?.body==='');
+ const fileKey=q('SELECT key FROM direct_attachments WHERE id=?',sentFile.attachment_id).key;
+ await post('dmDelete',{peer:owner.userId,id:sentFile.id});await new Promise(r=>setTimeout(r,200));
+ const {existsSync}=await import('node:fs');const {safeBlob}=await import('../self-host/runtime.mjs');
+ check('1:1 파일 메시지를 지우면 파일도 지워지고 더는 열 수 없음',!q('SELECT id FROM direct_attachments WHERE id=?',sentFile.attachment_id)&&!existsSync(safeBlob(fileKey))&&(as('owner'),(await download(sentFile.attachment_id)).status===404));
  await writeFile(path.join(root,'results.json'),JSON.stringify({passed:checks.length,checks},null,2));console.log(JSON.stringify({passed:checks.length,checks},null,2));
 }finally{if(app)await app.close()}

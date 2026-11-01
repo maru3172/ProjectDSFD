@@ -1,8 +1,8 @@
-import {Problem,q,rows,run,text,now,json,env,requireUser,membership} from './runtime.mjs';
+import {Problem,q,rows,run,text,now,json,env,requireUser,membership,audit} from './runtime.mjs';
 // 1:1 messages and the "what is new for me" pulse behind chat and contact alerts.
 // Direct messages live in their own tables, never in entries/comments, so no record list, search, export, report or
 // file route can show them to anyone but the two people in the conversation.
-export const contactActions=['pulse','dmThread','dmSend','dmRead'];
+export const contactActions=['pulse','dmThread','dmSend','dmRead','dmEdit','dmDelete','messageEdit','messageDelete'];
 const preview=value=>value.replace(/\s+/g,' ').trim().slice(0,120);
 const peerOf=(w,me,value)=>{const peer=text(value.peer,120,true);if(peer===me.userId)throw new Problem(400,'다른 팀원을 선택하세요.');return peer};
 const currentMember=(w,peer)=>{if(!q('SELECT id FROM members WHERE workspace_id=? AND user_id=?',w,peer))throw new Problem(400,'현재 팀원에게만 보낼 수 있습니다.')};
@@ -22,7 +22,7 @@ export function contactAction(action,value,w,me){
  }
  if(action==='dmThread'){
   const peer=peerOf(w,me,value);
-  const messages=rows('SELECT * FROM (SELECT m.rowid AS sequence,m.id,m.from_user,m.to_user,m.body,m.created_at,m.attachment_id,a.name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_type FROM direct_messages m LEFT JOIN direct_attachments a ON a.id=m.attachment_id WHERE m.workspace_id=? AND ((m.from_user=? AND m.to_user=?) OR (m.from_user=? AND m.to_user=?)) ORDER BY m.rowid DESC LIMIT 200) ORDER BY sequence',w,me.userId,peer,peer,me.userId);
+  const messages=rows('SELECT * FROM (SELECT m.rowid AS sequence,m.id,m.from_user,m.to_user,m.body,m.created_at,m.edited_at,m.attachment_id,a.name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_type FROM direct_messages m LEFT JOIN direct_attachments a ON a.id=m.attachment_id WHERE m.workspace_id=? AND ((m.from_user=? AND m.to_user=?) OR (m.from_user=? AND m.to_user=?)) ORDER BY m.rowid DESC LIMIT 200) ORDER BY sequence',w,me.userId,peer,peer,me.userId);
   return {messages,read:q('SELECT last_row FROM direct_reads WHERE workspace_id=? AND user_id=? AND peer_id=?',w,peer,me.userId)?.last_row??0};
  }
  if(action==='dmSend'){
@@ -35,6 +35,31 @@ export function contactAction(action,value,w,me){
   const max=q('SELECT coalesce(max(rowid),0) n FROM direct_messages WHERE workspace_id=? AND from_user=? AND to_user=?',w,peer,me.userId).n;
   run('INSERT INTO direct_reads VALUES(?,?,?,?) ON CONFLICT(workspace_id,user_id,peer_id) DO UPDATE SET last_row=max(last_row,excluded.last_row)',w,me.userId,peer,Math.min(sequence,max));
   return {ok:true};
+ }
+ // Writers change only their own messages. A room or comment message can also be removed by a space admin; a file it
+ // carried goes to the space's trash (restorable from 자료 관리). A 1:1 file is removed with its message.
+ if(action==='dmEdit'||action==='dmDelete'){
+  const message=q('SELECT * FROM direct_messages WHERE id=? AND workspace_id=? AND from_user=?',text(value.id,80,true),w,me.userId);
+  if(!message)throw new Problem(404,'내가 보낸 메시지만 고치거나 지울 수 있습니다.');
+  if(action==='dmEdit'){const body=text(value.body,5000,!message.attachment_id);if(body===message.body)return {ok:true};run('UPDATE direct_messages SET body=?,edited_at=? WHERE id=?',body,now(),message.id);return {ok:true}}
+  run('DELETE FROM direct_messages WHERE id=?',message.id);
+  if(message.attachment_id){const file=q('SELECT key FROM direct_attachments WHERE id=?',message.attachment_id);run('DELETE FROM direct_attachments WHERE id=?',message.attachment_id);if(file)setTimeout(()=>{void env.BUCKET.delete(file.key).catch(()=>{})},0)}
+  return {ok:true};
+ }
+ if(action==='messageEdit'||action==='messageDelete'){
+  const comment=q('SELECT c.* FROM comments c JOIN entries e ON e.id=c.entry_id WHERE c.id=? AND c.workspace_id=? AND e.deleted_at IS NULL',text(value.id,80,true),w);
+  if(!comment)throw new Problem(404,'메시지가 없습니다.');
+  const admin=['owner','admin'].includes(q('SELECT role FROM members WHERE workspace_id=? AND user_id=?',w,me.userId)?.role);
+  if(action==='messageEdit'){
+   if(comment.author_id!==me.userId)throw new Problem(403,'내가 쓴 메시지만 고칠 수 있습니다.');
+   if(comment.attachment_id)throw new Problem(400,'파일 메시지는 고칠 수 없습니다. 지운 뒤 다시 올려 주세요.');
+   const body=text(value.body,5000,true);if(body===comment.body)return {ok:true};
+   run('UPDATE comments SET body=?,edited_at=? WHERE id=?',body,now(),comment.id);audit(w,'comment_edited',comment.entry_id,{body},{body:comment.body});return {ok:true};
+  }
+  if(comment.author_id!==me.userId&&!admin)throw new Problem(403,'내가 쓴 메시지만 지울 수 있습니다. 관리자는 모든 메시지를 지울 수 있습니다.');
+  run('DELETE FROM comments WHERE id=?',comment.id);
+  if(comment.attachment_id)run('UPDATE attachments SET deleted_at=? WHERE id=? AND deleted_at IS NULL',now(),comment.attachment_id);
+  audit(w,'comment_deleted',comment.entry_id,null,{body:comment.body,author:comment.author_id});return {ok:true};
  }
  throw new Problem(400,'지원하지 않는 대화 작업입니다.');
 }

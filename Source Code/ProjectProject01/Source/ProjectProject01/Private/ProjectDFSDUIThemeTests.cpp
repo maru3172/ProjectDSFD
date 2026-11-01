@@ -132,4 +132,18 @@ bool FProjectDFSDUIThemeRenderTest::RunTest(const FString&)
 	Result->ReleaseSlateResources(true);
 	FlushRenderingCommands();return true;
 }
+
+// Match notices stack at the top left: each one reports its real height, so a longer one pushes the next further down.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectDFSDStackedNoticeTest,"ProjectProject01.UITheme.StackedNotices",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectDFSDStackedNoticeTest::RunTest(const FString&)
+{
+	auto* One=NewObject<UProjectProject01TransientNoticeWidget>();static_cast<UUserWidget*>(One)->Initialize();One->TakeWidget();One->ShowNotice(TEXT("다음 층으로 넘어갑니다"),3.f,1.f);
+	auto* Two=NewObject<UProjectProject01TransientNoticeWidget>();static_cast<UUserWidget*>(Two)->Initialize();Two->TakeWidget();Two->ShowNotice(TEXT("생존자 A님이 탈출했습니다\n생존자 B님이 다음 층으로 넘어갔습니다"),3.f,1.f);
+	const float H1=One->GetNoticeHeight(),H2=Two->GetNoticeHeight();
+	AddInfo(FString::Printf(TEXT("Notice heights %.1f / %.1f"),H1,H2));
+	TestTrue(TEXT("A one-line notice has a real height"),H1>=30.f&&H1<80.f);
+	TestTrue(TEXT("A two-line notice is taller, so the next notice moves further down"),H2>H1+10.f);
+	One->SetTopOffset(30.f);Two->SetTopOffset(30.f+H1+8.f);
+	One->ReleaseSlateResources(true);Two->ReleaseSlateResources(true);return true;
+}
 #endif

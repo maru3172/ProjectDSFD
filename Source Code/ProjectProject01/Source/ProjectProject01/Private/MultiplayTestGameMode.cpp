@@ -68,6 +68,7 @@ namespace
 
 		bool IsComplete() const { return SurvivorCount > 0 && ResolvedCount == SurvivorCount; }
 		bool DidMannequinWin() const { return IsComplete() && EliminatedCount == SurvivorCount; }
+		bool DidAllEscape() const { return IsComplete() && EliminatedCount == 0; }
 	};
 
 	FMatchResolutionSummary EvaluateMatchResolution(
@@ -260,6 +261,14 @@ bool FProjectProject01LevelTransitionResolutionTest::RunTest(const FString& Para
 		OneSurvivorAfterPartnerDeath.CanTravel());
 	TestEqual(TEXT("Only the waiting survivor respawns after partner death"),
 		OneSurvivorAfterPartnerDeath.AdvancingCount, 1);
+
+	// "게임이 종료되었습니다" is announced only when every survivor got out.
+	TestTrue(TEXT("All survivors escaped ends the game as an escape"),
+		EvaluateMatchResolution({ EMultiplayTestSurvivorState::Escaped, EMultiplayTestSurvivorState::Escaped }).DidAllEscape());
+	TestFalse(TEXT("One caught survivor is not an all-escape ending"),
+		EvaluateMatchResolution({ EMultiplayTestSurvivorState::Escaped, EMultiplayTestSurvivorState::Eliminated }).DidAllEscape());
+	TestFalse(TEXT("A survivor still playing is no ending yet"),
+		EvaluateMatchResolution({ EMultiplayTestSurvivorState::Escaped, EMultiplayTestSurvivorState::Active }).DidAllEscape());
 	return true;
 }
 
@@ -2702,8 +2711,21 @@ bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 
 	UE_LOG(LogProjectProject01Multiplayer, Log,
 		TEXT("Survivor %s escaped at %.2f seconds."), *GetNameSafe(Survivor), Record->EscapeSeconds);
+	BroadcastMatchNotice(FString::Printf(TEXT("생존자 %s님이 탈출했습니다"), *Record->DisplayName), true);
 	CheckForMatchCompletion();
 	return true;
+}
+
+void AMultiplayTestGameMode::BroadcastMatchNotice(const FString& Message, const bool bMannequinsOnly, const float HoldSeconds)
+{
+	if (!HasAuthority() || Message.IsEmpty() || AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) return;
+	for (const TPair<TWeakObjectPtr<AMultiplayTestPlayerController>, FMultiplayTestServerPlayerRecord>& Pair : MatchPlayerRecords)
+	{
+		AMultiplayTestPlayerController* Controller = Pair.Key.Get();
+		if (!IsValid(Controller) || Controller->IsServerControlledBot()) continue;
+		if (bMannequinsOnly && Pair.Value.Role != TEXT("Mannequin")) continue;
+		Controller->ClientShowMatchNotice(Message, HoldSeconds);
+	}
 }
 
 bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharacter* Survivor, const bool bFadeToSpectator)
@@ -2738,6 +2760,7 @@ bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharac
 	if (auto* Controller = Cast<AMultiplayTestPlayerController>(Survivor->GetController())) Controller->CaptureLevelTransitionState();
 	Record->SurvivorState = EMultiplayTestSurvivorState::TransitionWaiting;
 	RecordTimeline(EProjectMatchEvent::LevelTravel, Record->DisplayName);
+	BroadcastMatchNotice(FString::Printf(TEXT("생존자 %s님이 다음 층으로 넘어갔습니다"), *Record->DisplayName), true);
     if(auto* QuestController=Cast<AMultiplayTestPlayerController>(Survivor->GetController()))
         if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
             Instance->ReportMainQuestFloor(QuestController->GetAuthenticatedMatchId(),QuestController->GetAuthenticatedUserId(),TEXT("/Game/MyProject/Level/")+UGameplayStatics::GetCurrentLevelName(this,true));
@@ -2865,6 +2888,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
 	{
 		return;
 	}
+	if (!bLevelTransitionDeparting) BroadcastMatchNotice(TEXT("다음 층으로 넘어갑니다"), false);
 	bLevelTransitionDeparting = true;
     for(TActorIterator<AProjectOpenObserverController> It(GetWorld());It;++It)It->PrepareLevelTransitionCarryover(false,FadeSeconds);
 #if WITH_EDITOR
@@ -3059,6 +3083,7 @@ void AMultiplayTestGameMode::CheckForMatchCompletion()
 	}
 	if (Summary.IsComplete())
 	{
+		if (Summary.DidAllEscape()) BroadcastMatchNotice(TEXT("게임이 종료되었습니다"), false, 4.0f);
 		if (Summary.DidMannequinWin())
 		{
 			bMatchEndedByForfeit = bAnySurvivorForfeited;

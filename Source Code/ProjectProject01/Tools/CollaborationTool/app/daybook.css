@@ -78,3 +78,43 @@
 .contact-messages>div.mine .contact-file{background:#dff0ea;border-color:#c5e3da}
 .contact-attach{display:flex;align-items:center;justify-content:center;width:36px;min-height:44px;border-radius:8px;color:#6f8188;cursor:pointer;flex:none}
 .contact-attach:hover{background:var(--canvas);color:var(--ink)}
+.contact-messages>div.queued{opacity:.6}
+/* Editing and removing messages */
+.message-actions{display:inline-flex;gap:2px;margin-left:8px;opacity:0;transition:opacity .15s}
+.message:hover .message-actions,.message:focus-within .message-actions,.contact-messages>div:hover .message-actions,.contact-messages>div:focus-within .message-actions{opacity:1}
+.message-actions button{background:none;border:0;padding:0 4px;min-height:0;font-size:11px;color:var(--muted);cursor:pointer}
+.message-actions button:hover{color:var(--ink);text-decoration:underline}
+@media (hover:none){.message-actions{opacity:1}}
+.message-edit,.contact-edit{display:grid;gap:6px;min-width:240px}
+.message-edit textarea,.contact-edit textarea{min-height:56px;font-size:13px;resize:vertical}
+.message-edit>div,.contact-edit>div{display:flex;justify-content:flex-end;gap:6px}
+/* 담당자별 업무 (app/assignee-board.tsx) */
+.assignee-board{display:grid;gap:14px}
+.assignee-people{display:flex;flex-wrap:wrap;gap:6px}
+.assignee-people button{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--ink);font-size:13px}
+.assignee-people button b{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--canvas);color:var(--muted);font-size:11px;display:inline-flex;align-items:center;justify-content:center}
+.assignee-people button.active{background:var(--teal);border-color:var(--teal);color:#fff}
+.assignee-people button.active b{background:#ffffff33;color:#fff}
+.assignee-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.assignee-summary>div{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;gap:2px}
+.assignee-summary strong{font-size:22px}
+.assignee-summary span{font-size:12px;color:var(--muted)}
+.assignee-summary .late strong{color:#c4492f}
+.assignee-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
+.assignee-column>header{display:flex;align-items:center;gap:8px;padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.assignee-column>header h3{margin:0;font-size:14px}
+.assignee-column>header span{margin-left:auto;font-size:12px;color:var(--muted)}
+.assignee-column details{margin-top:8px}
+.assignee-column summary{cursor:pointer;font-size:12px;color:var(--muted);padding:4px 0}
+.assignee-empty{font-size:12px;color:var(--muted);padding:12px 2px}
+@media (max-width:1100px){.assignee-columns{grid-template-columns:1fr}}
+@media (max-width:640px){.assignee-summary{grid-template-columns:repeat(2,1fr)}}
+.assignee-column{padding:14px 16px}
+.assignee-goal{border-bottom:1px solid var(--line)}
+.assignee-goal .entry-row{border-bottom:0}
+.assignee-progress{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:0 12px 12px 52px}
+.assignee-progress>div{height:6px;border-radius:3px;background:var(--canvas);overflow:hidden}
+.assignee-progress i{display:block;height:100%;background:var(--teal);border-radius:3px}
+.assignee-progress span{font-size:11px;color:var(--muted);white-space:nowrap}
+.assignee-progress strong{color:var(--ink);font-size:12px}
+.assignee-columns{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}

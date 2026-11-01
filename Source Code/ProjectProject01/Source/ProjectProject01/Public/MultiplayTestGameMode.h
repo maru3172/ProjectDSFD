@@ -153,6 +153,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Multiplayer|Match")
 	bool MarkSurvivorEscaped(class APlayerCharacter* Survivor);
 
+	/** Top-left match notice for the human players (all of them, or only the mannequins). Never in the tutorial. */
+	void BroadcastMatchNotice(const FString& Message, bool bMannequinsOnly, float HoldSeconds = 3.0f);
+
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PreLogin(
 		const FString& Options,

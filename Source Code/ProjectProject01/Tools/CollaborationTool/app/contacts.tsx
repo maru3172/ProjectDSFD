@@ -7,7 +7,7 @@ import type {Data} from './types';
 type Row=Record<string,any>;
 type Pulse={me:string;rooms:{id:string;title:string;unread:number;last_row:number;author_id:string;preview:string}[];direct:{peer:string;unread:number;last_row:number;preview:string}[];conversations:{peer:string;last_at:string}[];notifications:{id:string;title:string;entry_id:string|null}[]};
 type Alert={key:string;title:string;body:string;open:()=>void};
-type Message={sequence:number;id:string;from_user:string;to_user:string;body:string;created_at:string;attachment_id:string|null;attachment_name:string|null;attachment_size:number|null;attachment_type:string|null};
+type Message={sequence:number;id:string;from_user:string;to_user:string;body:string;created_at:string;edited_at:string|null;attachment_id:string|null;attachment_name:string|null;attachment_size:number|null;attachment_type:string|null};
 const fileUrl=(id:string,inline=false)=>`/api/direct-file?id=${encodeURIComponent(id)}${inline?'&inline=1':''}`;
 const sizeText=(n:number)=>n<1024*1024?`${Math.max(1,Math.round(n/1024))}KB`:`${(n/1048576).toFixed(1)}MB`;
 const accept='.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.docx,.xlsx,.pptx,.zip';
@@ -75,6 +75,12 @@ export default function Contacts({workspace,data,selected,onOpen}:{workspace:str
 function ContactPanel({workspace,data,pulse,peer,name,permission,cards,onPermission,onPeer,onRead,onClose}:{workspace:string;data:Data|null;pulse:Pulse|null;peer:string|null;name:(id:string)=>string;permission:NotificationPermission|'unsupported';cards:ReactNode;onPermission:()=>void;onPeer:(id:string)=>void;onRead:()=>void;onClose:()=>void}){
  const [messages,setMessages]=useState<Message[]>([]),[peerRead,setPeerRead]=useState(0),[body,setBody]=useState(''),[error,setError]=useState(''),[sending,setSending]=useState(false);
  const bottom=useRef<HTMLDivElement>(null),readSent=useRef(0);
+ // Messages typed while earlier ones are still on their way wait here and go out in order; the box is free at once.
+ const [editing,setEditing]=useState<{id:string;text:string;file:boolean}|null>(null);
+ async function change(action:'dmEdit'|'dmDelete',id:string,text?:string){if(!peer)return;try{await call({action,workspace,peer,id,body:text},true);await load()}catch(e){setError((e as Error).message);throw e}}
+ const saveEdit=()=>{if(!editing||(!editing.file&&!editing.text.trim()))return;const target=editing;setEditing(null);void change('dmEdit',target.id,target.text).catch(()=>setEditing(target))};
+ const remove=(m:Message)=>{if(confirm(m.attachment_id?'이 파일 메시지를 지울까요? 두 사람 모두에게서 파일이 사라집니다.':'이 메시지를 지울까요? 상대에게서도 사라집니다.'))void change('dmDelete',m.id).catch(()=>{})};
+ const outbox=useRef<{peer:string;text:string}[]>([]),draining=useRef(false),[queued,setQueued]=useState<{peer:string;text:string}[]>([]);
  const me=pulse?.me??'',lastAt=new Map(pulse?.conversations.map(c=>[c.peer,c.last_at])??[]),unread=new Map(pulse?.direct.map(d=>[d.peer,d.unread])??[]);
  // Current teammates, people with unread messages first, then the most recent conversations.
  const people=(data?.members??[]).filter(m=>m.user_id!==me).sort((a,b)=>(unread.get(b.user_id)??0)-(unread.get(a.user_id)??0)||(lastAt.get(b.user_id)??'').localeCompare(lastAt.get(a.user_id)??'')||a.name.localeCompare(b.name,'ko'));
@@ -82,16 +88,25 @@ function ContactPanel({workspace,data,pulse,peer,name,permission,cards,onPermiss
    const last=result.messages.filter(m=>m.from_user===peer).at(-1)?.sequence??0;
    if(last>readSent.current&&document.visibilityState==='visible'){readSent.current=last;void call({action:'dmRead',workspace,peer,sequence:last},true).then(onRead).catch(()=>{})}}catch(e){setError((e as Error).message)}},[workspace,peer,onRead]);
  useEffect(()=>{setMessages([]);setBody('');readSent.current=0;if(!peer)return;void load();const timer=setInterval(()=>{if(document.visibilityState==='visible')void load()},4000);return()=>clearInterval(timer)},[peer,load]);
- useEffect(()=>{bottom.current?.scrollIntoView({block:'nearest'})},[messages.length]);
+ useEffect(()=>{bottom.current?.scrollIntoView({block:'nearest'})},[messages.length,queued.length]);
  useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==='Escape')onClose()};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)},[onClose]);
  async function attach(files:File[]){if(!peer||sending||!files.length)return;setSending(true);setError('');
-  try{for(const [i,file] of files.entries()){if(file.size>10*1024*1024)throw new Error(`${file.name}: 10MB 이하의 파일만 보낼 수 있습니다.`);
-    const form=new FormData();form.set('workspace',workspace);form.set('peer',peer);form.set('file',file);if(i===0&&body.trim())form.set('body',body.trim());
-    const r=await safeRequest('/api/direct-file',{method:'POST',body:form});const result=await r.json().catch(()=>({})) as Row;if(!r.ok)throw new Error(result.error??'보내지 못했습니다.');if(i===0)setBody('')}
-   await load()}catch(e){setError((e as Error).message)}finally{setSending(false)}}
+  // The typed text goes with the first file as its caption, so the box is emptied now (and refilled if that fails).
+  let caption=body.trim();if(caption)setBody('');
+  try{for(const file of files){if(file.size>10*1024*1024)throw new Error(`${file.name}: 10MB 이하의 파일만 보낼 수 있습니다.`);
+    const form=new FormData();form.set('workspace',workspace);form.set('peer',peer);form.set('file',file);if(caption)form.set('body',caption);
+    const r=await safeRequest('/api/direct-file',{method:'POST',body:form});const result=await r.json().catch(()=>({})) as Row;if(!r.ok)throw new Error(result.error??'보내지 못했습니다.');caption=''}
+   await load()}catch(e){setError((e as Error).message);if(caption)setBody(old=>old.trim()?old:caption)}finally{setSending(false)}}
  function paste(e:ClipboardEvent){const files=Array.from(e.clipboardData.files).filter(f=>f.type.startsWith('image/'));if(!files.length)return;e.preventDefault();
   void attach(files.map((f,i)=>f.name&&f.name!=='image.png'?f:new File([f],`붙여넣은 사진 ${new Date().toTimeString().slice(0,8).replace(/:/g,'')}${i?'-'+i:''}.png`,{type:f.type})))}
- async function send(){const text=body.trim();if(!text||!peer||sending)return;setSending(true);try{await call({action:'dmSend',workspace,peer,body:text},true);setBody('');await load()}catch(e){setError((e as Error).message)}finally{setSending(false)}}
+ function send(){const text=body.trim();if(!text||!peer)return;setBody('');outbox.current.push({peer,text});setQueued([...outbox.current]);void drain()}
+ async function drain(){if(draining.current)return;draining.current=true;setError('');
+  try{while(outbox.current.length){const next=outbox.current[0];
+    try{await call({action:'dmSend',workspace,peer:next.peer,body:next.text},true)}
+    catch(e){// Nothing after a failed message is sent out of order: the unsent text goes back into the box.
+     const unsent=outbox.current.filter(m=>m.peer===next.peer).map(m=>m.text).join('\n');outbox.current=[];setQueued([]);setError((e as Error).message);setBody(old=>old.trim()?old+'\n'+unsent:unsent);break}
+    outbox.current.shift();setQueued([...outbox.current])}
+   await load()}finally{draining.current=false}}
  return <aside className="contact-panel" aria-label="1:1 대화">
   <header><h2>1:1 대화</h2>
    {permission==='default'&&<button className="secondary" onClick={onPermission}><Bell size={13}/>브라우저 알림 켜기</button>}
@@ -107,11 +122,12 @@ function ContactPanel({workspace,data,pulse,peer,name,permission,cards,onPermiss
     <header><strong>{name(peer)}</strong></header>
     <div className="contact-messages">{messages.length?messages.map(m=><div key={m.id} className={m.from_user===me?'mine':''}>{m.attachment_id&&(m.attachment_type?.startsWith('image/')
      ?<a className="contact-photo" href={fileUrl(m.attachment_id,true)} target="_blank" rel="noreferrer"><img src={fileUrl(m.attachment_id,true)} alt={m.attachment_name??'사진'} loading="lazy"/></a>
-     :<a className="contact-file" href={fileUrl(m.attachment_id)} download={m.attachment_name??undefined}><FileText size={18}/><span>{m.attachment_name}<small>{sizeText(m.attachment_size??0)}</small></span></a>)}{m.body&&<p>{m.body}</p>}<small>{clock(m.created_at)}{m.from_user===me&&m.sequence<=peerRead?' · 읽음':''}</small></div>):<p className="contact-empty">첫 메시지를 보내 보세요.</p>}<div ref={bottom}/></div>
+     :<a className="contact-file" href={fileUrl(m.attachment_id)} download={m.attachment_name??undefined}><FileText size={18}/><span>{m.attachment_name}<small>{sizeText(m.attachment_size??0)}</small></span></a>)}{editing?.id===m.id?<form className="contact-edit" onSubmit={e=>{e.preventDefault();saveEdit()}}><textarea autoFocus aria-label="메시지 고치기" value={editing.text} onChange={e=>setEditing({...editing,text:e.target.value})} onKeyDown={e=>{if(e.key==='Escape'){e.stopPropagation();e.nativeEvent.stopImmediatePropagation();setEditing(null)}if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();saveEdit()}}}/><div><button type="button" className="secondary" onClick={()=>setEditing(null)}>취소</button><button className="primary" disabled={!editing.file&&!editing.text.trim()}>저장</button></div></form>
+     :m.body&&<p>{m.body}</p>}<small>{clock(m.created_at)}{m.edited_at?' · 수정됨':''}{m.from_user===me&&m.sequence<=peerRead?' · 읽음':''}{m.from_user===me&&editing?.id!==m.id&&<span className="message-actions"><button type="button" onClick={()=>setEditing({id:m.id,text:m.body,file:!!m.attachment_id})}>{m.attachment_id&&!m.body?'설명 쓰기':'수정'}</button><button type="button" onClick={()=>remove(m)}>삭제</button></span>}</small></div>):<p className="contact-empty">첫 메시지를 보내 보세요.</p>}{queued.filter(m=>m.peer===peer).map((m,i)=><div key={'queued-'+i} className="mine queued"><p>{m.text}</p><small>보내는 중…</small></div>)}<div ref={bottom}/></div>
     {error&&<p className="contact-error" role="alert">{error}</p>}
     <form onSubmit={e=>{e.preventDefault();void send()}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void attach(Array.from(e.dataTransfer.files))}}>
      <label className="contact-attach" title="사진·파일 보내기 (10MB까지)"><Paperclip size={16}/><input type="file" hidden multiple accept={accept} disabled={sending} onChange={e=>{void attach(Array.from(e.target.files??[]));e.target.value=''}}/></label>
-     <textarea onPaste={paste} aria-label="메시지" placeholder="메시지를 입력하세요… (Enter 보내기, Shift+Enter 줄바꿈, 사진은 붙여넣기·끌어 놓기)" value={body} maxLength={5000} onChange={e=>setBody(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}}/><button disabled={!body.trim()||sending} aria-label="보내기"><Send size={15}/></button></form>
+     <textarea onPaste={paste} aria-label="메시지" placeholder="메시지를 입력하세요… (Enter 보내기, Shift+Enter 줄바꿈, 사진은 붙여넣기·끌어 놓기)" value={body} onChange={e=>setBody(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}}/><button disabled={!body.trim()||sending} aria-label="보내기"><Send size={15}/></button></form>
    </>}</section>
   </div>
  </aside>;

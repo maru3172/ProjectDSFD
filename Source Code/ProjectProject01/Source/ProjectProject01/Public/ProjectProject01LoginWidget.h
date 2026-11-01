@@ -25,6 +25,9 @@ class PROJECTPROJECT01_API UProjectProject01TransientNoticeWidget final : public
 
 public:
 	void ShowNotice(const FString& Message, float HoldSeconds = 1.5f, float FadeSeconds = 1.5f);
+	/** Moves the notice down from the top edge (for stacking several notices). */
+	void SetTopOffset(float Top);
+	float GetNoticeHeight() const;
 
 protected:
 	virtual bool Initialize() override;
@@ -42,6 +45,7 @@ private:
 	float ElapsedSeconds = 0.0f;
 	float HoldDurationSeconds = 1.5f;
 	float FadeDurationSeconds = 1.5f;
+	int32 LineCount = 1;
 };
 
 /** 역할별 목표와 조작키를 보여주는 전체 화면 클릭 종료 가이드입니다. */

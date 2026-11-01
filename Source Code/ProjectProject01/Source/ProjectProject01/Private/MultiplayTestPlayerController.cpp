@@ -1928,9 +1928,29 @@ void AMultiplayTestPlayerController::OnRep_MatchAffixes()
 
 void AMultiplayTestPlayerController::ClientShowAffixNotice_Implementation(const FString& Message,float HoldSeconds)
 {
+    ShowStackedNotice(Message,HoldSeconds);
+}
+
+void AMultiplayTestPlayerController::ClientShowMatchNotice_Implementation(const FString& Message,float HoldSeconds)
+{
+    ShowStackedNotice(Message,HoldSeconds);
+}
+
+void AMultiplayTestPlayerController::ShowStackedNotice(const FString& Message,float HoldSeconds)
+{
     if(!IsLocalController()||Message.IsEmpty())return;
-    if(auto* Notice=CreateWidget<UProjectProject01TransientNoticeWidget>(this,UProjectProject01TransientNoticeWidget::StaticClass()))
-    {Notice->AddToViewport(170);Notice->ShowNotice(Message,FMath::Clamp(HoldSeconds,.5f,15.f),1.f);}
+    StackedNotices.RemoveAll([](const TObjectPtr<UProjectProject01TransientNoticeWidget>& Notice){return !IsValid(Notice)||!Notice->IsInViewport();});
+    if(StackedNotices.Num()>=3){StackedNotices[0]->RemoveFromParent();StackedNotices.RemoveAt(0);}
+    auto* Notice=CreateWidget<UProjectProject01TransientNoticeWidget>(this,UProjectProject01TransientNoticeWidget::StaticClass());
+    if(!Notice)return;
+    Notice->AddToViewport(170);Notice->ShowNotice(Message,FMath::Clamp(HoldSeconds,.5f,15.f),1.f);
+    StackedNotices.Add(Notice);LayoutStackedNotices();
+}
+
+void AMultiplayTestPlayerController::LayoutStackedNotices()
+{
+    float Top=IsLocalMannequinPlayer()?GetMannequinStatusBottom()+12.f:30.f;
+    for(const auto& Notice:StackedNotices)if(IsValid(Notice)){Notice->SetTopOffset(Top);Top+=Notice->GetNoticeHeight()+8.f;}
 }
 
 void AMultiplayTestPlayerController::ClientAffixPulse_Implementation(FVector_NetQuantize Location,FColor Color,float Seconds,float Radius)

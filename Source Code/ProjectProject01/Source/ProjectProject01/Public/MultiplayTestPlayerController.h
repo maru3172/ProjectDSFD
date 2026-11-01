@@ -150,6 +150,8 @@ public:
     FProjectMatchAffixes GetMatchAffixes()const;
     /** Affix event shown to this player (C-group notices such as the C05 rush). */
     UFUNCTION(Client,Reliable) void ClientShowAffixNotice(const FString& Message,float HoldSeconds);
+    /** Match news at the top left (moving to the next floor, a survivor out, the game over). Multiplayer only. */
+    UFUNCTION(Client,Reliable) void ClientShowMatchNotice(const FString& Message,float HoldSeconds);
     /** A short light at a place (B02 dust, B04 exit sign, B05 falling dust). Shadowed, so walls hide it. */
     UFUNCTION(Client,Unreliable) void ClientAffixPulse(FVector_NetQuantize Location,FColor Color,float Seconds,float Radius);
     /** C10: footsteps sound muffled for this long. */
@@ -375,6 +377,11 @@ private:
 	void ClientNotifyMannequinCommand(const FString& Message);
 	FString MannequinCommandNotice;
 	float MannequinCommandNoticeUntil = 0;
+
+	/** Top-left notices, oldest first; stacked below the mannequin status panel so they never cover it or each other. */
+	void ShowStackedNotice(const FString& Message,float HoldSeconds);
+	void LayoutStackedNotices();
+	UPROPERTY(Transient) TArray<TObjectPtr<class UProjectProject01TransientNoticeWidget>> StackedNotices;
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayMannequinCaptureFeedback(bool bElimination);

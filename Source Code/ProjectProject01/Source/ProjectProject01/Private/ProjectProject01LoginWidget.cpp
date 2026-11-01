@@ -471,10 +471,27 @@ void UProjectProject01TransientNoticeWidget::ShowNotice(
 	FadeDurationSeconds = FMath::Max(0.01f, FadeSeconds);
 	SetRenderOpacity(1.0f);
 	SetVisibility(ESlateVisibility::HitTestInvisible);
+	LineCount = 1;
+	for (const TCHAR Character : Message) LineCount += Character == TEXT('\n') ? 1 : 0;
 	if (IsValid(NoticeText))
 	{
 		NoticeText->SetText(FProjectProject01Localization::StatusText(Message));
 	}
+}
+
+void UProjectProject01TransientNoticeWidget::SetTopOffset(const float Top)
+{
+	if (UCanvasPanelSlot* CanvasSlot = IsValid(NoticeBackground) ? Cast<UCanvasPanelSlot>(NoticeBackground->Slot) : nullptr)
+	{
+		CanvasSlot->SetPosition(FVector2D(28.0f, Top));
+	}
+}
+
+float UProjectProject01TransientNoticeWidget::GetNoticeHeight() const
+{
+	// The notice sizes to its text and never wraps, so its height is the padding plus one 18pt line per line. Measured
+	// layout is not ready in the frame the notice is created, which is exactly when the stack is laid out.
+	return 18.0f + 25.0f * FMath::Max(1, LineCount);
 }
 
 void UProjectProject01TransientNoticeWidget::NativeTick(
