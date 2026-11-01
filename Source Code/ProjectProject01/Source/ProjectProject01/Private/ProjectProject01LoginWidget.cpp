@@ -5822,11 +5822,13 @@ void UProjectProject01LobbyWidget::HandleMatchRoleChanged(FString Item,ESelectIn
     if(SelectionType==ESelectInfo::Direct)return;
     auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
-    if(!Records||!Records->IsAuthenticated()||!Lobby||(Records->IsWriting()&&!bRoleWritePending)||Lobby->IsMatchmaking()||Lobby->IsStateChangeInFlight()||bTravelRequested||bGameStartFadeActive)return;
+    if(!Records||!Records->IsAuthenticated()||!Lobby||Lobby->IsMatchmaking()||bTravelRequested||bGameStartFadeActive)return;
     const auto& Room=Lobby->GetCurrentRoom();
     if(Lobby->HasCurrentRoom()&&(Room.bStarting||Room.bServerPreparing||Room.bStarted||Room.bIsObserver))return;
     DesiredMatchRole=Item==TEXT("마네킹")?TEXT("Mannequin"):Item==TEXT("생존자")?TEXT("Survivor"):TEXT("Any");
     if(bRoleWritePending)return;
+    // Another save or lobby change is running: keep the choice and send it from RefreshRoleSelection when that ends.
+    if(Records->IsWriting()||Lobby->IsStateChangeInFlight()){bRoleWritePending=true;SubmittedMatchRole.Reset();return;}
     bRoleWritePending=true;SubmittedMatchRole=DesiredMatchRole;
     Records->PartyAction(TEXT("Role"),FString(),FString(),SubmittedMatchRole);
 }
@@ -5836,9 +5838,9 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);if(!Lobby)return;
     const auto& Room=Lobby->GetCurrentRoom();
     if(!Records||!Records->IsAuthenticated()){bRoleWritePending=false;DesiredMatchRole.Reset();SubmittedMatchRole.Reset();}
-    if(bRoleWritePending&&!Records->IsWriting())
+    if(bRoleWritePending&&!Records->IsWriting()&&!Lobby->IsStateChangeInFlight())
     {
-        if(!Records->Status.IsEmpty())SetStatus(Records->Status,true);
+        if(!SubmittedMatchRole.IsEmpty()&&!Records->Status.IsEmpty())SetStatus(Records->Status,true); // A queued choice (nothing submitted yet) is still sent below.
         else if(DesiredMatchRole!=SubmittedMatchRole)
         {
             SubmittedMatchRole=DesiredMatchRole;
@@ -5848,7 +5850,8 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
         if(Lobby->HasCurrentRoom()&&!Lobby->IsRequestInFlight())Lobby->RefreshCurrentRoom();
     }
     const bool Busy=Records&&Records->IsWriting();
-    const bool Editable=(!Busy||bRoleWritePending)&&!Lobby->IsStateChangeInFlight()&&!Lobby->IsMatchmaking()&&!bTravelRequested&&!bGameStartFadeActive&&
+    const bool LongBusy=Records&&Records->IsWritingLong(); // Short saves keep the controls as they are (no grey flash); clicks are queued or refused in the handlers.
+    const bool Editable=(!LongBusy||bRoleWritePending)&&!Lobby->IsStateChangeInFlightLong()&&!Lobby->IsMatchmaking()&&!bTravelRequested&&!bGameStartFadeActive&&
         (!Lobby->HasCurrentRoom()||(!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted&&!Room.bIsObserver));
     if(RandomMatchRole)RandomMatchRole->SetIsEnabled(Editable);
     if(RoomMatchRole)
@@ -5887,7 +5890,7 @@ void UProjectProject01LobbyWidget::RefreshRoleSelection()
     if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(CanEnterBot);
     if(BotMatchRole){BotMatchRole->SetIsEnabled(!Lobby->HasCurrentRoom()&&Editable&&!TwoPlayerParty);if(TwoPlayerParty&&BotMatchRole->GetSelectedOption()!=TEXT("생존자"))BotMatchRole->SetSelectedOption(TEXT("생존자"));}
     if(RoomMatchRole&&Room.bBotMatch&&Room.Members.Num()==2){if(RoomMatchRole->GetSelectedOption()!=TEXT("생존자"))RoomMatchRole->SetSelectedOption(TEXT("생존자"));RoomMatchRole->SetIsEnabled(false);}
-    if(Busy)
+    if(LongBusy)
         for(auto* Button:{MatchStartButton.Get(),ReadyButton.Get(),StartRoomButton.Get()})if(Button)Button->SetIsEnabled(false);
     RefreshBotMatchView();
 }
@@ -6128,6 +6131,7 @@ void UProjectProject01LobbyWidget::HandleJoinByCodeClicked()
 
 void UProjectProject01LobbyWidget::HandleReadyClicked()
 {
+    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsWriting()){SetStatus(TEXT("역할 저장이 끝난 뒤 다시 눌러 주세요."),false);return;} // Role choice is saved before a match can start.
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>();
@@ -6140,6 +6144,7 @@ void UProjectProject01LobbyWidget::HandleReadyClicked()
 
 void UProjectProject01LobbyWidget::HandleStartRoomClicked()
 {
+    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);Records&&Records->IsWriting()){SetStatus(TEXT("역할 저장이 끝난 뒤 다시 눌러 주세요."),false);return;} // Role choice is saved before a match can start.
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (UProjectProject01LobbySubsystem* Lobby = GameInstance->GetSubsystem<UProjectProject01LobbySubsystem>())
@@ -6853,7 +6858,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
         RoomBotPanel->SetVisibility(Editable?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
         if(RoomBotsTabButton)RoomBotsTabButton->SetVisibility(Editable?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
         if(!Editable&&RoomToolsSwitcher&&RoomToolsSwitcher->GetActiveWidgetIndex()==0)HandleRoomMembersTabClicked();
-        RoomBotPanel->SetIsEnabled(Editable&&!Lobby->IsRequestInFlight());
+        RoomBotPanel->SetIsEnabled(Editable&&!Lobby->IsStateChangeInFlightLong()); // A quick bot edit keeps the panel as it is; EditRoomBot is still refused while a request runs.
         TArray<FString> Ids,Labels;
         for(const auto& Bot:Room.Bots){Ids.Add(Bot.BotId);Labels.Add(FString::Printf(TEXT("%s — %s"),*Bot.DisplayName,UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Bot.Difficulty))));}
         if(Ids!=RoomBotIds||Labels!=RoomBotLabels)
@@ -8393,5 +8398,10 @@ void UProjectProject01LobbyWidget::RefreshBotModePanel()
     FString Text=FString::Printf(TEXT("이번 주: %s\n주간 보너스가 붙고, 난이도가 높을수록 보상이 많습니다."),*Weekly.WeekName);
     for(const FString& Id:Weekly.Ids)if(const auto* Info=ProjectAffixes::Find(Id))
         Text+=FString::Printf(TEXT("\n· %s (%s) — %s"),Info->Name,ProjectAffixes::GroupName(Info->Group),Info->Summary);
+    // The one-time weekly bonus: whether this account already received it this week.
+    if(const auto& Reward=Lobby->GetWeeklyAffixReward();Reward.bKnown)
+        Text+=Reward.bReceived
+            ?FString::Printf(TEXT("\n\n이번 주 보너스: 받음 (%s · 경험치 +%d · 포인트 +%d)"),UTF8_TO_TCHAR(ProjectBots::Difficulty::Name(Reward.Difficulty)),Reward.Xp,Reward.Credits)
+            :FString(TEXT("\n\n이번 주 보너스: 아직 받지 않음 · 이번 주 첫 승리에 한 번 지급 (쉬움 경험치 +400·포인트 +200 ~ 마스터 +2000·+1000)"));
     BotWeeklyAffixText->SetText(FText::FromString(Text));
 }

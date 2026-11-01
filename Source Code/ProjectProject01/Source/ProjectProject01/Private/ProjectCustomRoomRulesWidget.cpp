@@ -3,6 +3,7 @@
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01VersionContract.h"
 #include "ProjectDFSDUITheme.h"
+#include "ProjectConfirmDialog.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"
 #include "HttpModule.h"
@@ -91,7 +92,7 @@ TSharedRef<SWidget> UProjectCustomRoomRulesWidget::RebuildWidget()
     auto Button=[this](const FString& Text,TFunction<void()> Click,TFunction<bool()> Enabled)
     {return SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).HAlign(HAlign_Center).ContentPadding(FMargin(14,7))
         .IsEnabled_Lambda([Enabled]{return Enabled();}).OnClicked_Lambda([Click]{Click();return FReply::Handled();})[Caption(Text,17)];};
-    Body->AddSlot().AutoHeight().Padding(0,12)[Button(TEXT("적용"),[this]{auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("roomId"),RoomId);J->SetObjectField(TEXT("rules"),Draft.ToJson());Send(TEXT("PUT"),TEXT("/api/rooms/current/custom-rules"),J);},[this]{return CanEdit();})];
+    Body->AddSlot().AutoHeight().Padding(0,12)[Button(TEXT("적용"),[this]{AskThen(TEXT("적용하시겠습니까?"),TEXT("RoomRulesApply"),[this]{auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("roomId"),RoomId);J->SetObjectField(TEXT("rules"),Draft.ToJson());Send(TEXT("PUT"),TEXT("/api/rooms/current/custom-rules"),J);});},[this]{return CanEdit();})];
     Body->AddSlot().AutoHeight().Padding(0,5)[Caption(TEXT("프리셋"))];
     Body->AddSlot().AutoHeight().Padding(0,5)
     [SAssignNew(PresetCombo,SComboBox<TSharedPtr<FString>>).OptionsSource(&PresetNames).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).ItemStyle(&ProjectDFSDUI::RowStyle()).HasDownArrow(false)
@@ -159,3 +160,13 @@ void UProjectCustomRoomRulesWidget::NativeDestruct()
 {if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}Super::NativeDestruct();}
 void UProjectCustomRoomRulesWidget::ReleaseSlateResources(bool Children)
 {PresetCombo.Reset();NameInput.Reset();Super::ReleaseSlateResources(Children);}
+void UProjectCustomRoomRulesWidget::AskThen(const FString& Question,const FString& SkipKey,TFunction<void()> Run)
+{
+    if(UProjectConfirmDialogWidget::IsSkippedToday(SkipKey)){Run();return;}
+    if(!IsValid(ApplyConfirm)&&GetOwningPlayer())
+    {ApplyConfirm=CreateWidget<UProjectConfirmDialogWidget>(GetOwningPlayer());if(ApplyConfirm)ApplyConfirm->AddToViewport(UProjectConfirmDialogWidget::ViewportZOrder);}
+    if(!IsValid(ApplyConfirm)){Run();return;}
+    const TWeakObjectPtr<UProjectCustomRoomRulesWidget> Weak(this);
+    ApplyConfirm->SetReturnFocus(this);
+    ApplyConfirm->Ask(Question,[Weak,Run]{if(Weak.IsValid())Run();},SkipKey);
+}

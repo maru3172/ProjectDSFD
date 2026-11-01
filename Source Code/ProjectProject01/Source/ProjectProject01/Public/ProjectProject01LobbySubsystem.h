@@ -321,6 +321,9 @@ public:
 	void RefreshRooms();
 	/** This week's affix set (name + three ids), refreshed with the room list. Empty until the first refresh. */
 	const FProjectMatchAffixes& GetWeeklyAffixes() const { return WeeklyAffixes; }
+	/** This week's one-time weekly affix bonus for the signed-in player (from the room list refresh). */
+	struct FWeeklyAffixReward { bool bKnown=false,bReceived=false; int32 Difficulty=0,Xp=0,Credits=0; };
+	const FWeeklyAffixReward& GetWeeklyAffixReward() const { return WeeklyAffixReward; }
     void JoinMatchmaking();
     void CreateMatchParty();
     void PollMatchmaking();
@@ -423,6 +426,8 @@ public:
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
 	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending || bAwaitingPartyAdmission; }
     bool IsStateChangeInFlight() const;
+    /** A state change that has lasted a noticeable time; UI greys out only then so quick edits do not flash. */
+    bool IsStateChangeInFlightLong(double Seconds=.35) const { return IsStateChangeInFlight()&&FPlatformTime::Seconds()-RequestStartedAt>=Seconds; }
     bool IsAwaitingPartyAdmission()const{return bAwaitingPartyAdmission;}
 
 	const TArray<FProjectProject01RoomSummary>& GetRooms() const { return Rooms; }
@@ -498,6 +503,7 @@ private:
 	UPROPERTY(Transient)
 	FProjectProject01RoomState CurrentRoom;
 	FProjectMatchAffixes WeeklyAffixes;
+	FWeeklyAffixReward WeeklyAffixReward;
 
 	UPROPERTY(Transient)
 	TArray<FProjectProject01LeaderboardEntry> LeaderboardEntries;
@@ -516,5 +522,6 @@ private:
 	FString GameTicketRole;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
+	double RequestStartedAt=0;
 	uint64 ActiveCircuitTicket=0;
 };

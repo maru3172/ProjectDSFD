@@ -56,6 +56,23 @@ internal static class SelfTests
             Check(Math.Abs(r.TotalTime.TotalSeconds - 1) < 0.05, "Conversion keeps the length");
             session.Save(folder);
             Check(MeetingSession.Load(folder)?.Notes.Count == 1 && File.Exists(Path.Combine(folder, MeetingSession.NotesFile)), "Meeting saves and loads");
+            Check(!File.Exists(Path.Combine(folder, MeetingSession.MemoFile)), "An empty notepad writes no memo file");
+
+            using (var picture = new Bitmap(8, 6)) session.Memo = "회의 메모\n" + MeetingImages.AddImage(folder, picture, "화이트보드") + "\n끝";
+            var source = Path.Combine(folder, "보드 사진.png");
+            using (var picture = new Bitmap(4, 4)) picture.Save(source, System.Drawing.Imaging.ImageFormat.Png);
+            session.Memo += "\n" + MeetingImages.AddFile(folder, source) + "\n" + MeetingImages.AddFile(folder, source) + "\n![없는 사진](images/none.png)";
+            session.Save(folder);
+            var shown = MeetingImages.InMemo(folder, MeetingSession.Load(folder)!.Memo);
+            Check(shown.Count == 3 && shown.All(p => p.StartsWith("images/")) && shown[1] != shown[2], "Pictures are copied into the meeting under their own names and listed in order");
+            Check(File.ReadAllText(Path.Combine(folder, MeetingSession.MemoFile)).Contains("![화이트보드](images/"), "The notepad is saved as markdown with its pictures");
+            Check(TranscriptFormatter.Body(session, []).Contains("### 메모장") && Summarizer.Local(session, raw).Contains("회의 메모"), "The notepad joins the transcript and the summary");
+
+            var edited = MeetingSession.Load(folder)!;
+            edited.Notes[0] = edited.Notes[0] with { Text = "빌드 일정 변경", Important = true };edited.Save(folder);
+            Check(MeetingSession.Load(folder)!.Notes is [{ Text: "빌드 일정 변경", Important: true }], "A timed note can be corrected");
+            edited.Notes.RemoveAt(0);edited.Save(folder);
+            Check(MeetingSession.Load(folder)!.Notes.Count == 0 && !File.ReadAllText(Path.Combine(folder, MeetingSession.NotesFile)).Contains("빌드 일정"), "A timed note can be deleted");
         }
         finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
         Console.WriteLine(failed == 0 ? "All checks passed." : $"{failed} check(s) failed.");

@@ -31,5 +31,8 @@ private:
     TSharedPtr<SComboBox<TSharedPtr<FString>>> PresetCombo;
     TSharedPtr<class SEditableTextBox> NameInput;
     TSharedPtr<class IHttpRequest,ESPMode::ThreadSafe> Request;
+    /** "적용하시겠습니까?" with 오늘 하루 다시 묻지 않기, before the rules are sent. */
+    UPROPERTY(Transient) TObjectPtr<class UProjectConfirmDialogWidget> ApplyConfirm;
+    void AskThen(const FString& Question,const FString& SkipKey,TFunction<void()> Run);
     TWeakObjectPtr<UUserWidget> ReturnWidget;
 };

@@ -42,9 +42,13 @@ bool FProjectShutterTest::RunTest(const FString&)
     TestFalse(TEXT("A wall between the view and shutter prevents interaction"),Shutter->TryInteractFromView(Pawn,Origin,Direction,500,ECC_Visibility));Wall->Destroy();
     TestTrue(TEXT("Active admitted survivor can operate an actually hit shutter"),Shutter->TryInteractFromView(Pawn,Origin,Direction,500,ECC_Visibility));
     TestTrue(TEXT("Server motion targets open"),Shutter->Motion.Target==1);
+    TestTrue(TEXT("Opening switches the prompt to lowering on the server"),Shutter->InteractionText.ToString().Contains(TEXT("내리기")));
+    {auto* Client=World->SpawnActor<AFireShutterActor>();Client->DispatchBeginPlay();Client->Motion=Shutter->Motion;Client->OnRep_Motion();
+     TestTrue(TEXT("A client receiving the motion shows the same prompt and position path"),Client->InteractionText.ToString().Contains(TEXT("내리기"))&&Client->Motion.Target==1);Client->Destroy();}
     Shutter->Motion.StartedAt-=1;Shutter->Tick(0);
     TestTrue(TEXT("Server-time interpolation advances between sparse network updates"),FMath::IsNearlyEqual(Shutter->CurrentOpenAlpha,.5f));
     Shutter->HandleInteraction(Pawn);TestTrue(TEXT("Mid-motion reversal preserves current position"),FMath::IsNearlyEqual(Shutter->Motion.Start,.5f)&&Shutter->Motion.Target==0);
+    TestTrue(TEXT("Reversing switches the prompt back to raising"),Shutter->InteractionText.ToString().Contains(TEXT("올리기")));
     Shutter->SetRole(ROLE_SimulatedProxy);TestFalse(TEXT("A client cannot change authoritative shutter motion"),Shutter->TryInteractFromView(Pawn,Origin,Direction,500,ECC_Visibility));Shutter->SetRole(ROLE_Authority);
     Mode->AuthoritativeMatchPhase=EMultiplayTestMatchPhase::Results;
     TestFalse(TEXT("Result phase prevents interaction"),Shutter->CanInteract_Implementation(Pawn));

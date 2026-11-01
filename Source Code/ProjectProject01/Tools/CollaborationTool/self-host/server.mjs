@@ -7,6 +7,7 @@ import {randomBytes} from 'node:crypto';
 import {openStore,closeStore,context,settings,dataRoot,Problem,q,run,json,log,sha,requireUser,membership} from './runtime.mjs';
 import {authenticate,authRoute,bootstrapToken,sessionResponse} from './auth.mjs';
 import {featureRoute,augmentData,preflight,jobs} from './features.mjs';
+import {directFileRoute} from './contacts.mjs';
 import {vaultRoute,queueExport} from './vault.mjs';
 import {backupRoute,scheduledBackup,applyPendingRestore} from './backup.mjs';
 const project=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -27,6 +28,7 @@ export async function startServer(options={}){
   if(url.pathname.startsWith('/api/')){
    const account=requireUser();if(account.mustChange)throw new Problem(403,'임시 비밀번호를 먼저 변경하세요.');
    if(url.pathname==='/api/features')return featureRoute(request,url);
+   if(url.pathname==='/api/direct-file')return directFileRoute(request,url);
    if(url.pathname==='/api/vault')return vaultRoute(request,url);
    if(url.pathname==='/api/backup')return backupRoute(request,url);
    const name=({'/api/data':'data','/api/file':'file','/api/access':'access','/api/presence':'presence','/api/local-files':'localFiles'})[url.pathname],handler=legacy[name]?.[request.method];
@@ -52,7 +54,7 @@ export async function startServer(options={}){
   if(!['GET','HEAD'].includes(req.method)&&!req.headers.origin&&req.headers['sec-fetch-mode'])throw new Problem(403,'브라우저 요청 출처를 확인하세요.');
   const ip=req.socket.remoteAddress,at=Date.now(),limit=limits.get(ip)??{at,n:0};if(at-limit.at>60000){limit.at=at;limit.n=0}if(++limit.n>900||active>64)throw new Problem(429,'요청이 많습니다. 잠시 후 다시 시도하세요.');limits.set(ip,limit);if(limits.size>10000)for(const [key,value] of limits)if(at-value.at>60000)limits.delete(key);
   const account=authenticate(new Request(url,{headers:req.headers}));if(url.pathname.startsWith('/api/')&&!url.pathname.startsWith('/api/auth/')&&url.pathname!=='/api/control'&&!account)throw new Problem(401,'로그인이 필요합니다.');if(url.pathname==='/api/backup'&&(!account?.operator||!loopback))throw new Problem(403,'운영 PC의 관리자만 백업·복원할 수 있습니다.');
-  const max=url.pathname==='/api/backup'?256*1024*1024:url.pathname==='/api/vault'?32*1024*1024:url.pathname==='/api/file'?11*1024*1024:2*1024*1024;let size=0;const chunks=[];
+  const max=url.pathname==='/api/backup'?256*1024*1024:url.pathname==='/api/vault'?32*1024*1024:url.pathname==='/api/file'||url.pathname==='/api/direct-file'?11*1024*1024:2*1024*1024;let size=0;const chunks=[];
   if(Number(req.headers['content-length']??0)>max)throw new Problem(413,'요청 용량 제한을 초과했습니다.');
   for await(const chunk of req){size+=chunk.length;if(size>max)throw new Problem(413,'요청 용량 제한을 초과했습니다.');chunks.push(chunk)}
   const request=new Request(url,{method:req.method,headers:req.headers,body:chunks.length?Buffer.concat(chunks):undefined,signal:cancelled.signal});

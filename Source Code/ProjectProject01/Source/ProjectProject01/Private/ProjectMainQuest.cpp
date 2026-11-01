@@ -90,6 +90,7 @@ void UProjectCaseRecords::ObserveMainQuest(const TSharedPtr<FJsonObject>& Respon
 {
     const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const FString Account=Str(Snapshot,TEXT("userId"));if(!Quest||Account.IsEmpty())return;
     const int64 Revision=int64(Num(Quest,TEXT("revision")));
+    ObserveChainUnlocks(); // Before the early returns below, so the first look at an account records what is already open.
     const bool Mutation=Response&&Response->HasTypedField<EJson::Array>(TEXT("questNotices"));
     if(QuestAccount!=Account){QuestAccount=Account;SeenQuestRevision=Mutation?0:Revision;if(!Mutation)return;}
     auto* UI=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>();if(!UI)return;
@@ -144,16 +145,19 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
     };
     if(QuestCategory==TEXT("Chain"))
     {
-        // NPC lines are listed now; their quests are added later.
+        // One line per NPC; each opens once that NPC's main quest talk is finished. Their quests are added later.
         static const TArray<FString> Npcs{TEXT("캘린"),TEXT("아테아")};SelectedChainQuest=FMath::Clamp(SelectedChainQuest,0,Npcs.Num()-1);
+        auto IsOpen=[&Chapters](const FString& Npc){for(const auto& C:Chapters)for(const auto& V:Rows(C,TEXT("steps")))if(Str(V->AsObject(),TEXT("npc"))==Npc&&Flag(V->AsObject(),TEXT("completed")))return true;return false;};
         auto List=SNew(SVerticalBox);
         for(int32 I=0;I<Npcs.Num();++I)
         {
-            auto Row=Button(Npcs[I],[this,I]{SelectedChainQuest=I;RenderedFingerprint.Reset();RefreshPanel();});Row->SetButtonStyle(&QuestButtonStyle(I==SelectedChainQuest));Row->SetContentPadding(FMargin(8,4));
+            auto Row=Button(Npcs[I]+(IsOpen(Npcs[I])?TEXT(""):TEXT(" (잠김)")),[this,I]{SelectedChainQuest=I;RenderedFingerprint.Reset();RefreshPanel();});Row->SetButtonStyle(&QuestButtonStyle(I==SelectedChainQuest));Row->SetContentPadding(FMargin(8,4));
             List->AddSlot().AutoHeight().Padding(0,2)[SNew(SBox).HeightOverride(32)[Row]];
         }
-        Columns(List,SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,12)[Text(TEXT("연계 퀘스트 · ")+Npcs[SelectedChainQuest],21)]
-            +SVerticalBox::Slot().AutoHeight()[Text(TEXT("아직 진행할 수 있는 연계 퀘스트가 없습니다."),16)]);
+        const FString Npc=Npcs[SelectedChainQuest];const bool Open=IsOpen(Npc);
+        Columns(List,SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,12)[Text(TEXT("연계 퀘스트 · ")+Npc,21)]
+            +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,8)[Text(Open?TEXT("열람 가능"):TEXT("잠김"),16)]
+            +SVerticalBox::Slot().AutoHeight()[Text(Open?TEXT("아직 진행할 수 있는 연계 퀘스트가 없습니다."):FString::Printf(TEXT("메인 퀘스트에서 %s와(과) 대화하면 열립니다."),*Npc),16)]);
         return;
     }
     if(QuestCategory==TEXT("Sub")){Body->AddSlot().AutoHeight().Padding(4,10)[Text(TEXT("아직 서브 퀘스트가 없습니다."),16)];return;}
@@ -213,4 +217,17 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
     }
     Body->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(300)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,18,0)[SNew(SBox).WidthOverride(260)[List]]
         +SHorizontalBox::Slot().FillWidth(1)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Canvas()).Padding(18)[Right]]]];
+}
+void UProjectCaseRecords::ObserveChainUnlocks()
+{
+    const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const FString Account=Str(Snapshot,TEXT("userId"));if(!Quest||Account.IsEmpty())return;
+    const bool First=ChainAccount!=Account;if(First){ChainAccount=Account;OpenChains.Reset();}
+    auto* UI=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>();
+    for(const auto& V:Rows(Quest,TEXT("steps")))
+    {
+        const auto Step=V.IsValid()?V->AsObject():nullptr;const FString Npc=Str(Step,TEXT("npc"));
+        if(Npc.IsEmpty()||!Flag(Step,TEXT("completed"))||OpenChains.Contains(Npc))continue;
+        OpenChains.Add(Npc);
+        if(!First&&UI)UI->NotifyQuest(TEXT("연계 퀘스트 · ")+Npc,TEXT("Unlock"),Npc+TEXT("의 연계 퀘스트를 열람할 수 있습니다."),Account+TEXT(":Chain:")+Npc);
+    }
 }

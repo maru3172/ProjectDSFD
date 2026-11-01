@@ -1,4 +1,6 @@
 #include "ProjectCaseRecords.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "ProjectCasePresentation.h"
 #include "ProjectCaseProfileSlate.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
@@ -249,6 +251,8 @@ void UProjectCaseRecordWidget::RefreshPanel()
     {
         auto Visible=MakeShared<FJsonObject>();
         if(Page==TEXT("Quest")){if(const auto Quest=Obj(R->Snapshot,TEXT("mainQuest")))Visible->SetObjectField(TEXT("mainQuest"),Quest);}
+        // Cosmetic pages rebuild only for their own data: missions, rates or other account changes must not redraw them.
+        else if(Page==TEXT("Collection")||Page==TEXT("Shop")){for(const TCHAR* Key:{TEXT("collection"),TEXT("inventory"),TEXT("loadout"),TEXT("catalogue"),TEXT("credits")})if(const auto Field=R->Snapshot->TryGetField(Key))Visible->SetField(Key,Field);}
         else {Visible->Values=R->Snapshot->Values;Visible->RemoveField(TEXT("partyState"));Visible->RemoveField(TEXT("mainQuest"));}
         FJsonSerializer::Serialize(Visible,TJsonWriterFactory<>::Create(&Encoded));
     }
@@ -271,6 +275,18 @@ void UProjectCaseRecordWidget::RefreshPanel()
     {
         Add(TEXT("로컬 캠페인 업적·도전과제를 현재 로그인한 계정에 병합할까요?"),24);
         Body->AddSlot().AutoHeight()[Button(TEXT("이 계정에 병합"),[this,R]{R->ImportCampaign();Page=TEXT("Achievements");RefreshPanel();},Ready&&R->CanImport())];Body->AddSlot().AutoHeight()[Button(TEXT("아니오"),[this]{Page=TEXT("Achievements");RefreshPanel();})];return;
+    }
+    if((Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements"))&&!FocusAchievement.IsEmpty()&&GetWorld())
+    {
+        // Opened from a profile link: bring the highlighted entry into view once this page is laid out.
+        const TWeakObjectPtr<UProjectCaseRecordWidget> Weak(this);
+        GetWorld()->GetTimerManager().SetTimerForNextTick([Weak]
+        {
+            auto* W=Weak.Get();if(!W||!W->RecordsScroll)return;
+            TFunction<TSharedPtr<SWidget>(const TSharedRef<SWidget>&)> Find=[&Find](const TSharedRef<SWidget>& Widget)->TSharedPtr<SWidget>
+            {if(Widget->GetTag()==FName(TEXT("FocusAchievement")))return Widget;FChildren* Children=Widget->GetChildren();for(int32 I=0;Children&&I<Children->Num();++I)if(auto Hit=Find(Children->GetChildAt(I)))return Hit;return nullptr;};
+            if(auto Row=Find(W->RecordsScroll.ToSharedRef()))W->RecordsScroll->ScrollDescendantIntoView(Row,true,EDescendantScrollDestination::Center);
+        });
     }
     if(Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements"))
     {
@@ -295,7 +311,9 @@ void UProjectCaseRecordWidget::RefreshPanel()
         {
             const bool Achieved=Earned.Contains(Entry.Code);
             int32 AreaTotal=0,AreaEarned=0;for(const auto& Def:Definitions)if(Def.Area==Entry.Area){++AreaTotal;if(Earned.Contains(Def.Code))++AreaEarned;}
-            Areas->AddSlot().AutoHeight().Padding(4,4)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.038f,.038f,.038f)).Padding(14,9)
+            const bool Focus=Entry.Code==FocusAchievement;
+            Areas->AddSlot().AutoHeight().Padding(4,4)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(Focus?FLinearColor(.13f,.05f,.035f):FLinearColor(.038f,.038f,.038f)).Padding(14,9)
+                .Tag(Focus?FName(TEXT("FocusAchievement")):NAME_None)
                 [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(170)[FixedLabel(FString::Printf(TEXT("%s %d/%d"),*Entry.Area,AreaEarned,AreaTotal),18)]]
                  +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(12,0)[Label(AchievementName(Entry.Code),16)]
                  +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10,0)[SNew(SBox).WidthOverride(170)[FixedLabel(ProjectCaseAchievements::GlobalRate(R->GetAchievementRates(),Entry.Code),14)]]
@@ -313,7 +331,9 @@ void UProjectCaseRecordWidget::RefreshPanel()
             for(const auto& Code:Codes)
             {
                 const bool Achieved=Flag(RewardFor(Code),TEXT("earned"));
-                Body->AddSlot().AutoHeight().Padding(4,3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(.038f,.038f,.038f)).Padding(14,7)
+                const bool Focus=Code==FocusAchievement;
+                Body->AddSlot().AutoHeight().Padding(4,3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(Focus?FLinearColor(.13f,.05f,.035f):FLinearColor(.038f,.038f,.038f)).Padding(14,7)
+                    .Tag(Focus?FName(TEXT("FocusAchievement")):NAME_None)
                     [SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Label(AchievementName(Code),16)]
                      +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10,0)[SNew(SBox).WidthOverride(170)[FixedLabel(ProjectCaseAchievements::GlobalRate(R->GetAchievementRates(),Code),14)]]
                      +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(62)[FixedLabel(Achieved?TEXT("달성"):TEXT("미달성"),16)]]
@@ -377,7 +397,29 @@ void UProjectCaseRecordWidget::RefreshPanel()
             Body->AddSlot().AutoHeight()[Choices];Body->AddSlot().AutoHeight().Padding(4,8)[Button(TEXT("저장"),[this,R,ResetPanel]{R->SaveFeatured(FeaturedDraft,BioDraft);bEditingProfile=false;ResetPanel();},Ready)];
             Body=ProfileRoot;return;
         }
-        Body=DetailsColumn;const bool MaxLevel=Num(State,TEXT("level"))>=100;
+        Body=IdentityColumn; // The achievement summary sits under the dossier, where the left column has room.
+        {
+            // How much of all achievements this player has done (campaign + multiplayer), and the featured ones, each
+            // a link that opens the achievement list at that entry.
+            static const TArray<FString> OnlineCodes{TEXT("pvp_first"),TEXT("bot_first"),TEXT("survivor_escape"),TEXT("mannequin_victory")};
+            const auto Earned=ProjectCaseAchievements::Earned(R->GetLocalAchievements(),State);const auto& Definitions=ProjectCaseAchievements::Definitions();
+            int32 Done=Earned.Num();for(const FString& Code:OnlineCodes)for(const auto& V:Rows(State,TEXT("achievementRewards")))if(Str(V->AsObject(),TEXT("code"))==Code&&Flag(V->AsObject(),TEXT("earned")))++Done;
+            const int32 Total=Definitions.Num()+OnlineCodes.Num();const float Rate=Total?float(Done)/Total:0.f;
+            Add(FString::Printf(TEXT("업적·도전과제 %d / %d  ·  달성률 %.0f%%"),Done,Total,Rate*100.f),20);
+            Body->AddSlot().AutoHeight().Padding(6,2,6,4)[SNew(SBox).HeightOverride(6)[SNew(SProgressBar).Style(&ExperienceStyle()).Percent(Rate).FillColorAndOpacity(ProjectDFSDUI::Accent())]];
+            auto Links=SNew(SWrapBox).UseAllottedSize(true);
+            for(const auto& V:Rows(Collection,TEXT("featured")))
+            {
+                const FString Code=Str(V->AsObject(),TEXT("code"));if(Code.IsEmpty())continue;
+                auto Link=Button(ProjectCaseProfile::Achievement(Code),[this,Code]{FocusAchievement=Code;Page=OnlineCodes.Contains(Code)?TEXT("OnlineAchievements"):TEXT("Achievements");RenderedFingerprint.Reset();RefreshPanel();});
+                Compact(Link,14);Links->AddSlot().Padding(3)[Link];
+            }
+            auto All=Button(TEXT("전체 업적 보기"),[this]{FocusAchievement.Reset();Page=TEXT("Achievements");RenderedFingerprint.Reset();RefreshPanel();});Compact(All,14);
+            Links->AddSlot().Padding(3)[All];
+            Body->AddSlot().AutoHeight().Padding(2,0,2,4)[Links];
+        }
+        Body=DetailsColumn;
+        const bool MaxLevel=Num(State,TEXT("level"))>=100;
         Add(FString::Printf(TEXT("계정 레벨 %d  |  %s"),int32(Num(State,TEXT("level"))),MaxLevel?TEXT("최고 레벨"):*FString::Printf(TEXT("경험치 %.0f / %.0f"),Num(State,TEXT("xp"))-Num(State,TEXT("levelStartXp")),Num(State,TEXT("nextLevelXp"))-Num(State,TEXT("levelStartXp")))));
         Body->AddSlot().AutoHeight().Padding(6,8)[SNew(SBox).HeightOverride(8)[SNew(SProgressBar).Style(&ExperienceStyle()).Percent(float(Num(State,TEXT("levelProgress")))).FillColorAndOpacity(ProjectDFSDUI::Accent())]];
         auto Rewards=Rows(State,TEXT("levelRewards"));
@@ -406,11 +448,17 @@ void UProjectCaseRecordWidget::RefreshPanel()
         Body->AddSlot().AutoHeight().Padding(6,7)[SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Label(Page==TEXT("Bot")?TEXT("봇전 일일 / 주간 미션"):TEXT("PvP 일일 / 주간 미션"),24)]
             +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ClaimAll]];
         Add(FString::Printf(TEXT("주간 상한 %.0f/%.0f"),Num(State,TEXT("missionWeeklyEarned")),State&&State->HasField(TEXT("missionWeeklyLimit"))?Num(State,TEXT("missionWeeklyLimit")):2000.0),18);
+        // Daily missions first, then weekly ones; each row carries its colour strip and 일일/주간 tag so they read apart at a glance.
+        for(const bool WeeklyPass:{false,true})
+        {
+        const FLinearColor Strip=WeeklyPass?ProjectDFSDUI::Accent():FLinearColor(.36f,.42f,.40f,1.f);
         for(const auto& Value:Rows(State,TEXT("missions")))
         {
-            auto M=Value->AsObject();if(Str(M,TEXT("mode"))!=Page)continue;
+            auto M=Value->AsObject();if(Str(M,TEXT("mode"))!=Page||Flag(M,TEXT("weekly"))!=WeeklyPass)continue;
             auto Row=SNew(SHorizontalBox);
-            auto Name=Label(FString::Printf(TEXT("[%s] %s"),Flag(M,TEXT("weekly"))?TEXT("주간"):TEXT("일일"),*Str(M,TEXT("name"))),16);Name->SetAutoWrapText(false);Name->SetLineHeightPercentage(1.f);Name->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);Name->SetToolTipText(Name->GetText());
+            Row->AddSlot().AutoWidth().Padding(0,0,8,0)[SNew(SBox).WidthOverride(4)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(Strip)]];
+            Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)[SNew(SBox).WidthOverride(34)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"),14)).ColorAndOpacity(Strip).Text(FText::FromString(WeeklyPass?TEXT("주간"):TEXT("일일")))]];
+            auto Name=Label(Str(M,TEXT("name")),16);Name->SetAutoWrapText(false);Name->SetLineHeightPercentage(1.f);Name->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);Name->SetToolTipText(Name->GetText());
             auto Progress=Label(FString::Printf(TEXT("%.0f / %.0f · 보상 %.0f 포인트"),Num(M,TEXT("progress")),Num(M,TEXT("target")),Num(M,TEXT("reward"))),14);Progress->SetLineHeightPercentage(1.f);
             Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)[SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[Name]
                 +SVerticalBox::Slot().AutoHeight()[Progress]];
@@ -421,6 +469,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
             Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(6,0)[SNew(SBox).WidthOverride(92)[Claim]];
             Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(118)[Change]];
             Body->AddSlot().AutoHeight().Padding(4,3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(8,4)[Row]];
+        }
         }return;
     }
     if(Page==TEXT("Shop"))
@@ -430,19 +479,17 @@ void UProjectCaseRecordWidget::RefreshPanel()
           +SOverlay::Slot()[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Muted()).OverflowPolicy(ETextOverflowPolicy::Ellipsis)
             .Text_Lambda([this]{auto* Record=Records(this);return FProjectProject01Localization::StatusText(Record&&!InsufficientPoints(Record->Status)?Record->Status:FString());}).ToolTipText_Lambda([this]{auto* Record=Records(this);return FProjectProject01Localization::StatusText(Record&&!InsufficientPoints(Record->Status)?Record->Status:FString());})]]];
         TSet<FString> Owned;for(const auto& V:Rows(State,TEXT("inventory")))Owned.Add(Str(V->AsObject(),TEXT("itemId")));
-        auto Catalogue=Rows(State,TEXT("catalogue"));
-        // Older level rewards leave the progression panel, but their owned cosmetics remain usable.
-        TArray<FString> OwnedIds=Owned.Array();OwnedIds.Sort();
-        for(const FString& Id:OwnedIds)if(!Catalogue.ContainsByPredicate([&](const auto& V){return Str(V->AsObject(),TEXT("id"))==Id;}))
-        {auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("id"),Id);Item->SetStringField(TEXT("name"),ProjectCaseProfile::Name(Id));Item->SetNumberField(TEXT("price"),0);Catalogue.Add(MakeShared<FJsonValueObject>(Item));}
+        // Only what the shop sells: items from achievements, levels or draws are not listed here (they live in the
+        // collection, where they are equipped). A bought item stays on its shelf as a disabled "구매 완료".
+        const auto Catalogue=Rows(State,TEXT("catalogue"));
         auto Shelves=SNew(SUniformGridPanel).SlotPadding(FMargin(4));int32 Product=0;
         for(const auto& Value:Catalogue)
         {
-            auto I=Value->AsObject();const FString Id=Str(I,TEXT("id"));
-            auto Buy=Button(Owned.Contains(Id)?TEXT("장착"):TEXT("구매"),[this,Id,Has=Owned.Contains(Id)]{if(Has)RequestCosmeticAction(TEXT("Equip"),Id);else RequestPurchase(Id);},Ready);
+            auto I=Value->AsObject();const FString Id=Str(I,TEXT("id"));const bool Bought=Owned.Contains(Id);
+            auto Buy=Button(Bought?TEXT("구매 완료"):TEXT("구매"),[this,Id]{RequestPurchase(Id);},Bought?false:Ready);
             Compact(Buy,16);
             auto Name=Label(Str(I,TEXT("name")),16);Name->SetLineHeightPercentage(1.f);Name->SetAutoWrapText(false);Name->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);Name->SetToolTipText(Name->GetText());
-            auto Price=Label(Owned.Contains(Id)?FString(TEXT("보유 중")):FString::Printf(TEXT("%.0f 포인트"),Num(I,TEXT("price"))),14);Price->SetLineHeightPercentage(1.f);
+            auto Price=Label(FString::Printf(TEXT("%.0f 포인트"),Num(I,TEXT("price"))),14);Price->SetLineHeightPercentage(1.f);
             Shelves->AddSlot(Product%3,Product/3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(6)
                 [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[SNew(SCaseShopDisplay).ItemId(Id)]
                  +SVerticalBox::Slot().AutoHeight().Padding(0,3,0,0)[Name]
@@ -547,7 +594,7 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
       {auto* R=Records(this);if(E.GetEffectingButton()==EKeys::RightMouseButton&&R&&SocialOverlay.IsValid()&&SocialOverlay->ShowPartyMemberMenu(Str(R->Snapshot,TEXT("userId")),E.GetScreenSpacePosition()))return FReply::Handled();return FReply::Unhandled();})[SNew(SBox).HeightOverride(64)[Profile]]];
     auto Leave=Button(TEXT("파티 나가기"),[this]{if(auto* R=Records(this))R->PartyAction(TEXT("Leave"));});Compact(Leave,13);Leave->SetContentPadding(FMargin(8,1));
     Leave->SetVisibility(TAttribute<EVisibility>::CreateLambda([Party]{return Party()?EVisibility::Visible:EVisibility::Collapsed;}));
-    Leave->SetEnabled(TAttribute<bool>::CreateLambda([this]{auto* R=Records(this);return R&&!R->IsWriting();}));SelfColumn->AddSlot().AutoHeight().Padding(0,3,0,0)[Leave];
+    Leave->SetEnabled(TAttribute<bool>::CreateLambda([this]{auto* R=Records(this);return R&&!R->IsWritingLong();}));SelfColumn->AddSlot().AutoHeight().Padding(0,3,0,0)[Leave];
     auto Members=SNew(SHorizontalBox);
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(185)[SelfColumn]];
     for(int32 Index=0;Index<2;++Index)
@@ -562,7 +609,7 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
         Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(185).HeightOverride(64).Visibility_Lambda([Other,Index]{return Other(Index)?EVisibility::Visible:EVisibility::Collapsed;})[Hit]];
     }
     auto Invite=SNew(SButton).ButtonStyle(&DockStyle).ContentPadding(6).ToolTipText(FText::FromString(TEXT("파티 초대")))
-      .IsEnabled_Lambda([this,Party]{auto* R=Records(this);auto P=Party();return R&&!R->IsWriting()&&(!P||(Flag(P,TEXT("isLeader"))&&Rows(P,TEXT("members")).Num()<3));})
+      .IsEnabled_Lambda([this,Party]{auto* R=Records(this);auto P=Party();return R&&!R->IsWritingLong()&&(!P||(Flag(P,TEXT("isLeader"))&&Rows(P,TEXT("members")).Num()<3));})
       .OnClicked_Lambda([this]{if(SocialOverlay.IsValid())SocialOverlay->OpenPartyInvite();return FReply::Handled();})[ProjectDFSDUI::Icon(ProjectDFSDUI::EIcon::Add,24)];
     auto InviteVisibility=TAttribute<EVisibility>::CreateLambda([Party]{return Rows(Party(),TEXT("members")).Num()<3?EVisibility::Visible:EVisibility::Collapsed;});
     Invite->SetVisibility(InviteVisibility);

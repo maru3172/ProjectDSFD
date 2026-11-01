@@ -67,6 +67,9 @@ internal static class MatchAffixes
           week_name VARCHAR(32) NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS weekly_affixes(week_start DATE PRIMARY KEY,name VARCHAR(32) NOT NULL,
           ids VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL);
+        CREATE TABLE IF NOT EXISTS weekly_affix_rewards(user_id BIGINT UNSIGNED NOT NULL,week_start DATE NOT NULL,difficulty TINYINT NOT NULL,
+          xp INT NOT NULL,credits INT NOT NULL,match_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,granted_at DATETIME(6) NOT NULL,
+          PRIMARY KEY(user_id,week_start),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         """,ct);
 
     private static AffixSet From(Dictionary<string,object?> row)=>new(Convert.ToString(row["mode"])!,
@@ -97,6 +100,22 @@ internal static class MatchAffixes
     }
     // Reward scale on top of the bot-match reward. Custom affix matches give nothing (they count as custom matches).
     internal static double RewardScale(string mode)=>mode switch{"MasterPlus"=>1.25,"MasterPlusPlus"=>1.5,"Weekly"=>2.0,_=>1.0};
+    // Weekly bonus: the first weekly-affix win of each week pays this once, on top of the match reward (bot difficulty 1-5).
+    internal static (int Xp,int Credits) WeeklyBonus(int difficulty)=>(400*Math.Clamp(difficulty,1,5),200*Math.Clamp(difficulty,1,5));
+    internal static async Task<bool> GrantWeeklyBonusAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,int difficulty,CancellationToken ct)
+    {
+        var week=(await WeeklyAsync(c,tx,ct)).WeekStartUtc;var bonus=WeeklyBonus(difficulty);
+        if(await CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO weekly_affix_rewards(user_id,week_start,difficulty,xp,credits,match_id,granted_at) VALUES(@u,@w,@d,@x,@p,@m,UTC_TIMESTAMP(6))",ct,("u",user),("w",week),("d",Math.Clamp(difficulty,1,5)),("x",bonus.Xp),("p",bonus.Credits),("m",match))==0)return false;
+        await CommunityEndpoints.Exec(c,tx,"UPDATE case_accounts SET xp=LEAST(1000000000,xp+@x),credits=LEAST(1000000000,credits+@p) WHERE user_id=@u",ct,("x",bonus.Xp),("p",bonus.Credits),("u",user));
+        return true;
+    }
+    /** This week's bonus for the player: received or not, and what it paid. */
+    internal static async Task<object> WeeklyRewardAsync(MySqlConnection c,MySqlTransaction? tx,ulong user,CancellationToken ct)
+    {
+        var week=(await WeeklyAsync(c,tx,ct)).WeekStartUtc;
+        var rows=await CommunityEndpoints.Rows(c,tx,"SELECT difficulty,xp,credits FROM weekly_affix_rewards WHERE user_id=@u AND week_start=@w",ct,("u",user),("w",week));
+        return rows.Count==0?new{received=false,difficulty=0,xp=0,credits=0}:new{received=true,difficulty=Convert.ToInt32(rows[0]["difficulty"]),xp=Convert.ToInt32(rows[0]["xp"]),credits=Convert.ToInt32(rows[0]["credits"])};
+    }
 
     internal static void Map(WebApplication app)
     {

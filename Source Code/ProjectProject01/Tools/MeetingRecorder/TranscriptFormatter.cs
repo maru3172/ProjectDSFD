@@ -61,9 +61,11 @@ internal static partial class TranscriptFormatter
         var lines = Turns(segments).Select(t => (t.Start, Line: TurnLine(t)))
             .Concat(session.Notes.Select(n => (Start: n.Seconds, Line: NoteLine(n))))
             .OrderBy(l => l.Start).ToList();
-        if (lines.Count == 0) return "(기록된 내용이 없습니다)\n";
+        var memo = session.Memo.Trim();
+        if (lines.Count == 0 && memo.Length == 0) return "(기록된 내용이 없습니다)\n";
         var sb = new StringBuilder();
         foreach (var (_, line) in lines) sb.AppendLine(line).AppendLine();
+        if (memo.Length > 0) sb.AppendLine("### 메모장").AppendLine().AppendLine(memo).AppendLine();
         return sb.ToString();
     }
 

@@ -56,6 +56,8 @@ public:
     UFUNCTION(BlueprintPure,Category="Case Records|Campaign") bool HasCampaignAchievement(FName Code) const;
     bool IsAuthenticated()const;
     bool IsBusy()const{return Request.IsValid();} bool IsWriting()const;
+    /** A write that has lasted a noticeable time. UI greys out only then, so short saves never flash the controls (clicks are still refused while any write runs). */
+    bool IsWritingLong(double Seconds=.35)const{return IsWriting()&&FPlatformTime::Seconds()-WriteStartedAt>=Seconds;}
     bool CanImport()const;
     const TSet<FString>& GetLocalAchievements()const;
     TSharedPtr<class FJsonObject> Snapshot;
@@ -93,6 +95,7 @@ private:
     double LastArchiveFetchAt=-100;
     FTSTicker::FDelegateHandle Ticker;
     float PollIn=0;
+    double WriteStartedAt=0;
     FString CurrentLocalSlot;
     FString PendingDrawId,PendingDrawOperation;
     int32 PendingDrawCount=0;
@@ -103,9 +106,17 @@ private:
     FString AchievementAccount;
     TSet<FString> SeenOnlineAchievements;
     void ObserveAchievements();
+    /** Shows "일일/주간 미션 완료" once when a mission reaches its target (not for missions already done at login). */
+    void ObserveMissions();
+    FString MissionAccount;
+    TSet<FString> CompletedMissions;
     void ObserveMainQuest(const TSharedPtr<class FJsonObject>& Response=nullptr);
     FString QuestAccount;
     int64 SeenQuestRevision=0;
+    /** Chain quest lines (캘린, 아테아) open when that NPC's main quest talk is done; a notice shows once when that happens. */
+    void ObserveChainUnlocks();
+    FString ChainAccount;
+    TSet<FString> OpenChains;
     FString PendingTutorialRole;
     uint64 PendingTutorialGeneration=0;
     double TutorialRetryAt=0;
@@ -169,6 +180,7 @@ private:
     int32 CollectionPage=0;
     int32 DrawExchangeCount=1;
     int32 SelectedQuestStage=-1;
+    FString FocusAchievement; // Set by a profile link; that achievement is highlighted and scrolled to.
     FString QuestCategory=TEXT("Main"); // Main, Chain or Sub.
     int32 SelectedChainQuest=0;
     int32 SelectedQuestChapter=0; // Which main quest line (탐사, ...) is open.

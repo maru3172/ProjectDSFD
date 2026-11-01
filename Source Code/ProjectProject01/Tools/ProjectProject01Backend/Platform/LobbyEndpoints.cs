@@ -163,7 +163,7 @@ internal static partial class LobbyEndpoints
                 await reader.DisposeAsync();
                 // The bot match screen shows this week's affixes from the same refresh.
                 var weekly = await MatchAffixes.WeeklyAsync(connection, null, ct);
-                return Results.Ok(new { message = "열린 방 목록을 불러왔습니다.", rooms, weeklyAffixes = new { mode = "Weekly", ids = weekly.Ids, weekName = weekly.Name } });
+                return Results.Ok(new { message = "열린 방 목록을 불러왔습니다.", rooms, weeklyAffixes = new { mode = "Weekly", ids = weekly.Ids, weekName = weekly.Name, reward = await MatchAffixes.WeeklyRewardAsync(connection, null, user.Id, ct) } });
             }
             catch (MySqlException)
             {

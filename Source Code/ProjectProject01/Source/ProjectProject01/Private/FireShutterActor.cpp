@@ -154,7 +154,12 @@ void AFireShutterActor::HandleInteraction(APawn* Interator)
 	SetActorTickEnabled(true);
 }
 double AFireShutterActor::ServerNow()const{const auto* State=GetWorld()->GetGameState();return State?State->GetServerWorldTimeSeconds():GetWorld()->GetTimeSeconds();}
-void AFireShutterActor::OnRep_Motion(){if(bMotionReady){SetActorTickEnabled(true);Tick(0);}}
+void AFireShutterActor::OnRep_Motion()
+{
+    // The prompt follows the replicated target on every machine (server and clients alike).
+    InteractionText=Motion.Target>=.5f?NSLOCTEXT("Interaction","LowerFireShutter","F 키: 방화 셔터 내리기"):NSLOCTEXT("Interaction","RaiseFireShutter","F 키: 방화 셔터 올리기");
+    if(bMotionReady){SetActorTickEnabled(true);Tick(0);}
+}
 void AFireShutterActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps)const{Super::GetLifetimeReplicatedProps(OutLifetimeProps);DOREPLIFETIME(AFireShutterActor,Motion);}
 bool AFireShutterActor::CanInteract_Implementation(APawn* Interactor)const
 {

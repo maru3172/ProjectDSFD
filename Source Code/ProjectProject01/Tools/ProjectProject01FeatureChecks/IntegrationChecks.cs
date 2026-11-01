@@ -91,6 +91,11 @@ internal static class IntegrationChecks
                 await CaseRecordChecks.RunAsync(database,admin);
                 await MainQuestChecks.RunAsync(database,admin);
                 await GuideProgressChecks.RunAsync(database,admin);
+                // Daily/weekly missions: progress, completion, claiming and the weekly point cap.
+                await CaseMissionRewardChecks.RunAsync(database,admin);
+                await MissionBudgetChecks.RunAsync(database,admin);
+                await BulkRewardChecks.RunAsync(database,admin);
+                await WeeklyAffixRewardChecks.RunAsync(database,admin);
                 Console.WriteLine("PASS: frontend-only checks (no bot simulation or AI checks)");
                 return;
             }
@@ -220,6 +225,7 @@ internal static class IntegrationChecks
             await CaseMissionRewardChecks.RunAsync(database,admin);
             await MissionBudgetChecks.RunAsync(database,admin);
             await BulkRewardChecks.RunAsync(database,admin);
+            await WeeklyAffixRewardChecks.RunAsync(database,admin);
             await CaseInvestigationChecks.RunAsync(database,admin);
             await AnnouncementChecks.RunAsync(admin);
             await PartyRoleChecks.RunAsync(database,admin,app.Configuration);

@@ -186,7 +186,7 @@ void UProjectProject01SocialWidget::BuildPanel()
         Body->AddSlot().AutoHeight().Padding(0,8)[SAssignNew(TargetInput,SEditableTextBox).Style(&SocialInputStyle()).Text(Txt(PartyInviteDraft)).HintText(Txt(TEXT("초대할 계정 아이디"))).ForegroundColor(ProjectDFSDUI::Text())
           .OnTextChanged_Lambda([this](const FText& Text){PartyInviteDraft=Text.ToString();})];
         Body->AddSlot().AutoHeight()[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle())
-          .IsEnabled_Lambda([this]{auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;const TSharedPtr<FJsonObject>* State=nullptr,*Party=nullptr;if(R&&R->Snapshot&&R->Snapshot->TryGetObjectField(TEXT("partyState"),State))(*State)->TryGetObjectField(TEXT("party"),Party);return R&&R->IsAuthenticated()&&!R->IsWriting()&&(!Party||(Flag(*Party,TEXT("isLeader"))&&Rows(*Party,TEXT("members")).Num()<3))&&!PartyInviteDraft.TrimStartAndEnd().IsEmpty();})
+          .IsEnabled_Lambda([this]{auto* R=GetGameInstance()?GetGameInstance()->GetSubsystem<UProjectCaseRecords>():nullptr;const TSharedPtr<FJsonObject>* State=nullptr,*Party=nullptr;if(R&&R->Snapshot&&R->Snapshot->TryGetObjectField(TEXT("partyState"),State))(*State)->TryGetObjectField(TEXT("party"),Party);return R&&R->IsAuthenticated()&&!R->IsWritingLong()&&(!Party||(Flag(*Party,TEXT("isLeader"))&&Rows(*Party,TEXT("members")).Num()<3))&&!PartyInviteDraft.TrimStartAndEnd().IsEmpty();})
           .OnClicked_Lambda([this]{if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->PartyAction(TEXT("Invite"),PartyInviteDraft);return FReply::Handled();})[Label(TEXT("초대 보내기"))]];
     }
     if(Page==TEXT("Whispers"))
@@ -460,7 +460,7 @@ void UProjectProject01SocialWidget::RefreshView()
             const auto J=Value->AsObject();Add(Str(J,TEXT("leaderName"))+TEXT("님의 파티 초대"));
             auto Choices=SNew(SHorizontalBox);
             for(const FString Op:{FString(TEXT("Accept")),FString(TEXT("Decline"))})
-                Choices->AddSlot().FillWidth(1).Padding(2)[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).IsEnabled_Lambda([this]{auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();return Records&&Records->IsAuthenticated()&&!Records->IsWriting();}).OnClicked_Lambda([this,Op,Id=Str(J,TEXT("id"))]{if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->PartyAction(Op,Id);return FReply::Handled();})[Label(Op==TEXT("Accept")?TEXT("수락"):TEXT("거절"))]];
+                Choices->AddSlot().FillWidth(1).Padding(2)[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).IsEnabled_Lambda([this]{auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();return Records&&Records->IsAuthenticated()&&!Records->IsWritingLong();}).OnClicked_Lambda([this,Op,Id=Str(J,TEXT("id"))]{if(auto* Records=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())Records->PartyAction(Op,Id);return FReply::Handled();})[Label(Op==TEXT("Accept")?TEXT("수락"):TEXT("거절"))]];
             List->AddSlot().AutoHeight()[Choices];
         }
     }

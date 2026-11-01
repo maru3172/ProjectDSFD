@@ -562,7 +562,7 @@ void UProjectProject01LobbySubsystem::SendRequest(
 	Request->OnProcessRequestComplete().BindUObject(
 		this, &UProjectProject01LobbySubsystem::HandleRequestComplete,
 		Operation, Verb, Endpoint, JsonBody, RetryIndex);
-	ActiveRequest = Request;
+	ActiveRequest = Request;RequestStartedAt=FPlatformTime::Seconds();
 	if (!Request->ProcessRequest())
 	{
 		ProjectRequestProtection::Complete(GetGameInstance(),ActiveCircuitTicket,Request,nullptr,false);
@@ -792,6 +792,13 @@ bool UProjectProject01LobbySubsystem::ParseRoomList(const TSharedPtr<FJsonObject
 	}
     const TSharedPtr<FJsonObject>* WeeklyJson=nullptr;FProjectMatchAffixes Weekly;
     if(Json->TryGetObjectField(TEXT("weeklyAffixes"),WeeklyJson)&&FProjectMatchAffixes::Parse(*WeeklyJson,Weekly)&&Weekly.Mode==EProjectAffixMode::Weekly)WeeklyAffixes=MoveTemp(Weekly);
+    const TSharedPtr<FJsonObject>* RewardJson=nullptr;
+    if(WeeklyJson&&(*WeeklyJson)->TryGetObjectField(TEXT("reward"),RewardJson))
+    {
+        FWeeklyAffixReward Reward;Reward.bKnown=true;(*RewardJson)->TryGetBoolField(TEXT("received"),Reward.bReceived);
+        (*RewardJson)->TryGetNumberField(TEXT("difficulty"),Reward.Difficulty);(*RewardJson)->TryGetNumberField(TEXT("xp"),Reward.Xp);(*RewardJson)->TryGetNumberField(TEXT("credits"),Reward.Credits);
+        WeeklyAffixReward=Reward;
+    }
 	Rooms = MoveTemp(ParsedRooms);
 	OnRoomListChanged.Broadcast();
 	OutError.Reset();

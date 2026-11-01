@@ -59,7 +59,7 @@ void UProjectCaseRecords::ClearSession()
     ClearPartyAdmission();
     if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     Snapshot.Reset();DrawResult.Reset();LastReceipt.Reset();PendingDrawId.Reset();PendingDrawOperation.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
-    AchievementAccount.Reset();SeenOnlineAchievements.Reset();
+    AchievementAccount.Reset();SeenOnlineAchievements.Reset();MissionAccount.Reset();CompletedMissions.Reset();
     QuestAccount.Reset();SeenQuestRevision=0;PendingTutorialRole.Reset();PendingTutorialGeneration=0;TutorialRetryAt=0;
     PendingTalkStep.Reset();PendingTalkChoices.Reset();PendingTalkGeneration=0;TalkRetryAt=0;bTalkInFlight=false;
 }
@@ -227,7 +227,7 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
 #if WITH_EDITOR
     if(GIsEditor)Pending->SetHeader(TEXT("X-ProjectProject01-Client"),TEXT("Editor"));
 #endif
-    if(!Body.IsEmpty())Pending->SetContentAsString(Body);
+    if(!Body.IsEmpty()){Pending->SetContentAsString(Body);WriteStartedAt=FPlatformTime::Seconds();}
     Pending->OnProcessRequestComplete().BindWeakLambda(this,[this,Generation,Path](FHttpRequestPtr Completed,FHttpResponsePtr Response,bool Connected)
     {
         if(Request!=Completed)return;Request.Reset();const auto* Current=Auth(this);if(!Current||!Current->IsSignedIn()||Current->GetSessionGeneration()!=Generation)return;
@@ -259,7 +259,7 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
             else {const TSharedPtr<FJsonObject>* State=nullptr;if(Json->TryGetObjectField(TEXT("snapshot"),State))Snapshot=*State;}
             Status.Reset();
             if(Path==TEXT("/api/case-records/draw")){FString Operation;if(DrawResult&&DrawResult->TryGetStringField(TEXT("operation"),Operation)&&Operation==TEXT("EditorReset"))Status=TEXT("이 계정의 뽑기 획득 기록을 초기화했습니다.");}
-            ObserveAchievements();
+            ObserveAchievements();ObserveMissions();
             if(Path==TEXT("/api/case-records/main-quest")){if(bTalkInFlight)PendingTalkStep.Reset();else PendingTutorialRole.Reset();bTalkInFlight=false;}
             ObserveMainQuest(Json);
             const TSharedPtr<FJsonObject>* Receipt=nullptr;
@@ -334,4 +334,22 @@ void AMultiplayTestPlayerController::ClientNotifyCaseDiscovery_Implementation(in
     if(auto* Notice=CreateWidget<UProjectProject01TransientNoticeWidget>(this))
     {Notice->AddToViewport(160);Notice->ShowNotice(FString::Printf(TEXT("사건 기록 조각 %d개를 발견했습니다."),Count),2.f,1.5f);}
     if(auto* GI=GetGameInstance())if(auto* R=GI->GetSubsystem<UProjectCaseRecords>())R->Refresh();
+}
+void UProjectCaseRecords::ObserveMissions()
+{
+    if(!Snapshot)return;FString Account;Snapshot->TryGetStringField(TEXT("userId"),Account);if(Account.IsEmpty())return;
+    const bool First=MissionAccount!=Account;if(First){MissionAccount=Account;CompletedMissions.Reset();}
+    const TArray<TSharedPtr<FJsonValue>>* Missions=nullptr;if(!Snapshot->TryGetArrayField(TEXT("missions"),Missions))return;
+    auto* Notices=GetGameInstance()->GetSubsystem<UProjectAnnouncementSubsystem>();
+    for(const auto& Value:*Missions)
+    {
+        const auto M=Value.IsValid()?Value->AsObject():nullptr;if(!M)continue;
+        FString Id,Mode,Period,Name;bool Weekly=false,Claimed=false;double Progress=0,Target=1;
+        M->TryGetStringField(TEXT("id"),Id);M->TryGetStringField(TEXT("mode"),Mode);M->TryGetStringField(TEXT("period"),Period);M->TryGetStringField(TEXT("name"),Name);
+        M->TryGetBoolField(TEXT("weekly"),Weekly);M->TryGetBoolField(TEXT("claimed"),Claimed);M->TryGetNumberField(TEXT("progress"),Progress);M->TryGetNumberField(TEXT("target"),Target);
+        const FString Key=Mode+TEXT(":")+Id+TEXT(":")+Period;
+        if(Progress<Target||CompletedMissions.Contains(Key))continue;
+        CompletedMissions.Add(Key);
+        if(!First&&!Claimed&&Notices)Notices->NotifyQuest(Mode==TEXT("Bot")?TEXT("봇전"):TEXT("PvP"),Weekly?TEXT("Weekly"):TEXT("Daily"),Name,Account+TEXT(":Mission:")+Key);
+    }
 }

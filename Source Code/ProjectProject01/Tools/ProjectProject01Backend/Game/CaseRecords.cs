@@ -82,6 +82,7 @@ internal static class CaseRecords
         foreach(string period in new[]{periods.Daily,periods.Weekly})
             foreach(var metric in new[]{("Matches",1),("Wins",won?1:0),(role+"Matches",1)})
                 await CommunityEndpoints.Exec(c,tx,"INSERT INTO case_mission_progress(user_id,mode,period_id,metric,value) VALUES(@u,@mode,@period,@metric,@v) ON DUPLICATE KEY UPDATE value=LEAST(1000000,value+@v)",ct,("u",user),("mode",mode),("period",period),("metric",metric.Item1),("v",metric.Item2));
+        if(mode=="Bot"&&won&&await MatchAffixes.MatchModeAsync(c,tx,match,ct)=="Weekly")await MatchAffixes.GrantWeeklyBonusAsync(c,tx,user,match,(int)Math.Round(difficulty),ct);
         await Unlock(c,tx,user,mode=="Bot"?"bot_first":"pvp_first","Server",ct);
         if(won)await Unlock(c,tx,user,role=="Survivor"?"survivor_escape":"mannequin_victory","Server",ct);
         await MainQuest.VerifiedAsync(c,tx,user,match,role,won,Convert.ToInt32(rows[0]["capture_count"]),Convert.ToDouble(rows[0]["escape_seconds"]),ct);
