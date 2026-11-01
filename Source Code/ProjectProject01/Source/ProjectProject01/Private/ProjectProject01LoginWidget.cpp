@@ -6,6 +6,7 @@
 #include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectDFSDUITheme.h"
+#include "ProjectStoreBackdrop.h"
 #include "ProjectCustomRoomRulesWidget.h"
 #include "ProjectDesertionNotice.h"
 #include "ProjectConfirmDialog.h"
@@ -1965,7 +1966,7 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 	StatusText = TitleLabel(TEXT(""), FVector2D(112, 785), FVector2D(560, 80), 14, FLinearColor(.65f, .68f, .72f));
 
 	UOverlay* SavesPage = WidgetTree->ConstructWidget<UOverlay>(); TitlePageSwitcher->AddChild(SavesPage);
-	auto* SavesDim = WidgetTree->ConstructWidget<UBorder>(); SavesDim->SetBrushColor(ProjectDFSDUI::Canvas().CopyWithNewOpacity(.98f));
+	auto* SavesDim = WidgetTree->ConstructWidget<UProjectDFSDStoreBackdrop>(); // Same backdrop as the multiplayer pages.
 	auto* SavesDimSlot = SavesPage->AddChildToOverlay(SavesDim);
 	SavesDimSlot->SetHorizontalAlignment(HAlign_Fill); SavesDimSlot->SetVerticalAlignment(VAlign_Fill);
 	auto* SavesFit = WidgetTree->ConstructWidget<UScaleBox>(); SavesFit->SetStretch(EStretch::ScaleToFit);

@@ -1,5 +1,6 @@
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01LoginWidget.h"
+#include "ProjectStoreBackdrop.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
 #include "Components/Border.h"
@@ -327,7 +328,7 @@ public:
 		const float Dpi=FMath::Max(.01f,G.GetAccumulatedLayoutTransform().GetScale());
 		const float Fit=FMath::Clamp(static_cast<float>(Size.Y)*Dpi/900.f,.75f,1.1f)/Dpi;
 		const auto Tint=Style.GetColorAndOpacityTint();
-		FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(),White,ESlateDrawEffect::None,ProjectDFSDUI::Canvas()*Tint);
+		ProjectDFSDUI::PaintStoreBackdrop(Out,G,Layer,Tint); // Same abandoned-store backdrop as the single-player save screen.
 		const float Left=FMath::Max(16.f/Dpi,(static_cast<float>(Size.X)-Width*Fit)/2);
 		FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(64*Fit,2*Fit),FSlateLayoutTransform(FVector2D(Left+6*Fit,28*Fit))),White,ESlateDrawEffect::None,ProjectDFSDUI::Accent()*Tint);
         // Restrained file-folder rules and a document header, not a bright paper texture.
@@ -401,6 +402,7 @@ public:
         switch(Kind)
         {
         case ProjectDFSDUI::EIcon::Add:Lines({{4,12},{20,12}});Lines({{12,4},{12,20}});break;
+        case ProjectDFSDUI::EIcon::Phone:Lines({{7,2},{17,2},{17,22},{7,22},{7,2}});Lines({{10,4.5},{14,4.5}});Circle({12,19},.8f);break;
         case ProjectDFSDUI::EIcon::Whisper:Lines({{3,4},{21,4},{21,17},{12,17},{6,21},{6,17},{3,17},{3,4}});Lines({{7,9},{17,9}});Lines({{7,13},{14,13}});break;
         case ProjectDFSDUI::EIcon::Report:Lines({{12,2},{23,21},{1,21},{12,2}});Lines({{12,8},{12,14}});Circle({12,18},.6f);break;
         case ProjectDFSDUI::EIcon::Bell:Lines({{4,18},{7,14},{7,9},{8,6},{12,4},{16,6},{17,9},{17,14},{20,18},{4,18}});Lines({{10,21},{14,21}});break;

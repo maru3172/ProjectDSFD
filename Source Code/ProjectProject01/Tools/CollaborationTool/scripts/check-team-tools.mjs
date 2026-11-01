@@ -79,5 +79,24 @@ try{
  run('UPDATE entries SET parent_id=? WHERE id IN (?,?,?)',goal,plan,t2,memo);run("UPDATE entries SET parent_id=?,status='done' WHERE id=?",plan,t1);run("UPDATE entries SET status='blocked' WHERE id=?",t2);
  const alpha=(await req(`/api/features?action=milestones&workspace=${w}`)).milestones.find(m=>m.id===goal);
  check('마일스톤: 하위 단계까지 업무만 세고 진행률·막힘·기한 지남 계산',alpha.total===3&&alpha.done===1&&alpha.blocked===1&&alpha.late===1&&alpha.percent===33&&alpha.daysLeft>0);
+
+ // Invite codes stay viewable for admins until used, revoked or expired.
+ cookie=ownerCookie;const made=await req('/api/data',{workspace:w,action:'invite',role:'member'});let invites=(await req('/api/data?workspace='+w)).invites;
+ check('초대 코드: 관리자는 다시 보고 복사 가능',invites.some(i=>i.token===made.token));
+ cookie=artistCookie;check('초대 코드: 일반 팀원에게는 안 보임',(await req('/api/data?workspace='+w)).invites.length===0);
+ cookie=ownerCookie;await req('/api/data',{workspace:w,action:'revokeInvite',id:invites.find(i=>i.token===made.token).id});invites=(await req('/api/data?workspace='+w)).invites;
+ check('초대 코드: 취소하면 다시 보이지 않음',invites.every(i=>!i.token)&&!q('SELECT 1 FROM invite_tokens'));
+
+ // Slide decks and export.
+ const deckType=(await post('deckType')).id,deckTypeAgain=(await post('deckType')).id;
+ const deckBody='<!-- daybook:slides -->\n# 표지\n\n---\n\n# 본문\n\n- 요점';
+ const deck=(await req('/api/data',{workspace:w,action:'create',kind:'note',title:'알파 발표',body:deckBody,day:'2026-10-30',custom_type_id:deckType})).id;
+ const decks=(await req(`/api/features?action=decks&workspace=${w}`)).decks;
+ check('발표 자료: 항목 하나, 목록에 본문·버전 포함',deckType===deckTypeAgain&&decks.length===1&&decks[0].id===deck&&decks[0].body===deckBody&&decks[0].version===1);
+ const single=await req(`/api/features?action=exportEntries&workspace=${w}&entry=${deck}`);
+ check('내보내기: 기록 하나와 항목 이름',single.entries.length===1&&single.entries[0].type==='발표 자료'&&single.workspace==='팀 도구 검사');
+ const filtered=await req(`/api/features?action=exportEntries&workspace=${w}&kind=task&status=blocked&from=2026-10-01&to=2026-10-31`);
+ check('내보내기: 종류·상태·기간 조건과 담당자 이름',filtered.entries.length>0&&filtered.entries.every(e=>e.kind==='task'&&e.status==='blocked'&&e.day>='2026-10-01'&&e.day<='2026-10-31'));
+ await req(`/api/features?action=exportEntries&workspace=${w}&kind=nope`,undefined,400);await req(`/api/features?action=exportEntries&workspace=${w}&from=2026/10/01`,undefined,400);checks.push('내보내기: 잘못된 조건 거부');
  await writeFile(path.join(root,'results.json'),JSON.stringify({passed:checks.length,checks},null,2));console.log(JSON.stringify({passed:checks.length,checks},null,2));
 }finally{if(app)await app.close()}

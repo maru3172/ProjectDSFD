@@ -15,6 +15,8 @@ const one=async<T=Record<string,unknown>>(sql:string,...args:(string|number|null
 const text=(v:unknown,max:number,required=false)=>{if(typeof v!=="string")return required?fail(400,"필수 입력을 확인하세요."):"";const value=v.trim();if((required&&!value)||value.length>max)fail(400,"입력 길이를 확인하세요.");return value};
 const date=(v:unknown,required=false)=>{const s=text(v,10,required);if(!s)return null;if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||Number.isNaN(Date.parse(s+"T00:00:00Z"))||new Date(s+"T00:00:00Z").toISOString().slice(0,10)!==s)fail(400,"날짜 형식을 확인하세요.");return s};
 const member=async(w:string,u:string)=>await one<Member>("SELECT * FROM members WHERE workspace_id=? AND user_id=?",w,u)??fail(403,"이 공간에 접근할 권한이 없습니다.");
+// invite_tokens exists only on the standalone server (self-host/migrations); the older cloud database has no such table.
+const inviteTokens=async()=>!!await one("SELECT name FROM sqlite_master WHERE type='table' AND name='invite_tokens'");
 const admin=(m:Member)=>{if(!["owner","admin"].includes(m.role))fail(403,"관리자 권한이 필요합니다.")};
 const writer=(m:Member)=>{if(m.role==="viewer")fail(403,"읽기 전용 팀원입니다.")};
 const hash=async(t:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t)))).map(x=>x.toString(16).padStart(2,"0")).join("");
@@ -53,7 +55,9 @@ export async function GET(request:Request){try{
  const listColumns="id,workspace_id,project_id,topic_id,custom_type_id,summary,auto_summary,kind,title,substr(body,1,300) AS body,author_id,assigned_id,day,due_day,status,priority,parent_id,pinned,created_at,updated_at,version,deleted_at";
  const results=await rows<Entry>(`SELECT ${listColumns} FROM entries WHERE ${parts.join(" AND ")} ORDER BY updated_at DESC LIMIT 1001`,...params);
  const recordTypes=await rows("SELECT * FROM record_types WHERE workspace_id=? ORDER BY created_at",workspace);
- return response({workspace:workspaceInfo,recordTypes,members:await rows("SELECT * FROM members WHERE workspace_id=? ORDER BY created_at",workspace),projects:await rows("SELECT * FROM projects WHERE workspace_id=? ORDER BY created_at",workspace),topics:await rows("SELECT * FROM topics WHERE workspace_id=? ORDER BY created_at",workspace),files:await rows("SELECT a.id,a.entry_id,a.name,a.size,a.created_at,e.title FROM attachments a JOIN entries e ON e.id=a.entry_id WHERE a.workspace_id=? AND e.deleted_at IS NULL ORDER BY a.created_at DESC LIMIT 1000",workspace),entries:results.slice(0,1000),hasMore:results.length>1000,activity:await rows("SELECT id,workspace_id,entry_id,actor_id,action,NULL AS before_json,NULL AS after_json,created_at FROM activity WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100",workspace),notifications:await rows("SELECT * FROM notifications WHERE workspace_id=? AND user_id=? ORDER BY created_at DESC LIMIT 100",workspace,user.userId),invites:["owner","admin"].includes(me.role)?await rows("SELECT id,email,role,uses,expires_at,revoked_at FROM invites WHERE workspace_id=? ORDER BY created_at DESC LIMIT 30",workspace):[]});
+ return response({workspace:workspaceInfo,recordTypes,members:await rows("SELECT * FROM members WHERE workspace_id=? ORDER BY created_at",workspace),projects:await rows("SELECT * FROM projects WHERE workspace_id=? ORDER BY created_at",workspace),topics:await rows("SELECT * FROM topics WHERE workspace_id=? ORDER BY created_at",workspace),files:await rows("SELECT a.id,a.entry_id,a.name,a.size,a.created_at,e.title FROM attachments a JOIN entries e ON e.id=a.entry_id WHERE a.workspace_id=? AND e.deleted_at IS NULL ORDER BY a.created_at DESC LIMIT 1000",workspace),entries:results.slice(0,1000),hasMore:results.length>1000,activity:await rows("SELECT id,workspace_id,entry_id,actor_id,action,NULL AS before_json,NULL AS after_json,created_at FROM activity WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100",workspace),notifications:await rows("SELECT * FROM notifications WHERE workspace_id=? AND user_id=? ORDER BY created_at DESC LIMIT 100",workspace,user.userId),invites:["owner","admin"].includes(me.role)?(await inviteTokens()
+   ?await rows("SELECT i.id,i.email,i.role,i.uses,i.expires_at,i.revoked_at,CASE WHEN i.uses=0 AND i.revoked_at IS NULL AND i.expires_at>? THEN t.token END token FROM invites i LEFT JOIN invite_tokens t ON t.invite_id=i.id WHERE i.workspace_id=? ORDER BY i.created_at DESC LIMIT 30",new Date().toISOString(),workspace)
+   :await rows("SELECT id,email,role,uses,expires_at,revoked_at FROM invites WHERE workspace_id=? ORDER BY created_at DESC LIMIT 30",workspace)):[]});
  }catch(e){return errors(e)}}
 export async function POST(request:Request){try{
  if(request.headers.get("origin")&&request.headers.get("origin")!==new URL(request.url).origin)fail(403,"다른 사이트에서는 요청할 수 없습니다.");
@@ -109,9 +113,13 @@ export async function POST(request:Request){try{
   admin(me);const role=text(input.role,20)||"member";if(!["member","viewer","admin"].includes(role)||role==="admin"&&me.role!=="owner")fail(403,"부여할 수 없는 권한입니다.");
   const token=Array.from(crypto.getRandomValues(new Uint8Array(24))).map(x=>x.toString(16).padStart(2,"0")).join("");
   const email=text(input.email,200)||null;if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,"이메일을 확인하세요.");
-  await query("INSERT INTO invites(id,workspace_id,token_hash,role,email,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)",id(),workspace,await hash(token),role,email,new Date(Date.now()+7*86400000).toISOString(),user.userId,stamp).run();return response({token});
+  const inviteId=id();
+  await query("INSERT INTO invites(id,workspace_id,token_hash,role,email,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)",inviteId,workspace,await hash(token),role,email,new Date(Date.now()+7*86400000).toISOString(),user.userId,stamp).run();
+  // The standalone server keeps the code so admins can show and copy it again until it is used, revoked or expired.
+  if(await inviteTokens())await query("INSERT INTO invite_tokens(invite_id,token) VALUES(?,?)",inviteId,token).run();
+  return response({token});
  }
- if(action==="revokeInvite"){admin(me);await query("UPDATE invites SET revoked_at=? WHERE id=? AND workspace_id=?",stamp,text(input.id,80,true),workspace).run();return response({ok:true})}
+ if(action==="revokeInvite"){admin(me);const inviteId=text(input.id,80,true);await query("UPDATE invites SET revoked_at=? WHERE id=? AND workspace_id=?",stamp,inviteId,workspace).run();if(await inviteTokens())await query("DELETE FROM invite_tokens WHERE invite_id=? AND invite_id IN (SELECT id FROM invites WHERE workspace_id=?)",inviteId,workspace).run();return response({ok:true})}
  if(action==="member"){
   admin(me);const target=text(input.userId,120,true),role=text(input.role,20,true),old=await member(workspace,target);
   if(old.role==="owner"||target===user.userId||me.role!=="owner"&&old.role==="admin")fail(403,"이 팀원의 권한은 바꿀 수 없습니다.");

@@ -5,6 +5,8 @@
 #include "ProjectCaseAchievementPresentation.h"
 #include "ProjectMatchReplay.h"
 #include "ProjectDFSDUITheme.h"
+#include "ProjectPhoneMessenger.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01Localization.h"
 #include "ProjectProject01SocialSubsystem.h"
@@ -201,7 +203,7 @@ TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
     for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("개인 기록"),TEXT("Profile")},{TEXT("컬렉션"),TEXT("Collection")},{TEXT("성장 기록"),TEXT("Achievements")},{TEXT("배틀패스"),TEXT("Track")},{TEXT("이벤트"),TEXT("Events")},{TEXT("리플레이"),TEXT("Replays")},{TEXT("사건 보관함"),TEXT("Archive")}})
         Tabs->AddSlot().Padding(3)[NavigationButton(Entry.Key,Entry.Value)];
     auto GrowthTabs=SNew(SWrapBox).UseAllottedSize(true).Visibility_Lambda([this]{return Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements")||Page==TEXT("Quest")||Page==TEXT("Import")||Page==TEXT("Pvp")||Page==TEXT("Bot")||Page==TEXT("Shop")?EVisibility::Visible:EVisibility::Collapsed;});
-    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("업적·도전과제"),TEXT("Achievements")},{TEXT("메인 퀘스트"),TEXT("Quest")},{TEXT("PvP 미션"),TEXT("Pvp")},{TEXT("봇전 미션"),TEXT("Bot")},{TEXT("보관소 상점"),TEXT("Shop")}})
+    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("업적·도전과제"),TEXT("Achievements")},{TEXT("퀘스트"),TEXT("Quest")},{TEXT("PvP 미션"),TEXT("Pvp")},{TEXT("봇전 미션"),TEXT("Bot")},{TEXT("보관소 상점"),TEXT("Shop")}})
         GrowthTabs->AddSlot().Padding(3)[NavigationButton(Entry.Key,Entry.Value)];
     auto Content=SNew(SBorder).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(22)
          [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,10)
@@ -565,6 +567,15 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
     auto InviteVisibility=TAttribute<EVisibility>::CreateLambda([Party]{return Rows(Party(),TEXT("members")).Num()<3?EVisibility::Visible:EVisibility::Collapsed;});
     Invite->SetVisibility(InviteVisibility);
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(40).HeightOverride(64).Visibility(InviteVisibility)[Invite]];
+    // NPC conversations (main quest): opens the phone over the lobby; a red dot means a conversation is waiting.
+    static const FSlateRoundedBoxBrush UnreadDot(FLinearColor(.86f,.16f,.14f,1.f),5.f);
+    auto Phone=SNew(SButton).ButtonStyle(&DockStyle).ContentPadding(6).ToolTipText(FText::FromString(TEXT("NPC와 대화하기")))
+      .OnClicked_Lambda([this]{UProjectPhoneWidget::Open(GetOwningPlayer());return FReply::Handled();})
+      [SNew(SOverlay)
+        +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[ProjectDFSDUI::Icon(ProjectDFSDUI::EIcon::Phone,26)]
+        +SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top)[SNew(SBox).WidthOverride(10).HeightOverride(10)
+          .Visibility_Lambda([this]{auto* R=Records(this);return R&&R->HasUnreadTalk()?EVisibility::HitTestInvisible:EVisibility::Collapsed;})[SNew(SBorder).BorderImage(&UnreadDot)]]];
+    Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(48).HeightOverride(64)[Phone]];
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top)[SNew(SBox).WidthOverride(118).HeightOverride(64).VAlign(VAlign_Center)[SNew(SVerticalBox)
       +SVerticalBox::Slot().AutoHeight()[Label(TEXT("보유 포인트"),14)]
       +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18)).ColorAndOpacity(ProjectDFSDUI::Text()).Text_Lambda([this]{auto* R=Records(this);return FText::AsNumber(int64(Num(R?R->Snapshot:nullptr,TEXT("credits"))));})]]];

@@ -5,6 +5,7 @@
 #include "ProjectAnnouncementSubsystem.h"
 #include "MultiplayTestPlayerController.h"
 #include "ProjectProject01ResultOutbox.h"
+#include "ProjectPhoneMessenger.h"
 #include "Interfaces/IHttpRequest.h"
 #include "ProjectDFSDUITheme.h"
 #include "Dom/JsonObject.h"
@@ -53,8 +54,28 @@ void UProjectCaseRecords::MainQuestAction(const FString& Action,const FString& R
     if(Id!=TEXT("survivor_tutorial")&&Id!=TEXT("mannequin_tutorial"))return;
     ObserveMainQuest(); // Establish the pre-write baseline before a completion can be returned.
     auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("action"),Action);J->SetStringField(TEXT("expectedStep"),Id);J->SetStringField(TEXT("role"),Role);
-    TutorialRetryAt=FPlatformTime::Seconds()+5;
+    TutorialRetryAt=FPlatformTime::Seconds()+5;bTalkInFlight=false;
     FString Body;FJsonSerializer::Serialize(J,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/main-quest"),Body);
+}
+void UProjectCaseRecords::MainQuestTalk(const FString& StepId,const TArray<int32>& Choices)
+{
+    if(!IsAuthenticated()||StepId.IsEmpty())return;
+    PendingTalkStep=StepId;PendingTalkChoices=Choices;PendingTalkGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();
+    if(!PrepareWrite()){TalkRetryAt=0;return;} // Another write is running; Tick sends this when it ends.
+    ObserveMainQuest(); // Baseline before the stage notice can come back.
+    auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("action"),TEXT("TalkComplete"));J->SetStringField(TEXT("expectedStep"),StepId);
+    TArray<TSharedPtr<FJsonValue>> Picked;for(const int32 Choice:Choices)Picked.Add(MakeShared<FJsonValueNumber>(Choice));J->SetArrayField(TEXT("choices"),Picked);
+    TalkRetryAt=FPlatformTime::Seconds()+5;bTalkInFlight=true;
+    FString Body;FJsonSerializer::Serialize(J,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/main-quest"),Body);
+}
+bool UProjectCaseRecords::HasUnreadTalk()const
+{
+    for(const auto& V:Rows(Obj(Snapshot,TEXT("mainQuest")),TEXT("steps")))
+    {
+        const auto Step=V.IsValid()?V->AsObject():nullptr;
+        if(Obj(Step,TEXT("talk"))&&!Flag(Step,TEXT("talked"))&&Str(Step,TEXT("id"))!=PendingTalkStep)return true; // A talk being reported already counts as read.
+    }
+    return false;
 }
 void UProjectCaseRecords::ApplyMainQuestUpdate(const TSharedPtr<FJsonObject>& Update)
 {
@@ -105,23 +126,70 @@ void AMultiplayTestPlayerController::ClientRefreshCaseProgress_Implementation()
 {if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->Refresh();}
 void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& State)
 {
-    auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();const auto Quest=Obj(State,TEXT("mainQuest"));
-    Body->AddSlot().AutoHeight().Padding(4,6)[Text(TEXT("메인 퀘스트 · ")+(Str(Quest,TEXT("name")).IsEmpty()?TEXT("탐사"):Str(Quest,TEXT("name"))),24)];
+    auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();
+    // Quest kinds: 메인 퀘스트 (several story lines such as 탐사, chosen in the list), 연계 퀘스트 (one line per NPC), 서브 퀘스트.
+    TArray<TSharedPtr<FJsonObject>> Chapters;if(const auto Exploration=Obj(State,TEXT("mainQuest")))Chapters.Add(Exploration); // 탐사; later main quest lines are appended here.
+    auto Kinds=SNew(SHorizontalBox);
+    for(const auto& Kind:TArray<TPair<FString,FString>>{{TEXT("Main"),TEXT("메인 퀘스트")},{TEXT("Chain"),TEXT("연계 퀘스트")},{TEXT("Sub"),TEXT("서브 퀘스트")}})
+    {
+        const FString Id=Kind.Key;auto Tab=Button(Kind.Value,[this,Id]{QuestCategory=Id;RenderedFingerprint.Reset();RefreshPanel();});
+        Tab->SetButtonStyle(&QuestButtonStyle(QuestCategory==Id));Tab->SetContentPadding(FMargin(12,3));StaticCastSharedRef<STextBlock>(Tab->GetContent())->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15));StaticCastSharedRef<STextBlock>(Tab->GetContent())->SetAutoWrapText(false);
+        Kinds->AddSlot().AutoWidth().Padding(0,0,6,0)[Tab];
+    }
+    Body->AddSlot().AutoHeight().Padding(4,4,4,8)[Kinds]; // The selected tab names the page, so there is no separate title.
+    auto Columns=[this](TSharedRef<SWidget> Left,TSharedRef<SWidget> Right)
+    {
+        Body->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(300)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,18,0)[SNew(SBox).WidthOverride(260)[Left]]
+            +SHorizontalBox::Slot().FillWidth(1)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Canvas()).Padding(18)[Right]]]];
+    };
+    if(QuestCategory==TEXT("Chain"))
+    {
+        // NPC lines are listed now; their quests are added later.
+        static const TArray<FString> Npcs{TEXT("캘린"),TEXT("아테아")};SelectedChainQuest=FMath::Clamp(SelectedChainQuest,0,Npcs.Num()-1);
+        auto List=SNew(SVerticalBox);
+        for(int32 I=0;I<Npcs.Num();++I)
+        {
+            auto Row=Button(Npcs[I],[this,I]{SelectedChainQuest=I;RenderedFingerprint.Reset();RefreshPanel();});Row->SetButtonStyle(&QuestButtonStyle(I==SelectedChainQuest));Row->SetContentPadding(FMargin(8,4));
+            List->AddSlot().AutoHeight().Padding(0,2)[SNew(SBox).HeightOverride(32)[Row]];
+        }
+        Columns(List,SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,12)[Text(TEXT("연계 퀘스트 · ")+Npcs[SelectedChainQuest],21)]
+            +SVerticalBox::Slot().AutoHeight()[Text(TEXT("아직 진행할 수 있는 연계 퀘스트가 없습니다."),16)]);
+        return;
+    }
+    if(QuestCategory==TEXT("Sub")){Body->AddSlot().AutoHeight().Padding(4,10)[Text(TEXT("아직 서브 퀘스트가 없습니다."),16)];return;}
+
+    if(Chapters.IsEmpty())return;
+    SelectedQuestChapter=FMath::Clamp(SelectedQuestChapter,0,Chapters.Num()-1);const auto Quest=Chapters[SelectedQuestChapter];
     const auto Steps=Rows(Quest,TEXT("steps"));if(Steps.IsEmpty())return;
     const int32 Current=int32(Num(Quest,TEXT("stage")));const int32 LastUnlocked=FMath::Clamp(Current,0,Steps.Num()-1);if(SelectedQuestStage<0)SelectedQuestStage=LastUnlocked;SelectedQuestStage=FMath::Clamp(SelectedQuestStage,0,LastUnlocked);
     auto List=SNew(SVerticalBox);
-    for(int32 I=0;I<Steps.Num();++I)
+    // Every main quest line is a heading; the chosen one opens to show its steps.
+    for(int32 C=0;C<Chapters.Num();++C)
     {
-        if(I>LastUnlocked)break;
-        auto Row=Button(FString::Printf(TEXT("%d. "),I+1)+Str(Steps[I]->AsObject(),TEXT("title")),[this,I]{SelectedQuestStage=I;RenderedFingerprint.Reset();RefreshPanel();});
-        Row->SetButtonStyle(&QuestButtonStyle(I==SelectedQuestStage));Row->SetContentPadding(FMargin(8,4));
-        StaticCastSharedRef<STextBlock>(Row->GetContent())->SetAutoWrapText(false);StaticCastSharedRef<STextBlock>(Row->GetContent())->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);StaticCastSharedRef<STextBlock>(Row->GetContent())->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),14));
-        List->AddSlot().AutoHeight().Padding(0,2)[SNew(SBox).HeightOverride(32)[Row]];
+        const bool Open=C==SelectedQuestChapter;const FString Name=Str(Chapters[C],TEXT("name")).IsEmpty()?TEXT("탐사"):Str(Chapters[C],TEXT("name"));
+        auto Heading=Button(Name,[this,C]{if(SelectedQuestChapter!=C){SelectedQuestChapter=C;SelectedQuestStage=-1;}RenderedFingerprint.Reset();RefreshPanel();});
+        Heading->SetButtonStyle(&QuestButtonStyle(Open));Heading->SetContentPadding(FMargin(8,3));StaticCastSharedRef<STextBlock>(Heading->GetContent())->SetAutoWrapText(false);
+        List->AddSlot().AutoHeight().Padding(0,0,0,4)[Heading];
+        if(!Open)continue;
+        for(int32 I=0;I<Steps.Num();++I)
+        {
+            if(I>LastUnlocked)break;
+            auto Row=Button(FString::Printf(TEXT("%d. "),I+1)+Str(Steps[I]->AsObject(),TEXT("title")),[this,I]{SelectedQuestStage=I;RenderedFingerprint.Reset();RefreshPanel();});
+            Row->SetButtonStyle(&QuestButtonStyle(I==SelectedQuestStage));Row->SetContentPadding(FMargin(8,4));
+            StaticCastSharedRef<STextBlock>(Row->GetContent())->SetAutoWrapText(false);StaticCastSharedRef<STextBlock>(Row->GetContent())->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);StaticCastSharedRef<STextBlock>(Row->GetContent())->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),14));
+            List->AddSlot().AutoHeight().Padding(14,2,0,2)[SNew(SBox).HeightOverride(32)[Row]];
+        }
     }
     const auto Selected=Steps[SelectedQuestStage]->AsObject();auto Details=SNew(SVerticalBox);
     Details->AddSlot().AutoHeight().Padding(0,0,0,12)[Text(Str(Selected,TEXT("title")),21)];
     Details->AddSlot().AutoHeight().Padding(0,0,0,10)[Text(Flag(Selected,TEXT("completed"))?TEXT("단계 완료"):Flag(Selected,TEXT("active"))?TEXT("진행 중"):TEXT("미진행"),16)];
     for(const auto& V:Rows(Selected,TEXT("goals"))){const auto G=V->AsObject();Details->AddSlot().AutoHeight().Padding(0,4)[Text(FString::Printf(TEXT("%s · %.0f/%.0f"),*Str(G,TEXT("label")),Num(G,TEXT("progress")),Num(G,TEXT("target"))),16)];}
+    if(Obj(Selected,TEXT("talk")))
+    {
+        // Talk steps open the phone on that conversation (also reachable from the phone button at the bottom of the lobby).
+        const FString StepId=Str(Selected,TEXT("id"));const bool Read=Flag(Selected,TEXT("talked"));
+        Details->AddSlot().AutoHeight().Padding(0,10)[Button(Read?TEXT("대화 다시 보기"):TEXT("휴대폰으로 대화하기"),[this,StepId]{UProjectPhoneWidget::Open(GetOwningPlayer(),StepId);})];
+    }
     if(Flag(Selected,TEXT("canSkip")))
     {
         auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();const bool Ready=R->IsAuthenticated()&&Lobby&&!Lobby->HasCurrentRoom()&&!Lobby->IsMatchmaking();
@@ -133,7 +201,7 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
             FTimerHandle Timer;const TWeakObjectPtr<UProjectProject01GameInstance> Weak(GI);GetWorld()->GetTimerManager().SetTimer(Timer,[Weak,Map,Mannequin]{if(auto* Instance=Weak.Get())UGameplayStatics::OpenLevel(Instance,Map,true,Mannequin?TEXT("TutorialRole=Mannequin"):TEXT("TutorialRole=Survivor"));},.65f,false);
         },Ready)]+SHorizontalBox::Slot().FillWidth(1)[Button(TEXT("건너뛰기"),[R]{R->MainQuestAction(TEXT("SkipTutorial"));},Ready)]];
     }
-    if(Flag(Quest,TEXT("completed")))Details->AddSlot().AutoHeight().Padding(0,10)[Text(TEXT("탐사 퀘스트 완료"),20)];
+    if(Flag(Quest,TEXT("completed")))Details->AddSlot().AutoHeight().Padding(0,10)[Text((Str(Quest,TEXT("name")).IsEmpty()?FString(TEXT("탐사")):Str(Quest,TEXT("name")))+TEXT(" 퀘스트 완료"),20)];
     FString Story=Str(Quest,TEXT("baseStory"));for(const auto& V:Steps){const FString Part=Str(V->AsObject(),TEXT("story"));if(!Part.IsEmpty())Story+=(Story.IsEmpty()?TEXT(""):TEXT("\n\n"))+Part;}
     TSharedRef<SWidget> Right=SNew(SScrollBox)+SScrollBox::Slot()[Details];
     if(!Story.IsEmpty())

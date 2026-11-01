@@ -68,6 +68,10 @@ public:
     void SkipConfirmationToday(const FString& Category);
     void MainQuestAction(const FString& Action,const FString& Role=FString());
     void ApplyMainQuestUpdate(const TSharedPtr<class FJsonObject>& Update);
+    /** Reports a finished phone conversation (choices per choice line); retried until the server answers. */
+    void MainQuestTalk(const FString& StepId,const TArray<int32>& Choices);
+    /** An unlocked main quest conversation has not been read yet (red dot on the phone button). */
+    bool HasUnreadTalk()const;
 private:
     void ClearSession();
     bool Tick(float Delta);
@@ -105,6 +109,11 @@ private:
     FString PendingTutorialRole;
     uint64 PendingTutorialGeneration=0;
     double TutorialRetryAt=0;
+    FString PendingTalkStep;
+    TArray<int32> PendingTalkChoices;
+    uint64 PendingTalkGeneration=0;
+    double TalkRetryAt=0;
+    bool bTalkInFlight=false;
     void TickPartyAdmission(float Delta);
     void ReadPartyAdmission(const TSharedPtr<class FJsonObject>& Json);
     void SendPartyAdmission(const FString& Body=FString());
@@ -160,6 +169,9 @@ private:
     int32 CollectionPage=0;
     int32 DrawExchangeCount=1;
     int32 SelectedQuestStage=-1;
+    FString QuestCategory=TEXT("Main"); // Main, Chain or Sub.
+    int32 SelectedChainQuest=0;
+    int32 SelectedQuestChapter=0; // Which main quest line (탐사, ...) is open.
     TMap<int32,int32> DrawShowcase;
     FString LastDrawReceipt;
     TMap<int32,double> ParcelOpenTimes;

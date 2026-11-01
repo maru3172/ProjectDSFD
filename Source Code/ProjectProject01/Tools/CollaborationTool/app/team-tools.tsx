@@ -5,8 +5,10 @@ import {randomId} from './browser-crypto';
 import {Copy,Download,FileUp,GitCommit,Save} from 'lucide-react';
 import type {Data} from './types';
 import {AssetLocks,BugReports,Milestones} from './project-tools';
+import {SlideDecks} from './slide-editor';
+import {ExportRecords} from './export-tools';
 type Row=Record<string,any>;
-const Sections=[['locks','작업 잠금'],['bugs','버그·플레이테스트'],['milestones','마일스톤'],['meeting','회의 가져오기'],['weekly','주간 보고'],['commits','커밋 연결']] as const;
+const Sections=[['decks','발표 자료'],['export','내보내기'],['locks','작업 잠금'],['bugs','버그·플레이테스트'],['milestones','마일스톤'],['meeting','회의 가져오기'],['weekly','주간 보고'],['commits','커밋 연결']] as const;
 // Team tools (self-host API, features.mjs → team.mjs): MeetingRecorder import, weekly report, commit links.
 async function call(url:string,value?:Row){const r=await safeRequest(url,{method:value?'POST':'GET',headers:value?{'Content-Type':'application/json'}:undefined,body:value?JSON.stringify(value):undefined});const result=await r.json() as Row;if(!r.ok)throw new Error(result.error??'요청 실패');if(value)window.dispatchEvent(new Event('daybook-saved'));return result}
 /** Same code as recordCode() in self-host/team.mjs: put it in a commit message to link the commit to the record. */
@@ -39,7 +41,7 @@ async function readMeeting(files:FileList):Promise<Meeting>{
 
 export default function TeamTools({workspace,data,selected,onOpen}:{workspace:string;data:Data|null;selected:string|null;onOpen:(id:string)=>void}){
  const [meeting,setMeeting]=useState<Meeting|null>(null),[weekStart,setWeekStart]=useState(monday(kstToday())),[report,setReport]=useState<Row|null>(null),[commits,setCommits]=useState<Row|null>(null),[error,setError]=useState(''),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
- const [section,setSection]=useState<string>('locks');
+ const [section,setSection]=useState<string>('decks');
  const entry=data?.entries.find(e=>e.id===selected)??null;
  const run=async(job:()=>Promise<unknown>,message='')=>{if(busy)return;setBusy(true);setError('');setStatus('');try{await job();if(message)setStatus(message)}catch(e){setError((e as Error).message)}finally{setBusy(false)}};
  useEffect(()=>{setCommits(null);if(entry)void call(`/api/features?action=commits&workspace=${encodeURIComponent(workspace)}&entry=${encodeURIComponent(entry.id)}`).then(setCommits,e=>setError((e as Error).message))},[workspace,entry?.id]);
@@ -54,6 +56,8 @@ export default function TeamTools({workspace,data,selected,onOpen}:{workspace:st
 
  return <><nav className="segmented team-sections" aria-label="팀 도구">{Sections.map(([key,label])=><button key={key} className={section===key?'selected':''} onClick={()=>{setSection(key);setError('');setStatus('')}}>{label}</button>)}</nav>
   {error&&<div className="operations-error" role="alert">{error}</div>}{status&&<div className="operations-status" role="status">{status}</div>}
+  {section==='decks'&&<SlideDecks workspace={workspace} onOpen={onOpen}/>}
+  {section==='export'&&<ExportRecords workspace={workspace} entry={entry}/>}
   {section==='locks'&&<AssetLocks workspace={workspace} entry={entry} onOpen={onOpen}/>}
   {section==='bugs'&&<BugReports workspace={workspace} onOpen={onOpen}/>}
   {section==='milestones'&&<Milestones workspace={workspace} onOpen={onOpen}/>}

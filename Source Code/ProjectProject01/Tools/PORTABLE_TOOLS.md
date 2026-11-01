@@ -20,7 +20,7 @@
 ## 확인 방법
 
 - 회의 기록: `MeetingRecorder.exe --selftest`
-- 협업툴: `node scripts/check-standalone.mjs`, `node scripts/check-standalone-extended.mjs`, `node scripts/check-team-tools.mjs` (CollaborationTool 폴더에서)
+- 협업툴: `node scripts/check-standalone.mjs`, `node scripts/check-standalone-extended.mjs`, `node scripts/check-team-tools.mjs`, Office 파일은 `npx tsx scripts/check-office-files.ts` 후 `scripts/check-office-files.ps1`(Word·Excel·PowerPoint가 있는 PC) (CollaborationTool 폴더에서)
 - Git 관리: `ProjectDFSDGitManager.exe --self-test --repo <저장소>` (PowerShell 7 필요)
 - 진단 대시보드: `ProjectDFSDDiagnosticsDashboard.exe --self-test`
 - 런처·빌드 도우미·백엔드: `dotnet run --project Tools/ProjectProject01FeatureChecks/ProjectProject01FeatureChecks.csproj` (프로젝트 폴더에서)

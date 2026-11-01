@@ -85,7 +85,7 @@ export function BugReports({workspace,onOpen}:{workspace:string;onOpen:(id:strin
     <label>불편한 점<textarea rows={3} value={form.bad} onChange={set('bad')}/></label>
     <label>제안<textarea rows={3} value={form.idea} onChange={set('idea')}/></label>
    </>}
-   <label>스크린샷·영상 (선택)<input type="file" multiple accept="image/*,video/*,.txt,.log" onChange={e=>setFiles([...e.currentTarget.files??[]])}/></label>
+   <label>스크린샷·로그 (선택, 파일당 10MB · 로그나 영상은 .zip으로 묶어서)<input type="file" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.zip" onChange={e=>setFiles([...e.currentTarget.files??[]])}/></label>
    <div className="inline"><button className="primary" disabled={busy||!ready} onClick={()=>void submit()}>기록하기</button></div>
   </div>
   <div className="inline"><h3 style={{margin:0}}>열린 버그 {list?.bugs.length??0}개</h3><button className="secondary" onClick={()=>void load()}><RefreshCw size={15}/>새로 고침</button></div>

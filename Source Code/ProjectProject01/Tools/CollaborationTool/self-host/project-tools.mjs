@@ -140,5 +140,28 @@ export function projectAction(action,value,w,me,role){
    const daysLeft=g.due_day?Math.round((Date.parse(g.due_day+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null;
    return {...g,total:c.total,done:c.done??0,doing:c.doing??0,blocked:c.blocked??0,late:c.late??0,percent:c.total?Math.round(100*(c.done??0)/c.total):null,daysLeft}})};
  }
+ // Slide decks are records of the "발표 자료" type (body format: app/slides.ts).
+ if(action==='deckType')return {id:recordType(w,me,'발표 자료','#4a7fb5','슬라이드로 만든 발표 자료')};
+ if(action==='decks'){
+  const type=q("SELECT id FROM record_types WHERE workspace_id=? AND name='발표 자료'",w)?.id;
+  return {decks:type?rows("SELECT id,title,body,version,updated_at FROM entries WHERE workspace_id=? AND custom_type_id=? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 200",w,type):[]};
+ }
+ // Records for export (txt, md, csv, xlsx, docx, pdf are written in the browser): one record, or a filtered list.
+ if(action==='exportEntries'){
+  const where=['e.workspace_id=?','e.deleted_at IS NULL'],args=[w],entry=text(value.entry??'',80);
+  if(entry){where.push('e.id=?');args.push(entry)}
+  else{
+   const kinds=['task','meeting','note','log','decision','event','plan','goal','discussion','chat'],states=['todo','inprogress','blocked','done'];
+   if(value.kind){if(!kinds.includes(value.kind))throw new Problem(400,'기록 종류를 확인하세요.');where.push('e.kind=?');args.push(value.kind)}
+   if(value.status){if(!states.includes(value.status))throw new Problem(400,'진행 상태를 확인하세요.');where.push('e.status=?');args.push(value.status)}
+   for(const [key,op] of [['from','>='],['to','<=']]){if(value[key]){if(!/^\d{4}-\d{2}-\d{2}$/.test(value[key]))throw new Problem(400,'날짜를 확인하세요.');where.push(`e.day${op}?`);args.push(value[key])}}
+  }
+  const name=column=>`coalesce((SELECT m.name FROM members m WHERE m.workspace_id=e.workspace_id AND m.user_id=e.${column}),(SELECT p.name FROM author_profiles p WHERE p.user_id=e.${column}))`;
+  const list=rows(`SELECT e.id,e.kind,e.title,e.body,e.summary,e.status,e.priority,e.day,e.due_day,e.created_at,e.updated_at,${name('author_id')} author,${name('assigned_id')} assignee,
+    (SELECT name FROM projects WHERE id=e.project_id) project,(SELECT name FROM topics WHERE id=e.topic_id) topic,(SELECT name FROM record_types WHERE id=e.custom_type_id) type
+   FROM entries e WHERE ${where.join(' AND ')} ORDER BY e.day,e.created_at LIMIT 5001`,...args);
+  if(entry&&!list.length)throw new Problem(404,'기록이 없습니다.');
+  return {entries:list.slice(0,5000),truncated:list.length>5000,workspace:q('SELECT name FROM workspaces WHERE id=?',w)?.name??''};
+ }
  throw new Problem(400,'알 수 없는 요청입니다.');
 }

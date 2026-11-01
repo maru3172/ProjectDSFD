@@ -61,6 +61,7 @@ void UProjectCaseRecords::ClearSession()
     Snapshot.Reset();DrawResult.Reset();LastReceipt.Reset();PendingDrawId.Reset();PendingDrawOperation.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
     AchievementAccount.Reset();SeenOnlineAchievements.Reset();
     QuestAccount.Reset();SeenQuestRevision=0;PendingTutorialRole.Reset();PendingTutorialGeneration=0;TutorialRetryAt=0;
+    PendingTalkStep.Reset();PendingTalkChoices.Reset();PendingTalkGeneration=0;TalkRetryAt=0;bTalkInFlight=false;
 }
 bool UProjectCaseRecords::IsAuthenticated()const{const auto* A=Auth(this);return A&&A->IsSignedIn();}
 bool UProjectCaseRecords::Tick(float Delta)
@@ -70,6 +71,11 @@ bool UProjectCaseRecords::Tick(float Delta)
     {
         if(Auth(this)->GetSessionGeneration()!=PendingTutorialGeneration)PendingTutorialRole.Reset();
         else if(!IsWriting()&&FPlatformTime::Seconds()>=TutorialRetryAt){MainQuestAction(TEXT("TutorialComplete"),PendingTutorialRole);return true;}
+    }
+    if(!PendingTalkStep.IsEmpty())
+    {
+        if(Auth(this)->GetSessionGeneration()!=PendingTalkGeneration)PendingTalkStep.Reset();
+        else if(!IsWriting()&&FPlatformTime::Seconds()>=TalkRetryAt){MainQuestTalk(PendingTalkStep,PendingTalkChoices);return true;}
     }
     TickPartyAdmission(Delta);
     if(!Request&&!bImportAttempted&&CanImport()){bImportAttempted=true;ImportCampaign();return true;}
@@ -254,7 +260,7 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
             Status.Reset();
             if(Path==TEXT("/api/case-records/draw")){FString Operation;if(DrawResult&&DrawResult->TryGetStringField(TEXT("operation"),Operation)&&Operation==TEXT("EditorReset"))Status=TEXT("이 계정의 뽑기 획득 기록을 초기화했습니다.");}
             ObserveAchievements();
-            if(Path==TEXT("/api/case-records/main-quest"))PendingTutorialRole.Reset();
+            if(Path==TEXT("/api/case-records/main-quest")){if(bTalkInFlight)PendingTalkStep.Reset();else PendingTutorialRole.Reset();bTalkInFlight=false;}
             ObserveMainQuest(Json);
             const TSharedPtr<FJsonObject>* Receipt=nullptr;
             if(Json->TryGetObjectField(TEXT("receipt"),Receipt)&&Receipt&&Receipt->IsValid())
@@ -272,7 +278,12 @@ void UProjectCaseRecords::Send(const FString& Path,const FString& Body)
         }
         else
         {
-            if(Path==TEXT("/api/case-records/main-quest"))TutorialRetryAt=FPlatformTime::Seconds()+5;
+            if(Path==TEXT("/api/case-records/main-quest"))
+            {
+                // A refused conversation (locked, changed choices) will not succeed by retrying; a network failure will.
+                if(bTalkInFlight&&Response&&Response->GetResponseCode()>=400&&Response->GetResponseCode()<500)PendingTalkStep.Reset();
+                if(bTalkInFlight)TalkRetryAt=FPlatformTime::Seconds()+5;else TutorialRetryAt=FPlatformTime::Seconds()+5;bTalkInFlight=false;
+            }
             if(Path==TEXT("/api/case-records/draw"))
             {if(Response&&Response->GetResponseCode()>=400&&Response->GetResponseCode()<500){PendingDrawId.Reset();PendingDrawOperation.Reset();}}
             Status=TEXT("서버 응답을 확인하지 못했습니다. 다시 시도하세요.");if(Response&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),Json)&&Json)Json->TryGetStringField(TEXT("message"),Status);
