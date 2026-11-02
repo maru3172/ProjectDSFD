@@ -13,9 +13,10 @@ internal static class MiniGameRules
     internal static SpotRound MakeSpotRound(int seed, int round)
     {
         var random = new Random(unchecked(seed * 7919 + round * 104729));
-        int count = Math.Min(4 + round, 12), changes = 1 + (round >= 4 ? 1 : 0) + (round >= 8 ? 1 : 0), step = Math.Max(26, 110 - round * 9);
+        int count = Math.Min(4 + round, 12), changes = 1 + (round >= 4 ? 1 : 0) + (round >= 8 ? 1 : 0), step = Math.Max(70, 160 - round * 8);
         var before = new List<SpotFigure>();
-        // Spread over a 1000x1000 picture; never closer than 90 apart so every figure can be clicked on its own.
+        // Spread over a 1000x1000 picture; never closer than 90 apart so every figure can be clicked on its own. A moved
+        // figure steps at least 70 aside (7% of the width): a clear step, never a nudge.
         for (int tries = 0; before.Count < count && tries < 4000; tries++)
         {
             var f = new SpotFigure(random.Next(80, 921), random.Next(260, 900), random.Next(3), random.Next(3));
@@ -40,6 +41,37 @@ internal static class MiniGameRules
     }
     internal const int SpotLives = 3;
     internal static int SpotPoints(int round) => 100 + 25 * round;
+
+    // ---- 어디서 났지 (listen): the server picks where each creak comes from; the client plays it in stereo. ----
+    /// <summary>One sound of a round: direction 0..7 clockwise from straight ahead (45° apart), what it is, when it starts.</summary>
+    internal sealed record ListenSound(int Direction, string Kind, double Delay);
+    internal sealed record ListenRound(int Round, int Direction, double Gain, double Length, ListenSound[] Sounds);
+
+    /// <summary>
+    /// Round n: one mannequin creak from a direction; quieter and shorter as it goes. From round 3 a decoy (a pipe knock
+    /// or a shutter rattle) plays from another direction, from round 6 two. The same seed and round give the same round.
+    /// </summary>
+    internal static ListenRound MakeListenRound(int seed, int round)
+    {
+        var random = new Random(unchecked(seed * 6151 + round * 92821));
+        int direction = random.Next(8), decoys = round >= 6 ? 2 : round >= 3 ? 1 : 0;
+        double gain = Math.Max(.35, 1 - .06 * (round - 1)), length = Math.Max(.25, .9 - .06 * (round - 1));
+        var sounds = new List<ListenSound> { new(direction, "creak", Math.Round(random.NextDouble() * .6, 2)) };
+        var used = new HashSet<int> { direction };
+        string[] kinds = ["knock", "rattle"];
+        while (sounds.Count < 1 + decoys)
+        {
+            int d = random.Next(8); if (!used.Add(d)) continue;
+            sounds.Add(new ListenSound(d, kinds[random.Next(2)], Math.Round(random.NextDouble() * .9, 2)));
+        }
+        return new ListenRound(round, direction, Math.Round(gain, 2), Math.Round(length, 2), [.. sounds.OrderBy(x => x.Delay)]);
+    }
+    internal const int ListenLives = 3;
+    internal static int ListenPoints(int round) => 100 + 20 * round;
+
+    // ---- 다가가기 (approach): runs on the client; the server only bounds the time. ----
+    /// <summary>A mannequin needs at least this long to cover the floor even if the survivor never looked back.</summary>
+    internal const int ApproachMinimumMs = 8000;
 
     // ---- 한 칸씩 (steps) ----
     internal sealed record StepStage(string Id, string Name, string[] Map, char Facing, int Shutters, int Par);

@@ -39,6 +39,12 @@ internal static class MiniGameChecks
         Check(late.Before.Length > a.Before.Length && late.Changed.Length > a.Changed.Length, "움직였다: 라운드가 오를수록 마네킹과 변화가 늘어남");
         Check(Enumerable.Range(1, 12).All(r => { var x = MiniGameRules.MakeSpotRound(7, r); return x.Changed.All(i => x.Before[i] != x.After[i]) && Enumerable.Range(0, x.Before.Length).Except(x.Changed).All(i => x.Before[i] == x.After[i]); }),
             "움직였다: 바뀐 마네킹만 다르고 나머지는 그대로");
+        var l1 = MiniGameRules.MakeListenRound(42, 1); var l7 = MiniGameRules.MakeListenRound(42, 7);
+        Check(JsonSerializer.Serialize(l1) == JsonSerializer.Serialize(MiniGameRules.MakeListenRound(42, 1)), "어디서 났지: 같은 판·라운드는 같은 소리");
+        Check(l1.Sounds.Length == 1 && l1.Sounds[0].Kind == "creak" && l1.Sounds[0].Direction == l1.Direction, "1라운드는 삐걱 소리 하나");
+        Check(l7.Sounds.Length == 3 && l7.Sounds.Count(x => x.Kind == "creak") == 1 && l7.Sounds.Select(x => x.Direction).Distinct().Count() == 3, "6라운드부터 다른 방향의 가짜 소리 둘");
+        Check(l7.Gain < l1.Gain && l7.Length < l1.Length, "라운드가 오를수록 작고 짧은 소리");
+        Check(Enumerable.Range(1, 40).All(r => { var x = MiniGameRules.MakeListenRound(9, r); return x.Direction is >= 0 and <= 7 && x.Gain >= .35 && x.Length >= .25; }), "방향 0~7, 소리 크기·길이 하한 유지");
         Console.WriteLine($"PASS: {count} mini game rule checks");
     }
 
@@ -121,6 +127,35 @@ internal static class MiniGameChecks
             var spotBoard = await Read(p1.GetAsync("/api/minigames/leaderboard?game=spot&period=all"));
             Check(spotBoard.GetProperty("me").GetProperty("primary").GetInt32() == 1, "움직였다 순위표: 통과한 라운드 수");
             await Expect(p1.PostAsJsonAsync("/api/minigames/spot/answer", new { runId = spotId, round, picks = Array.Empty<int>() }), HttpStatusCode.Conflict, "끝난 판은 더 채점하지 않음");
+
+            // 어디서 났지: the server grades each direction.
+            var listen = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = "listen" }))).GetProperty("run");
+            string listenId = listen.GetProperty("id").GetString()!; var lv = listen.GetProperty("listen");
+            Check(lv.GetProperty("round").GetInt32() == 1 && lv.GetProperty("sounds").GetArrayLength() == 1, "어디서 났지: 1라운드 소리를 받음");
+            int heard = lv.GetProperty("sounds")[0].GetProperty("direction").GetInt32();
+            await Expect(p1.PostAsJsonAsync("/api/minigames/listen/answer", new { runId = listenId, round = 1, direction = 9 }), HttpStatusCode.BadRequest, "없는 방향 거부");
+            var heardRight = await Read(p1.PostAsJsonAsync("/api/minigames/listen/answer", new { runId = listenId, round = 1, direction = heard }));
+            Check(heardRight.GetProperty("correct").GetBoolean() && heardRight.GetProperty("cleared").GetInt32() == 1, "맞는 방향이면 통과");
+            JsonElement lastListen = heardRight;
+            for (int r = 2; r < 2 + MiniGameRules.ListenLives; r++)
+            {
+                var sounds = lastListen.GetProperty("listen").GetProperty("sounds").EnumerateArray().ToList();
+                int creak = sounds.Single(x => x.GetProperty("kind").GetString() == "creak").GetProperty("direction").GetInt32();
+                lastListen = await Read(p1.PostAsJsonAsync("/api/minigames/listen/answer", new { runId = listenId, round = r, direction = (creak + 4) % 8 }));
+            }
+            Check(lastListen.GetProperty("over").GetBoolean() && !lastListen.GetProperty("correct").GetBoolean(), "어디서 났지: 세 번 틀리면 끝");
+            Check((await Read(p1.GetAsync("/api/minigames/leaderboard?game=listen&period=all"))).GetProperty("me").GetProperty("primary").GetInt32() == 1, "어디서 났지 순위표");
+            await Expect(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = listenId, cleared = true }), HttpStatusCode.Conflict, "끝난 판은 마칠 수 없음");
+
+            // 다가가기 (the mannequin's game): time and times seen moving.
+            string near = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = "approach" }))).GetProperty("run").GetProperty("id").GetString()!;
+            await Age(near, 60);
+            await Expect(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = near, cleared = true, activeMs = 3000, strikes = 0 }), HttpStatusCode.BadRequest, "불가능하게 짧은 다가가기 기록 거부");
+            Check((await Read(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = near, cleared = true, activeMs = 21000, strikes = 2 }))).GetProperty("result").GetProperty("strikes").GetInt32() == 2, "다가가기 성공 기록(시간·들킨 횟수)");
+            string near2 = (await Read(p2.PostAsJsonAsync("/api/minigames/start", new { game = "approach" }))).GetProperty("run").GetProperty("id").GetString()!;
+            await Age(near2, 60); await Read(p2.PostAsJsonAsync("/api/minigames/finish", new { runId = near2, cleared = true, activeMs = 21000, strikes = 0 }));
+            var nearBoard = await Read(p1.GetAsync("/api/minigames/leaderboard?game=approach&period=all"));
+            Check(nearBoard.GetProperty("top")[0].GetProperty("secondary").GetInt32() == 0 && nearBoard.GetProperty("me").GetProperty("rank").GetInt32() == 2, "다가가기 순위: 같은 시간이면 덜 들킨 쪽이 위");
 
             // One open run per game; a new start replaces it, abandon closes it.
             string a1 = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = "blackout" }))).GetProperty("run").GetProperty("id").GetString()!;

@@ -119,6 +119,97 @@ bool FSpotRound::Parse(const TSharedPtr<FJsonObject>& Json,FSpotRound& Out)
     return ReadFigures(Json,TEXT("before"),Out.Before)&&ReadFigures(Json,TEXT("after"),Out.After)&&Out.Before.Num()==Out.After.Num()&&Out.Before.Num()>0;
 }
 
+// ---------------------------------------------------------------- 어디서 났지
+bool FListenRound::Parse(const TSharedPtr<FJsonObject>& Json,FListenRound& Out)
+{
+    if(!Json)return false;
+    Out=FListenRound();double Round=1,Cleared=0,Lives=3,Score=0,Gain=1,Length=.9;
+    Json->TryGetNumberField(TEXT("round"),Round);Json->TryGetNumberField(TEXT("cleared"),Cleared);Json->TryGetNumberField(TEXT("lives"),Lives);
+    Json->TryGetNumberField(TEXT("score"),Score);Json->TryGetNumberField(TEXT("gain"),Gain);Json->TryGetNumberField(TEXT("length"),Length);
+    Out.Round=int32(Round);Out.Cleared=int32(Cleared);Out.Lives=int32(Lives);Out.Score=int32(Score);Out.Gain=float(Gain);Out.Length=float(Length);
+    const TArray<TSharedPtr<FJsonValue>>* List=nullptr;if(!Json->TryGetArrayField(TEXT("sounds"),List))return false;
+    for(const auto& V:*List)
+    {
+        const TSharedPtr<FJsonObject>* O=nullptr;if(!V->TryGetObject(O))return false;
+        FListenSound S;double D=0,Delay=0;
+        if(!(*O)->TryGetNumberField(TEXT("direction"),D)||!(*O)->TryGetStringField(TEXT("kind"),S.Kind))return false;
+        (*O)->TryGetNumberField(TEXT("delay"),Delay);S.Direction=int32(D);S.Delay=float(Delay);
+        if(S.Direction<0||S.Direction>7)return false;
+        Out.Sounds.Add(S);
+    }
+    return Out.Sounds.ContainsByPredicate([](const FListenSound& S){return S.Kind==TEXT("creak");});
+}
+FString FListenRound::DirectionName(int32 D)
+{
+    static const TCHAR* Names[]={TEXT("앞"),TEXT("오른쪽 앞"),TEXT("오른쪽"),TEXT("오른쪽 뒤"),TEXT("뒤"),TEXT("왼쪽 뒤"),TEXT("왼쪽"),TEXT("왼쪽 앞")};
+    return Names[((D%8)+8)%8];
+}
+
+// ---------------------------------------------------------------- 다가가기
+double FApproachSim::Random01(){RandomState=RandomState*1664525u+1013904223u;return double(RandomState>>8)/double(1u<<24);}
+void FApproachSim::Start(uint32 Seed){*this=FApproachSim();RandomState=Seed?Seed:1;Enter(EPhase::Away);}
+void FApproachSim::Enter(EPhase Next)
+{
+    Phase=Next;
+    // Closer to the survivor it waits less between looks, and feints more often.
+    const double Near=Distance/Goal;
+    switch(Next)
+    {
+    case EPhase::Away:PhaseLength=FMath::Lerp(3.6,1.6,Near)*(.7+.6*Random01());break;
+    case EPhase::Tell:PhaseLength=TellSeconds;bFeint=Distance>35&&Random01()<FMath::Lerp(.15,.35,Near);break;
+    case EPhase::Turning:PhaseLength=TurnSeconds;break;
+    case EPhase::Looking:PhaseLength=1.+1.2*Random01();break;
+    }
+    PhaseLeft=PhaseLength;
+}
+FApproachSim::EOutcome FApproachSim::Tick(double Seconds,bool bAdvancing,bool& bSpotted)
+{
+    bSpotted=false;
+    if(Outcome!=EOutcome::Playing||Seconds<=0)return Outcome;
+    Seconds=FMath::Min(Seconds,.1);Elapsed+=Seconds;bMoving=bAdvancing;SpottedFor=FMath::Max(0.,SpottedFor-Seconds);
+    if(bAdvancing&&Watching()&&SpottedFor<=0)
+    {
+        // Seen moving: thrown back, and the survivor keeps looking a moment longer.
+        ++Strikes;bSpotted=true;SpottedFor=.8;Distance=FMath::Max(0.,Distance-PushBack);
+        if(Phase==EPhase::Looking)PhaseLeft=FMath::Max(PhaseLeft,.8);
+        if(Strikes>=MaxStrikes)return Outcome=EOutcome::Caught;
+    }
+    else if(bAdvancing&&!Watching())
+    {
+        Distance=FMath::Min(Goal,Distance+Speed*Seconds);
+        if(Distance>=Goal)return Outcome=EOutcome::Reached;
+    }
+    PhaseLeft-=Seconds;
+    if(PhaseLeft<=0)
+    {
+        switch(Phase)
+        {
+        case EPhase::Away:Enter(EPhase::Tell);break;
+        case EPhase::Tell:Enter(bFeint?EPhase::Away:EPhase::Turning);break;
+        case EPhase::Turning:Enter(EPhase::Looking);break;
+        case EPhase::Looking:Enter(EPhase::Away);break;
+        }
+    }
+    return Outcome;
+}
+TSharedRef<FJsonObject> FApproachSim::Save()const
+{
+    auto J=MakeShared<FJsonObject>();
+    J->SetNumberField(TEXT("distance"),Distance);J->SetNumberField(TEXT("elapsed"),Elapsed);J->SetNumberField(TEXT("strikes"),Strikes);
+    J->SetNumberField(TEXT("random"),double(RandomState));
+    return J;
+}
+bool FApproachSim::Load(const TSharedPtr<FJsonObject>& J)
+{
+    if(!J)return false;
+    double D=0,E=0,S=0,R=1;
+    if(!J->TryGetNumberField(TEXT("distance"),D)||!J->TryGetNumberField(TEXT("elapsed"),E))return false;
+    J->TryGetNumberField(TEXT("strikes"),S);J->TryGetNumberField(TEXT("random"),R);
+    // Continuing starts with the survivor's back turned, so a pause never lands the player in the middle of a look.
+    Start(uint32(R));Distance=FMath::Clamp(D,0.,Goal-1);Elapsed=FMath::Max(0.,E);Strikes=FMath::Clamp(int32(S),0,MaxStrikes-1);
+    return true;
+}
+
 // ---------------------------------------------------------------- 정전 복구
 const FVector2D FBlackoutSim::Board(320,22);
 double FBlackoutSim::Random01(){RandomState=RandomState*1664525u+1013904223u;return double(RandomState>>8)/double(1u<<24);}

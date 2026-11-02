@@ -64,6 +64,49 @@ namespace ProjectMiniGame
         float MemorizeSeconds()const{return 3.f+.25f*Before.Num();}
     };
 
+    // ---- 어디서 났지 (listen): the server picks where each sound comes from. ----
+    /** Direction 0..7 clockwise from straight ahead (45° apart); Kind "creak" (the one to find), "knock" or "rattle". */
+    struct FListenSound{int32 Direction=0;FString Kind;float Delay=0;};
+    struct PROJECTPROJECT01_API FListenRound
+    {
+        int32 Round=1,Cleared=0,Lives=3,Score=0;
+        float Gain=1,Length=.9f;
+        TArray<FListenSound> Sounds;
+        static bool Parse(const TSharedPtr<FJsonObject>& Json,FListenRound& Out);
+        static FString DirectionName(int32 Direction);
+    };
+
+    // ---- 다가가기 (approach): the mannequin's game, real time on the client. ----
+    /**
+     * Seen from the mannequin: the survivor stands with its back turned at the far end. Holding the move key walks
+     * closer. Before turning round the survivor gives a tell (a shoulder twitch and a breath); then it looks back with
+     * its torch. Caught moving while it looks: pushed back and a strike; the third strike ends the run. Sometimes the
+     * tell is a feint and it does not turn. Reaching it wins.
+     */
+    struct FApproachSim
+    {
+        static constexpr double Goal=100,Speed=12,PushBack=25,Grace=.12,TellSeconds=.55,TurnSeconds=.25;
+        static constexpr int32 MaxStrikes=3;
+        enum class EPhase:uint8{Away,Tell,Turning,Looking};
+        enum class EOutcome:uint8{Playing,Reached,Caught};
+        double Distance=0,PhaseLeft=2,PhaseLength=2,Elapsed=0,SpottedFor=0;
+        EPhase Phase=EPhase::Away;
+        int32 Strikes=0;
+        bool bFeint=false,bMoving=false;
+        uint32 RandomState=1;
+        EOutcome Outcome=EOutcome::Playing;
+        void Start(uint32 Seed);
+        /** Advancing: the move key is held. bSpotted is set on the tick a strike lands. */
+        EOutcome Tick(double Seconds,bool bAdvancing,bool& bSpotted);
+        /** The survivor can see the mannequin now (looking, or turning after a short grace). */
+        bool Watching()const{return Phase==EPhase::Looking||(Phase==EPhase::Turning&&PhaseLength-PhaseLeft>=Grace);}
+        TSharedRef<FJsonObject> Save()const;
+        bool Load(const TSharedPtr<FJsonObject>& Json);
+    private:
+        double Random01();
+        void Enter(EPhase Next);
+    };
+
     // ---- 정전 복구 (blackout): real time, on the client only. ----
     struct FBlackoutInput
     {

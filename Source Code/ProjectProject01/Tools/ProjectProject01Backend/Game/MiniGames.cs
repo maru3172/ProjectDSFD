@@ -7,10 +7,12 @@ using MySqlConnector;
 /// - 움직였다 (spot): the server makes every round and grades the picks; the run's progress lives here.
 /// - 정전 복구 (blackout): runs on the client; the server keeps its saved snapshot and bounds the finishing time.
 /// - 한 칸씩 (steps): the server replays the submitted moves on the stage before it records anything.
+/// - 어디서 났지 (listen): like 움직였다, the server picks every round and grades the answer.
+/// - 다가가기 (approach): the mannequin's game; runs on the client, the server bounds the time.
 /// </summary>
 internal static class MiniGames
 {
-    internal static readonly string[] Games = ["spot", "blackout", "steps"];
+    internal static readonly string[] Games = ["spot", "blackout", "steps", "listen", "approach"];
     // 정전 복구 cannot be won faster than this: three fuses to fetch and two seconds at the board for each.
     internal const int BlackoutMinimumMs = 12000;
     const int StateLimit = 32 * 1024;
@@ -18,7 +20,8 @@ internal static class MiniGames
     internal sealed record StartBody(string? Game, string? Stage);
     internal sealed record SaveBody(string? RunId, int ActiveMs, JsonElement? State);
     internal sealed record SpotBody(string? RunId, int Round, int[]? Picks, int ActiveMs);
-    internal sealed record FinishBody(string? RunId, bool Cleared, int ActiveMs, int Battery, string[]? Moves);
+    internal sealed record FinishBody(string? RunId, bool Cleared, int ActiveMs, int Battery, string[]? Moves, int Strikes);
+    internal sealed record ListenBody(string? RunId, int Round, int Direction, int ActiveMs);
     internal sealed record AbandonBody(string? Game);
     sealed record SpotState(int Seed, int Round, int Cleared, int Lives, int Score);
 
@@ -34,6 +37,8 @@ internal static class MiniGames
     {
         "spot" => (true, true),
         "blackout" => (false, true),
+        "listen" => (true, true),
+        "approach" => (false, false), // time, then times seen moving
         _ => board == "stars" ? (true, false) : (false, false),
     };
     internal static bool Better(string game, string board, (int P, int S) value, (int P, int S) than)
@@ -81,6 +86,12 @@ internal static class MiniGames
         return new { round = s.Round, cleared = s.Cleared, lives = s.Lives, score = s.Score, before = round.Before, after = round.After, changes = round.Changed.Length };
     }
     static SpotState ReadSpot(object? json) => JsonSerializer.Deserialize<SpotState>(Convert.ToString(json) ?? "{}")!;
+    // 어디서 났지 keeps the same progress record as 움직였다 (seed, round, cleared, lives, score).
+    static object ListenView(SpotState s)
+    {
+        var round = MiniGameRules.MakeListenRound(s.Seed, s.Round);
+        return new { round = s.Round, cleared = s.Cleared, lives = s.Lives, score = s.Score, gain = round.Gain, length = round.Length, sounds = round.Sounds };
+    }
 
     static object RunView(Dictionary<string, object?> run)
     {
@@ -91,6 +102,7 @@ internal static class MiniGames
         {
             id = Convert.ToString(run["id"]), game, stage = Convert.ToString(run["stage"]), activeMs = Convert.ToInt32(run["active_ms"]), state,
             spot = game == "spot" ? SpotView(ReadSpot(run["server_state"])) : null,
+            listen = game == "listen" ? ListenView(ReadSpot(run["server_state"])) : null,
         };
     }
 
@@ -139,7 +151,7 @@ internal static class MiniGames
             await using var c = await db.OpenConnectionAsync(ct); await using var tx = await c.BeginTransactionAsync(ct);
             await CommunityEndpoints.Exec(c, tx, "UPDATE minigame_runs SET finished_at=UTC_TIMESTAMP(6) WHERE user_id=@u AND game=@g AND finished_at IS NULL", ct, ("u", user.Id), ("g", body.Game));
             string id = Guid.NewGuid().ToString("N");
-            string? server = body.Game == "spot" ? JsonSerializer.Serialize(new SpotState(Random.Shared.Next(1, int.MaxValue), 1, 0, MiniGameRules.SpotLives, 0)) : null;
+            string? server = body.Game is "spot" or "listen" ? JsonSerializer.Serialize(new SpotState(Random.Shared.Next(1, int.MaxValue), 1, 0, body.Game == "spot" ? MiniGameRules.SpotLives : MiniGameRules.ListenLives, 0)) : null;
             await CommunityEndpoints.Exec(c, tx, "INSERT INTO minigame_runs(id,user_id,game,stage,server_state,started_at,saved_at) VALUES(@i,@u,@g,@s,@v,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))", ct,
                 ("i", id), ("u", user.Id), ("g", body.Game), ("s", stage), ("v", server));
             var run = (await CommunityEndpoints.Rows(c, tx, "SELECT * FROM minigame_runs WHERE id=@i", ct, ("i", id)))[0];
@@ -186,7 +198,30 @@ internal static class MiniGames
             return Results.Ok(new { correct, changed = round.Changed, over, cleared = next.Cleared, score = next.Score, lives = next.Lives, spot = over ? null : SpotView(next) });
         }).RequireRateLimiting("social");
 
-        // 정전 복구 and 한 칸씩 end here. A cleared run is checked before it reaches a board.
+        // 어디서 났지: grade the direction picked for this round. A wrong one costs a life; the third ends the run.
+        app.MapPost("/api/minigames/listen/answer", async (ListenBody body, HttpRequest request, AuthDatabase db, CancellationToken ct) =>
+        {
+            var user = await LobbyEndpoints.AuthenticateAsync(request, db, ct); if (user is null) return Results.Unauthorized();
+            if (body.Direction is < 0 or > 7) return Results.BadRequest(new { message = "방향을 확인하세요." });
+            await using var c = await db.OpenConnectionAsync(ct); await using var tx = await c.BeginTransactionAsync(ct);
+            var run = await OpenRunAsync(c, tx, user.Id, body.RunId, ct);
+            if (run is null || Convert.ToString(run["game"]) != "listen") return Results.Conflict(new { message = "이미 끝났거나 새로 시작한 게임입니다." });
+            var state = ReadSpot(run["server_state"]);
+            if (body.Round != state.Round) return Results.Conflict(new { message = "이미 채점한 라운드입니다.", run = RunView(run) });
+            var round = MiniGameRules.MakeListenRound(state.Seed, state.Round);
+            bool correct = body.Direction == round.Direction;
+            var next = correct ? state with { Round = state.Round + 1, Cleared = state.Cleared + 1, Score = state.Score + MiniGameRules.ListenPoints(state.Round) }
+                               : state with { Round = state.Round + 1, Lives = state.Lives - 1 };
+            int active = Math.Max(Convert.ToInt32(run["active_ms"]), PlausibleActive(run, body.ActiveMs) ? body.ActiveMs : 0);
+            bool over = next.Lives <= 0;
+            await CommunityEndpoints.Exec(c, tx, "UPDATE minigame_runs SET server_state=@s,client_state=NULL,active_ms=@a,saved_at=UTC_TIMESTAMP(6),finished_at=IF(@o,UTC_TIMESTAMP(6),NULL) WHERE id=@i", ct,
+                ("s", JsonSerializer.Serialize(next)), ("a", active), ("o", over), ("i", body.RunId));
+            if (over && next.Cleared > 0) await RecordAsync(c, tx, user.Id, "listen", "all", next.Cleared, next.Score, ct);
+            await tx.CommitAsync(ct);
+            return Results.Ok(new { correct, direction = round.Direction, over, cleared = next.Cleared, score = next.Score, lives = next.Lives, listen = over ? null : ListenView(next) });
+        }).RequireRateLimiting("social");
+
+        // 정전 복구, 한 칸씩 and 다가가기 end here. A cleared run is checked before it reaches a board.
         app.MapPost("/api/minigames/finish", async (FinishBody body, HttpRequest request, AuthDatabase db, CancellationToken ct) =>
         {
             var user = await LobbyEndpoints.AuthenticateAsync(request, db, ct); if (user is null) return Results.Unauthorized();
@@ -194,7 +229,7 @@ internal static class MiniGames
             var run = await OpenRunAsync(c, tx, user.Id, body.RunId, ct);
             if (run is null) return Results.Conflict(new { message = "이미 끝났거나 새로 시작한 게임입니다." });
             string game = Convert.ToString(run["game"])!;
-            if (game == "spot") return Results.BadRequest(new { message = "움직였다는 라운드마다 채점합니다." });
+            if (game is "spot" or "listen") return Results.BadRequest(new { message = "라운드마다 채점하는 게임입니다." });
             object? result = null;
             if (body.Cleared && game == "blackout")
             {
@@ -202,6 +237,13 @@ internal static class MiniGames
                     return Results.BadRequest(new { message = "기록을 확인할 수 없습니다." });
                 await RecordAsync(c, tx, user.Id, "blackout", "all", body.ActiveMs, body.Battery, ct);
                 result = new { timeMs = body.ActiveMs, battery = body.Battery };
+            }
+            else if (body.Cleared && game == "approach")
+            {
+                if (body.ActiveMs < MiniGameRules.ApproachMinimumMs || !PlausibleActive(run, body.ActiveMs) || body.Strikes is < 0 or > 50)
+                    return Results.BadRequest(new { message = "기록을 확인할 수 없습니다." });
+                await RecordAsync(c, tx, user.Id, "approach", "all", body.ActiveMs, body.Strikes, ct);
+                result = new { timeMs = body.ActiveMs, strikes = body.Strikes };
             }
             else if (body.Cleared && game == "steps")
             {

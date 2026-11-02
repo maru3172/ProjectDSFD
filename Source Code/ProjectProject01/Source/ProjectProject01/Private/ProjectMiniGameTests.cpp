@@ -91,4 +91,54 @@ bool FProjectMiniGameBlackoutTest::RunTest(const FString&)
     TestFalse(TEXT("A broken save is refused"),Loaded.Load(MakeShared<FJsonObject>()));
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMiniGameListenTest,"ProjectProject01.MiniGames.ListenRound",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectMiniGameListenTest::RunTest(const FString&)
+{
+    // As the server sends it (camelCase): the creak and a decoy from another direction.
+    TSharedPtr<FJsonObject> Json;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(TEXT(R"({"round":4,"cleared":3,"lives":3,"score":420,"gain":0.82,"length":0.72,
+        "sounds":[{"direction":6,"kind":"creak","delay":0.1},{"direction":1,"kind":"rattle","delay":0.4}]})")),Json);
+    FListenRound R;
+    TestTrue(TEXT("A round from the server parses"),FListenRound::Parse(Json,R)&&R.Round==4&&R.Sounds.Num()==2&&FMath::IsNearlyEqual(R.Gain,.82f));
+    TestTrue(TEXT("Directions keep their order and kinds"),R.Sounds[0].Direction==6&&R.Sounds[0].Kind==TEXT("creak")&&R.Sounds[1].Kind==TEXT("rattle"));
+    TestEqual(TEXT("Direction names run clockwise from ahead"),FListenRound::DirectionName(0)+TEXT("/")+FListenRound::DirectionName(2)+TEXT("/")+FListenRound::DirectionName(4)+TEXT("/")+FListenRound::DirectionName(6),FString(TEXT("앞/오른쪽/뒤/왼쪽")));
+    TSharedPtr<FJsonObject> NoCreak;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(TEXT(R"({"sounds":[{"direction":1,"kind":"knock","delay":0}]})")),NoCreak);
+    TestFalse(TEXT("A round without the creak is refused"),FListenRound::Parse(NoCreak,R));
+    TSharedPtr<FJsonObject> Bad;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(TEXT(R"({"sounds":[{"direction":9,"kind":"creak","delay":0}]})")),Bad);
+    TestFalse(TEXT("A direction outside 0..7 is refused"),FListenRound::Parse(Bad,R));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectMiniGameApproachTest,"ProjectProject01.MiniGames.ApproachRules",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectMiniGameApproachTest::RunTest(const FString&)
+{
+    bool bSpotted=false;
+    FApproachSim A;A.Start(7);
+    TestTrue(TEXT("It starts with the survivor's back turned"),A.Phase==FApproachSim::EPhase::Away&&!A.Watching());
+    A.Tick(.1,true,bSpotted);
+    TestTrue(TEXT("Holding the key while it looks away walks closer"),A.Distance>1&&!bSpotted);
+    // Its look: moving is seen (a strike and a push back), standing still is not.
+    FApproachSim L;L.Start(3);L.Distance=50;L.Phase=FApproachSim::EPhase::Looking;L.PhaseLength=L.PhaseLeft=2;
+    L.Tick(.1,false,bSpotted);TestTrue(TEXT("Standing still while it looks is safe"),!bSpotted&&L.Distance==50);
+    L.Tick(.1,true,bSpotted);TestTrue(TEXT("Moving while it looks: a strike and pushed back"),bSpotted&&L.Strikes==1&&FMath::IsNearlyEqual(L.Distance,50-FApproachSim::PushBack));
+    L.Tick(.1,true,bSpotted);TestTrue(TEXT("Not struck twice for the same moment"),!bSpotted&&L.Strikes==1);
+    // The first moment of the turn is forgiving; after it the survivor sees.
+    FApproachSim T;T.Start(5);T.Phase=FApproachSim::EPhase::Turning;T.PhaseLength=T.PhaseLeft=FApproachSim::TurnSeconds;
+    TestFalse(TEXT("Grace at the start of the turn"),T.Watching());
+    T.PhaseLeft-=FApproachSim::Grace+.01;TestTrue(TEXT("Then it sees"),T.Watching());
+    // Three strikes end the run; reaching the survivor wins.
+    FApproachSim C;C.Start(9);C.Strikes=FApproachSim::MaxStrikes-1;C.Phase=FApproachSim::EPhase::Looking;C.PhaseLength=C.PhaseLeft=2;
+    TestEqual(TEXT("The third strike ends it"),C.Tick(.1,true,bSpotted),FApproachSim::EOutcome::Caught);
+    FApproachSim W;W.Start(11);W.Distance=FApproachSim::Goal-.5;W.Phase=FApproachSim::EPhase::Away;W.PhaseLength=W.PhaseLeft=3;
+    TestEqual(TEXT("Reaching it wins"),W.Tick(.1,true,bSpotted),FApproachSim::EOutcome::Reached);
+    // A whole run by a careful player: stop on the tell, walk otherwise.
+    FApproachSim Run;Run.Start(21);int32 Steps=0;
+    while(Run.Outcome==FApproachSim::EOutcome::Playing&&Steps++<20000)Run.Tick(.05,Run.Phase==FApproachSim::EPhase::Away,bSpotted);
+    TestTrue(TEXT("A careful player reaches the survivor without a strike"),Run.Outcome==FApproachSim::EOutcome::Reached&&Run.Strikes==0);
+    TestTrue(TEXT("...and it takes longer than the server's minimum"),Run.Elapsed*1000>=8000);
+    FApproachSim Saved;Saved.Start(13);Saved.Distance=42;Saved.Elapsed=9;Saved.Strikes=1;
+    FApproachSim Loaded;
+    TestTrue(TEXT("A save loads back with the survivor's back turned"),Loaded.Load(Saved.Save())&&FMath::IsNearlyEqual(Loaded.Distance,42.)&&Loaded.Strikes==1&&Loaded.Phase==FApproachSim::EPhase::Away);
+    return true;
+}
 #endif

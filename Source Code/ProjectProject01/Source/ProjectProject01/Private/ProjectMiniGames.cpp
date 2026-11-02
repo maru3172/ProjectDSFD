@@ -93,13 +93,19 @@ void UProjectMiniGames::SpotAnswer(const FString& RunId,int32 Round,const TArray
     TArray<TSharedPtr<FJsonValue>> List;for(const int32 P:Picks)List.Add(MakeShared<FJsonValueNumber>(P));Body->SetArrayField(TEXT("picks"),List);
     Send(TEXT("POST"),TEXT("/api/minigames/spot/answer"),Body,MoveTemp(Done));
 }
-void UProjectMiniGames::Finish(const FString& RunId,bool bCleared,int32 ActiveMs,int32 Battery,const TArray<FString>& Moves,FReply Done)
+void UProjectMiniGames::Finish(const FString& RunId,bool bCleared,int32 ActiveMs,int32 Battery,const TArray<FString>& Moves,FReply Done,int32 Strikes)
 {
     LocalSaves.Remove(RunId);
     auto Body=MakeShared<FJsonObject>();Body->SetStringField(TEXT("runId"),RunId);Body->SetBoolField(TEXT("cleared"),bCleared);
-    Body->SetNumberField(TEXT("activeMs"),ActiveMs);Body->SetNumberField(TEXT("battery"),Battery);
+    Body->SetNumberField(TEXT("activeMs"),ActiveMs);Body->SetNumberField(TEXT("battery"),Battery);Body->SetNumberField(TEXT("strikes"),Strikes);
     TArray<TSharedPtr<FJsonValue>> List;for(const FString& M:Moves)List.Add(MakeShared<FJsonValueString>(M));Body->SetArrayField(TEXT("moves"),List);
     Send(TEXT("POST"),TEXT("/api/minigames/finish"),Body,MoveTemp(Done));
+}
+void UProjectMiniGames::ListenAnswer(const FString& RunId,int32 Round,int32 Direction,int32 ActiveMs,FReply Done)
+{
+    auto Body=MakeShared<FJsonObject>();Body->SetStringField(TEXT("runId"),RunId);Body->SetNumberField(TEXT("round"),Round);
+    Body->SetNumberField(TEXT("direction"),Direction);Body->SetNumberField(TEXT("activeMs"),ActiveMs);
+    Send(TEXT("POST"),TEXT("/api/minigames/listen/answer"),Body,MoveTemp(Done));
 }
 void UProjectMiniGames::Abandon(const FString& Game,FReply Done)
 {

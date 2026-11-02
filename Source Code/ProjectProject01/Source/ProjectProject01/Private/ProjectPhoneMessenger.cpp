@@ -1,6 +1,7 @@
 #include "ProjectPhoneMessenger.h"
 #include "ProjectMiniGameWidgets.h"
 #include "ProjectMiniGames.h"
+#include "Framework/Application/SlateApplication.h"
 #include "ProjectCaseRecords.h"
 #include "ProjectDFSDUITheme.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
@@ -166,9 +167,12 @@ public:
         NotchBrush=FSlateRoundedBoxBrush(Ink,8.f);RowBrush=FSlateRoundedBoxBrush(FLinearColor(1,1,1,.04f),12.f);
         ChildSlot
         [
-            SNew(SOverlay)
-            +SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor_Lambda([this]{return FLinearColor(0,0,0,.55f*Ease());})
-                .OnMouseButtonDown_Lambda([this](const FGeometry&,const FPointerEvent&){RequestClose();return FReply::Handled();})] // Tapping outside puts the phone down.
+            SNew(SOverlay).Visibility(EVisibility::SelfHitTestInvisible)
+            // Tapping outside tucks the phone small into the bottom-right corner; the dimming goes and the screen behind
+            // is usable again until the small phone is tapped.
+            +SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor_Lambda([this]{return FLinearColor(0,0,0,.55f*Ease()*(1-MinimizeEase()));})
+                .Visibility_Lambda([this]{return bMinimized?EVisibility::Collapsed:EVisibility::Visible;})
+                .OnMouseButtonDown_Lambda([this](const FGeometry&,const FPointerEvent&){SetMinimized(true);return FReply::Handled();})]
             // Laid out in the middle in its final orientation; the transform turns, scales and shifts it there, so the
             // portrait phone keeps its place on the right and a turn looks like the phone being rotated in the hand.
             +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
@@ -190,6 +194,10 @@ public:
                         ]
                     ]
                     +SOverlay::Slot()[SNew(SProjectPhoneWear)] // Rust and cracks; clicks pass through.
+                    // While tucked away the whole small phone is one button that brings it back.
+                    +SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("NoBorder")))
+                        .Visibility_Lambda([this]{return bMinimized?EVisibility::Visible:EVisibility::Collapsed;}).Cursor(EMouseCursor::Hand)
+                        .OnMouseButtonDown_Lambda([this](const FGeometry&,const FPointerEvent&){SetMinimized(false);return FReply::Handled();})]
                 ]
             ]
         ];
@@ -203,6 +211,7 @@ public:
         SCompoundWidget::Tick(G,Time,Delta);const float Step=FMath::Clamp(Delta,0.f,.1f);
         OpenTime=bClosing?OpenTime-Step:FMath::Min(SlideSeconds,OpenTime+Step);
         ViewSize=G.GetLocalSize();TurnTime=FMath::Min(TurnSeconds,TurnTime+Step);
+        MinimizeTime=bMinimized?FMath::Min(MinimizeSeconds,MinimizeTime+Step):FMath::Max(0.f,MinimizeTime-Step);
         if(bClosing&&OpenTime<=0){bClosing=false;OnClose.ExecuteIfBound();return;}
         if(bBackToList){bBackToList=false;bInGames=false;ShowContacts();}
         if(bOpenGames){bOpenGames=false;bInChat=false;bInGames=true;ScreenBox->SetContent(ProjectMiniGameUI::MakeFolder(Game,FSimpleDelegate::CreateLambda([this]{bBackToList=true;}),FSimpleDelegate::CreateLambda([this]{SetLandscape(true);})));}
@@ -235,7 +244,26 @@ private:
         const float Start=bLandscape?FMath::Min(PortraitSize.X/L.Y,PortraitSize.Y/L.X):FMath::Min(L.X/PortraitSize.Y,L.Y/PortraitSize.X);
         const float Angle=(1-E)*(bLandscape?HALF_PI:-HALF_PI),Scale=FMath::Lerp(Start,1.f,E);
         const float Shift=bLandscape?FMath::Lerp(PortraitShift(),0.f,E):FMath::Lerp(0.f,PortraitShift(),E);
-        return FSlateRenderTransform(::Concatenate(FScale2f(Scale),FQuat2f(Angle)),FVector2f(Shift,(1.f-Ease())*760.f));
+        FVector2f Move(Shift,(1.f-Ease())*760.f);float Size=Scale;
+        // Tucked away: shrunk to a third and slid into the bottom-right corner, 24 from the edges.
+        if(const float M=MinimizeEase();M>0)
+        {
+            const FVector2D Box=bLandscape?LandscapeSize():PortraitSize;
+            const FVector2f Corner(float(ViewSize.X*.5-24-Box.X*MinimizedScale*.5),float(ViewSize.Y*.5-24-Box.Y*MinimizedScale*.5));
+            Size=FMath::Lerp(Scale,MinimizedScale,M);Move=FMath::Lerp(Move,Corner,M);
+        }
+        return FSlateRenderTransform(::Concatenate(FScale2f(Size),FQuat2f(Angle)),Move);
+    }
+    static constexpr float MinimizedScale=.3f,MinimizeSeconds=.3f;
+    float MinimizeEase()const{const float T=FMath::Clamp(MinimizeTime/MinimizeSeconds,0.f,1.f);return T*T*(3-2*T);}
+    void SetMinimized(bool bOn)
+    {
+        if(bOn==bMinimized)return;
+        bMinimized=bOn;
+        if(!FSlateApplication::IsInitialized())return;
+        // Small: the keyboard goes back to the screen behind (a game in the phone pauses as it loses focus). Back: the
+        // phone takes it again.
+        if(bOn)FSlateApplication::Get().ClearKeyboardFocus(EFocusCause::SetDirectly);else if(Refocus)Refocus();
     }
     void SetLandscape(bool bOn)
     {
@@ -361,6 +389,12 @@ private:
     FVector2D ViewSize{1280,720};
     float TurnTime=TurnSeconds; // a finished turn: opening the phone does not replay it
     bool bLandscape=false;
+    float MinimizeTime=0;
+    bool bMinimized=false;
+public:
+    /** Gives the keyboard back to the phone widget when it comes back from the corner. */
+    TFunction<void()> Refocus;
+private:
     TWeakObjectPtr<UGameInstance> Game;
     TSharedPtr<FJsonObject> FixedSnapshot;
     FSimpleDelegate OnClose;
@@ -382,6 +416,8 @@ UProjectPhoneWidget* UProjectPhoneWidget::Open(APlayerController* Player,const F
     if(!IsValid(Player))return nullptr;
     auto* Widget=CreateWidget<UProjectPhoneWidget>(Player);if(!Widget)return nullptr;
     Widget->InitialStep=StepId;Widget->OwnerController=Player;Widget->SetIsFocusable(true);
+    // Only the phone and the dimming take clicks, so the screen behind works while the phone is tucked away.
+    Widget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
     Widget->AddToViewport(ViewportZOrder);Widget->SetKeyboardFocus();Player->bShowMouseCursor=true;
     return Widget;
 }
@@ -389,8 +425,10 @@ void UProjectPhoneWidget::Close(){if(Phone)Phone->RequestClose();else RemoveFrom
 TSharedRef<SWidget> UProjectPhoneWidget::RebuildWidget()
 {
     const TWeakObjectPtr<UProjectPhoneWidget> Weak(this);
-    return SAssignNew(Phone,SProjectPhone).GameInstance(TWeakObjectPtr<UGameInstance>(GetGameInstance())).Step(InitialStep)
+    SAssignNew(Phone,SProjectPhone).GameInstance(TWeakObjectPtr<UGameInstance>(GetGameInstance())).Step(InitialStep)
         .OnClose(FSimpleDelegate::CreateLambda([Weak]{if(auto* W=Weak.Get())W->RemoveFromParent();}));
+    Phone->Refocus=[Weak]{if(auto* W=Weak.Get())W->SetKeyboardFocus();};
+    return Phone.ToSharedRef();
 }
 FReply UProjectPhoneWidget::NativeOnKeyDown(const FGeometry& Geometry,const FKeyEvent& Event)
 {
@@ -476,6 +514,10 @@ bool FProjectPhoneRenderTest::RunTest(const FString&)
     Chat->SetLandscape(true);Capture(Chat,TEXT("PhoneTurning_1280x720.png"),2);Capture(Chat,TEXT("PhoneLandscape_1280x720.png"),10);
     TestTrue(TEXT("Sideways the phone is wider than tall"),Chat->bLandscape&&Chat->LandscapeSize().X>Chat->LandscapeSize().Y);
     Chat->SetLandscape(false);Capture(Chat,TEXT("PhoneBackUpright_1280x720.png"),10);
+    // Tapping outside: tucked small into the bottom-right corner, the screen behind no longer dimmed.
+    Chat->SetMinimized(true);Capture(Chat,TEXT("PhoneMinimized_1280x720.png"),6);
+    TestTrue(TEXT("Tucked away, the dimming is gone"),Chat->bMinimized&&Chat->MinimizeEase()==1.f);
+    Chat->SetMinimized(false);Capture(Chat,TEXT("PhoneRestored_1280x720.png"),6);
     TestTrue(TEXT("Phone screens render to images"),bSaved);
     return true;
 }

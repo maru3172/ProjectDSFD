@@ -26,7 +26,8 @@ public:
     void Start(const FString& Game,const FString& Stage,FReply Done);
     void Save(const FString& RunId,int32 ActiveMs,const TSharedRef<FJsonObject>& State,FReply Done=nullptr);
     void SpotAnswer(const FString& RunId,int32 Round,const TArray<int32>& Picks,int32 ActiveMs,FReply Done);
-    void Finish(const FString& RunId,bool bCleared,int32 ActiveMs,int32 Battery,const TArray<FString>& Moves,FReply Done);
+    void Finish(const FString& RunId,bool bCleared,int32 ActiveMs,int32 Battery,const TArray<FString>& Moves,FReply Done,int32 Strikes=0);
+    void ListenAnswer(const FString& RunId,int32 Round,int32 Direction,int32 ActiveMs,FReply Done);
     void Abandon(const FString& Game,FReply Done=nullptr);
     void Leaderboard(const FString& Game,const FString& Board,bool bWeekly,FReply Done);
 
