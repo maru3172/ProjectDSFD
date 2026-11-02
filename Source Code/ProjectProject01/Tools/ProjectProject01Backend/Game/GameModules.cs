@@ -8,7 +8,7 @@ internal static class GameModules
 {
     public static IReadOnlyList<IBackendModule> All { get; } =
     [
-        new BotMatchModule(), new CustomRulesModule(), new AffixModule(), new BotRatingModule(), new CaseRecordsModule(), new MainQuestModule(),
+        new BotMatchModule(), new CustomRulesModule(), new AffixModule(), new BotRatingModule(), new CaseRecordsModule(), new MainQuestModule(), new MiniGamesModule(),
     ];
 }
 
@@ -81,6 +81,13 @@ internal sealed class CaseRecordsModule : IBackendModule
 internal sealed class MainQuestModule : IBackendModule
 {
     public Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) => MainQuest.EnsureAsync(c, ct);
+}
+
+/// <summary>Phone mini games: saved runs and their own boards (Docs/MiniGames.md).</summary>
+internal sealed class MiniGamesModule : IBackendModule
+{
+    public Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) => MiniGames.EnsureAsync(c, ct);
+    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) => MiniGames.Map(app);
 }
 
 /// <summary>The game registers itself when the assembly loads, so the server and every check process see the same modules.</summary>

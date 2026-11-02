@@ -43,6 +43,8 @@ class PROJECTPROJECT01_API UProjectProject01AuthSubsystem final : public UGameIn
 
 public:
     FSimpleMulticastDelegate OnLocalSessionCleared;
+    /** Right before the session is cleared, while its access token still works (last saves of the signed-in account). */
+    FSimpleMulticastDelegate OnLocalSessionClearing;
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 

@@ -149,6 +149,17 @@ function Start-ProjectProject01Server {
     throw "ProjectProject01 MySQL did not start within 30 seconds. Check $errorLog"
 }
 
+# Windows PowerShell 5.1 (.NET Framework) writes the console input encoding's byte-order mark into a redirected
+# standard input the moment the process starts, which mysql and user-secrets then read as data. Starting it while the
+# console input encoding is UTF-8 without a mark avoids that; PowerShell 7 never writes the mark.
+function Start-ProcessWithoutInputMark {
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    $previous = $null
+    try { $previous = [Console]::InputEncoding; [Console]::InputEncoding = [Text.UTF8Encoding]::new($false) } catch { $previous = $null }
+    try { return $Process.Start() }
+    finally { if ($null -ne $previous) { try { [Console]::InputEncoding = $previous } catch { } } }
+}
+
 function Invoke-MySqlInput {
     param(
         [Parameter(Mandatory = $true)]
@@ -167,7 +178,6 @@ function Invoke-MySqlInput {
     $startInfo.RedirectStandardInput = -not [string]::IsNullOrEmpty($StandardInput)
     $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
     $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-    if ($startInfo.RedirectStandardInput) { $startInfo.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
     Set-ProcessArguments -StartInfo $startInfo -Arguments $Arguments
     if (-not [string]::IsNullOrEmpty($Password)) {
         Set-ProcessEnvironmentValue -StartInfo $startInfo -Name 'MYSQL_PWD' -Value $Password
@@ -175,12 +185,17 @@ function Invoke-MySqlInput {
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
-    if (-not $process.Start()) {
+    if (-not (Start-ProcessWithoutInputMark -Process $process)) {
         throw "Failed to start $Executable"
     }
     if ($startInfo.RedirectStandardInput) {
-        $process.StandardInput.Write($StandardInput)
-        $process.StandardInput.Close()
+        # UTF-8 bytes straight to the pipe: Windows PowerShell 5.1 (.NET Framework) has no StandardInputEncoding, and
+        # its writer would add a byte-order mark or break Korean text in the SQL.
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($StandardInput)
+        $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $process.StandardInput.BaseStream.Flush()
+        # Close the pipe itself: closing the writer on a UTF-8 console would append a byte-order mark after the data.
+        $process.StandardInput.BaseStream.Close()
     }
     $standardOutput = $process.StandardOutput.ReadToEnd()
     $standardError = $process.StandardError.ReadToEnd()
@@ -275,16 +290,22 @@ function Save-LocalSecrets {
     Set-ProcessArguments -StartInfo $startInfo -Arguments @('user-secrets', 'set', '--project', $projectFile)
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
-    if (-not $process.Start()) {
+    if (-not (Start-ProcessWithoutInputMark -Process $process)) {
         throw 'Failed to start dotnet user-secrets.'
     }
-    $process.StandardInput.Write($json)
-    $process.StandardInput.Close()
+    # Raw UTF-8 bytes, no byte-order mark (user-secrets cannot parse one).
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+    $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $process.StandardInput.BaseStream.Flush()
+    # Close the pipe itself: closing the writer on a UTF-8 console would append a byte-order mark after the data.
+    $process.StandardInput.BaseStream.Close()
     $standardError = $process.StandardError.ReadToEnd()
-    $process.StandardOutput.ReadToEnd() | Out-Null
+    $standardOutput = $process.StandardOutput.ReadToEnd()
     $process.WaitForExit()
     if ($process.ExitCode -ne 0) {
-        throw "dotnet user-secrets failed: $standardError"
+        # The tool prints the parse error (a position, never the values) on standard output.
+        $detail = ($standardOutput -split "`r?`n" | Where-Object { $_ -match 'Exception|Line' } | Select-Object -First 3) -join ' | '
+        throw "dotnet user-secrets failed: $standardError $detail"
     }
 }
 
@@ -470,13 +491,23 @@ function Read-AdminPassword {
     return $password
 }
 
+# True when the process on the port is the mysqld this script started on this instance's own data folder (an earlier
+# Initialize that stopped before its accounts were made). Any other process on the port is left alone.
+function Test-OwnIncompleteInstance {
+    if ((Test-Path -LiteralPath $provisionedMarker) -or -not (Test-Path -LiteralPath $pidFile)) { return $false }
+    $processId = 0
+    if (-not [int]::TryParse(([System.IO.File]::ReadAllText($pidFile)).Trim(), [ref]$processId)) { return $false }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
+    return $null -ne $process -and $process.Name -eq 'mysqld.exe' -and $process.CommandLine -like "*--datadir=$dataDirectory*"
+}
+
 function Initialize-ProjectProject01Server {
     if (Test-Path -LiteralPath $provisionedMarker) {
         Write-Host "The isolated instance is already provisioned at $dataDirectory. Starting it without replacing any data."
         Start-ProjectProject01Server
         return
     }
-    if (Test-ProjectProject01Port) {
+    if ((Test-ProjectProject01Port) -and -not (Test-OwnIncompleteInstance)) {
         throw "Port $port is already in use. No existing process was changed."
     }
 

@@ -669,6 +669,7 @@ bool UProjectProject01AuthSubsystem::CanStartOperation(const EAuthOperation Oper
 
 void UProjectProject01AuthSubsystem::ClearSession()
 {
+    if (!AccessToken.IsEmpty()) OnLocalSessionClearing.Broadcast();
     ++SessionGeneration;
 	if (InitialTutorialProgressRequest.IsValid())
 	{

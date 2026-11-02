@@ -1,4 +1,6 @@
 #include "ProjectPhoneMessenger.h"
+#include "ProjectMiniGameWidgets.h"
+#include "ProjectMiniGames.h"
 #include "ProjectCaseRecords.h"
 #include "ProjectDFSDUITheme.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
@@ -122,7 +124,8 @@ public:
         const FVector2D Unit(S.X/372.,S.Y/720.);
         for(const auto& R:Rust)
         {
-            const FVector2D Size(R.D*Unit.X,R.D*Unit.X);
+            const float Grain=FMath::Min(Unit.X,Unit.Y); // the same blob size upright or sideways
+            const FVector2D Size(R.D*Grain,R.D*Grain);
             FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(Size,FSlateLayoutTransform(FVector2D(R.X*Unit.X,R.Y*Unit.Y)-Size*.5)),&Blob,ESlateDrawEffect::None,Tones[R.Tone].CopyWithNewOpacity(R.A)*Tint);
         }
         // Cracked glass, kept in the status bar between the clock and the notch: the one strip that is empty on every
@@ -142,6 +145,7 @@ public:
 /** The phone itself: slides up over the screen, contact list ↔ chat, messenger-style bubbles and answer buttons. */
 class SProjectPhone final:public SCompoundWidget
 {
+    friend class FProjectPhoneRenderTest;
 public:
     SLATE_BEGIN_ARGS(SProjectPhone){}
         SLATE_ARGUMENT(TWeakObjectPtr<UGameInstance>,GameInstance)
@@ -152,6 +156,8 @@ public:
     void Construct(const FArguments& Args)
     {
         Game=Args._GameInstance;OnClose=Args._OnClose;FixedSnapshot=Args._Snapshot;
+        // The phone opens the way it was left, unless a match or a sign-out has put it back upright since.
+        if(auto* Games=MiniGames())bLandscape=Games->bPhoneLandscape;
         // An old phone found in the store: dull, rust-stained body, cracked glass, no service.
         const FLinearColor Ink(.035f,.04f,.045f,1.f),Body(.11f,.095f,.08f,1.f),Screen=ProjectDFSDUI::Canvas(),Npc=ProjectDFSDUI::Panel().CopyWithNewOpacity(1.f),Player=ProjectDFSDUI::Accent();
         FrameBrush=FSlateRoundedBoxBrush(Body,34.f,FLinearColor(.34f,.2f,.11f,1.f),2.f);ScreenBrush=FSlateRoundedBoxBrush(Screen,26.f);
@@ -163,9 +169,12 @@ public:
             SNew(SOverlay)
             +SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor_Lambda([this]{return FLinearColor(0,0,0,.55f*Ease());})
                 .OnMouseButtonDown_Lambda([this](const FGeometry&,const FPointerEvent&){RequestClose();return FReply::Handled();})] // Tapping outside puts the phone down.
-            +SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Center).Padding(0,0,96,0)
+            // Laid out in the middle in its final orientation; the transform turns, scales and shifts it there, so the
+            // portrait phone keeps its place on the right and a turn looks like the phone being rotated in the hand.
+            +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
             [
-                SNew(SBox).WidthOverride(372).HeightOverride(720).RenderTransform_Lambda([this]{return TOptional<FSlateRenderTransform>(FSlateRenderTransform(FVector2f(0.f,(1.f-Ease())*760.f)));})
+                SNew(SBox).WidthOverride_Lambda([this]{return FOptionalSize(bLandscape?LandscapeSize().X:PortraitSize.X);}).HeightOverride_Lambda([this]{return FOptionalSize(bLandscape?LandscapeSize().Y:PortraitSize.Y);})
+                    .RenderTransformPivot(FVector2D(.5f,.5f)).RenderTransform_Lambda([this]{return TOptional<FSlateRenderTransform>(PhoneTransform());})
                 [
                     SNew(SOverlay)
                     +SOverlay::Slot()
@@ -193,8 +202,10 @@ public:
     {
         SCompoundWidget::Tick(G,Time,Delta);const float Step=FMath::Clamp(Delta,0.f,.1f);
         OpenTime=bClosing?OpenTime-Step:FMath::Min(SlideSeconds,OpenTime+Step);
+        ViewSize=G.GetLocalSize();TurnTime=FMath::Min(TurnSeconds,TurnTime+Step);
         if(bClosing&&OpenTime<=0){bClosing=false;OnClose.ExecuteIfBound();return;}
-        if(bBackToList){bBackToList=false;ShowContacts();}
+        if(bBackToList){bBackToList=false;bInGames=false;ShowContacts();}
+        if(bOpenGames){bOpenGames=false;bInChat=false;bInGames=true;ScreenBox->SetContent(ProjectMiniGameUI::MakeFolder(Game,FSimpleDelegate::CreateLambda([this]{bBackToList=true;}),FSimpleDelegate::CreateLambda([this]{SetLandscape(true);})));}
         if(!PendingChat.IsEmpty()){const FString Step_=MoveTemp(PendingChat);PendingChat.Reset();OpenChat(Step_);}
         if(!bInChat)return;
         if(bRestart){bRestart=false;Script.bTalked=false;Playback.Start(Script);ResetMessages();}
@@ -208,15 +219,43 @@ public:
     }
 private:
     UProjectCaseRecords* Records()const{auto* GI=Game.Get();return GI?GI->GetSubsystem<UProjectCaseRecords>():nullptr;}
+    UProjectMiniGames* MiniGames()const{auto* GI=Game.Get();return GI?GI->GetSubsystem<UProjectMiniGames>():nullptr;}
     float Ease()const{const float T=FMath::Clamp(OpenTime/SlideSeconds,0.f,1.f);return 1.f-FMath::Pow(1.f-T,3.f);}
+    // ---- orientation: upright (messages) or sideways and larger (games) ----
+    inline static const FVector2D PortraitSize{372,720};
+    FVector2D LandscapeSize()const{return FVector2D(FMath::Clamp(ViewSize.X-80,PortraitSize.X,1120.),FMath::Clamp(ViewSize.Y-56,PortraitSize.X,620.));}
+    /** Where the upright phone sits, from the centre: on the right with a 96 margin, as it always was. */
+    float PortraitShift()const{return FMath::Max(0.f,float(ViewSize.X*.5-96-PortraitSize.X*.5));}
+    float TurnEase()const{const float T=FMath::Clamp(TurnTime/TurnSeconds,0.f,1.f);return T<.5f?4*T*T*T:1-FMath::Pow(-2*T+2,3.f)/2;}
+    FSlateRenderTransform PhoneTransform()const
+    {
+        // Turning: the new layout starts drawn at the old orientation and size (rotated a quarter turn, scaled to the old
+        // outline) and eases into place; to landscape it grows, back to portrait it shrinks.
+        const float E=TurnEase();const FVector2D L=LandscapeSize();
+        const float Start=bLandscape?FMath::Min(PortraitSize.X/L.Y,PortraitSize.Y/L.X):FMath::Min(L.X/PortraitSize.Y,L.Y/PortraitSize.X);
+        const float Angle=(1-E)*(bLandscape?HALF_PI:-HALF_PI),Scale=FMath::Lerp(Start,1.f,E);
+        const float Shift=bLandscape?FMath::Lerp(PortraitShift(),0.f,E):FMath::Lerp(0.f,PortraitShift(),E);
+        return FSlateRenderTransform(::Concatenate(FScale2f(Scale),FQuat2f(Angle)),FVector2f(Shift,(1.f-Ease())*760.f));
+    }
+    void SetLandscape(bool bOn)
+    {
+        if(bOn==bLandscape)return;
+        bLandscape=bOn;TurnTime=0;if(auto* Games=MiniGames())Games->bPhoneLandscape=bOn;
+    }
     TSharedRef<SWidget> StatusBar()
     {
-        return SNew(SBox).HeightOverride(34).Padding(FMargin(22,6,22,0))[SNew(SOverlay)
+        return SNew(SBox).HeightOverride(34).Padding(FMargin(16,6,14,0))[SNew(SOverlay)
             // The clock lost its time once in a while; the store has no signal at all.
             +SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center)[SNew(STextBlock).Font(Font(11,TEXT("Bold"))).ColorAndOpacity(ProjectDFSDUI::Text()).Text_Lambda([]{return FText::FromString(FMath::Fmod(FPlatformTime::Seconds(),23.0)<.6?TEXT("--:--"):FDateTime::Now().ToString(TEXT("%H:%M")));})]
-            +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top)[SNew(SBox).WidthOverride(92).HeightOverride(18)[SNew(SBorder).BorderImage(&NotchBrush)]]
+            +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top)[SNew(SBox).WidthOverride(64).HeightOverride(18)[SNew(SBorder).BorderImage(&NotchBrush)]]
             +SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Center)[SNew(SHorizontalBox)
-                +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)[SNew(STextBlock).Font(Font(10)).ColorAndOpacity(ProjectDFSDUI::Muted()).Text(FText::FromString(TEXT("서비스 없음")))]
+                // Turn the phone: sideways and larger, or back upright. Only a match or a sign-out turns it back by itself.
+                +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,4,0)[SNew(SButton).IsFocusable(false).ButtonStyle(&FCoreStyle::Get(),TEXT("NoBorder")).ContentPadding(FMargin(2,0))
+                    .OnClicked_Lambda([this]{SetLandscape(!bLandscape);return FReply::Handled();})
+                    .ToolTipText_Lambda([this]{return FText::FromString(bLandscape?TEXT("세로로 작게 되돌리기"):TEXT("가로로 크게 보기"));})
+                    // Two letters: the upright status bar has room for no more beside the notch.
+                    [SNew(STextBlock).Font(Font(10,TEXT("Bold"))).ColorAndOpacity(ProjectDFSDUI::Accent()).Text_Lambda([this]{return FText::FromString(bLandscape?TEXT("세로"):TEXT("가로"));})]]
+                +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,5,0)[SNew(STextBlock).Font(Font(10)).ColorAndOpacity(ProjectDFSDUI::Muted()).Text(FText::FromString(TEXT("서비스 없음")))]
                 +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(STextBlock).Font(Font(10,TEXT("Bold"))).ColorAndOpacity(FLinearColor(.86f,.3f,.2f,1.f)).Text(FText::FromString(TEXT("12%")))]]];
     }
     TSharedRef<SWidget> Avatar(const FString& Name,float Size)
@@ -225,7 +264,7 @@ private:
             [SNew(STextBlock).Font(Font(int32(Size*.42f),TEXT("Bold"))).ColorAndOpacity(ProjectDFSDUI::Text()).Text(FText::FromString(Name.Left(1)))]];
     }
     TSharedRef<SWidget> Dot(){return SNew(SBox).WidthOverride(10).HeightOverride(10)[SNew(SBorder).BorderImage(&DotBrush)];}
-    void OnRecordsChanged(){if(!bInChat)ShowContacts();}
+    void OnRecordsChanged(){if(!bInChat&&!bInGames)ShowContacts();}
     void ShowContacts()
     {
         bInChat=false;auto* R=Records();const auto Talks=FProjectTalkScript::FromSnapshot(R?R->Snapshot:FixedSnapshot);
@@ -246,6 +285,9 @@ private:
         ScreenBox->SetContent(SNew(SVerticalBox)
             +SVerticalBox::Slot().AutoHeight().Padding(20,12,12,10)[SNew(SHorizontalBox)
                 +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[SNew(STextBlock).Font(Font(20,TEXT("Bold"))).ColorAndOpacity(ProjectDFSDUI::Text()).Text(FText::FromString(TEXT("메시지")))]
+                // The offline games folder (no signal needed).
+                +SHorizontalBox::Slot().AutoWidth().Padding(0,0,6,0)[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle(true)).ContentPadding(FMargin(10,4)).OnClicked_Lambda([this]{bOpenGames=true;return FReply::Handled();})
+                    [SNew(STextBlock).Font(Font(11,TEXT("Bold"))).ColorAndOpacity(ProjectDFSDUI::Text()).Text(FText::FromString(TEXT("오프라인 게임")))]]
                 +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).ContentPadding(FMargin(10,4)).OnClicked_Lambda([this]{RequestClose();return FReply::Handled();})
                     [SNew(STextBlock).Font(Font(11)).ColorAndOpacity(ProjectDFSDUI::Text()).Text(FText::FromString(TEXT("닫기")))]]]
             +SVerticalBox::Slot().FillHeight(1)[SNew(SScrollBox)+SScrollBox::Slot()[List]]);
@@ -315,7 +357,10 @@ private:
                 +SHorizontalBox::Slot().FillWidth(1)[Button(TEXT("목록으로"),[this]{bBackToList=true;})]];
         }
     }
-    static constexpr float SlideSeconds=.28f;
+    static constexpr float SlideSeconds=.28f,TurnSeconds=.5f;
+    FVector2D ViewSize{1280,720};
+    float TurnTime=TurnSeconds; // a finished turn: opening the phone does not replay it
+    bool bLandscape=false;
     TWeakObjectPtr<UGameInstance> Game;
     TSharedPtr<FJsonObject> FixedSnapshot;
     FSimpleDelegate OnClose;
@@ -329,7 +374,7 @@ private:
     int32 BubbleRows=0;
     FString PendingChat;
     float OpenTime=0;
-    bool bClosing=false,bInChat=false,bReported=false,bChoicesDirty=false,bRestart=false,bBackToList=false; // Button actions run on the next tick, outside the click.
+    bool bClosing=false,bInChat=false,bReported=false,bChoicesDirty=false,bRestart=false,bBackToList=false,bOpenGames=false,bInGames=false; // Button actions run on the next tick, outside the click.
 };
 
 UProjectPhoneWidget* UProjectPhoneWidget::Open(APlayerController* Player,const FString& StepId)
@@ -416,9 +461,9 @@ bool FProjectPhoneRenderTest::RunTest(const FString&)
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("CaseRecordUIQA");IFileManager::Get().MakeDirectory(*Directory,true);
     FWidgetRenderer Renderer(false);const FIntPoint Size(1280,720);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
     bool bSaved=true;
-    auto Capture=[&](const TSharedRef<SProjectPhone>& Phone,const FString& Name)
+    auto Capture=[&](const TSharedRef<SProjectPhone>& Phone,const FString& Name,int32 Ticks=40)
     {
-        for(int32 I=0;I<40;++I)Phone->Tick(FGeometry(),I*.1,.1f); // Finish the slide-in and let the first message arrive.
+        for(int32 I=0;I<Ticks;++I)Phone->Tick(FGeometry::MakeRoot(FVector2D(Size),FSlateLayoutTransform()),I*.1,.1f); // Finish the slide-in and let the first message arrive.
         auto* Target=ProjectUIRenderCapture::Create(Size);
         for(int32 Pass=0;Pass<3;++Pass)Renderer.DrawWidget(Target,Phone,Dpi,FVector2D(Size),0);
         FlushRenderingCommands();TArray<FColor> Pixels;
@@ -427,6 +472,10 @@ bool FProjectPhoneRenderTest::RunTest(const FString&)
     };
     auto Contacts=SNew(SProjectPhone).Snapshot(Snapshot);Capture(Contacts,TEXT("PhoneContacts_1280x720.png"));
     auto Chat=SNew(SProjectPhone).Snapshot(Snapshot).Step(TEXT("kalin_talk"));Capture(Chat,TEXT("PhoneChat_1280x720.png"));
+    // Turning sideways: halfway through the turn, then settled large in the middle; and back upright on the right.
+    Chat->SetLandscape(true);Capture(Chat,TEXT("PhoneTurning_1280x720.png"),2);Capture(Chat,TEXT("PhoneLandscape_1280x720.png"),10);
+    TestTrue(TEXT("Sideways the phone is wider than tall"),Chat->bLandscape&&Chat->LandscapeSize().X>Chat->LandscapeSize().Y);
+    Chat->SetLandscape(false);Capture(Chat,TEXT("PhoneBackUpright_1280x720.png"),10);
     TestTrue(TEXT("Phone screens render to images"),bSaved);
     return true;
 }
