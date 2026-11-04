@@ -94,7 +94,7 @@ private:
 	float MannequinSightRadius = 1500.0f;
 	
 	// 마네킹 정면을 기준으로 한 좌우 시야각의 절반
-	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
 	float MannequinSightHalfAngle = 60.0f;
 	
 	// 층이 다른 플레이어를 직접 관측하지 않도록 하는 최대 높이 차이
