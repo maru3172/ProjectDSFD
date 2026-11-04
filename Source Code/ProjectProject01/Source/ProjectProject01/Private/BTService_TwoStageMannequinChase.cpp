@@ -56,6 +56,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		AIController->StopMovement();
 		CurrentMannequin->SetFrozen(true);
 		Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), false);
+		Blackboard->SetValueAsBool(TEXT("MannequinCanSeePlayer"), false);
 		Blackboard->ClearValue(TEXT("TargetActor"));
 		Blackboard->ClearValue(TEXT("RoamingLocation"));
 		Blackboard->SetValueAsInt(TEXT("ChaseTier"),static_cast<int32>(ETwoStageMannequinTier::Roaming));
@@ -68,8 +69,10 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
 
 	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins);
+	const bool bMannequinCanSeePlayer = CanMannequinSeePlayer(*CurrentMannequin, *Player, AllMannequins);
 
 	Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), bObservedByPlayerOrHelper);
+	Blackboard->SetValueAsBool(TEXT("MannequinCanSeePlayer"), bMannequinCanSeePlayer);
 
 	if (bObservedByPlayerOrHelper)
 	{
@@ -270,6 +273,94 @@ bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayer
 	const bool bInHelperRearGuardSight = IsValid(HelperRearGuard) && HelperRearGuard->CanObserveActor(&CurrentMannequin);
 
 	return bInScreen || bInHelperRearGuardSight;
+}
+
+bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAICharacter& CurrentMannequin, const APlayerCharacter& Player, const TArray<AActor*>& AllMannequins) const
+{
+	UWorld* World = GetWorld();
+	// 1. World가 유효한가?
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	const FVector MannequinLocation = CurrentMannequin.GetActorLocation();
+	const FVector PlayerLocation = Player.GetActorLocation();
+	const float HeightDifference = FMath::Abs(MannequinLocation.Z - PlayerLocation.Z);
+	
+	// 2. 플레이어와 높이 차이가 너무 큰가?
+	if (HeightDifference > MannequinSightMaximumHeightDifference)
+	{
+		return false;
+	}
+	
+	const FVector MannequinToPlayer = MannequinLocation - PlayerLocation;
+	const double SightRadiusSquared = FMath::Square(static_cast<double>(MannequinSightRadius));
+	
+	// 3. 거리가 너무 먼가?
+	if (MannequinToPlayer.SizeSquared2D() > SightRadiusSquared)
+	{
+		return false;
+	}
+	
+	const FVector MannequinForward = CurrentMannequin.GetActorForwardVector().GetSafeNormal2D();
+	const FVector DirectionToPlayer = MannequinToPlayer.GetSafeNormal2D();
+
+	if (DirectionToPlayer.IsNearlyZero())
+	{
+		return true;
+	}
+	
+	const float SightMinimumDot = FMath::Cos(FMath::DegreesToRadians(MannequinSightHalfAngle));
+	const float SightDirectionDot = FVector::DotProduct(MannequinForward, DirectionToPlayer);
+	
+	// 4. 플레이어가 마네킹 정면 시야각 안에 있는가?
+	if (SightDirectionDot < SightMinimumDot)
+	{
+		return false;
+	}
+	
+	FVector TraceStart = MannequinLocation;
+	
+	const USkeletalMeshComponent* MannequinMesh = CurrentMannequin.GetMesh();
+	if (!IsValid(MannequinMesh) && MannequinMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
+	{
+		TraceStart = MannequinMesh->GetBoneLocation(TEXT("head"));
+	}
+
+	FVector TraceEnd = PlayerLocation;
+	
+	const UCapsuleComponent* PlayerCapsule = Player.GetCapsuleComponent();
+	if (!IsValid(PlayerCapsule))
+	{
+		TraceEnd = PlayerCapsule->GetComponentLocation();
+	}
+	
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	
+	// 현재 마네킹은 충돌을 무시하도록 한다.
+	QueryParams.AddIgnoredActor(&CurrentMannequin);
+	
+	// 다른 마네킹은 시야 장애물로 처리하지 않는다.
+	for (AActor* OtherMannequin : AllMannequins)
+	{
+		if (OtherMannequin != &CurrentMannequin)
+		{
+			QueryParams.AddIgnoredActor(OtherMannequin);
+		}
+	}
+	
+	const bool bHit = World->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_GameTraceChannel1,
+		QueryParams
+		);
+	
+	// 5. 머리에서 플레이어까지 Line Trace가 도달하는가?
+	return bHit && HitResult.GetActor() == &Player;
 }
 
 ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const APlayerCharacter& Player, const TArray<AActor*>& AllMannequins) const
