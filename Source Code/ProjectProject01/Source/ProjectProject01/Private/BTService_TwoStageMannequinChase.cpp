@@ -294,7 +294,7 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 		return false;
 	}
 	
-	const FVector MannequinToPlayer = MannequinLocation - PlayerLocation;
+	const FVector MannequinToPlayer = PlayerLocation - MannequinLocation;
 	const double SightRadiusSquared = FMath::Square(static_cast<double>(MannequinSightRadius));
 	
 	// 3. 거리가 너무 먼가?
@@ -323,7 +323,7 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 	FVector TraceStart = MannequinLocation;
 	
 	const USkeletalMeshComponent* MannequinMesh = CurrentMannequin.GetMesh();
-	if (!IsValid(MannequinMesh) && MannequinMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
+	if (IsValid(MannequinMesh) && MannequinMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
 	{
 		TraceStart = MannequinMesh->GetBoneLocation(TEXT("head"));
 	}
@@ -331,7 +331,7 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 	FVector TraceEnd = PlayerLocation;
 	
 	const UCapsuleComponent* PlayerCapsule = Player.GetCapsuleComponent();
-	if (!IsValid(PlayerCapsule))
+	if (IsValid(PlayerCapsule))
 	{
 		TraceEnd = PlayerCapsule->GetComponentLocation();
 	}
