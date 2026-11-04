@@ -10,6 +10,7 @@
 #include "ProjectProject01VoiceAudibility.h"
 #include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectAffixes.h"
+#include "ProjectItemRoguelike.h"
 #include "MultiplayTestPlayerController.generated.h"
 
 struct FProjectProject01ValidatedJoinClaim;
@@ -79,6 +80,7 @@ struct PROJECTPROJECT01_API FProjectObservedPlayerResult
     UPROPERTY(BlueprintReadOnly) double FirstCaptureSeconds=0;
     UPROPERTY(BlueprintReadOnly) double AllCapturedSeconds=0;
     UPROPERTY(BlueprintReadOnly) double EscapeSeconds=0;
+    UPROPERTY(BlueprintReadOnly) FProjectRoguePickRecord RoguePicks; // Item roguelike cards this player picked.
 };
 
 /** 서버가 확정하여 해당 소유 클라이언트에만 전달하는 한 경기의 결과입니다. */
@@ -131,6 +133,8 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 	UPROPERTY(BlueprintReadOnly)
 	int32 OmittedTimelineEvents = 0;
     UPROPERTY(BlueprintReadOnly) TArray<FProjectObservedPlayerResult> ObservedPlayers;
+    /** Item roguelike: the cards this player picked (one entry), shown on the result screen and then gone. */
+    UPROPERTY(BlueprintReadOnly) TArray<FProjectRoguePickRecord> RoguePicks;
 };
 
 /** 마네킹 슬롯 선택 입력을 서버에 요청하는 MultiplayTest 전용 컨트롤러입니다. */
@@ -200,6 +204,8 @@ public:
 	EMultiplayTestMatchPhase GetMatchPhase() const { return MatchPhase; }
 	EMultiplayTestSurvivorState GetSurvivorState() const { return SurvivorState; }
 	bool HasQueuedManualMannequinCommand() const { return bManualMannequinCommandIssued; }
+	/** The command wheel (right mouse button) is open on this screen. */
+	bool IsMannequinWheelOpen() const { return MannequinWheel.IsValid(); }
 	UFUNCTION(Client,Reliable) void ClientNotifyCaseDiscovery(int32 Count);
 	FString GetMannequinCommandNotice() const;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -289,6 +295,29 @@ private:
 	void SelectMannequinSlot8();
 	void SelectMannequinSlot9();
 	void RequestMannequinSlot(int32 Slot);
+	// Command wheel: right click opens it for the mannequin under the crosshair (or, aiming at nothing, the viewed one);
+	// left click picks, right click again closes. While open the view stops following the mouse, the cursor shows,
+	// the camera turns gently toward the chosen mannequin and movement keys still work.
+	void ToggleMannequinWheel();
+	void CloseMannequinWheel();
+	void ChooseMannequinWheel(int32 Index);
+	void TickMannequinWheel(float DeltaSeconds);
+	class AMannequinAICharacter* TraceWheelTarget() const;
+	TSharedPtr<class SProjectMannequinWheel> MannequinWheel;
+	TWeakObjectPtr<class AMannequinAICharacter> WheelTarget; // null: the viewed mannequin itself
+	bool bWheelCursorWasShown = false;
+	// The wheel grows in when it opens and shrinks away when it closes (0..1 over a short time); the closing one takes no input.
+	TSharedPtr<class SProjectMannequinWheel> ClosingWheel;
+	float WheelOpenAlpha = 0.f, WheelCloseAlpha = 0.f;
+	void TickWheelPresentation(float DeltaSeconds);
+	// Before the wheel opens: a ring on the mannequin the crosshair points at (who a right click would pick).
+	TSharedPtr<class SProjectMannequinAimMarker> WheelAimMarker;
+	TWeakObjectPtr<class AMannequinAICharacter> WheelAimTarget;
+	float WheelAimRefreshSeconds = 0.f;
+	void TickWheelAimMarker(float DeltaSeconds);
+	void RemoveWheelAimMarker();
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerRequestMannequinWheel(class AMannequinAICharacter* Target, EMannequinWheelAction Action);
 	void RequestMannequinManualControl();
 	void RequestMannequinPatrolCommand();
 	void RequestMannequinRangeChaseCommand();

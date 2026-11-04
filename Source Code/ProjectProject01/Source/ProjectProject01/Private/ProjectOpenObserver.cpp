@@ -202,6 +202,7 @@ void AProjectOpenObserverController::TickActor(float Delta,ELevelTick Kind,FActo
             const auto Final=Mode->BuildFinalResult(Participant,Record);
             FProjectObservedPlayerResult Row;Row.Name=Record.DisplayName;Row.Role=Final.Role;Row.Outcome=Final.Outcome;Row.bSuccess=Final.bSuccess;
             Row.CaptureCount=Final.CaptureCount;Row.RescueCount=Final.RescueCount;Row.FirstCaptureSeconds=Final.FirstCaptureSeconds;Row.AllCapturedSeconds=Final.AllCapturedSeconds;Row.EscapeSeconds=Final.EscapeSeconds;
+            if(!Final.RoguePicks.IsEmpty())Row.RoguePicks=Final.RoguePicks[0]; // The observer sees everyone's cards.
             Result.ObservedPlayers.Add(Row);
         };
         for(const auto& Pair:Mode->MatchPlayerRecords)Append(Pair.Key.Get(),Pair.Value);

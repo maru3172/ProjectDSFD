@@ -13,13 +13,13 @@ internal static class ServerAdministrationUiChecks
             [categories[0]] = ["점검·공지 적용", "안내 공지", "공지 지우기"],
             [categories[1]] = ["점검 예약 추가", "선택 예약 변경", "점검 예약 취소"],
             [categories[2]] = ["계정 이용 제한", "플레이어 신고 확인", "선택 계정 로그아웃", "접속자 전원 로그아웃"],
-            [categories[3]] = ["런처 뉴스·패치노트·문의", "피드백/설문조사 관리", "사건 기록 조사 수량", "주간 미션 재화 상한"],
+            [categories[3]] = ["런처 뉴스·패치노트·문의", "피드백/설문조사 관리", "시즌 뽑기 상품·확률", "메인 퀘스트·스토리", "사건 기록 조사 수량", "주간 미션 재화 상한"],
             [categories[4]] = ["크래시 보고서 보기", "크래시 보관 정책", "최대 방 수"]
         };
         check(tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(categories), "서버 운영 5개 항목 분류");
         var allButtons = Children(form).OfType<Button>().ToArray();
         string[] expected = actions.Values.SelectMany(v => v).Append("상태 새로고침").ToArray();
-        check(allButtons.Length == 18 && expected.All(text => allButtons.Count(b => b.Text == text) == 1), "기존 서버 운영 버튼 18개 모두 보존·중복 없음");
+        check(allButtons.Length == expected.Length && expected.All(text => allButtons.Count(b => b.Text == text) == 1), $"서버 운영 버튼 {expected.Length}개 모두 보존·중복 없음");
         foreach (TabPage page in tabs.TabPages)
             check(Children(page).OfType<Button>().Select(b => b.Text).Order().SequenceEqual(actions[page.Text].Order()), page.Text + "에 기존 작업만 분류");
 

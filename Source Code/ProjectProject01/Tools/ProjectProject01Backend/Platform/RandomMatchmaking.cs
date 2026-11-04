@@ -97,8 +97,13 @@ internal static partial class LobbyEndpoints
     }
     private static async Task FormRandomGroupAsync(MySqlConnection c,MySqlTransaction tx,HttpRequest req,string url,GameServerDemandManager? demand,CancellationToken ct)
     {
+        // One queue per match mode (MatchModes): searchers are only grouped with the same mode.
+        foreach(string mode in MatchModes.All)await FormRandomGroupAsync(c,tx,req,url,demand,mode,ct);
+    }
+    private static async Task FormRandomGroupAsync(MySqlConnection c,MySqlTransaction tx,HttpRequest req,string url,GameServerDemandManager? demand,string mode,CancellationToken ct)
+    {
         // Internal staging rooms are single-user only. Never recruit from open rooms or grouped parties.
-        var selected=await CommunityEndpoints.Rows(c,tx,"SELECT q.search_id,q.room_id,TIMESTAMPDIFF(SECOND,MIN(q.created_at_utc),UTC_TIMESTAMP(6)) age FROM random_match_searches q JOIN random_match_search_members m ON m.search_id=q.search_id WHERE q.state='Waiting' GROUP BY q.search_id,q.room_id HAVING COUNT(m.user_id)=1 ORDER BY MIN(q.created_at_utc),q.search_id LIMIT 3",ct);
+        var selected=await CommunityEndpoints.Rows(c,tx,$"SELECT q.search_id,q.room_id,TIMESTAMPDIFF(SECOND,MIN(q.created_at_utc),UTC_TIMESTAMP(6)) age FROM random_match_searches q JOIN random_match_search_members m ON m.search_id=q.search_id WHERE q.state='Waiting' AND {MatchModes.QueueFilter("q.room_id")} GROUP BY q.search_id,q.room_id HAVING COUNT(m.user_id)=1 ORDER BY MIN(q.created_at_utc),q.search_id LIMIT 3",ct,("queueMode",mode));
         if(selected.Count==0)return;
         if(selected.Count<3 && (Convert.ToInt32(selected[0]["age"])<300 || !LocalEditorTesting.BotsEnabled(req)))return;
         string room=Convert.ToString(selected[0]["room_id"])!;
@@ -190,6 +195,7 @@ internal static partial class LobbyEndpoints
             {
                 target=Guid.NewGuid().ToString("D");string code=await GenerateUniqueJoinCodeAsync(c,tx,ct);
                 await CommunityEndpoints.Exec(c,tx,"INSERT INTO game_rooms(id,join_code,name,host_user_id,is_public) VALUES(@r,@code,@name,@u,FALSE);INSERT INTO random_match_parties(room_id) VALUES(@r)",ct,("r",target),("code",code),("name","랜덤 매칭 "+code),("u",host));
+                await MatchModes.CopyRoomAsync(c,tx,room,target,ct);
             }
             foreach(ulong user in users)await CommunityEndpoints.Exec(c,tx,"UPDATE room_members SET room_id=@target,is_ready=FALSE,assigned_role=NULL,returned_to_room=FALSE WHERE room_id=@r AND user_id=@u",ct,("target",target),("r",room),("u",user));
             first=false;
@@ -218,6 +224,7 @@ internal static partial class LobbyEndpoints
                 DELETE FROM game_join_tickets WHERE room_id=@r AND user_id=@u;
                 DELETE FROM random_match_origins WHERE room_id=@r AND user_id=@u;
                 """,ct,("target",target),("code",code),("name","랜덤 매칭 "+code),("u",user),("r",room));
+            await MatchModes.CopyRoomAsync(c,tx,room,target,ct);
         }
         var remaining=members.Where(m=>!Convert.ToBoolean(m["returned_to_room"])).ToArray();
         if(remaining.Length>0)

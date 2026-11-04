@@ -570,6 +570,7 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
 	DOREPLIFETIME(AMannequinAICharacter, AffixSpeedScale);
+	DOREPLIFETIME(AMannequinAICharacter, RogueFootstepScale);
 	DOREPLIFETIME(AMannequinAICharacter, AffixCue);
 	DOREPLIFETIME(AMannequinAICharacter, AffixBeamRadius);
 	DOREPLIFETIME(AMannequinAICharacter, bManualControlEnabled);
@@ -662,7 +663,7 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 			this,
 			DefaultFootstepSound,
 			Hit.ImpactPoint+Hit.ImpactNormal*8.0f,
-			UFootstepSynthComponent::AffixMuffle(),
+			UFootstepSynthComponent::AffixMuffle()*RogueFootstepScale,
 			FMath::FRandRange(0.95f, 1.05f),
 			0.0f,
 			OccludedFootstepAttenuation);

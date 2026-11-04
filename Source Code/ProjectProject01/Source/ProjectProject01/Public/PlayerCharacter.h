@@ -82,6 +82,14 @@ public:
 	void SetAffixSprintBlocked(bool bBlocked);
 	/** A glow on this survivor (A10 breath, B03 alarm, B07 face light, ...); zero strength removes it. */
 	void SetAffixCue(const FLinearColor& Color, float Strength);
+	/** Item roguelike (ProjectAffixRuntime): footstep loudness for everyone, and the extra the mannequin hears (M06). */
+	void SetRogueFootstepScale(float Everyone, float ForMannequin);
+	float GetRogueFootstepScale() const { return RogueFootstepScale; }
+	float GetRogueMannequinHearingScale() const { return RogueMannequinHearingScale; }
+	/** Item roguelike S03: the stamina bar stops short of full (multiplayer only). Server only. */
+	void SetRogueMaxStaminaScale(float Scale) { RogueMaxStaminaScale = FMath::Clamp(Scale, 0.5f, 1.0f); }
+	/** Item roguelike S10: an instant refill (multiplayer only). Server only. */
+	void AddRogueStamina(float Amount);
 	/** Local player currently seeing this pawn, including a dead free-look observer. */
 	APlayerController* GetLocalPresentationController() const;
 	bool IsLocallyObserved() const;
@@ -276,6 +284,9 @@ private:
 	float AffixStaminaDrainScale = 1.0f;
 	float AffixStaminaRecoveryScale = 1.0f;
 	bool bAffixSprintBlocked = false;
+	float RogueMaxStaminaScale = 1.0f;
+	UPROPERTY(Replicated) float RogueFootstepScale = 1.0f;
+	UPROPERTY(Replicated) float RogueMannequinHearingScale = 1.0f;
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerWalkSpeed)
 	float AffixSpeedScale = 1.0f;
 	UPROPERTY(ReplicatedUsing = OnRep_AffixCue)

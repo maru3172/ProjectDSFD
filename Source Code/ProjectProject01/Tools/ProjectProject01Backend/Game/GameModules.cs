@@ -8,7 +8,7 @@ internal static class GameModules
 {
     public static IReadOnlyList<IBackendModule> All { get; } =
     [
-        new BotMatchModule(), new CustomRulesModule(), new AffixModule(), new BotRatingModule(), new CaseRecordsModule(), new MainQuestModule(), new MiniGamesModule(),
+        new BotMatchModule(), new CustomRulesModule(), new AffixModule(), new MatchModeModule(), new BotRatingModule(), new CaseRecordsModule(), new MainQuestModule(), new MiniGamesModule(),
     ];
 }
 
@@ -55,6 +55,16 @@ internal sealed class AffixModule : IBackendModule
     }
 }
 
+/// <summary>PvP match modes (normal, item roguelike); non-normal matches are unofficial.</summary>
+internal sealed class MatchModeModule : IBackendModule
+{
+    public Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) => MatchModes.EnsureAsync(c, ct);
+    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) => app.MapMatchModes(canLaunchOrConnect);
+    public Task OnMatchStartedAsync(MySqlConnection c, MySqlTransaction tx, string match, CancellationToken ct) => MatchModes.CaptureAsync(c, tx, match, ct);
+    public async Task AddTicketFieldsAsync(MySqlConnection c, MySqlTransaction tx, string match, IDictionary<string, object?> fields, CancellationToken ct) =>
+        fields["matchMode"] = await MatchModes.MatchAsync(c, tx, match, ct);
+}
+
 /// <summary>Players' skill against bots (needs the custom and affix captures before it).</summary>
 internal sealed class BotRatingModule : IBackendModule
 {
@@ -67,7 +77,7 @@ internal sealed class CaseRecordsModule : IBackendModule
     public async Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct)
     {
         await CaseRecords.EnsureAsync(c, ct);await CaseCollection.EnsureAsync(c, ct);await CaseDraw.EnsureAsync(c, ct);
-        await CaseMissionSlots.EnsureAsync(c, ct);await CaseInvestigation.EnsureAsync(c, ct);await CaseMissionBudget.EnsureAsync(c, ct);
+        await CaseMissionSlots.EnsureAsync(c, ct);await CaseInvestigation.EnsureAsync(c, ct);await CaseLore.EnsureAsync(c, ct);await CaseMissionBudget.EnsureAsync(c, ct);
     }
     public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) => app.MapCaseRecords();
     public async Task OnMatchStartedAsync(MySqlConnection c, MySqlTransaction tx, string match, CancellationToken ct)

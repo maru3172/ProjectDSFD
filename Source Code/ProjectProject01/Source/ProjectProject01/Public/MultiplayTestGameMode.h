@@ -9,6 +9,7 @@
 #include "MultiplayMannequinTypes.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectLoadingBarrier.h"
+#include "ProjectItemRoguelikeRuntime.h"
 #include "MultiplayTestGameMode.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogProjectProject01Multiplayer, Log, All);
@@ -43,6 +44,7 @@ struct FMultiplayTestMatchCarryover
 {
     FProjectCustomMatchRules CustomRules;
     FProjectMatchAffixes Affixes;
+    FProjectRogueCarry Rogue; // Item roguelike picks so far (ProjectItemRoguelikeRuntime.h).
     FString MatchId;
     FString BotRoomId;
     TArray<FProjectMatchBotSpec> Bots;
@@ -72,6 +74,8 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class AProjectProject01TutorialGameMode;
     friend class UProjectMatchBots;
     friend class UProjectAffixRuntime;
+    friend class UProjectItemRoguelikeRuntime;
+    friend class FProjectItemRoguelikeTest;
     friend class FProjectMatchBotsRuntimeTest;
     friend class FProjectCustomRulesTest;
     friend class FProjectActualBotMatchEditorTest;
@@ -96,6 +100,14 @@ public:
     bool AcceptMatchAffixes(const FString& Match,const FProjectMatchAffixes& Affixes,FString& Error);
     const FProjectMatchAffixes& GetMatchAffixes()const{return MatchAffixes;}
     class UProjectAffixRuntime* GetAffixRuntime()const{return AffixRuntime;}
+    /** PvP match mode from the ticket (normal or item roguelike). Fixed for the whole match like the affixes. */
+    bool AcceptMatchMode(const FString& Match,EProjectMatchMode Mode,FString& Error);
+    class UProjectItemRoguelikeRuntime* GetItemRoguelike()const{return ItemRoguelike;}
+    bool IsItemRoguelikeMatch()const{return ItemRoguelike&&ItemRoguelike->IsActive();}
+    /** An affix rule is in play: from the ticket (bot match affixes) or handed over as an item roguelike buff. */
+    bool HasAffixRule(const TCHAR* Id)const{return MatchAffixes.Has(Id)||(ItemRoguelike&&ItemRoguelike->HasBuff(Id));}
+    /** The affix runtime has work: ticket affixes, or an item roguelike match (its items and buffs run there too). */
+    bool AreAffixRulesActive()const{return MatchAffixes.IsActive()||IsItemRoguelikeMatch();}
 	void GetDiagnosticSurvivorVisionTuning(float& OutIntervalSeconds, float& OutHalfAngleDegrees) const
 	{
 		OutIntervalSeconds = SurvivorVisionCheckIntervalSeconds;
@@ -104,8 +116,9 @@ public:
 
 	bool TryPossessMannequin(class AMultiplayTestPlayerController* RequestingController, int32 Slot);
 	bool TryEnableMannequinManualControl(class AMultiplayTestPlayerController* RequestingController);
+	/** Target: a mannequin picked with the command wheel; null means the one the player is viewing. */
 	bool TryIssueMannequinCommand(class AMultiplayTestPlayerController* RequestingController,
-		EMultiplayMannequinCommand Command);
+		EMultiplayMannequinCommand Command, class AMannequinAICharacter* Target = nullptr);
 	bool TryResetFollowingMannequins(class AMultiplayTestPlayerController* RequestingController);
 	bool ToggleMannequinCatchDamage(class AMultiplayTestPlayerController* RequestingController);
 	bool TryMannequinAttack(class AMultiplayTestPlayerController* RequestingController);
@@ -180,6 +193,10 @@ protected:
 private:
     UPROPERTY(Transient) TObjectPtr<class UProjectMatchBots> MatchBots;
     UPROPERTY(Transient) TObjectPtr<class UProjectAffixRuntime> AffixRuntime;
+    UPROPERTY(Transient) TObjectPtr<class UProjectItemRoguelikeRuntime> ItemRoguelike;
+    FString MatchModeMatchId;
+    /** The order a body had when a human took direct control; it goes back to it when the player lets go. */
+    TMap<TWeakObjectPtr<class AMannequinAICharacter>, EMultiplayMannequinCommand> PreManualMannequinCommands;
 	void UpdateVoiceAudibility();
 	float VoiceAudibilityAccumulator=0;
 	void RecordTimeline(EProjectMatchEvent Kind, const FString& PlayerName = {}, const FString& Detail = {});

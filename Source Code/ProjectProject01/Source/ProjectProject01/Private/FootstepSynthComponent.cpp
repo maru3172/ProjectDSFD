@@ -4,6 +4,23 @@
 
 double UFootstepSynthComponent::AffixMuffleUntil = 0.0;
 #include "PlasticJointSynthComponent.h"
+#include "PlayerCharacter.h"
+#include "MannequinAICharacter.h"
+#include "MultiplayTestPlayerController.h"
+
+float UFootstepSynthComponent::RogueLoudness() const
+{
+	if (const APlayerCharacter* Survivor = Cast<APlayerCharacter>(GetOwner()))
+	{
+		float Scale = Survivor->GetRogueFootstepScale();
+		// M06 makes some survivors louder only in the mannequin player's ears.
+		if (const auto* Local = GetWorld() ? Cast<AMultiplayTestPlayerController>(GetWorld()->GetFirstPlayerController()) : nullptr;
+			Local && Local->IsLocalMannequinPlayer()) Scale *= Survivor->GetRogueMannequinHearingScale();
+		return Scale;
+	}
+	if (const AMannequinAICharacter* Body = Cast<AMannequinAICharacter>(GetOwner())) return Body->GetRogueFootstepScale();
+	return 1.0f;
+}
 #include "ProjectProject01LocomotionFeedback.h"
 
 #include "GameFramework/Character.h"
@@ -282,7 +299,7 @@ void UFootstepSynthComponent::TriggerFootstep(const bool bRunning)
 	}
 
 	const EProjectProject01FootstepStyle Style = FootstepStyle;
-	const float Gain = AffixMuffle() * FootstepVolumeScale * (bRunning ? 1.18f : 1.0f) * FMath::FRandRange(0.92f, 1.0f);
+	const float Gain = AffixMuffle() * RogueLoudness() * FootstepVolumeScale * (bRunning ? 1.18f : 1.0f) * FMath::FRandRange(0.92f, 1.0f);
 	const uint32 Seed = FMath::Rand();
 	SynthCommand([this, Style, Pitch, Gain, Seed, bRunning]()
 	{
@@ -318,7 +335,7 @@ void UFootstepSynthComponent::TriggerSkidStop()
 	}
 
 	const float Pitch = FMath::FRandRange(0.94f, 1.04f);
-	const float Gain = AffixMuffle() * FootstepVolumeScale * FMath::FRandRange(0.82f, 0.92f);
+	const float Gain = AffixMuffle() * RogueLoudness() * FootstepVolumeScale * FMath::FRandRange(0.82f, 0.92f);
 	const uint32 Seed = FMath::Rand();
 	SynthCommand([this, Pitch, Gain, Seed]()
 	{
@@ -356,7 +373,7 @@ void UFootstepSynthComponent::TryTriggerPlasticBodyMotion(const bool bRunning, c
 	const uint32 Seed = FMath::Rand();
 	const float Delay = FMath::FRandRange(0.025f, 0.075f);
 	const float Duration = bRunning ? FMath::FRandRange(0.16f, 0.24f) : FMath::FRandRange(0.21f, 0.32f);
-	const float Gain = AffixMuffle() * FootstepVolumeScale * FMath::FRandRange(0.16f, 0.22f);
+	const float Gain = AffixMuffle() * RogueLoudness() * FootstepVolumeScale * FMath::FRandRange(0.16f, 0.22f);
 	Joint->TriggerMotion(Seed, Delay, Duration, Gain, bRunning);
 }
 
@@ -495,7 +512,7 @@ bool UFootstepSynthComponent::PlaySoundAsset(const bool bRunning, const float Pi
 			SelectedSound,
 			GetComponentLocation(),
 			GetComponentRotation(),
-			FootstepVolumeScale *
+			FootstepVolumeScale * RogueLoudness() *
 				(bRunning ? 1.18f : 1.0f) *
 				FMath::FRandRange(0.92f, 1.0f),
 			Pitch,

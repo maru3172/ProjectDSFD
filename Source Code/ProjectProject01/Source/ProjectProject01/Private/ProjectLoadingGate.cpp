@@ -53,6 +53,7 @@ void AMultiplayTestGameMode::InitializeLoadingGate(AMultiplayTestPlayerControlle
 	if(Controller->IsServerControlledBot())LoadingGate.Report(Id,LoadingGate.Epoch,100);
 	else Controller->ClientBeginLoadingGate(LoadingGate.Epoch,Id,Record->DisplayName,LoadingGate.Expected,LoadingGate.Released);
 	LoadingBroadcastSeconds=1;
+	if(ItemRoguelike)ItemRoguelike->Resend(this,Controller); // Back during the card pick: the same cards again.
 }
 void AMultiplayTestGameMode::ReceiveLoadingStage(AMultiplayTestPlayerController* Controller,const FString& Epoch,uint8 Progress)
 {
@@ -87,6 +88,10 @@ bool AMultiplayTestGameMode::TickLoadingGate(float Delta)
 		LoadingBroadcastSeconds=0;
 		for(const auto& Pair:MatchPlayerRecords)if(auto* PC=Pair.Key.Get();PC&&!PC->IsServerControlledBot())PC->ClientUpdateLoadingParticipants(LoadingGate.Epoch,Rows);
 	}
+	// Item roguelike: everyone is in and the screen is still black, so the card pick happens now. The gate (and the
+	// match clock) wait until all have picked or the pick times out; a pick in progress keeps running if someone drops.
+	if(IsItemRoguelikeMatch()&&AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment&&
+		(LoadingGate.AllReady()||ItemRoguelike->IsPicking())&&ItemRoguelike->HoldGate(this,FPlatformTime::Seconds()))return true;
 	if(LoadingGate.AllReady() && AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment)
 	{
 		LoadingGate.Released=true;MatchStartWorldSeconds=GetWorld()->GetTimeSeconds();

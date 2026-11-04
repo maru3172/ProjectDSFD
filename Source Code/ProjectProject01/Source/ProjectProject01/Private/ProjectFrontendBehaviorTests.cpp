@@ -40,7 +40,13 @@ bool FProjectFrontendBehaviorTest::RunTest(const FString&)
     TestFalse(TEXT("New account starts without an initial-tutorial decision"),Auth->HasSeenInitialTutorialForAccount());
     Auth->MarkInitialTutorialSeenForAccount();Auth->MarkInitialTutorialSeenForAccount();
     TestTrue(TEXT("Tutorial offer is consumed once without consuming either role pamphlet"),Auth->HasSeenInitialTutorialForAccount()&&!Auth->HasSeenSurvivorGuideForAccount()&&!Auth->HasSeenMannequinGuideForAccount());
+    // Skipping also clears the main quest's tutorial step: capture that write here (there is no backend in this test,
+    // and a write left open would make the role controls below wait for it forever).
+    TArray<FString> SkipWrites;
+    if(auto* QuestRecords=Instance->GetSubsystem<UProjectCaseRecords>())QuestRecords->ReviewRequestSink=[&SkipWrites](const FString& Path,const FString& Body){SkipWrites.Add(Path+Body);};
     Widget->InitialTutorialPrompt->SetVisibility(ESlateVisibility::Visible);Widget->HandleInitialTutorialSkip();
+    if(auto* QuestRecords=Instance->GetSubsystem<UProjectCaseRecords>()){QuestRecords->ReviewRequestSink=nullptr;QuestRecords->Request.Reset();} // As if the server answered.
+    TestTrue(TEXT("Skip asks the account to clear the main quest tutorial step"),SkipWrites.ContainsByPredicate([](const FString& W){return W.Contains(TEXT("SkipTutorial"));}));
     TestEqual(TEXT("Skip dismisses prompt without starting tutorial travel"),Widget->InitialTutorialPrompt->GetVisibility(),ESlateVisibility::Collapsed);
     TestFalse(TEXT("Skip preserves the normal matchmaking screen"),Widget->bTravelRequested);
     TArray<FString> Requests;Lobby->ReviewRequestSink=[&](const FString& Path){Requests.Add(Path);};

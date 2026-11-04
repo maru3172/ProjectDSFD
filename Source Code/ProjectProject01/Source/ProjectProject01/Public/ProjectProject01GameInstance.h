@@ -14,6 +14,7 @@
 #include "ProjectMatchBotTypes.h"
 #include "ProjectCustomMatchRules.h"
 #include "ProjectAffixes.h"
+#include "ProjectItemRoguelike.h"
 #include "ProjectProject01GameInstance.generated.h"
 
 class SBorder;
@@ -268,6 +269,7 @@ struct PROJECTPROJECT01_API FProjectProject01ValidatedJoinClaim
 {
     FProjectCustomMatchRules CustomRules;
     FProjectMatchAffixes Affixes; // Bot match affixes (ProjectAffixes.h).
+    EProjectMatchMode MatchMode=EProjectMatchMode::Normal; // PvP mode (ProjectItemRoguelike.h).
     TArray<FProjectMatchBotSpec> Bots;
 	FString UserId;
 	FString DisplayName;

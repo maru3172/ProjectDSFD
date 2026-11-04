@@ -85,6 +85,46 @@ EStepResult FStepState::MoveMannequins()
     }
     return EStepResult::Continue;
 }
+TArray<FString> SolveSteps(const FStepState& From,int32 MaxActions)
+{
+    // 0-1 search: a turn costs nothing, a step or a shutter costs one action. Same answer as the server's solver.
+    auto Key=[](const FStepState& S)
+    {
+        FString K=FString::Printf(TEXT("%d,%d,%c,%d|"),S.Player.X,S.Player.Y,S.Facing,S.ShuttersLeft);
+        for(const FIntPoint& M:S.Mannequins)K+=FString::Printf(TEXT("%d.%d;"),M.X,M.Y);
+        for(const FString& Row:S.Grid)K+=Row;
+        return K;
+    };
+    struct FNode{FStepState State;int32 Parent;FString Move;int32 Cost;};
+    TArray<FNode> Nodes;Nodes.Add({From,INDEX_NONE,FString(),0});
+    TMap<FString,int32> Best;Best.Add(Key(From),0);
+    TArray<int32> Queue;Queue.Add(0);int32 Head=0;
+    static const TCHAR* Actions[]={TEXT("U"),TEXT("D"),TEXT("L"),TEXT("R"),TEXT("tU"),TEXT("tD"),TEXT("tL"),TEXT("tR"),TEXT("S")};
+    while(Head<Queue.Num()&&Nodes.Num()<200000)
+    {
+        // Deque by hand: free turns were pushed to the front (see below), so the cheapest node is next.
+        const int32 Index=Queue[Head++];const FNode Node=Nodes[Index];
+        if(Best.FindRef(Key(Node.State))<Node.Cost)continue;
+        for(const TCHAR* A:Actions)
+        {
+            FStepState Next=Node.State;const EStepResult R=Next.Apply(A);
+            if(R==EStepResult::Invalid||R==EStepResult::Caught)continue;
+            const bool bFree=A[0]==TEXT('t');const int32 Cost=Node.Cost+(bFree?0:1);
+            if(Cost>MaxActions)continue;
+            if(R==EStepResult::Won)
+            {
+                TArray<FString> Path;Path.Add(A);
+                for(int32 I=Index;Nodes[I].Parent!=INDEX_NONE;I=Nodes[I].Parent)Path.Insert(Nodes[I].Move,0);
+                return Path;
+            }
+            const FString K=Key(Next);if(const int32* Seen=Best.Find(K);Seen&&*Seen<=Cost)continue;
+            Best.Add(K,Cost);Nodes.Add({Next,Index,A,Cost});
+            if(bFree){Queue.Insert(Nodes.Num()-1,Head);}else Queue.Add(Nodes.Num()-1);
+        }
+    }
+    return {};
+}
+
 EStepResult Replay(const FStepStage& Stage,const TArray<FString>& Moves,FStepState& Out)
 {
     Out=FStepState(Stage);
@@ -221,9 +261,14 @@ FVector2D FBlackoutSim::SpawnPoint()
     for(int32 Try=0;Try<3;++Try){const int32 I=int32(Random01()*4)%4;const double D=FVector2D::Distance(Doors[I],Player);if(D>Far){Far=D;Best=I;}}
     return Doors[Best];
 }
-void FBlackoutSim::Start(uint32 Seed)
+void FBlackoutSim::Start(uint32 Seed,bool bEndlessMode)
 {
-    *this=FBlackoutSim();RandomState=Seed?Seed:1;
+    *this=FBlackoutSim();RandomState=Seed?Seed:1;bEndless=bEndlessMode;
+    PlaceFuses();
+    for(int32 I=0;I<2;++I)Mannequins.Add({SpawnPoint(),0});
+}
+void FBlackoutSim::PlaceFuses()
+{
     for(int32 I=0;I<FuseCount;++I)
     {
         FVector2D P;
@@ -234,7 +279,6 @@ void FBlackoutSim::Start(uint32 Seed)
         }
         Fuses.Add(P);
     }
-    for(int32 I=0;I<2;++I)Mannequins.Add({SpawnPoint(),0});
 }
 FVector2D FBlackoutSim::TorchDirection()const
 {
@@ -258,7 +302,16 @@ FBlackoutSim::EOutcome FBlackoutSim::Tick(double Seconds,const FBlackoutInput& I
     if(bInstalling)
     {
         InstallProgress+=Seconds;
-        if(InstallProgress>=InstallSeconds){InstallProgress=0;--Carried;++Installed;if(Installed>=FuseCount)return Outcome=EOutcome::Cleared;}
+        if(InstallProgress>=InstallSeconds)
+        {
+            InstallProgress=0;--Carried;++Installed;
+            if(!bEndless&&Installed>=FuseCount)return Outcome=EOutcome::Cleared;
+            if(bEndless)
+            {
+                Battery=FMath::Min(100.,Battery+EndlessBatteryPerFuse);
+                if(Fuses.IsEmpty()&&Carried==0)PlaceFuses(); // the next three, away from the player
+            }
+        }
     }
     else
     {
@@ -280,7 +333,7 @@ FBlackoutSim::EOutcome FBlackoutSim::Tick(double Seconds,const FBlackoutInput& I
     for(auto& P:Prints)P.Age+=Seconds;
     Prints.RemoveAll([](const FBlackoutPrint& P){return P.Age>2.5;});
     NextSpawn-=Seconds;
-    if(NextSpawn<=0){NextSpawn=SpawnEvery;if(Mannequins.Num()<MaxMannequins)Mannequins.Add({SpawnPoint(),0});}
+    if(NextSpawn<=0){NextSpawn=SpawnInterval();if(Mannequins.Num()<MannequinLimit())Mannequins.Add({SpawnPoint(),0});}
     return Outcome;
 }
 static TArray<TSharedPtr<FJsonValue>> Points(const TArray<FVector2D>& List)
@@ -302,7 +355,7 @@ TSharedRef<FJsonObject> FBlackoutSim::Save()const
     TArray<FVector2D> M;for(const auto& Mq:Mannequins)M.Add(Mq.Pos);J->SetArrayField(TEXT("mannequins"),Points(M));
     J->SetNumberField(TEXT("battery"),Battery);J->SetNumberField(TEXT("elapsed"),Elapsed);J->SetNumberField(TEXT("nextSpawn"),NextSpawn);
     J->SetNumberField(TEXT("carried"),Carried);J->SetNumberField(TEXT("installed"),Installed);J->SetBoolField(TEXT("light"),bLight);
-    J->SetNumberField(TEXT("random"),double(RandomState));
+    J->SetNumberField(TEXT("random"),double(RandomState));J->SetBoolField(TEXT("endless"),bEndless);
     return J;
 }
 bool FBlackoutSim::Load(const TSharedPtr<FJsonObject>& J)
@@ -312,7 +365,7 @@ bool FBlackoutSim::Load(const TSharedPtr<FJsonObject>& J)
     if(!ReadPoints(J,TEXT("player"),P)||P.Num()!=1||!ReadPoints(J,TEXT("fuses"),S.Fuses)||!ReadPoints(J,TEXT("mannequins"),M))return false;
     if(!J->TryGetNumberField(TEXT("battery"),S.Battery)||!J->TryGetNumberField(TEXT("elapsed"),S.Elapsed))return false;
     J->TryGetNumberField(TEXT("nextSpawn"),S.NextSpawn);J->TryGetNumberField(TEXT("carried"),Carried_);J->TryGetNumberField(TEXT("installed"),Installed_);
-    J->TryGetBoolField(TEXT("light"),S.bLight);J->TryGetNumberField(TEXT("random"),Random);
+    J->TryGetBoolField(TEXT("light"),S.bLight);J->TryGetNumberField(TEXT("random"),Random);J->TryGetBoolField(TEXT("endless"),S.bEndless);
     S.Player=P[0];S.Carried=int32(Carried_);S.Installed=int32(Installed_);S.RandomState=uint32(Random);
     for(const auto& Pos:M)S.Mannequins.Add({Pos,0});
     S.Battery=FMath::Clamp(S.Battery,0.,100.);

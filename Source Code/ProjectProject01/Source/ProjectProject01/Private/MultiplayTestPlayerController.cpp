@@ -2,6 +2,8 @@
 // Build target: ProjectProject01Server / ProjectProject01
 
 #include "MultiplayTestPlayerController.h"
+#include "ProjectMannequinWheel.h"
+#include "ProjectMannequinAimMarker.h"
 #include "ProjectInstantReplay.h"
 
 #include "InputCoreTypes.h"
@@ -37,6 +39,7 @@
 #include "InputMappingContext.h"
 #include "ProjectProject01TuningData.h"
 #include "UObject/ConstructorHelpers.h"
+#include "ProjectRoguePick.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -77,6 +80,7 @@ AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 {
 	PlayerCameraManagerClass=AProjectSpectatorCameraManager::StaticClass();
 	CreateDefaultSubobject<UProjectProject01ObjectiveComponent>(TEXT("MultiplayerObjective"));
+	CreateDefaultSubobject<UProjectRoguePickComponent>(TEXT("ItemRoguelikePick")); // Card pick (ProjectRoguePick.h).
 	static ConstructorHelpers::FObjectFinder<UInputAction> Look(TEXT("/Game/MyProject/Input/IA_Player_Look.IA_Player_Look"));
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> Mapping(TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
 	MannequinCameraLookAction=Look.Object;MannequinCameraInputContext=Mapping.Object;
@@ -218,6 +222,7 @@ void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
     TickAffixPresentation();
 	Super::PlayerTick(DeltaTime);
+	TickMannequinWheel(DeltaTime);
 	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
 	if (!IsLocalController() || bLocalMatchResultRequested) return;
     if(bSendObserverView&&GetWorld()->GetTimeSeconds()>=NextObserverViewAt)
@@ -291,6 +296,9 @@ void AMultiplayTestPlayerController::ApplySurvivorSpectatorView()
 
 void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	CloseMannequinWheel();
+	if (ClosingWheel.IsValid()) if (ULocalPlayer* Local = GetLocalPlayer(); Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef());
+	ClosingWheel.Reset();RemoveWheelAimMarker();
 	RemoveMannequinLookBinding();
 	if (IsLocalController())
 	{
@@ -713,13 +721,9 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot7);
 	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot8);
 	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AMultiplayTestPlayerController::SelectMannequinSlot9);
-	InputComponent->BindKey(EKeys::V, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinManualControl);
-	InputComponent->BindKey(EKeys::Z, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinPatrolCommand);
-	InputComponent->BindKey(EKeys::X, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinRangeChaseCommand);
-	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinFollowCommand);
-	InputComponent->BindKey(EKeys::Q, IE_Pressed, this, &AMultiplayTestPlayerController::RequestResetFollowingMannequins);
-	InputComponent->BindKey(EKeys::B, IE_Pressed, this, &AMultiplayTestPlayerController::RequestToggleMannequinCatchDamage);
+	// Mannequin orders are given only through the command wheel (right mouse button); 0~9 still pick the view.
 	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinAttack);
+	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleMannequinWheel);
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
 	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
 	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
@@ -728,6 +732,7 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 
 void AMultiplayTestPlayerController::ToggleSessionMenu()
 {
+	if (MannequinWheel.IsValid()) { CloseMannequinWheel(); return; } // Esc closes the command wheel first
 	if (auto* Tutorial=GetWorld()->GetAuthGameMode<AProjectProject01TutorialGameMode>())
 	{
 		Tutorial->ToggleTutorialMenu(); return;
@@ -1722,6 +1727,212 @@ void AMultiplayTestPlayerController::RequestMannequinAttack()
 {
 	if (IsLocalController() && !bShowMouseCursor && SurvivorState == EMultiplayTestSurvivorState::NotApplicable)
 		ServerRequestMannequinAttack();
+}
+
+void AMultiplayTestPlayerController::ToggleMannequinWheel()
+{
+	if (MannequinWheel.IsValid()) { CloseMannequinWheel(); return; }
+	// Only for the mannequin player during play, and never over a menu that already has the cursor.
+	AMannequinAICharacter* Viewed = GetViewedMannequin();
+	if (!IsLocalController() || SurvivorState != EMultiplayTestSurvivorState::NotApplicable || MatchPhase != EMultiplayTestMatchPhase::InProgress ||
+		bShowMouseCursor || !IsValid(Viewed)) return;
+	ULocalPlayer* Local = GetLocalPlayer();
+	UGameViewportClient* ViewportClient = Local ? Local->ViewportClient.Get() : nullptr;
+	if (!ViewportClient) return;
+	AMannequinAICharacter* Hit = TraceWheelTarget();
+	WheelTarget = Hit != Viewed ? Hit : nullptr;
+	const bool bOther = WheelTarget.IsValid();
+	TArray<SProjectMannequinWheel::FOption> Options;
+	for (int32 I = 0; I < int32(EMannequinWheelAction::Count); ++I)
+	{
+		const EMannequinWheelAction Action = EMannequinWheelAction(I);
+		Options.Add({StaticEnum<EMannequinWheelAction>()->GetDisplayNameTextByValue(I).ToString(), Action != EMannequinWheelAction::Possess || bOther});
+	}
+	const TWeakObjectPtr<AMultiplayTestPlayerController> Weak(this);
+	MannequinWheel = SNew(SProjectMannequinWheel)
+		.Options(Options)
+		.Title(bOther ? FString::Printf(TEXT("%d번 마네킹"), WheelTarget->GetControlSlot()) : FString::Printf(TEXT("%d번 (지금 시점)"), Viewed->GetControlSlot()))
+		.Status([Weak, Chosen = TWeakObjectPtr<AMannequinAICharacter>(bOther ? WheelTarget.Get() : Viewed)]() -> FString
+		{
+			// What that mannequin is doing now, under its number (the replicated order, or direct control).
+			const AMannequinAICharacter* Body = Chosen.Get();
+			if (!Body) return FString();
+			if (Body->IsManualControlEnabled()) return TEXT("직접 조작 중");
+			switch (Body->GetMultiplayCommand())
+			{
+			case EMultiplayMannequinCommand::Patrol: return TEXT("정찰 중");
+			case EMultiplayMannequinCommand::ChaseInDetectionRange: return TEXT("범위 추격 중");
+			case EMultiplayMannequinCommand::FollowMannequinPlayer: return TEXT("따라오는 중");
+			case EMultiplayMannequinCommand::HoldPosition: return TEXT("정지 중");
+			default: return FString();
+			}
+		})
+		.Locate([Weak](FVector2D& At, float& Height)
+		{
+			// Ring the chosen mannequin on this screen only (no replicated effect: the survivors never see it).
+			AMultiplayTestPlayerController* Self = Weak.Get();AMannequinAICharacter* Target = Self ? Self->WheelTarget.Get() : nullptr;
+			if (!Target) return false;
+			int32 W = 0, H = 0; Self->GetViewportSize(W, H); if (W <= 0 || H <= 0) return false;
+			const float Half = Target->GetSimpleCollisionHalfHeight();FVector2D Top, Bottom;
+			if (!Self->ProjectWorldLocationToScreen(Target->GetActorLocation() + FVector(0, 0, Half), Top) ||
+				!Self->ProjectWorldLocationToScreen(Target->GetActorLocation() - FVector(0, 0, Half), Bottom)) return false;
+			At = (Top + Bottom) * .5f / FVector2D(W, H);Height = FMath::Abs(Bottom.Y - Top.Y) / H;return true;
+		})
+		.OnChoose([Weak](int32 Index) { if (auto* Self = Weak.Get()) Self->ChooseMannequinWheel(Index); })
+		.OnCancel([Weak] { if (auto* Self = Weak.Get()) Self->CloseMannequinWheel(); });
+	ViewportClient->AddViewportWidgetContent(MannequinWheel.ToSharedRef(), 60);
+	// Grows in from a smaller, faint wheel (TickWheelPresentation); a wheel still shrinking away is dropped at once.
+	if (ClosingWheel.IsValid()) { ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef()); ClosingWheel.Reset(); }
+	WheelOpenAlpha = 0.f;MannequinWheel->SetRenderTransformPivot(FVector2D(.5f, .5f));
+	MannequinWheel->SetRenderTransform(FSlateRenderTransform(.7f));MannequinWheel->SetRenderOpacity(0.f);
+	RemoveWheelAimMarker();
+	bWheelCursorWasShown = bShowMouseCursor;bShowMouseCursor = true;
+	FInputModeGameAndUI Mode;Mode.SetHideCursorDuringCapture(false);Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);SetInputMode(Mode);
+	int32 W = 0, H = 0;GetViewportSize(W, H);SetMouseLocation(W / 2, H / 2);
+}
+void AMultiplayTestPlayerController::CloseMannequinWheel()
+{
+	if (!MannequinWheel.IsValid()) return;
+	// Shrinks away instead of vanishing: it stays on screen a moment, taking no input, then TickWheelPresentation removes it.
+	ULocalPlayer* Local = GetLocalPlayer();
+	if (ClosingWheel.IsValid() && Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef());
+	ClosingWheel = MannequinWheel;ClosingWheel->SetVisibility(EVisibility::HitTestInvisible);WheelCloseAlpha = 0.f;
+	if (!Local || !Local->ViewportClient || !GetWorld() || GetWorld()->bIsTearingDown)
+	{ if (Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef()); ClosingWheel.Reset(); }
+	MannequinWheel.Reset();WheelTarget.Reset();
+	bShowMouseCursor = bWheelCursorWasShown;
+	if (!bWheelCursorWasShown) SetInputMode(FInputModeGameOnly());
+}
+void AMultiplayTestPlayerController::ChooseMannequinWheel(int32 Index)
+{
+	if (Index < 0 || Index >= int32(EMannequinWheelAction::Count)) return;
+	ServerRequestMannequinWheel(WheelTarget.Get(), EMannequinWheelAction(Index));
+	CloseMannequinWheel();
+}
+AMannequinAICharacter* AMultiplayTestPlayerController::TraceWheelTarget() const
+{
+	if (!PlayerCameraManager || !GetWorld()) return nullptr;
+	const FVector From = PlayerCameraManager->GetCameraLocation(), To = From + PlayerCameraManager->GetCameraRotation().Vector() * 4000.0f;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(MannequinWheel), false);Params.AddIgnoredActor(GetViewedMannequin());Params.AddIgnoredActor(GetPawn());
+	FHitResult Hit;
+	// A wide sweep first: whatever the crosshair roughly meets. A mannequin there gets the order.
+	if (GetWorld()->SweepSingleByChannel(Hit, From, To, FQuat::Identity, ECC_Pawn, FCollisionShape::MakeSphere(60.0f), Params))
+		if (AMannequinAICharacter* Direct = Cast<AMannequinAICharacter>(Hit.GetActor())) return Direct;
+	// Otherwise the mannequin nearest the crosshair within a small cone (7 degrees) that the camera can actually see.
+	const FVector Forward = (To - From).GetSafeNormal();AMannequinAICharacter* Best = nullptr;float BestCos = FMath::Cos(FMath::DegreesToRadians(7.0f));
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+	{
+		AMannequinAICharacter* Candidate = *It;
+		if (Candidate == GetViewedMannequin() || Candidate == GetPawn()) continue;
+		const FVector ToCandidate = Candidate->GetActorLocation() - From;const float Distance = ToCandidate.Size();
+		if (Distance > 4000.0f || Distance < 1.0f) continue;
+		const float Cos = FVector::DotProduct(ToCandidate / Distance, Forward);if (Cos < BestCos) continue;
+		FCollisionQueryParams Sight = Params;Sight.AddIgnoredActor(Candidate);
+		if (GetWorld()->LineTraceTestByChannel(From, Candidate->GetActorLocation(), ECC_Visibility, Sight)) continue; // behind a wall
+		BestCos = Cos;Best = Candidate;
+	}
+	return Best; // none: the order is for the viewed mannequin itself
+}
+void AMultiplayTestPlayerController::TickWheelPresentation(float DeltaSeconds)
+{
+	// Open: 0.7 -> 1.0 scale and fade in over 0.14 s (eased). Close: 1.0 -> 0.75 and fade out over 0.12 s. Nothing blinks.
+	if (MannequinWheel.IsValid() && WheelOpenAlpha < 1.f)
+	{
+		WheelOpenAlpha = FMath::Min(1.f, WheelOpenAlpha + DeltaSeconds / .14f);
+		const float E = 1.f - FMath::Square(1.f - WheelOpenAlpha);
+		MannequinWheel->SetRenderTransform(FSlateRenderTransform(FMath::Lerp(.7f, 1.f, E)));MannequinWheel->SetRenderOpacity(E);
+	}
+	if (ClosingWheel.IsValid())
+	{
+		WheelCloseAlpha = FMath::Min(1.f, WheelCloseAlpha + DeltaSeconds / .12f);
+		const float E = FMath::Square(WheelCloseAlpha);
+		ClosingWheel->SetRenderTransform(FSlateRenderTransform(FMath::Lerp(1.f, .75f, E)));ClosingWheel->SetRenderOpacity(1.f - E);
+		if (WheelCloseAlpha >= 1.f)
+		{
+			if (ULocalPlayer* Local = GetLocalPlayer(); Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef());
+			ClosingWheel.Reset();
+		}
+	}
+}
+void AMultiplayTestPlayerController::RemoveWheelAimMarker()
+{
+	if (WheelAimMarker.IsValid())
+		if (ULocalPlayer* Local = GetLocalPlayer(); Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(WheelAimMarker.ToSharedRef());
+	WheelAimMarker.Reset();WheelAimTarget.Reset();
+}
+void AMultiplayTestPlayerController::TickWheelAimMarker(float DeltaSeconds)
+{
+	// Only for the mannequin player in play with the wheel closed and no menu cursor.
+	const bool bShow = IsLocalController() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable &&
+		MatchPhase == EMultiplayTestMatchPhase::InProgress && !MannequinWheel.IsValid() && !bShowMouseCursor && IsValid(GetViewedMannequin());
+	if (!bShow) { if (WheelAimMarker.IsValid()) RemoveWheelAimMarker(); return; }
+	WheelAimRefreshSeconds -= DeltaSeconds;
+	if (WheelAimRefreshSeconds <= 0.f) { WheelAimRefreshSeconds = .1f;WheelAimTarget = TraceWheelTarget(); } // the same pick as the right click
+	if (WheelAimMarker.IsValid()) return;
+	ULocalPlayer* Local = GetLocalPlayer();if (!Local || !Local->ViewportClient) return;
+	const TWeakObjectPtr<AMultiplayTestPlayerController> Weak(this);
+	WheelAimMarker = SNew(SProjectMannequinAimMarker).Locate([Weak](FVector2D& At, float& Height, FString& Label)
+	{
+		AMultiplayTestPlayerController* Self = Weak.Get();AMannequinAICharacter* Target = Self ? Self->WheelAimTarget.Get() : nullptr;
+		if (!Target || Target->IsHidden()) return false;
+		int32 W = 0, H = 0; Self->GetViewportSize(W, H); if (W <= 0 || H <= 0) return false;
+		const float Half = Target->GetSimpleCollisionHalfHeight();FVector2D Top, Bottom;
+		if (!Self->ProjectWorldLocationToScreen(Target->GetActorLocation() + FVector(0, 0, Half), Top) ||
+			!Self->ProjectWorldLocationToScreen(Target->GetActorLocation() - FVector(0, 0, Half), Bottom)) return false;
+		At = (Top + Bottom) * .5f / FVector2D(W, H);Height = FMath::Abs(Bottom.Y - Top.Y) / H;
+		Label = FString::Printf(TEXT("%d번"), Target->GetControlSlot());return true;
+	});
+	Local->ViewportClient->AddViewportWidgetContent(WheelAimMarker.ToSharedRef(), 59); // under the wheel's own layer
+}
+void AMultiplayTestPlayerController::TickMannequinWheel(float DeltaSeconds)
+{
+	TickWheelPresentation(DeltaSeconds);
+	TickWheelAimMarker(DeltaSeconds);
+	if (!MannequinWheel.IsValid()) return;
+	if (MatchPhase != EMultiplayTestMatchPhase::InProgress || SurvivorState != EMultiplayTestSurvivorState::NotApplicable || !GetViewedMannequin())
+	{
+		CloseMannequinWheel();return;
+	}
+	// Turn gently toward the chosen mannequin (slow, pitch kept modest, so it never swings or spins).
+	if (AMannequinAICharacter* Target = WheelTarget.Get(); Target && PlayerCameraManager)
+	{
+		FRotator Desired = (Target->GetActorLocation() - PlayerCameraManager->GetCameraLocation()).Rotation();
+		Desired.Pitch = FMath::Clamp(Desired.Pitch, -25.0f, 15.0f);Desired.Roll = 0;
+		SetControlRotation(FMath::RInterpTo(GetControlRotation(), Desired, DeltaSeconds, 2.5f));
+	}
+}
+void AMultiplayTestPlayerController::ServerRequestMannequinWheel_Implementation(AMannequinAICharacter* Target, const EMannequinWheelAction Action)
+{
+	if (!AllowServerRequest(6, 8, 1.0f)) return; // shares the command budget
+	AMultiplayTestGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr;
+	if (!IsValid(GameMode) || SurvivorState != EMultiplayTestSurvivorState::NotApplicable) return;
+	AMannequinAICharacter* Viewed = GetViewedMannequin();
+	if (!IsValid(Target)) Target = Viewed;
+	if (!IsValid(Target)) return;
+	switch (Action)
+	{
+	case EMannequinWheelAction::Possess: ServerRequestMannequinSlot_Implementation(Target->GetControlSlot()); return;
+	case EMannequinWheelAction::ManualControl:
+		// Another mannequin: move the view there first (the slot rules apply), then take it over.
+		if (Target != Viewed) ServerRequestMannequinSlot_Implementation(Target->GetControlSlot());
+		if (GetViewedMannequin() == Target) ServerRequestMannequinManualControl_Implementation();
+		return;
+	case EMannequinWheelAction::ResetFollowing: ServerResetFollowingMannequins_Implementation(); return;
+	case EMannequinWheelAction::ToggleCatchDamage: ServerToggleMannequinCatchDamage_Implementation(); return;
+	default: break;
+	}
+	const EMultiplayMannequinCommand Command = Action == EMannequinWheelAction::Patrol ? EMultiplayMannequinCommand::Patrol :
+		Action == EMannequinWheelAction::ChaseInDetectionRange ? EMultiplayMannequinCommand::ChaseInDetectionRange :
+		Action == EMannequinWheelAction::FollowMannequinPlayer ? EMultiplayMannequinCommand::FollowMannequinPlayer : EMultiplayMannequinCommand::HoldPosition;
+	if (!GameMode->TryIssueMannequinCommand(this, Command, Target)) return;
+	ClientNotifyMannequinCommand(FString::Printf(TEXT("%d번: %s 명령 지정"), Target->GetControlSlot(), *StaticEnum<EMannequinWheelAction>()->GetDisplayNameTextByValue(int64(Action)).ToString()));
+	if (auto* Tutorial = Cast<AProjectProject01TutorialGameMode>(GameMode); Tutorial && Command != EMultiplayMannequinCommand::HoldPosition)
+		Tutorial->RecordAction(this, Command == EMultiplayMannequinCommand::Patrol ? EProjectTutorialCondition::PatrolCommand :
+			Command == EMultiplayMannequinCommand::ChaseInDetectionRange ? EProjectTutorialCondition::ChaseCommand : EProjectTutorialCondition::FollowCommand);
+}
+bool AMultiplayTestPlayerController::ServerRequestMannequinWheel_Validate(AMannequinAICharacter* Target, const EMannequinWheelAction Action)
+{
+	return Action < EMannequinWheelAction::Count;
 }
 
 void AMultiplayTestPlayerController::ServerRequestMannequinAttack_Implementation()

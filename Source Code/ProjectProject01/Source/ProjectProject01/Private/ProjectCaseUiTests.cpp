@@ -262,7 +262,7 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
         if(TestTrue(TEXT("Equipped banner renders inside the existing profile dock"),ProjectUIRenderCapture::Read(Target,Pixels))){TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("DockBanner_%dx%d.png"),Size.X,Size.Y)));}Target->ReleaseResource();
     }
     R->Snapshot->SetArrayField(TEXT("loadout"),OriginalLoadout);
-    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("ProfileEdit")),FString(TEXT("Collection")),FString(TEXT("CollectionBanner")),FString(TEXT("CollectionFrame")),FString(TEXT("Draw")),FString(TEXT("DrawReset")),FString(TEXT("DrawInactive")),FString(TEXT("DrawNoFunds")),FString(TEXT("DrawRates")),FString(TEXT("DrawResult")),FString(TEXT("DrawRare")),FString(TEXT("Events")),FString(TEXT("Achievements")),FString(TEXT("OnlineAchievements")),FString(TEXT("Quest")),FString(TEXT("QuestStory")),FString(TEXT("QuestAll")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive"))})
+    for(const FString Page:{FString(TEXT("Profile")),FString(TEXT("ProfileClaimed")),FString(TEXT("ProfileEdit")),FString(TEXT("Collection")),FString(TEXT("CollectionBanner")),FString(TEXT("CollectionFrame")),FString(TEXT("Draw")),FString(TEXT("DrawReset")),FString(TEXT("DrawInactive")),FString(TEXT("DrawNoFunds")),FString(TEXT("DrawRates")),FString(TEXT("DrawResult")),FString(TEXT("DrawRare")),FString(TEXT("Events")),FString(TEXT("Achievements")),FString(TEXT("OnlineAchievements")),FString(TEXT("Quest")),FString(TEXT("QuestStory")),FString(TEXT("QuestAll")),FString(TEXT("Pvp")),FString(TEXT("Bot")),FString(TEXT("Shop")),FString(TEXT("ShopNoFunds")),FString(TEXT("Replays")),FString(TEXT("Track")),FString(TEXT("TrackUnclaimed")),FString(TEXT("TrackComplete")),FString(TEXT("Archive")),FString(TEXT("Lore")),FString(TEXT("LoreRead"))})
     {
         Auth->AuthState=Page==TEXT("Archive")?EProjectProject01AuthState::SignedOut:EProjectProject01AuthState::SignedIn;
         if(Page==TEXT("TrackComplete")||Page==TEXT("TrackUnclaimed")||Page==TEXT("Archive"))
@@ -314,7 +314,21 @@ bool FProjectCaseUiRenderTest::RunTest(const FString&)
             Quest->SetNumberField(TEXT("stage"),7);
             for(int32 I=0;I<QuestSteps.Num();++I){auto S=QuestSteps[I]->AsObject();S->SetBoolField(TEXT("active"),I==7);S->SetBoolField(TEXT("completed"),I<7);S->SetBoolField(TEXT("canSkip"),false);}
         }
-        Widget->Page=Page.StartsWith(TEXT("Quest"))?TEXT("Quest"):Page.StartsWith(TEXT("Collection"))?TEXT("Collection"):Page.StartsWith(TEXT("Draw"))?TEXT("Draw"):Page.StartsWith(TEXT("Track"))?TEXT("Track"):Page.StartsWith(TEXT("Profile"))?TEXT("Profile"):Page.StartsWith(TEXT("Shop"))?TEXT("Shop"):Page;Widget->bShowDrawRates=Page==TEXT("DrawRates");R->Status=Page==TEXT("TrackComplete")?TEXT("보상을 수령했습니다."):Page==TEXT("ShopNoFunds")?TEXT("포인트가 부족합니다"):FString();
+        if(Page.StartsWith(TEXT("Lore")))
+        {
+            // As the server sends 기본 기록: open entries carry their text, locked ones only their category and condition.
+            TArray<TSharedPtr<FJsonValue>> Lore;
+            auto AddLore=[&](const TCHAR* Id,const TCHAR* Category,bool bOpen,const TCHAR* Title,const TCHAR* Body,const TCHAR* Unlock,const TCHAR* Value)
+            {auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("id"),Id);J->SetStringField(TEXT("category"),Category);J->SetBoolField(TEXT("unlocked"),bOpen);J->SetStringField(TEXT("title"),bOpen?Title:TEXT(""));J->SetStringField(TEXT("body"),bOpen?Body:TEXT(""));J->SetStringField(TEXT("unlock"),Unlock);J->SetStringField(TEXT("value"),Value);Lore.Add(MakeShared<FJsonValueObject>(J));};
+            AddLore(TEXT("me_01"),TEXT("플레이어"),true,TEXT("출입증 사본"),TEXT("이름 칸은 비어 있다. 사진만 남아 있다.\n\n발급 부서: 시설관리팀 야간조."),TEXT("always"),TEXT(""));
+            AddLore(TEXT("me_02"),TEXT("플레이어"),false,TEXT(""),TEXT(""),TEXT("level"),TEXT("10"));
+            AddLore(TEXT("store_01"),TEXT("그 밖의 기록"),true,TEXT("서관 3층 진열 지시서"),TEXT("마네킹은 매일 아침 같은 자세로 되돌려 둘 것."),TEXT("always"),TEXT(""));
+            AddLore(TEXT("store_02"),TEXT("그 밖의 기록"),false,TEXT(""),TEXT(""),TEXT("achievement"),TEXT("bot_first"));
+            AddLore(TEXT("store_03"),TEXT("그 밖의 기록"),false,TEXT(""),TEXT(""),TEXT("part"),TEXT("2"));
+            auto LoreObject=MakeShared<FJsonObject>();LoreObject->SetArrayField(TEXT("records"),Lore);R->Snapshot->SetObjectField(TEXT("lore"),LoreObject);
+            Widget->LoreId=Page==TEXT("LoreRead")?TEXT("me_01"):TEXT("");
+        }
+        Widget->Page=Page.StartsWith(TEXT("Lore"))?TEXT("Lore"):Page.StartsWith(TEXT("Quest"))?TEXT("Quest"):Page.StartsWith(TEXT("Collection"))?TEXT("Collection"):Page.StartsWith(TEXT("Draw"))?TEXT("Draw"):Page.StartsWith(TEXT("Track"))?TEXT("Track"):Page.StartsWith(TEXT("Profile"))?TEXT("Profile"):Page.StartsWith(TEXT("Shop"))?TEXT("Shop"):Page;Widget->bShowDrawRates=Page==TEXT("DrawRates");R->Status=Page==TEXT("TrackComplete")?TEXT("보상을 수령했습니다."):Page==TEXT("ShopNoFunds")?TEXT("포인트가 부족합니다"):FString();
         R->Request=FHttpModule::Get().CreateRequest();Slate=Widget->TakeWidget();R->Request.Reset();Widget->RefreshPanel();
         if(Page==TEXT("DrawReset"))TestTrue(TEXT("Confirmed reset clears previous boxes and solo reveal without showing stale results"),!Widget->bDrawResultOpen&&!Widget->bDrawRequestedHere&&Widget->ParcelOpenTimes.IsEmpty()&&Widget->RareRevealQueue.IsEmpty());
         if(Page==TEXT("DrawInactive"))

@@ -159,9 +159,9 @@ AProjectProject01TutorialPlan::AProjectProject01TutorialPlan()
 	Add(SurvivorSteps,TEXT("Survivor.Escape"),TEXT("이제 탈출구로 이동할 시간입니다."),TEXT("배운 조작을 활용해 탈출 지점에 도달하세요."),EProjectTutorialCondition::Trigger,1,TEXT("Tutorial.Escape"));
 	Add(MannequinSteps,TEXT("Mannequin.Intro"),TEXT("생존자의 탈출을 저지하세요"),TEXT("당신은 마네킹 플레이어입니다.\n마네킹의 시점을 선택하고 명령을 내리거나\n직접 조작할 수 있습니다.\n\n생존자 전원을 붙잡아 탈출을 막는 것이\n최종 목표입니다.\n생존자가 바라보는 마네킹은 멈추게 되며\n이들이 바라보지 않는 시야에서 잡는 것이\n중요한 관건입니다."),EProjectTutorialCondition::Continue);
 	Add(MannequinSteps,TEXT("Mannequin.Select"),TEXT("다른 마네킹에게 빙의를 할지 선택할 수 있습니다."),TEXT("머리 위의 번호를 확인하고\n0~9의 숫자 키 중 원하는 번호를 눌러\n다른 마네킹으로 시점을 전환할 수 있습니다."),EProjectTutorialCondition::SelectMannequin,3);
-	Add(MannequinSteps,TEXT("Mannequin.Manual"),TEXT("자신이 선택한 마네킹을 직접 조종할 수 있습니다."),TEXT("V키를 눌러 직접 조작을 시작하세요."),EProjectTutorialCondition::ManualControl);
+	Add(MannequinSteps,TEXT("Mannequin.Manual"),TEXT("자신이 선택한 마네킹을 직접 조종할 수 있습니다."),TEXT("마우스 우클릭으로 명령 휠을 열고 '직접 조작'을 고르세요."),EProjectTutorialCondition::ManualControl);
 	Add(MannequinSteps,TEXT("Mannequin.Move"),TEXT("{Move}로 이동하며\n마우스를 통해 시점을 움직일 수 있습니다."),TEXT("직접 조작 중에만\n마네킹을 조종해 이동시킬 수 있습니다."),EProjectTutorialCondition::MoveMannequin,1000);
-	Add(MannequinSteps,TEXT("Mannequin.Command"),TEXT("마네킹에게 맡길 명령을 지정하세요."),TEXT("시점을 선택한 마네킹에게 명령을 내릴 수 있습니다.\n\nZ: 정찰\nX: 감지 범위 추격\nC: 자신을 따라오기\nQ: 따라오는 마네킹을 정찰 상태로 변경\n\nB: 전체 마네킹의 접촉 데스카운트 소모\n    활성/비활성화\n마우스 좌클릭: 직접 조작 중 공격"),EProjectTutorialCondition::CommandPractice,3);
+	Add(MannequinSteps,TEXT("Mannequin.Command"),TEXT("마네킹에게 맡길 명령을 지정하세요."),TEXT("마우스 우클릭으로 명령 휠을 엽니다. 조준한 마네킹이 있으면 그 마네킹에게, 없으면 지금 시점의 마네킹에게 내립니다.\n\n정찰 · 범위 추격 · 따라오기: 맡길 명령\n정지: 그 자리에 세우기\n추종 해제: 따라오는 마네킹을 정찰로\n\n잡기 피해: 전체 마네킹의 접촉 데스카운트 소모\n    활성/비활성화\n마우스 좌클릭: 직접 조작 중 공격"),EProjectTutorialCondition::CommandPractice,3);
 	Add(MannequinSteps,TEXT("Mannequin.Release"),TEXT("이제 빙의를 다른 번호의 마네킹을 선택해\n명령을 내리세요."),TEXT("다음 맵으로 이동하기 전까지\n한번 내린 명령은 유지됩니다."),EProjectTutorialCondition::ReleaseMannequin,3);
 	Add(MannequinSteps,TEXT("Mannequin.Capture"),TEXT("연습용 생존자 1명이 나타났습니다."),TEXT("직접 마네킹을 조작하여\n생존자의 시야를 피해 붙잡으세요.\n\n(단, 마네킹 플레이어는 접촉 데스카운트를\n비활성화 시켜도 언제든 소모시킬 수 있습니다.)"),EProjectTutorialCondition::Capture);
 	SurvivorClosing=ProjectTutorial::Text(TEXT("동료와 함께 무사히 탈출하시길 바랍니다.\n건승을 빕니다!"));
@@ -439,10 +439,10 @@ FText AProjectProject01TutorialGameMode::GetPracticeStatusText() const
 	FString Hint=ProjectTutorial::ResolveText(S->Title).ToString();
 	if (S->Condition==EProjectTutorialCondition::CommandPractice)
 	{
-		Hint+=FString::Printf(TEXT("\n명령 상태 확인 %d/%d\nZ / X / C 중 원하는 명령을 선택하세요."),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
+		Hint+=FString::Printf(TEXT("\n명령 상태 확인 %d/%d\n명령 휠(우클릭)에서 정찰 / 범위 추격 / 따라오기 중 하나를 고르세요."),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
 	}
 	else if (S->Condition==EProjectTutorialCondition::ReleaseMannequin)
-		Hint+=FString::Printf(TEXT("\n명령 맡기기 %d/%d\nZ/X/C 명령 → 다른 번호 선택"),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
+		Hint+=FString::Printf(TEXT("\n명령 맡기기 %d/%d\n휠 명령 → 다른 번호 선택"),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
 	else if (S->Condition==EProjectTutorialCondition::SelectMannequin)
 		Hint+=FString::Printf(TEXT("\n시점 전환 %d/%d"),FMath::FloorToInt(Progress),FMath::CeilToInt(S->RequiredAmount));
 	else if (S->Condition==EProjectTutorialCondition::ObserveMannequin) Hint+=FString::Printf(TEXT("\n마네킹 주시 %.1f / %g 초"),FMath::FloorToFloat(FMath::Min(Progress,S->RequiredAmount)*10.f)/10.f,S->RequiredAmount);

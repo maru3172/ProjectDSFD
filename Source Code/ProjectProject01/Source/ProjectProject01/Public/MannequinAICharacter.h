@@ -86,6 +86,9 @@ public:
 	float GetAffixHeat() const { return AffixHeat; }
 	/** A08: a floor beam the length of this body's detection reach, pointing where it faces. */
 	void SetAffixBeam(bool bOn, float Radius);
+	/** Item roguelike M01/M08: this body's footstep loudness (0 silent, 1 usual). Server sets it. */
+	void SetRogueFootstepScale(float Scale) { RogueFootstepScale = FMath::Clamp(Scale, 0.0f, 2.0f); }
+	float GetRogueFootstepScale() const { return RogueFootstepScale; }
 
 	/** 마네킹 플레이어 HUD에 표시할 서버 권한 현재 행동입니다. */
 	void SetMultiplayActivity(EMultiplayMannequinActivity NewActivity);
@@ -147,6 +150,8 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed)
 	float AffixSpeedScale = 1.0f;
+	UPROPERTY(Replicated)
+	float RogueFootstepScale = 1.0f;
 	// RGB colour, A = strength. Zero alpha: no cue.
 	UPROPERTY(ReplicatedUsing = OnRep_AffixCue)
 	FColor AffixCue = FColor(0, 0, 0, 0);

@@ -120,13 +120,17 @@ TSharedRef<SButton> Button(const FString& Caption,TFunction<void()> Run,bool bPr
 }
 FString GameName(const FString& Game)
 {
-    return Game==TEXT("spot")?TEXT("움직였다"):Game==TEXT("blackout")?TEXT("정전 복구"):Game==TEXT("listen")?TEXT("어디서 났지?"):Game==TEXT("approach")?TEXT("다가가기"):TEXT("한 칸씩");
+    return Game==TEXT("spot")?TEXT("움직였다"):Game==TEXT("blackout")?TEXT("정전 복구"):Game==TEXT("endless")?TEXT("정전 복구 · 무한"):Game==TEXT("listen")?TEXT("어디서 났지?")
+        :Game==TEXT("approach")?TEXT("다가가기"):Game==TEXT("shutter")?TEXT("셔터 내려"):Game==TEXT("mimic")?TEXT("흉내 내기"):TEXT("한 칸씩");
 }
 FString Record(const FString& Game,const FString& Board,int32 P,int32 S)
 {
     if(Game==TEXT("spot")||Game==TEXT("listen"))return FString::Printf(TEXT("%d라운드 · %d점"),P,S);
     if(Game==TEXT("approach"))return FString::Printf(TEXT("%.1f초 · 들킴 %d번"),P/1000.f,S);
     if(Game==TEXT("blackout"))return FString::Printf(TEXT("%.1f초 · 배터리 %d%%"),P/1000.f,S);
+    if(Game==TEXT("endless"))return FString::Printf(TEXT("퓨즈 %d개 · %.1f초"),P,S/1000.f);
+    if(Game==TEXT("shutter"))return FString::Printf(TEXT("%d명 막음 · %.1f초"),P,S/1000.f);
+    if(Game==TEXT("mimic"))return FString::Printf(TEXT("%d번 버팀 · %.1f초"),P,S/1000.f);
     if(Board==TEXT("stars"))return FString::Printf(TEXT("별 %d개 · %d수"),P,S);
     return FString::Printf(TEXT("%d수"),P);
 }
@@ -430,23 +434,25 @@ class SProjectBlackoutGame final:public SProjectMiniGameView
 public:
     SLATE_BEGIN_ARGS(SProjectBlackoutGame){}
     SLATE_END_ARGS()
-    void Construct(const FArguments&,const FHost& InHost,const FString& Run,int32 Ms,const TSharedPtr<FJsonObject>& Saved)
+    void Construct(const FArguments&,const FHost& InHost,const FString& Run,int32 Ms,const TSharedPtr<FJsonObject>& Saved,bool bInEndless=false)
     {
-        if(!Sim.Load(Saved))Sim.Start(uint32(GetTypeHash(Run)));
+        if(!Sim.Load(Saved))Sim.Start(uint32(GetTypeHash(Run)),bInEndless);
+        Sim.bEndless=bInEndless;
         if(const auto* S=UProjectProject01GameUserSettings::Get())
         {Keys[0]=S->GetMoveForwardKey();Keys[1]=S->GetMoveBackwardKey();Keys[2]=S->GetMoveLeftKey();Keys[3]=S->GetMoveRightKey();}
-        Init(InHost,TEXT("blackout"),Run,Ms);
+        Init(InHost,bInEndless?TEXT("endless"):TEXT("blackout"),Run,Ms);
     }
 private:
     FBlackoutSim Sim;FBlackoutInput Input;bool Held[4]={},bToggle=false;FKey Keys[4]={EKeys::W,EKeys::S,EKeys::A,EKeys::D};
     float Scale=1,CreakWait=0;FVector2D Offset=FVector2D::ZeroVector;
     FString Hud()const override
     {
+        if(Sim.bEndless)return FString::Printf(TEXT("배터리 %d%% · 퓨즈 %d개 (들고 있음 %d) · 마네킹 최대 %d · %.1f초"),FMath::RoundToInt(Sim.Battery),Sim.Installed,Sim.Carried,Sim.MannequinLimit(),ActiveSeconds);
         return FString::Printf(TEXT("배터리 %d%% · 퓨즈 %d/3 (들고 있음 %d) · %.1f초"),FMath::RoundToInt(Sim.Battery),Sim.Installed,Sim.Carried,ActiveSeconds);
     }
     FHowTo HowTo()const override
     {
-        return {TEXT("바닥의 노란 퓨즈 3개를 밟아 줍고, 위쪽 배전반 앞에 서 있으면 저절로 끼워집니다."),
+        return {Sim.bEndless?TEXT("퓨즈가 끝없이 나옵니다. 주워서 배전반에 끼울 때마다 배터리가 25% 찹니다. 붙잡힐 때까지 몇 개를 끼울 수 있을까요?"):TEXT("바닥의 노란 퓨즈 3개를 밟아 줍고, 위쪽 배전반 앞에 서 있으면 저절로 끼워집니다."),
             FString::Printf(TEXT("%s/%s/%s/%s 또는 방향키로 이동 · 마우스로 손전등 비추기 · F 또는 오른쪽 클릭으로 손전등 끄고 켜기"),
                 *Keys[0].GetDisplayName().ToString(),*Keys[2].GetDisplayName().ToString(),*Keys[1].GetDisplayName().ToString(),*Keys[3].GetDisplayName().ToString()),
             TEXT("빛에 닿은 마네킹은 멈춥니다. 어둠 속 하얀 발자국 = 마네킹이 다가오는 중, 그쪽을 비추세요. 배터리가 닳으면 다시 못 켜니 아껴 쓰세요.")};
@@ -491,6 +497,14 @@ private:
         const bool bCleared=Outcome==FBlackoutSim::EOutcome::Cleared;
         const TWeakPtr<SProjectBlackoutGame> Weak=StaticCastSharedRef<SProjectBlackoutGame>(AsShared());
         const int32 Ms=ActiveMs(),Battery=FMath::RoundToInt(Sim.Battery);
+        if(Sim.bEndless)
+        {
+            // Endless ends only when caught; the record is the fuses seated.
+            const int32 Fuses=Sim.Installed;
+            auto Show=[Weak,Fuses,Ms](const FString& Error){if(auto Self=Weak.Pin())Self->ShowOver(TEXT("붙잡혔습니다"),FString::Printf(TEXT("퓨즈 %d개 · %.1f초"),Fuses,Ms/1000.f)+(Error.IsEmpty()?FString():TEXT("\n")+Error));};
+            if(!Games){Show(FString());return;}
+            Games->Finish(RunId,false,Ms,Battery,{},[Show](TSharedPtr<FJsonObject>,const FString& Error){Show(Error);},0,0,Fuses);return;
+        }
         if(!Games){ShowOver(bCleared?TEXT("전기가 들어왔습니다"):TEXT("붙잡혔습니다"),TEXT(""));return;}
         Games->Finish(RunId,bCleared,Ms,Battery,{},[Weak,bCleared,Ms,Battery](TSharedPtr<FJsonObject>,const FString& Error)
         {
@@ -522,7 +536,7 @@ private:
         const FDraw Top{D.Out,D.G,D.Layer+2};
         // Fuse board with its three slots.
         Top.Box(P(FBlackoutSim::Board-FVector2D(34,14)),FVector2D(68,22)*S,FLinearColor(.09f,.08f,.07f,1.f));
-        for(int32 I=0;I<3;++I)Top.Box(P(FBlackoutSim::Board+FVector2D(-26+I*20,-9)),FVector2D(12,12)*S,I<Sim.Installed?FLinearColor(.95f,.75f,.25f,1.f):FLinearColor(.02f,.02f,.02f,1.f));
+        for(int32 I=0;I<3;++I)Top.Box(P(FBlackoutSim::Board+FVector2D(-26+I*20,-9)),FVector2D(12,12)*S,I<(Sim.bEndless?Sim.Installed%3:Sim.Installed)?FLinearColor(.95f,.75f,.25f,1.f):FLinearColor(.02f,.02f,.02f,1.f));
         Top.Text(P(FBlackoutSim::Board+FVector2D(-17,12)),TEXT("배전반"),FMath::Max(9,int32(11*S)),FLinearColor(.75f,.7f,.6f,1.f),true);
         if(Sim.bInstalling)Top.Ring(P(FBlackoutSim::Board),20*S,FLinearColor(.95f,.75f,.25f,.4f+.6f*float(Sim.InstallProgress/FBlackoutSim::InstallSeconds)),3.f);
         // Fuses glow faintly; mannequins only show in the light or right next to the player.
@@ -543,7 +557,7 @@ private:
         Top.Line({P(Sim.Player),P(Sim.Player+Sim.TorchDirection()*14)},FLinearColor(.9f,.9f,.8f,1.f),2.f);
         // What to do right now, in the room's bottom-left corner.
         const FString Task=Sim.bInstalling?TEXT("퓨즈를 끼우는 중 · 배전반 앞에 머무르세요"):Sim.Carried>0?FString::Printf(TEXT("퓨즈 %d개를 들었습니다 · 위쪽 배전반 앞으로"),Sim.Carried):TEXT("노란 퓨즈를 밟아 주우세요");
-        Top.Text(P(FVector2D(10,FBlackoutSim::Height-24)),FString::Printf(TEXT("할 일: %s (%d/3)"),*Task,Sim.Installed),FMath::Max(9,int32(12*S)),FLinearColor(.85f,.82f,.75f,.9f),true);
+        Top.Text(P(FVector2D(10,FBlackoutSim::Height-24)),(Sim.bEndless?FString::Printf(TEXT("할 일: %s (%d개째)"),*Task,Sim.Installed+1):FString::Printf(TEXT("할 일: %s (%d/3)"),*Task,Sim.Installed)),FMath::Max(9,int32(12*S)),FLinearColor(.85f,.82f,.75f,.9f),true);
         return D.Layer+4;
     }
 };
@@ -555,19 +569,30 @@ public:
     SLATE_BEGIN_ARGS(SProjectStepsGame){}
     SLATE_END_ARGS()
     /** The stage, the saved moves and what "다음 스테이지" does (one argument: Slate passes at most five). */
-    struct FSetup{FStepStage Stage;TSharedPtr<FJsonObject> Saved;TFunction<void(const FString&)> Next;};
+    struct FSetup{FStepStage Stage;TSharedPtr<FJsonObject> Saved;TFunction<void(const FString&)> Next;int32 StageCount=13;};
     void Construct(const FArguments&,const FHost& InHost,const FString& Run,int32 Ms,const FSetup& Setup)
     {
         Stage=Setup.Stage;NextStage=Setup.Next;const TSharedPtr<FJsonObject>& Saved=Setup.Saved;
         const TArray<TSharedPtr<FJsonValue>>* List=nullptr;
         if(Saved&&Saved->TryGetArrayField(TEXT("moves"),List))for(const auto& V:*List)Moves.Add(V->AsString());
+        double Saved_Hints=0,Saved_Level=0;
+        if(Saved){Saved->TryGetNumberField(TEXT("hints"),Saved_Hints);Saved->TryGetNumberField(TEXT("hintLevel"),Saved_Level);}
+        HintsUsed=int32(Saved_Hints);HintLevel=FMath::Clamp(int32(Saved_Level),0,3);StageCount=Setup.StageCount;
+        // A stage already lost once this session offers its hint at once; otherwise after a while of trying.
+        NextHintAt=Failures().FindRef(Stage.Id)>0||HintLevel>0?0.f:FirstHintSeconds;
         Rebuild();
         if(const auto* S=UProjectProject01GameUserSettings::Get())
         {Keys[0]=S->GetMoveForwardKey();Keys[1]=S->GetMoveBackwardKey();Keys[2]=S->GetMoveLeftKey();Keys[3]=S->GetMoveRightKey();}
         Init(InHost,TEXT("steps"),Run,Ms);
     }
 private:
-    FStepStage Stage;FStepState State;TArray<FString> Moves;EStepResult Last=EStepResult::Continue;TFunction<void(const FString&)> NextStage;
+    FStepStage Stage;FStepState State;TArray<FString> Moves;EStepResult Last=EStepResult::Continue;TFunction<void(const FString&)> NextStage;int32 StageCount=13;
+    // Hints come in three steps, each a bit more of the answer: 1 shows where the mannequins would go for the cell under
+    // the mouse, 2 marks one cell the answer passes through, 3 shows the next move (once per press). Any hint caps the
+    // stage at two stars.
+    static constexpr float FirstHintSeconds=25.f,HintGapSeconds=10.f;
+    int32 HintLevel=0,HintsUsed=0;float NextHintAt=FirstHintSeconds;FIntPoint KeyCell=FIntPoint(-1,-1),Hover=FIntPoint(-1,-1);FString NextMove;
+    static TMap<FString,int32>& Failures(){static TMap<FString,int32> Map;return Map;} // stages lost this session
     FKey Keys[4]={EKeys::W,EKeys::S,EKeys::A,EKeys::D};
     FString Title()const override{return FString::Printf(TEXT("한 칸씩 %s. %s"),*Stage.Id,*Stage.Name);}
     FString Hud()const override
@@ -577,7 +602,9 @@ private:
     /** One line on what matters right now: being caught, a door to shut, or why the yellow-ringed mannequin stays put. */
     FString Hint()const
     {
-        if(Last==EStepResult::Caught)return TEXT("붙잡혔습니다. Z(되돌리기)로 한 수 무르세요.");
+        if(!NextMove.IsEmpty())return TEXT("힌트: 빛나는 화살표 쪽이 다음 한 수입니다.");
+        if(HintLevel>=2&&KeyCell.X>=0)return TEXT("힌트: 정답은 별표 칸을 지나갑니다. 그 칸까지 어떻게 갈지 생각해 보세요.");
+        if(HintLevel>=1)return TEXT("힌트: 옆 칸에 마우스를 올리면, 그리로 갔을 때 마네킹이 어디로 오는지 보입니다.");
         FStepState Probe=State;
         if(State.ShuttersLeft>0&&Probe.Apply(TEXT("S"))!=EStepResult::Invalid)return TEXT("바로 앞이 문입니다. 스페이스로 셔터를 내리면 벽이 되어 막힙니다.");
         if(State.ShuttersLeft>0)return TEXT("문(빨간 줄)을 바라보고 스페이스: 셔터로 길을 막을 수 있습니다.");
@@ -589,7 +616,7 @@ private:
         return {TEXT("초록색 출구 칸까지 가세요. 적은 행동일수록 별이 많습니다."),
             FString::Printf(TEXT("%s/%s/%s/%s·방향키 또는 옆 칸 클릭: 한 칸 이동 · Q/E 또는 먼 칸 클릭: 그쪽 보기(공짜) · 스페이스: 앞 문에 셔터 · Z 되돌리기 · R 처음부터"),
                 *Keys[0].GetDisplayName().ToString(),*Keys[2].GetDisplayName().ToString(),*Keys[1].GetDisplayName().ToString(),*Keys[3].GetDisplayName().ToString()),
-            TEXT("내가 걷거나 셔터를 내리면 마네킹이 모두 한 칸 다가옵니다. 내가 바라보는 줄의 첫 마네킹(노란 테두리)만 멈춥니다. 붙잡혀도 되돌리면 됩니다.")};
+            TEXT("내가 걷거나 셔터를 내리면 마네킹이 모두 한 칸 다가옵니다. 내가 바라보는 줄의 첫 마네킹(노란 테두리)만 멈춥니다. 붙잡히면 처음부터입니다. 막히면 잠시 뒤 힌트가 열립니다.")};
     }
     FString RestartStage()const override{return Stage.Id;}
     void Rebuild(){Last=Replay(Stage,Moves,State);}
@@ -602,36 +629,75 @@ private:
         Moves.Add(Action);State=Next;Last=R;
         UProjectMiniGameSound::Play(Action==TEXT("S")?EProjectMiniGameSound::Shutter:R==EStepResult::Won?EProjectMiniGameSound::Good:R==EStepResult::Caught?EProjectMiniGameSound::Caught:EProjectMiniGameSound::Step);
         if(bMannequinsMoved&&R==EStepResult::Continue)UProjectMiniGameSound::Play(EProjectMiniGameSound::Creak);
+        if(Action[0]!=TEXT('t'))NextMove.Reset(); // a shown next move is used up by the move after it
+        if(HintLevel>=2)KeyCell=FindKeyCell();
         if(Moves.Num()%5==0&&R==EStepResult::Continue)SaveNow();
         if(R==EStepResult::Won)Win();
+        if(R==EStepResult::Caught)Lose();
     }
-    void Undo(){if(!Moves.IsEmpty()){Moves.Pop();Rebuild();}}
-    void Restart(){Moves.Reset();Rebuild();}
+    /** Caught: the stage is over. Start it again or go back to the list. */
+    void Lose()
+    {
+        ++Failures().FindOrAdd(Stage.Id);Phase=EPhase::Busy;
+        if(auto* Games=Subsystem())Games->Abandon(TEXT("steps"));
+        ShowOver(TEXT("붙잡혔습니다"),FString::Printf(TEXT("%d번째 행동에서 마네킹에게 닿았습니다. 처음부터 다시 하면 힌트를 바로 쓸 수 있습니다."),State.Actions));
+    }
+    bool HintReady()const{return HintLevel<3||NextMove.IsEmpty();}
+    float HintWait()const{return FMath::Max(0.f,NextHintAt-float(ActiveSeconds));}
+    void UseHint()
+    {
+        if(Phase!=EPhase::Running||HintWait()>0||!HintReady())return;
+        if(HintLevel<3)++HintLevel;
+        if(HintLevel==2)KeyCell=FindKeyCell();
+        if(HintLevel==3)
+        {
+            // The next move from here; a turn only ever matters in front of a shutter, so show it as "turn, then shutter".
+            const TArray<FString> Path=SolveSteps(State);NextMove.Reset();
+            int32 I=0;while(I<Path.Num()&&Path[I][0]==TEXT('t')&&!(I+1<Path.Num()&&Path[I+1]==TEXT("S")))++I;
+            if(I<Path.Num())NextMove=Path[I][0]==TEXT('t')?Path[I].Mid(1)+TEXT("S"):Path[I]==TEXT("S")?FString(1,&State.Facing)+TEXT("S"):Path[I];
+        }
+        ++HintsUsed;NextHintAt=float(ActiveSeconds)+HintGapSeconds;SaveNow();
+        UProjectMiniGameSound::Play(EProjectMiniGameSound::Pick);
+    }
+    /** A cell midway along the answer from here (or the shutter's doorway when the answer lowers one). */
+    FIntPoint FindKeyCell()const
+    {
+        const TArray<FString> Path=SolveSteps(State);if(Path.IsEmpty())return FIntPoint(-1,-1);
+        FStepState Walk=State;TArray<FIntPoint> Cells;
+        for(const FString& M:Path)
+        {
+            if(M==TEXT("S"))return Walk.Player+FStepState::Delta(Walk.Facing);
+            Walk.Apply(M);if(M[0]!=TEXT('t'))Cells.Add(Walk.Player);
+        }
+        return Cells.Num()>=3?Cells[Cells.Num()/2]:FIntPoint(-1,-1); // two steps from the exit is no puzzle left: no mark
+    }
+    void Undo(){if(!Moves.IsEmpty()){Moves.Pop();Rebuild();NextMove.Reset();if(HintLevel>=2)KeyCell=FindKeyCell();}}
+    void Restart(){Moves.Reset();Rebuild();NextMove.Reset();if(HintLevel>=2)KeyCell=FindKeyCell();}
     static TCHAR TurnLeft(TCHAR F){return F==TEXT('U')?TEXT('L'):F==TEXT('L')?TEXT('D'):F==TEXT('D')?TEXT('R'):TEXT('U');}
     static TCHAR TurnRight(TCHAR F){return F==TEXT('U')?TEXT('R'):F==TEXT('R')?TEXT('D'):F==TEXT('D')?TEXT('L'):TEXT('U');}
     void Turn(TCHAR To){if(To!=State.Facing)Do(FString(TEXT("t"))+To);}
     void Win()
     {
-        auto* Games=Subsystem();Phase=EPhase::Busy;const int32 Actions=State.Actions,Stars=Stage.Stars(Actions);
+        auto* Games=Subsystem();Phase=EPhase::Busy;const int32 Actions=State.Actions,Stars=Stage.Stars(Actions,HintsUsed);
         const TWeakPtr<SProjectStepsGame> Weak=StaticCastSharedRef<SProjectStepsGame>(AsShared());
-        const FString Detail=FString::Printf(TEXT("행동 %d · 기준 %d · 별 %s"),Actions,Stage.Par,*(FString::ChrN(Stars,TEXT('★'))+FString::ChrN(3-Stars,TEXT('☆'))));
+        const FString Detail=FString::Printf(TEXT("행동 %d · 기준 %d · 별 %s"),Actions,Stage.Par,*(FString::ChrN(Stars,TEXT('★'))+FString::ChrN(3-Stars,TEXT('☆'))))+(HintsUsed>0?FString::Printf(TEXT(" · 힌트 %d번"),HintsUsed):FString());
         auto Finish=[Weak,Detail](const FString& Error)
         {
             auto Self=Weak.Pin();if(!Self)return;
             TArray<TPair<FString,TFunction<void()>>> Extra;
             const int32 Index=FCString::Atoi(*Self->Stage.Id);
-            if(Index<10&&Self->NextStage){auto Next=Self->NextStage;const FString Id=FString::FromInt(Index+1);Extra.Add({TEXT("다음 스테이지"),[Next,Id]{Next(Id);}});}
+            if(Index<Self->StageCount&&Self->NextStage){auto Next=Self->NextStage;const FString Id=FString::FromInt(Index+1);Extra.Add({TEXT("다음 스테이지"),[Next,Id]{Next(Id);}});}
             Self->ShowOver(TEXT("출구에 닿았습니다"),Error.IsEmpty()?Detail:Detail+TEXT("\n")+Error,Extra);
         };
         if(!Games){Finish(FString());return;}
-        Games->Finish(RunId,true,ActiveMs(),0,Moves,[Finish](TSharedPtr<FJsonObject>,const FString& Error){Finish(Error);});
+        Games->Finish(RunId,true,ActiveMs(),0,Moves,[Finish](TSharedPtr<FJsonObject>,const FString& Error){Finish(Error);},0,HintsUsed);
     }
     int32 Dir(const FKey& K)const
     {
         for(int32 I=0;I<4;++I)if(K==Keys[I])return I;
         return K==EKeys::Up?0:K==EKeys::Down?1:K==EKeys::Left?2:K==EKeys::Right?3:INDEX_NONE;
     }
-    bool IsGameKey(const FKey& K)const override{return Dir(K)!=INDEX_NONE||K==EKeys::Q||K==EKeys::E||K==EKeys::SpaceBar||K==EKeys::Z||K==EKeys::BackSpace||K==EKeys::R;}
+    bool IsGameKey(const FKey& K)const override{return Dir(K)!=INDEX_NONE||K==EKeys::Q||K==EKeys::E||K==EKeys::SpaceBar||K==EKeys::Z||K==EKeys::BackSpace||K==EKeys::R||K==EKeys::H;}
     bool Key(const FKeyEvent& E,bool bDown)override
     {
         if(!bDown)return IsGameKey(E.GetKey());
@@ -642,6 +708,7 @@ private:
         if(K==EKeys::SpaceBar){Do(TEXT("S"));return true;}
         if(K==EKeys::Z||K==EKeys::BackSpace){Undo();return true;}
         if(K==EKeys::R){Restart();return true;}
+        if(K==EKeys::H){UseHint();return true;}
         return false;
     }
     TSharedRef<SWidget> Controls()override
@@ -650,11 +717,21 @@ private:
             +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(TEXT("왼쪽 보기"),[this]{if(Phase==EPhase::Running)Turn(TurnLeft(State.Facing));})]
             +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(TEXT("오른쪽 보기"),[this]{if(Phase==EPhase::Running)Turn(TurnRight(State.Facing));})]
             +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(TEXT("셔터"),[this]{if(Phase==EPhase::Running)Do(TEXT("S"));})]
-            +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(TEXT("되돌리기"),[this]{if(Phase==EPhase::Running)Undo();})];
+            +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(TEXT("되돌리기"),[this]{if(Phase==EPhase::Running)Undo();})]
+            +SHorizontalBox::Slot().FillWidth(1).Padding(2)[SNew(SButton).IsFocusable(false).ButtonStyle(&ProjectDFSDUI::ButtonStyle(false)).ContentPadding(FMargin(10,6)).HAlign(HAlign_Center)
+                .IsEnabled_Lambda([this]{return Phase==EPhase::Running&&HintWait()<=0&&HintReady();})
+                .OnClicked_Lambda([this]{UseHint();return FReply::Handled();})
+                [SNew(STextBlock).Font(Font(12,TEXT("Bold"))).ColorAndOpacity(ProjectDFSDUI::Text()).Text_Lambda([this]
+                {
+                    if(HintWait()>0)return FText::FromString(FString::Printf(TEXT("힌트 %d초"),FMath::CeilToInt(HintWait())));
+                    static const TCHAR* Names[]={TEXT("힌트 1 · 예고 (H)"),TEXT("힌트 2 · 열쇠 칸 (H)"),TEXT("힌트 3 · 다음 한 수 (H)"),TEXT("다음 한 수 (H)")};
+                    return FText::FromString(Names[FMath::Clamp(HintLevel,0,3)]);
+                })]];
     }
     TSharedRef<FJsonObject> SaveState()const override
     {
-        auto J=MakeShared<FJsonObject>();TArray<TSharedPtr<FJsonValue>> List;for(const FString& M:Moves)List.Add(MakeShared<FJsonValueString>(M));J->SetArrayField(TEXT("moves"),List);return J;
+        auto J=MakeShared<FJsonObject>();TArray<TSharedPtr<FJsonValue>> List;for(const FString& M:Moves)List.Add(MakeShared<FJsonValueString>(M));J->SetArrayField(TEXT("moves"),List);
+        J->SetNumberField(TEXT("hints"),HintsUsed);J->SetNumberField(TEXT("hintLevel"),HintLevel);return J;
     }
     void Cell(const FGeometry& G,float& Size,FVector2D& Origin)const
     {
@@ -669,6 +746,11 @@ private:
         const TCHAR To=D.X==0?(D.Y<0?TEXT('U'):TEXT('D')):D.Y==0?(D.X<0?TEXT('L'):TEXT('R')):0;
         if(!To||D==FIntPoint::ZeroValue)return;
         if(FMath::Abs(D.X)+FMath::Abs(D.Y)==1)Do(FString(1,&To));else Turn(To); // next cell: step; further in a line: look that way
+    }
+    void BoardMove(const FGeometry& G,const FPointerEvent& E)override
+    {
+        float Size;FVector2D Origin;Cell(G,Size,Origin);const FVector2D P=(Local(G,E)-Origin)/Size;
+        Hover=FIntPoint(FMath::FloorToInt(P.X),FMath::FloorToInt(P.Y));
     }
     int32 PaintBoard(const FDraw& D)const override
     {
@@ -696,6 +778,32 @@ private:
             const FVector2D P=At(State.Mannequins[I]);
             Mannequin(Top,P+FVector2D(Size*.5f,Size*.95f),Size*.88f,0,I==Watched?0:2,I==Watched?FLinearColor(.55f,.52f,.47f,1.f):FLinearColor(.3f,.28f,.26f,1.f),Ink());
             if(I==Watched)Top.Ring(P+FVector2D(Size*.5f,Size*.5f),Size*.46f,FLinearColor(.95f,.85f,.5f,.9f),3.f); // frozen by the player's look (the tip line names the ring)
+        }
+        // Hint 1: for the neighbouring cell under the mouse, where each mannequin would step (red cross: caught there).
+        if(HintLevel>=1&&Phase==EPhase::Running&&FMath::Abs(Hover.X-State.Player.X)+FMath::Abs(Hover.Y-State.Player.Y)==1)
+        {
+            const FIntPoint Step=Hover-State.Player;const TCHAR To=Step.X>0?TEXT('R'):Step.X<0?TEXT('L'):Step.Y>0?TEXT('D'):TEXT('U');
+            FStepState Ahead=State;const EStepResult R=Ahead.Apply(FString(1,&To));
+            if(R!=EStepResult::Invalid)
+            {
+                const FDraw Ghost{D.Out,D.G,D.Layer+3};
+                for(int32 I=0;I<State.Mannequins.Num()&&I<Ahead.Mannequins.Num();++I)if(Ahead.Mannequins[I]!=State.Mannequins[I])
+                {
+                    const FVector2D From=At(State.Mannequins[I])+FVector2D(Size*.5f,Size*.5f),Into=At(Ahead.Mannequins[I])+FVector2D(Size*.5f,Size*.5f);
+                    Ghost.Line({From,Into},FLinearColor(.95f,.55f,.35f,.8f),3.f);Ghost.Ring(Into,Size*.22f,FLinearColor(.95f,.55f,.35f,.8f),2.f);
+                }
+                const FVector2D C=At(Hover)+FVector2D(Size*.5f,Size*.5f);
+                if(R==EStepResult::Caught){const float A=Size*.25f;Ghost.Line({C-FVector2D(A,A),C+FVector2D(A,A)},FLinearColor(.95f,.3f,.25f,1.f),4.f);Ghost.Line({C+FVector2D(-A,A),C+FVector2D(A,-A)},FLinearColor(.95f,.3f,.25f,1.f),4.f);}
+                else Ghost.Ring(C,Size*.3f,FLinearColor(.6f,.85f,1.f,.7f),2.f);
+            }
+        }
+        // Hint 2: one cell the answer passes through. Hint 3: the next move as an arrow from the player.
+        if(HintLevel>=2&&KeyCell.X>=0){const FVector2D C=At(KeyCell)+FVector2D(Size*.5f,Size*.5f);Top.Ring(C,Size*.4f,FLinearColor(.55f,.95f,.65f,.9f),3.f);Top.Text(C-FVector2D(Size*.12f,Size*.2f),TEXT("★"),FMath::Max(10,int32(Size*.3f)),FLinearColor(.55f,.95f,.65f,1.f),true);}
+        if(!NextMove.IsEmpty())
+        {
+            const FIntPoint Dir=FStepState::Delta(NextMove[0]);const FVector2D C=At(State.Player)+FVector2D(Size*.5f,Size*.5f),Tip=C+FVector2D(Dir.X,Dir.Y)*Size*.85f;
+            Top.Line({C,Tip},FLinearColor(.55f,.95f,.65f,1.f),5.f);Top.Ring(Tip,Size*.12f,FLinearColor(.55f,.95f,.65f,1.f),4.f);
+            if(NextMove.Len()>1)Top.Text(Tip+FVector2D(Size*.15f,-Size*.4f),TEXT("셔터"),FMath::Max(9,int32(Size*.2f)),FLinearColor(.55f,.95f,.65f,1.f),true);
         }
         const FVector2D Me=At(State.Player)+FVector2D(Size*.5f,Size*.5f);const FIntPoint F=FStepState::Delta(State.Facing);
         const FVector2D Fwd(F.X,F.Y),Side(-F.Y,F.X);
@@ -936,6 +1044,263 @@ private:
 };
 
 // ======================================================================== the folder
+// ======================================================================== 셔터 내려
+/**
+ * Three aisles. Mannequins run from the dark end toward the player; dropping an aisle's fire shutter (1/2/3 or a click)
+ * stops a runner that hits it while it is down. Tell: a creak as each runner sets off, and the runner itself. Counter:
+ * the shutter, held down for a moment. Weak spot: after it lifts, the motor needs a second before it can drop again, so
+ * dropping early wastes it. Runners come faster and closer together, later in pairs.
+ */
+class SProjectShutterGame final:public SProjectMiniGameView
+{
+public:
+    SLATE_BEGIN_ARGS(SProjectShutterGame){}
+    SLATE_END_ARGS()
+    void Construct(const FArguments&,const FHost& InHost,const FString& Run,int32 Ms,const TSharedPtr<FJsonObject>& Saved)
+    {
+        Random=uint32(GetTypeHash(Run))|1u;
+        if(Saved)
+        {
+            double V=0;
+            if(Saved->TryGetNumberField(TEXT("score"),V))Score=int32(V);
+            if(Saved->TryGetNumberField(TEXT("lives"),V))Lives=FMath::Clamp(int32(V),1,MaxLives);
+            if(Saved->TryGetNumberField(TEXT("random"),V))Random=uint32(V)|1u;
+        }
+        Init(InHost,TEXT("shutter"),Run,Ms);
+    }
+private:
+    struct FRunner{int32 Lane=0;float X=1.f;bool bStopped=false;float Fade=0;};
+    static constexpr int32 Lanes=3,MaxLives=3;
+    static constexpr float ShutterX=.24f,ClosedSeconds=.8f,MotorSeconds=1.f,ReachX=.04f;
+    TArray<FRunner> Runners;float Closed[Lanes]={},Motor[Lanes]={},SpawnIn=1.2f,Hurt=0;int32 Score=0,Lives=MaxLives;uint32 Random=1;
+    float Speed()const{return FMath::Min(.75f,.3f+Score*.012f);}
+    float Gap()const{return FMath::Max(.5f,1.5f-Score*.03f);}
+    float Next01(){Random=Random*1664525u+1013904223u;return float(Random>>8)/float(1u<<24);}
+    FString Hud()const override
+    {
+        return FString::Printf(TEXT("막음 %d · 목숨 %s · %.1f초"),Score,*(FString::ChrN(Lives,TEXT('●'))+FString::ChrN(MaxLives-Lives,TEXT('○'))),ActiveSeconds);
+    }
+    FHowTo HowTo()const override
+    {
+        return {TEXT("통로 세 곳으로 마네킹이 달려옵니다. 셔터에 닿는 순간 셔터가 내려가 있으면 막습니다. 세 명이 지나가면 끝입니다."),
+            TEXT("1 · 2 · 3 (위·가운데·아래 통로) 또는 통로를 눌러 셔터 내리기"),
+            TEXT("셔터는 잠깐만 내려가 있고, 올라간 뒤 1초 동안 다시 못 내립니다. 너무 일찍 내리면 놓칩니다. 출발할 때 삐걱 소리가 납니다.")};
+    }
+    int32 LaneOf(const FKey& K)const
+    {
+        return K==EKeys::One||K==EKeys::NumPadOne?0:K==EKeys::Two||K==EKeys::NumPadTwo?1:K==EKeys::Three||K==EKeys::NumPadThree?2:INDEX_NONE;
+    }
+    bool IsGameKey(const FKey& K)const override{return LaneOf(K)!=INDEX_NONE;}
+    bool Key(const FKeyEvent& E,bool bDown)override{const int32 L=LaneOf(E.GetKey());if(L==INDEX_NONE)return false;if(bDown&&!E.IsRepeat())Drop(L);return true;}
+    void Drop(int32 Lane)
+    {
+        if(Closed[Lane]>0||Motor[Lane]>0)return;
+        Closed[Lane]=ClosedSeconds;UProjectMiniGameSound::Play(EProjectMiniGameSound::Shutter);
+    }
+    void Area(const FGeometry& G,FVector2D& Origin,FVector2D& Size,float& LaneH)const
+    {
+        const FVector2D S=G.GetLocalSize();Origin=FVector2D(8,8);Size=S-FVector2D(16,16);LaneH=Size.Y/Lanes;
+    }
+    void BoardPress(const FGeometry& G,const FPointerEvent& E,bool bDown)override
+    {
+        if(!bDown)return;FVector2D O,S;float H;Area(G,O,S,H);
+        const int32 Lane=FMath::FloorToInt((Local(G,E).Y-O.Y)/H);if(Lane>=0&&Lane<Lanes)Drop(Lane);
+    }
+    void TickGame(float Dt)override
+    {
+        Hurt=FMath::Max(0.f,Hurt-Dt);
+        for(int32 L=0;L<Lanes;++L)
+        {
+            if(Closed[L]>0){Closed[L]-=Dt;if(Closed[L]<=0){Closed[L]=0;Motor[L]=MotorSeconds;}}
+            else Motor[L]=FMath::Max(0.f,Motor[L]-Dt);
+        }
+        SpawnIn-=Dt;
+        if(SpawnIn<=0)
+        {
+            SpawnIn=Gap()*(.8f+.4f*Next01());const int32 Lane=FMath::Min(Lanes-1,int32(Next01()*Lanes));
+            Runners.Add({Lane,1.f});
+            if(Score>=12&&Next01()<.35f)Runners.Add({Lane,1.13f}); // a second one close behind: one long drop covers both
+            UProjectMiniGameSound::PlayFrom(EProjectMiniGameSound::Creak,0.f,.5f+.25f*Lane,1.f);
+        }
+        for(FRunner& R:Runners)
+        {
+            if(R.bStopped){R.Fade+=Dt;continue;}
+            const float Before=R.X;R.X-=Speed()*Dt;
+            if(Before>ShutterX&&R.X<=ShutterX&&Closed[R.Lane]>0){R.X=ShutterX+.01f;R.bStopped=true;++Score;UProjectMiniGameSound::Play(EProjectMiniGameSound::Knock);}
+            else if(R.X<=ReachX){R.bStopped=true;R.Fade=1.f;--Lives;Hurt=.6f;UProjectMiniGameSound::Play(EProjectMiniGameSound::Bad);}
+        }
+        Runners.RemoveAll([](const FRunner& R){return R.bStopped&&R.Fade>=.6f;});
+        if(Lives>0)return;
+        UProjectMiniGameSound::Play(EProjectMiniGameSound::Caught);
+        Phase=EPhase::Busy;const int32 Ms=ActiveMs(),Stopped=Score;
+        const TWeakPtr<SProjectShutterGame> Weak=StaticCastSharedRef<SProjectShutterGame>(AsShared());
+        auto Show=[Weak,Stopped,Ms](const FString& Error){if(auto Self=Weak.Pin())Self->ShowOver(TEXT("세 명이 지나갔습니다"),FString::Printf(TEXT("%d명 막음 · %.1f초"),Stopped,Ms/1000.f)+(Error.IsEmpty()?FString():TEXT("\n")+Error));};
+        auto* Games=Subsystem();if(!Games){Show(FString());return;}
+        Games->Finish(RunId,false,Ms,0,{},[Show](TSharedPtr<FJsonObject>,const FString& Error){Show(Error);},0,0,Stopped);
+    }
+    // A pause keeps the score and lives; the aisles start empty again after the countdown.
+    void OnPaused()override{Runners.Reset();SpawnIn=1.2f;for(int32 L=0;L<Lanes;++L){Closed[L]=0;Motor[L]=0;}}
+    TSharedRef<FJsonObject> SaveState()const override
+    {
+        auto J=MakeShared<FJsonObject>();J->SetNumberField(TEXT("score"),Score);J->SetNumberField(TEXT("lives"),Lives);J->SetNumberField(TEXT("random"),double(Random));return J;
+    }
+    int32 PaintBoard(const FDraw& D)const override
+    {
+        FVector2D O,S;float H;Area(D.G,O,S,H);
+        D.Box(O,S,FLinearColor(.02f,.019f,.018f,1.f));
+        const FDraw Top{D.Out,D.G,D.Layer+2};
+        for(int32 L=0;L<Lanes;++L)
+        {
+            const FVector2D LaneO=O+FVector2D(0,H*L);
+            // The aisle fades into the dark toward where the runners come from.
+            for(int32 I=0;I<8;++I)D.Box(LaneO+FVector2D(S.X*I/8.f,3),FVector2D(S.X/8.f+1,H-6),FLinearColor(.09f,.085f,.075f,1.f)*(1.f-I*.1f)+FLinearColor(0,0,0,1.f)*(I*.1f));
+            const float Sx=O.X+S.X*ShutterX;
+            Top.Text(FVector2D(Sx+10,LaneO.Y+6),FString::FromInt(L+1),16,FLinearColor(.85f,.82f,.75f,.9f),true); // the key that drops this shutter
+            if(Closed[L]>0)for(int32 I=0;I<5;++I)Top.Box(FVector2D(Sx-6,LaneO.Y+4+I*(H-8)/5.f),FVector2D(12,(H-8)/5.f-3),FLinearColor(.6f,.22f,.12f,1.f));
+            else
+            {
+                Top.Line({FVector2D(Sx,LaneO.Y+4),FVector2D(Sx,LaneO.Y+H-4)},FLinearColor(.6f,.22f,.12f,Motor[L]>0?.25f:.7f),2.f);
+                if(Motor[L]>0)Top.Box(FVector2D(Sx-14,LaneO.Y+H-10),FVector2D(28*(1.f-Motor[L]/MotorSeconds),4),FLinearColor(.75f,.7f,.6f,.7f)); // motor recharging
+            }
+        }
+        for(const FRunner& R:Runners)
+        {
+            const float A=R.bStopped?FMath::Clamp(1.f-R.Fade/.6f,0.f,1.f):1.f;
+            const FVector2D Foot(O.X+S.X*R.X,O.Y+H*(R.Lane+.92f));
+            Mannequin(Top,Foot,H*.8f,0,1,FLinearColor(.5f,.47f,.42f,A),FLinearColor(.03f,.028f,.025f,A)); // arms up, reaching
+        }
+        // The player at the near end of the aisles; a red wash for a moment when one gets through (no flashing).
+        Top.Disc(FVector2D(O.X+S.X*.03f,O.Y+S.Y*.5f),FMath::Min(14.f,H*.2f),FLinearColor(.55f,.75f,.85f,1.f));
+        if(Hurt>0)Top.Box(O,S,FLinearColor(.6f,.05f,.03f,.25f*Hurt/.6f));
+        return D.Layer+4;
+    }
+};
+
+// ======================================================================== 흉내 내기
+/**
+ * The player hides as one of five mannequins in a dark shop window. A torch sweeps the row from the left; every
+ * mannequin stands in the same pose, and the player must stand in it too by the time the light reaches them. While it is
+ * dark again the mannequins take a new pose. Tell: the light shows each pose as it passes the others first. Counter: set
+ * head (Q/W/E) and arms (A/S/D). Weak spot: the sweep speeds up and, later, the dark hides the poses until lit.
+ */
+class SProjectMimicGame final:public SProjectMiniGameView
+{
+public:
+    SLATE_BEGIN_ARGS(SProjectMimicGame){}
+    SLATE_END_ARGS()
+    void Construct(const FArguments&,const FHost& InHost,const FString& Run,int32 Ms,const TSharedPtr<FJsonObject>& Saved)
+    {
+        Random=uint32(GetTypeHash(Run))|1u;
+        if(Saved)
+        {
+            double V=0;
+            if(Saved->TryGetNumberField(TEXT("score"),V))Score=int32(V);
+            if(Saved->TryGetNumberField(TEXT("lives"),V))Lives=FMath::Clamp(int32(V),1,MaxLives);
+            if(Saved->TryGetNumberField(TEXT("random"),V))Random=uint32(V)|1u;
+        }
+        NewPose();
+        Init(InHost,TEXT("mimic"),Run,Ms);
+    }
+private:
+    static constexpr int32 Count=5,Me=3,MaxLives=3;
+    static constexpr float DarkSeconds=.6f;
+    int32 Head=0,Arm=0,MyHead=0,MyArm=0,Score=0,Lives=MaxLives;uint32 Random=1;
+    float Beam=-.15f,Dark=DarkSeconds,Hurt=0;bool bChecked=false,bLastGood=true;
+    float SweepSeconds()const{return FMath::Max(1.3f,4.f-Score*.15f);}
+    float DarkAlpha()const{return Score<6?.5f:Score<12?.25f:.1f;} // later the dark hides the poses until the light passes
+    float Next01(){Random=Random*1664525u+1013904223u;return float(Random>>8)/float(1u<<24);}
+    void NewPose()
+    {
+        const int32 OldHead=Head,OldArm=Arm;
+        do{Head=FMath::Min(2,int32(Next01()*3));Arm=FMath::Min(2,int32(Next01()*3));}while(Head==OldHead&&Arm==OldArm);
+    }
+    static float SlotX(int32 I){return .12f+I*.19f;}
+    FString Hud()const override
+    {
+        return FString::Printf(TEXT("버팀 %d · 목숨 %s · %.1f초"),Score,*(FString::ChrN(Lives,TEXT('●'))+FString::ChrN(MaxLives-Lives,TEXT('○'))),ActiveSeconds);
+    }
+    FHowTo HowTo()const override
+    {
+        return {TEXT("파란 옷이 나입니다. 손전등이 나에게 오기 전에 다른 마네킹과 같은 자세를 하세요. 세 번 들키면 끝입니다."),
+            TEXT("고개: Q 왼쪽 · W 정면 · E 오른쪽 / 팔: A 내림 · S 만세 · D 한쪽 뻗기 (내 머리·몸을 눌러도 바뀜)"),
+            TEXT("불이 꺼진 사이 마네킹들이 자세를 바꿉니다. 빛이 왼쪽 마네킹들을 먼저 비추니 그때 보고 따라 하세요. 점점 빨라지고 어두워집니다.")};
+    }
+    bool IsGameKey(const FKey& K)const override{return K==EKeys::Q||K==EKeys::W||K==EKeys::E||K==EKeys::A||K==EKeys::S||K==EKeys::D;}
+    bool Key(const FKeyEvent& E,bool bDown)override
+    {
+        const FKey K=E.GetKey();if(!IsGameKey(K))return false;if(!bDown||E.IsRepeat())return true;
+        if(K==EKeys::Q)MyHead=1;else if(K==EKeys::W)MyHead=0;else if(K==EKeys::E)MyHead=2;
+        else if(K==EKeys::A)MyArm=0;else if(K==EKeys::S)MyArm=1;else MyArm=2;
+        UProjectMiniGameSound::Play(EProjectMiniGameSound::Pick);return true;
+    }
+    void Window(const FGeometry& G,FVector2D& O,FVector2D& S)const{S=G.GetLocalSize()-FVector2D(16,16);O=FVector2D(8,8);}
+    void BoardPress(const FGeometry& G,const FPointerEvent& E,bool bDown)override
+    {
+        if(!bDown)return;FVector2D O,S;Window(G,O,S);const FVector2D P=Local(G,E);const float H=S.Y*.62f,Foot=O.Y+S.Y*.86f;
+        if(FMath::Abs(P.X-(O.X+S.X*SlotX(Me)))>H*.25f||P.Y>Foot||P.Y<Foot-H)return;
+        if(P.Y<Foot-H*.82f)MyHead=(MyHead+1)%3;else MyArm=(MyArm+1)%3; // the head cycles its way; the body cycles the arms
+        UProjectMiniGameSound::Play(EProjectMiniGameSound::Pick);
+    }
+    void TickGame(float Dt)override
+    {
+        Hurt=FMath::Max(0.f,Hurt-Dt);
+        if(Dark>0){Dark-=Dt;return;}
+        Beam+=Dt/SweepSeconds();
+        if(!bChecked&&Beam>=SlotX(Me))
+        {
+            bChecked=true;bLastGood=MyHead==Head&&MyArm==Arm;
+            if(bLastGood){++Score;UProjectMiniGameSound::Play(EProjectMiniGameSound::Good);}
+            else{--Lives;Hurt=.8f;UProjectMiniGameSound::Play(EProjectMiniGameSound::Bad);}
+        }
+        if(Lives<=0)
+        {
+            UProjectMiniGameSound::Play(EProjectMiniGameSound::Caught);
+            Phase=EPhase::Busy;const int32 Ms=ActiveMs(),Held=Score;
+            const TWeakPtr<SProjectMimicGame> Weak=StaticCastSharedRef<SProjectMimicGame>(AsShared());
+            auto Show=[Weak,Held,Ms](const FString& Error){if(auto Self=Weak.Pin())Self->ShowOver(TEXT("들켰습니다"),FString::Printf(TEXT("%d번 버팀 · %.1f초"),Held,Ms/1000.f)+(Error.IsEmpty()?FString():TEXT("\n")+Error));};
+            auto* Games=Subsystem();if(!Games){Show(FString());return;}
+            Games->Finish(RunId,false,Ms,0,{},[Show](TSharedPtr<FJsonObject>,const FString& Error){Show(Error);},0,0,Held);return;
+        }
+        if(Beam>=1.15f){Beam=-.15f;Dark=DarkSeconds;bChecked=false;NewPose();UProjectMiniGameSound::Play(EProjectMiniGameSound::Creak);}
+    }
+    // After a pause the sweep starts over from the dark (a new pose), so a paused screen is never studied for free.
+    void OnPaused()override{Beam=-.15f;Dark=DarkSeconds;bChecked=false;NewPose();}
+    TSharedRef<FJsonObject> SaveState()const override
+    {
+        auto J=MakeShared<FJsonObject>();J->SetNumberField(TEXT("score"),Score);J->SetNumberField(TEXT("lives"),Lives);J->SetNumberField(TEXT("random"),double(Random));return J;
+    }
+    int32 PaintBoard(const FDraw& D)const override
+    {
+        FVector2D O,S;Window(D.G,O,S);
+        D.Box(O,S,FLinearColor(.015f,.014f,.013f,1.f));
+        D.Box(O+FVector2D(0,S.Y*.86f),FVector2D(S.X,S.Y*.14f),FLinearColor(.05f,.045f,.04f,1.f)); // the window's floor
+        const float BeamX=O.X+S.X*Beam,BeamW=S.X*.16f;
+        const FDraw Light{D.Out,D.G,D.Layer+1};
+        if(Dark<=0)for(int32 I=0;I<12;++I)
+        {
+            const float T=(I+.5f)/12.f,Edge=1.f-FMath::Abs(T-.5f)*2.f;
+            Light.Box(FVector2D(BeamX-BeamW*.5f+BeamW*I/12.f,O.Y),FVector2D(BeamW/12.f+1,S.Y),FLinearColor(1.f,.9f,.62f,.12f*Edge));
+        }
+        const FDraw Top{D.Out,D.G,D.Layer+3};
+        static const FLinearColor Garments[]={{.32f,.05f,.04f,1.f},{.16f,.19f,.04f,1.f},{.42f,.27f,.03f,1.f},{.04f,.07f,.24f,1.f},{.2f,.05f,.24f,1.f}};
+        const float H=S.Y*.62f,Foot=O.Y+S.Y*.86f;
+        for(int32 I=0;I<Count;++I)
+        {
+            const float X=O.X+S.X*SlotX(I);
+            const bool bLit=Dark<=0&&FMath::Abs(X-BeamX)<BeamW*.5f;
+            const float A=I==Me?1.f:bLit?1.f:DarkAlpha();
+            const bool bMine=I==Me;
+            FLinearColor Body(.42f,.4f,.37f,A),Edge(.03f,.028f,.025f,A),Cloth=bMine?FLinearColor(.1f,.3f,.6f,1.f):Garments[I]*FLinearColor(1,1,1,A);
+            if(Dark>0&&!bMine){Body.A=Edge.A=Cloth.A=.06f;} // the change itself happens unseen
+            Mannequin(Top,FVector2D(X,Foot),H,bMine?MyHead:Head,bMine?MyArm:Arm,Body,Edge,&Cloth);
+            if(bMine)Top.Text(FVector2D(X-8,Foot+6),TEXT("나"),12,FLinearColor(.6f,.8f,1.f,1.f),true);
+        }
+        if(bChecked&&Beam<1.15f)Top.Text(FVector2D(O.X+12,O.Y+10),bLastGood?TEXT("통과"):TEXT("들켰습니다"),16,bLastGood?FLinearColor(.3f,.85f,.45f,1.f):FLinearColor(.95f,.4f,.3f,1.f),true);
+        if(Hurt>0)Top.Box(O,S,FLinearColor(.6f,.05f,.03f,.25f*Hurt/.8f));
+        return D.Layer+5;
+    }
+};
+
 class SProjectMiniGameFolder final:public SCompoundWidget
 {
 public:
@@ -998,7 +1363,8 @@ private:
         auto List=SNew(SVerticalBox);
         struct FCard{FString Id,Desc;};
         for(const FCard& Card:{FCard{TEXT("spot"),TEXT("불이 꺼진 사이 움직인 마네킹을 찾으세요.")},FCard{TEXT("blackout"),TEXT("손전등으로 마네킹을 멈춰 두고 퓨즈 3개를 끼우세요.")},FCard{TEXT("steps"),TEXT("한 칸씩, 보고 있는 마네킹은 멈춥니다. 출구까지 가세요.")},
-            FCard{TEXT("listen"),TEXT("어둠 속 삐걱 소리, 어느 쪽에서 났을까요? 이어폰을 권합니다.")},FCard{TEXT("approach"),TEXT("마네킹이 되어, 생존자가 돌아보지 않을 때만 다가가세요.")}})
+            FCard{TEXT("listen"),TEXT("어둠 속 삐걱 소리, 어느 쪽에서 났을까요? 이어폰을 권합니다.")},FCard{TEXT("approach"),TEXT("마네킹이 되어, 생존자가 돌아보지 않을 때만 다가가세요.")},
+            FCard{TEXT("shutter"),TEXT("마네킹이 통로를 달려옵니다. 닿기 직전에 방화 셔터를 내리세요.")},FCard{TEXT("mimic"),TEXT("마네킹 사이에 숨었습니다. 손전등이 오기 전에 같은 자세를 하세요.")}})
         {
             const FString Id=Card.Id;const bool bOpen=Id!=TEXT("steps")&&OpenRun(Id).IsValid();
             const FString Mine=Best(Id,Id==TEXT("steps")?TEXT("stars"):TEXT("all"));
@@ -1010,11 +1376,21 @@ private:
                 Buttons->AddSlot().FillWidth(1).Padding(2)[Button(bOpen?TEXT("새로 시작"):TEXT("시작"),[this,Id]{Begin(Id,FString());},!bOpen)];
             }
             Buttons->AddSlot().FillWidth(1).Padding(2)[Button(TEXT("순위"),[this,Id]{ShowBoard(Id,Id==TEXT("steps")?TEXT("stars"):TEXT("all"),true);})];
-            List->AddSlot().AutoHeight().Padding(10,4)[SNew(SBorder).BorderImage(Round(12)).BorderBackgroundColor(FLinearColor(1,1,1,.05f)).Padding(FMargin(12,10))[SNew(SVerticalBox)
+            auto Box=SNew(SVerticalBox)
                 +SVerticalBox::Slot().AutoHeight()[Label(GameName(Id),15,true)]
                 +SVerticalBox::Slot().AutoHeight().Padding(0,2)[Label(Card.Desc,11,false,ProjectDFSDUI::Muted())]
                 +SVerticalBox::Slot().AutoHeight().Padding(0,2,0,6)[Label(Mine.IsEmpty()?TEXT("최고 기록 없음"):TEXT("최고 기록 ")+Mine,11,false,ProjectDFSDUI::Accent())]
-                +SVerticalBox::Slot().AutoHeight()[Buttons]]];
+                +SVerticalBox::Slot().AutoHeight()[Buttons];
+            if(Id==TEXT("blackout"))
+            {
+                // 무한 모드: its own saved run and board, so it never ends the normal run.
+                const bool bEndlessOpen=OpenRun(TEXT("endless")).IsValid();const FString EndlessBest=Best(TEXT("endless"),TEXT("all"));
+                Box->AddSlot().AutoHeight().Padding(0,8,0,2)[Label(EndlessBest.IsEmpty()?TEXT("무한 모드 · 기록 없음"):TEXT("무한 모드 최고 ")+EndlessBest,11,false,ProjectDFSDUI::Accent())];
+                Box->AddSlot().AutoHeight()[SNew(SHorizontalBox)
+                    +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(bEndlessOpen?TEXT("무한 이어하기"):TEXT("무한 모드"),[this]{Resume(TEXT("endless"));})]
+                    +SHorizontalBox::Slot().FillWidth(1).Padding(2)[Button(TEXT("무한 순위"),[this]{ShowBoard(TEXT("endless"),TEXT("all"),true);})]];
+            }
+            List->AddSlot().AutoHeight().Padding(10,4)[SNew(SBorder).BorderImage(Round(12)).BorderBackgroundColor(FLinearColor(1,1,1,.05f)).Padding(FMargin(12,10))[Box]];
         }
         Screen->SetContent(SNew(SVerticalBox)
             +SVerticalBox::Slot().AutoHeight().Padding(8,6,12,6)[Header(TEXT("오프라인 게임"),[this]{Back.ExecuteIfBound();})]
@@ -1081,7 +1457,9 @@ private:
             if(!Run->TryGetObjectField(TEXT("spot"),Spot)||!FSpotRound::Parse(*Spot,Round)){Status=TEXT("판을 불러오지 못했습니다.");ShowList();return;}
             Playing=SNew(SProjectSpotGame,H,Id,int32(Ms),Round,Saved);
         }
-        else if(GameId==TEXT("blackout"))Playing=SNew(SProjectBlackoutGame,H,Id,int32(Ms),Saved);
+        else if(GameId==TEXT("blackout")||GameId==TEXT("endless"))Playing=SNew(SProjectBlackoutGame,H,Id,int32(Ms),Saved,GameId==TEXT("endless"));
+        else if(GameId==TEXT("shutter"))Playing=SNew(SProjectShutterGame,H,Id,int32(Ms),Saved);
+        else if(GameId==TEXT("mimic"))Playing=SNew(SProjectMimicGame,H,Id,int32(Ms),Saved);
         else if(GameId==TEXT("approach"))Playing=SNew(SProjectApproachGame,H,Id,int32(Ms),Saved);
         else if(GameId==TEXT("listen"))
         {
@@ -1094,7 +1472,7 @@ private:
             const FStepStage* S=Stages.FindByPredicate([&](const FStepStage& X){return X.Id==Stage;});
             if(!S){Status=TEXT("스테이지를 불러오지 못했습니다.");ShowList();return;}
             const TWeakPtr<SProjectMiniGameFolder> Weak=StaticCastSharedRef<SProjectMiniGameFolder>(AsShared());
-            Playing=SNew(SProjectStepsGame,H,Id,int32(Ms),SProjectStepsGame::FSetup{*S,Saved,[Weak](const FString& Next){if(auto F=Weak.Pin())F->Pending=[F,Next]{F->Begin(TEXT("steps"),Next);};}});
+            Playing=SNew(SProjectStepsGame,H,Id,int32(Ms),SProjectStepsGame::FSetup{*S,Saved,[Weak](const FString& Next){if(auto F=Weak.Pin())F->Pending=[F,Next]{F->Begin(TEXT("steps"),Next);};},Stages.Num()});
         }
         // A fresh run opens on the how-to card (한 칸씩: only its first stage; later stages show their tip line instead).
         if(Ms<=0&&!Saved&&(GameId!=TEXT("steps")||Stage==TEXT("1")))Playing->ShowIntro();
@@ -1188,6 +1566,9 @@ bool FProjectMiniGameRenderTest::RunTest(const FString&)
     auto ListenAnswer=MakeShared<FJsonObject>();ListenAnswer->SetStringField(TEXT("phase"),TEXT("answer"));
     Capture(SNew(SProjectListenGame,Host,TEXT("qa"),0,Listen,ListenAnswer),TEXT("Listen.png"),3.5f);
     Capture(SNew(SProjectApproachGame,Host,TEXT("qa-approach"),0,nullptr),TEXT("Approach_Start.png"),3.5f);
+    Capture(SNew(SProjectBlackoutGame,Host,TEXT("qa-endless"),0,nullptr,true),TEXT("Blackout_Endless.png"),5.f);
+    Capture(SNew(SProjectShutterGame,Host,TEXT("qa-shutter"),0,nullptr),TEXT("Shutter.png"),6.f);
+    Capture(SNew(SProjectMimicGame,Host,TEXT("qa-mimic"),0,nullptr),TEXT("Mimic.png"),5.2f);
     auto Close=MakeShared<FJsonObject>();Close->SetNumberField(TEXT("distance"),70);Close->SetNumberField(TEXT("elapsed"),12);Close->SetNumberField(TEXT("strikes"),1);
     Capture(SNew(SProjectApproachGame,Host,TEXT("qa-approach"),12000,Close),TEXT("Approach_Close.png"),3.5f);
     Size=FIntPoint(352,640); // upright again (the player turned the phone back): still playable

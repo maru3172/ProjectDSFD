@@ -39,6 +39,8 @@ public:
 	/** C10 (대피 방송): every footstep on this client is muffled until this platform time. */
 	static double AffixMuffleUntil;
 	static float AffixMuffle() { return FPlatformTime::Seconds() < AffixMuffleUntil ? 0.25f : 1.0f; }
+	/** Item roguelike: the owner's footstep loudness (survivor S01/S09 and, for a local mannequin player, M06; body M01/M08). */
+	float RogueLoudness() const;
 	/** Accepted contacts on the game thread, also when SFX is muted. No new network traffic. */
 	FProjectProject01FootContact OnFootContact;
 

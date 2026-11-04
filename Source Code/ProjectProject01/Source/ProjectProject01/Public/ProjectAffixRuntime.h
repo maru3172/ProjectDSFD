@@ -41,6 +41,21 @@ public:
     float BotAttackIntervalScale()const;
     bool IsRushActive()const{return bRush;}
 
+    // Item roguelike items (ProjectItemRoguelike.h, Docs/ItemRoguelikeMode.md). All 1 / false outside that mode.
+    /** S13 narrows (-10%), S15 widens (+10%) this survivor's freezing gaze. */
+    float GazeAngleScale(const APlayerCharacter* Survivor)const;
+    /** M04: the mannequin player's direct attack reaches 15% further. */
+    float ManualAttackRangeScale()const;
+    /** M11: survivor pings reach the mannequin player (and mannequin bots). */
+    bool MannequinSeesPings()const;
+    /** Bot hearing: footsteps from this source carry this much further (S01, S09, M01, M08, M06). */
+    float BotHearingScale(const APawn* Listener,const AActor* Source)const;
+    void OnSurvivorPingFrom(class AMultiplayTestPlayerController* Sender,const FVector& Location);
+    /** A survivor lost a death count (bEliminated false) or was caught for good. */
+    void OnSurvivorHit(APlayerCharacter* Survivor,bool bEliminated);
+    /** S03: the first catch of the match is blocked (the death count stays). True when this catch was blocked. */
+    bool TryShieldCatch(APlayerCharacter* Survivor,AMannequinAICharacter* Catcher);
+
     static constexpr float MaxSlow=.3f;
     static constexpr float MaxBoost=.25f;
     static float SpeedScale(float StrongestSlow,float StrongestBoost)
@@ -80,13 +95,39 @@ private:
         double FlashUntil=-1;FLinearColor Flash=FLinearColor::Black;
         double ClusterSince=-1,FrozenSince=-1,LastSeen=-1,DoubleUntil=-1,BoostUntil=-1;float BoostAmount=0;
         double AttackBlockedUntil=-1;int32 Watchers=0;bool bHandedOff=false,bLocked=false;
+        // Item roguelike.
+        double TapeUntil=-1,ClockCooldownUntil=-1,WatchAlertCooldownUntil=-1,NextDustAt=-1,NextFrostAt=-1;
+        bool bWasFrozen=false,bTapeWatched=false;
     };
     struct FSurvivor
     {
         TWeakObjectPtr<AMannequinAICharacter> WatchTarget;double WatchSince=-1;
         FVector Anchor=FVector::ZeroVector;double AnchorSince=-1,ApartSince=-1,StaminaFreeUntil=-1,RecoveryDelayUntil=-1,NextPulse=-1,FlashUntil=-1;
         float LastStamina=-1;bool bWatching=false;
+        // Item roguelike.
+        TWeakObjectPtr<AMannequinAICharacter> SharedTarget;double MirrorCooldownUntil=-1,NextTrailAt=-1,NextSharePulseAt=-1,GlintUntil=-1;
+        double AdrenalineUntil=-1;int32 ChalkMarks=0;bool bDrankThisFloor=false;
     };
+    // Item roguelike, per floor.
+    double LastCatchAt=-1,FeedCommandBlockUntil=-1,BatonLockUntil=-1;
+    TWeakObjectPtr<AMannequinAICharacter> BatonLast,FeedBody;double FeedUntil=-1,BatonUntil=-1;
+    TMap<FVector,double> ExitWatchCooldown; // M15, per exit location.
+    bool bLastStandNotified=false;
+    const class UProjectItemRoguelikeRuntime* Rogue()const;
+    bool Item(const APlayerCharacter* Survivor,const TCHAR* Id)const;
+    bool MannequinItem(const TCHAR* Id)const;
+    void RogueTickStart(AMultiplayTestGameMode* Mode);
+    // Marks that last longer than one client pulse (3 s): the server sends them again until they expire.
+    struct FRogueMark{FVector At=FVector::ZeroVector;FLinearColor Color=FLinearColor::White;float Radius=100;double Until=0,NextAt=0;TWeakObjectPtr<class AMultiplayTestPlayerController> Only;};
+    TArray<FRogueMark> RogueMarks;TArray<FVector> RogueExits;double RogueStartAt=-1;
+    void RogueSurvivor(AMultiplayTestGameMode* Mode,APlayerCharacter* Survivor,FSurvivor& S,const TArray<APlayerCharacter*,TInlineAllocator<4>>& Active,
+        float& Drain,float& Recovery,float& Slow,float& Boost,FLinearColor& Cue,float& CueStrength);
+    void RogueBody(AMultiplayTestGameMode* Mode,AMannequinAICharacter* Body,FBody& State,const TArray<APlayerCharacter*,TInlineAllocator<4>>& Active,
+        float& Slow,float& Boost,FLinearColor& Cue,float& CueStrength);
+    void NotifyTo(class AMultiplayTestPlayerController* Controller,const FString& Message,float Hold=2.f)const;
+    void NotifyRole(bool bMannequins,const FString& Message,float Hold=2.f)const;
+    void PulseTo(class AMultiplayTestPlayerController* Controller,const FVector& Location,const FLinearColor& Color,float Seconds,float Radius)const;
+    void PulseRole(bool bMannequins,const FVector& Location,const FLinearColor& Color,float Seconds,float Radius)const;
     TMap<TWeakObjectPtr<AMannequinAICharacter>,FBody> Bodies;
     TMap<TWeakObjectPtr<APlayerCharacter>,FSurvivor> Survivors;
     TMap<TPair<TWeakObjectPtr<APlayerCharacter>,TWeakObjectPtr<AMannequinAICharacter>>,double> LastMet; // C01

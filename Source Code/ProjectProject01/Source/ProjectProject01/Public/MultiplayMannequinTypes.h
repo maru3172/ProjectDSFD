@@ -18,6 +18,21 @@ enum class EMultiplayMannequinCommand : uint8
 	HoldPosition UMETA(DisplayName = "정지")
 };
 
+/** 명령 휠(오른쪽 클릭)의 항목. 휠에 놓이는 순서(위에서 시계 방향)와 같습니다. */
+UENUM(BlueprintType)
+enum class EMannequinWheelAction : uint8
+{
+	Patrol UMETA(DisplayName = "정찰"),
+	ChaseInDetectionRange UMETA(DisplayName = "범위 추격"),
+	FollowMannequinPlayer UMETA(DisplayName = "따라오기"),
+	HoldPosition UMETA(DisplayName = "정지"),
+	ManualControl UMETA(DisplayName = "직접 조작"),
+	Possess UMETA(DisplayName = "빙의"),
+	ResetFollowing UMETA(DisplayName = "추종 해제"),
+	ToggleCatchDamage UMETA(DisplayName = "잡기 피해"),
+	Count UMETA(Hidden)
+};
+
 /** 서버가 판정한 각 마네킹의 실제 현재 행동입니다. */
 UENUM(BlueprintType)
 enum class EMultiplayMannequinActivity : uint8

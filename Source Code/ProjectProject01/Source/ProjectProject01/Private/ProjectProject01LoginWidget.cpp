@@ -3,6 +3,7 @@
 
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectCaseRecords.h"
+#include "ProjectMatchWait.h"
 #include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectDFSDUITheme.h"
@@ -2620,12 +2621,9 @@ void UProjectProject01GameGuideWidget::RefreshGuideText()
 		ControlsText->SetText(FProjectProject01Localization::Text(
 			TEXT("조작키\n"
 				"0~9 : 머리 위 번호와 같은 마네킹 시점 선택\n"
-				"V : 선택한 마네킹 직접 조작\n"
-				"Z : 선택한 마네킹 정찰\n"
-				"X : 선택한 마네킹 감지 범위 추격\n"
-				"C : 선택한 마네킹 플레이어 추종\n"
-				"Q : 추종 중인 마네킹을 정찰 상태로 초기화\n"
-				"B : 전체 AI 마네킹 접촉 데스카운트 소모 켜기/끄기\n"
+				"마우스 우클릭 : 명령 휠 (조준한 마네킹, 없으면 지금 시점 마네킹에게)\n"
+				"  정찰 · 범위 추격 · 따라오기 · 정지 · 직접 조작 · 빙의 · 추종 해제 · 잡기 피해\n"
+				"  휠에서 좌클릭으로 실행, 우클릭·ESC로 닫기\n"
 				"마우스 좌클릭 : 직접 조작 중 공격 (직접 조작 공격·접촉은 항상 피해 적용)\n"
 				"W/A/S/D : 직접 조작 이동 | 마우스 : 시점\n"
 				"ESC : 게임 메뉴")));
@@ -4238,6 +4236,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
                 Details+=FString::Printf(TEXT("\n\n[%s] %s — %s"),Mannequin?TEXT("마네킹"):TEXT("생존자"),*Player.Name,*Outcome);
                 Details+=Mannequin?FString::Printf(TEXT("\n포획 %d회 · 첫 포획 %.2f초 · 전원 포획 %.2f초"),Player.CaptureCount,Player.FirstCaptureSeconds,Player.AllCapturedSeconds):
                     FString::Printf(TEXT("\n구출 %d회 · 탈출 시간 %s"),Player.RescueCount,Player.bSuccess?*FString::Printf(TEXT("%.2f초"),Player.EscapeSeconds):TEXT("—"));
+                if(const FString Cards=ProjectRoguePickSummary(Player.RoguePicks,true);!Cards.IsEmpty())Details+=TEXT("\n")+Cards; // Item roguelike: everyone's cards.
             }
         }
         else Details += FString::Printf(TEXT("\n역할: %s\n전체 경기 시간: %.2f초"),*Result.Role, Result.MatchDurationSeconds);
@@ -4255,6 +4254,10 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	ResultText->SetText(FProjectProject01Localization::Text(Details));
     auto DisplayFont=ResultText->GetFont();DisplayFont.Size=Result.Role==TEXT("Observer")?22:36;ResultText->SetFont(DisplayFont);
     ResultText->SetAutoWrapText(Result.Role==TEXT("Observer"));ResultText->SetWrapTextAt(900);
+	// Item roguelike: this player's own cards under the summary (nothing carries over to the next match).
+	const FString RogueCards = !bSinglePlayer && Result.Role!=TEXT("Observer") && !Result.RoguePicks.IsEmpty() ? ProjectRoguePickSummary(Result.RoguePicks[0], false) : FString();
+	if (IsValid(RogueCardsText) && RogueCardsText->GetText().ToString()!=RogueCards) RogueCardsText->SetText(FText::FromString(RogueCards));
+	if (IsValid(RogueCardsFrame)) RogueCardsFrame->SetVisibility(RogueCards.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	const bool bHasTimeline = !bSinglePlayer && Result.Role==TEXT("Observer") && !Result.Timeline.IsEmpty();
 	if (!bHasTimeline) bShowingTimeline = false;
 	if (IsValid(TimelineButton))
@@ -4404,7 +4407,15 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	StatusText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	StatusText->SetJustification(ETextJustify::Center);
 	ResultMenu->AddChildToVerticalBox(StatusText)->SetPadding(FMargin(8.0f));
-	TimelineButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("경기 타임라인"));
+	RogueCardsFrame = WidgetTree->ConstructWidget<USizeBox>();
+	RogueCardsFrame->SetWidthOverride(760); RogueCardsFrame->SetMaxDesiredHeight(170);
+	RogueCardsFrame->SetVisibility(ESlateVisibility::Collapsed);
+	UScrollBox* CardsScroll = WidgetTree->ConstructWidget<UScrollBox>(); RogueCardsFrame->AddChild(CardsScroll);
+	RogueCardsText = WidgetTree->ConstructWidget<UTextBlock>(); CardsScroll->AddChild(RogueCardsText);
+	RogueCardsText->SetAutoWrapText(true); RogueCardsText->SetColorAndOpacity(FSlateColor(FLinearColor(.9f,.88f,.84f)));
+	{ FSlateFontInfo CardsFont = RogueCardsText->GetFont(); CardsFont.Size = 17; RogueCardsText->SetFont(CardsFont); }
+	ResultMenu->AddChildToVerticalBox(RogueCardsFrame)->SetPadding(FMargin(12.0f, 4.0f));
+	TimelineButton =ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("경기 타임라인"));
 	TimelineButton->SetVisibility(ESlateVisibility::Collapsed);
 	TimelineFrame = WidgetTree->ConstructWidget<USizeBox>();
 	TimelineFrame->SetWidthOverride(760); TimelineFrame->SetHeightOverride(240);
@@ -5508,6 +5519,7 @@ bool UProjectProject01LobbyWidget::Initialize()
 void UProjectProject01LobbyWidget::NativeConstruct()
 {
     if(auto* Social=GameInstanceSubsystemOf<UProjectProject01SocialSubsystem>(this))Social->SetLobbyVisible(true);
+    if(auto* Wait=GameInstanceSubsystemOf<UProjectMatchWait>(this))MatchWaitOpenHandle=Wait->OnOpenMatchView.AddUObject(this,&ThisClass::HandleOpenMatchViewFromPanel);
     if(IsValid(LobbySettingsButton))LobbySettingsButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbySettingsClicked);
 	Super::NativeConstruct();
     // A desertion from an earlier match: its result is shown once on coming into the lobby.
@@ -5629,6 +5641,7 @@ FReply UProjectProject01LobbyWidget::NativeOnKeyDown(const FGeometry& InGeometry
 
 void UProjectProject01LobbyWidget::NativeDestruct()
 {
+    if(auto* Wait=GameInstanceSubsystemOf<UProjectMatchWait>(this)){Wait->OnOpenMatchView.Remove(MatchWaitOpenHandle);Wait->SetLobbyMatchViewShown(false);}
     if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this))Records->OnChanged.RemoveAll(this);
 	if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(TutorialTravelTimer);
     if(auto* Social=GameInstanceSubsystemOf<UProjectProject01SocialSubsystem>(this))Social->SetLobbyVisible(false);
@@ -5720,6 +5733,8 @@ void UProjectProject01LobbyWidget::HandleInitialTutorialPlay()
 void UProjectProject01LobbyWidget::HandleInitialTutorialSkip()
 {
     if(InitialTutorialPrompt)InitialTutorialPrompt->SetVisibility(ESlateVisibility::Collapsed);
+    // Skipping still clears the main quest's tutorial step, the same as its own 건너뛰기 (the server ignores it on any other step).
+    if(auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this))Records->MainQuestAction(TEXT("SkipTutorial"),TEXT("Survivor"));
     SetKeyboardFocus();
 }
 
@@ -5733,6 +5748,7 @@ void UProjectProject01LobbyWidget::HandleOpenMatchClicked()
 {
     bShowingBotMatch=false;
     HandleCloseCodeJoinClicked();
+    bMatchViewMinimized=false;
     bShowingOpenMatching=true;bShowingMatchmaking=false;bShowingCreateRoom=false;ShowLobbyView(0);
 }
 void UProjectProject01LobbyWidget::HandleBotMatchClicked()
@@ -5849,8 +5865,31 @@ void UProjectProject01LobbyWidget::HandleMatchRoleChanged(FString Item,ESelectIn
     bRoleWritePending=true;SubmittedMatchRole=DesiredMatchRole;
     Records->PartyAction(TEXT("Role"),FString(),FString(),SubmittedMatchRole);
 }
+void UProjectProject01LobbyWidget::HandleMatchModeChanged(FString Item,ESelectInfo::Type SelectionType)
+{
+    if(SelectionType==ESelectInfo::Direct)return;
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
+    if(!Lobby||!Lobby->HasCurrentRoom()||Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||bTravelRequested||bGameStartFadeActive){RefreshMatchModeSelection();return;}
+    const EProjectMatchMode Mode=Item==TEXT("아이템 로그라이크")?EProjectMatchMode::ItemRoguelike:EProjectMatchMode::Normal;
+    if(Mode!=Lobby->GetCurrentRoom().MatchMode)Lobby->SetMatchMode(Mode);
+}
+void UProjectProject01LobbyWidget::RefreshMatchModeSelection()
+{
+    auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);if(!Lobby)return;
+    const bool InRoom=Lobby->HasCurrentRoom();const auto& Room=Lobby->GetCurrentRoom();
+    const FString Shown=InRoom&&Room.MatchMode==EProjectMatchMode::ItemRoguelike?TEXT("아이템 로그라이크"):TEXT("일반");
+    const bool Changeable=InRoom&&Room.bIsHost&&!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted&&
+        !Lobby->IsMatchmaking()&&!Lobby->IsRequestInFlight()&&!bTravelRequested&&!bGameStartFadeActive;
+    for(auto* Combo:{RoomMatchMode.Get(),RandomMatchMode.Get()})if(Combo)
+    {
+        if(Combo->GetSelectedOption()!=Shown)Combo->SetSelectedOption(Shown);
+        Combo->SetIsEnabled(Changeable&&(Combo==RandomMatchMode.Get())==Room.bRandomParty);
+    }
+    if(RoomMatchMode)RoomMatchMode->SetVisibility(InRoom&&!Room.bBotMatch?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+}
 void UProjectProject01LobbyWidget::RefreshRoleSelection()
 {
+    RefreshMatchModeSelection();
     auto* Records=GameInstanceSubsystemOf<UProjectCaseRecords>(this);
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);if(!Lobby)return;
     const auto& Room=Lobby->GetCurrentRoom();
@@ -5953,7 +5992,9 @@ void UProjectProject01LobbyWidget::HandleTutorialClicked()
 {
     bShowingBotMatch=false;
 	auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
-	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || bTravelRequested || bGameStartFadeActive) return;
+	// Waiting in an open room or the random queue (put aside with "로비로") does not stop tutorial and practice.
+	const bool bWaitingAside=bMatchViewMinimized&&CanMinimizeMatchView();
+	if (!Lobby || (!bWaitingAside && (Lobby->HasCurrentRoom() || Lobby->IsMatchmaking())) || bTravelRequested || bGameStartFadeActive) return;
 	bShowingTutorial=true; ShowLobbyView(6);
 }
 void UProjectProject01LobbyWidget::HandleAddRoomBot()
@@ -6004,7 +6045,8 @@ void UProjectProject01LobbyWidget::HandleMannequinPracticeClicked() { StartTutor
 void UProjectProject01LobbyWidget::StartTutorial(bool bMannequin,bool bFreePractice)
 {
 	auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
-	if (!Lobby || Lobby->HasCurrentRoom() || Lobby->IsMatchmaking() || Lobby->IsRequestInFlight() || bTravelRequested || bGameStartFadeActive) return;
+	const bool bWaitingAside=bMatchViewMinimized&&CanMinimizeMatchView();
+	if (!Lobby || (!bWaitingAside && (Lobby->HasCurrentRoom() || Lobby->IsMatchmaking())) || Lobby->IsRequestInFlight() || bTravelRequested || bGameStartFadeActive) return;
 	UWorld* World=GetWorld();
 	if (!IsValid(World)) return;
 	const FName TutorialMap(TEXT("/Game/MyProject/Level/MultiplayerTutorial"));
@@ -6024,12 +6066,31 @@ void UProjectProject01LobbyWidget::HandleRandomMatchClicked()
 {
     bShowingBotMatch=false;
     HandleCloseCodeJoinClicked();
+    bMatchViewMinimized=false;
     bShowingMatchmaking=true;bShowingOpenMatching=false;bShowingCreateRoom=false;bPartyCreationRequested=false;ShowLobbyView(3);RefreshMatchmakingView();RefreshLobbyState();
+}
+bool UProjectProject01LobbyWidget::CanMinimizeMatchView()const
+{
+    const auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);const auto* Wait=GameInstanceSubsystemOf<UProjectMatchWait>(this);
+    return Lobby&&Wait&&Wait->IsWaiting()&&!Wait->IsStarting()&&!bTravelRequested&&!bGameStartFadeActive;
+}
+void UProjectProject01LobbyWidget::HandleMinimizeMatchView()
+{
+    if(!CanMinimizeMatchView())return;
+    bMatchViewMinimized=true;bShowingTutorial=false;bShowingBotMatch=false;HandleCloseCodeJoinClicked();
+    RefreshCurrentRoomView();
+}
+void UProjectProject01LobbyWidget::HandleOpenMatchViewFromPanel()
+{
+    bMatchViewMinimized=false;bShowingTutorial=false;
+    if(auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);Lobby&&Lobby->IsMatchmaking())bShowingMatchmaking=true;
+    RefreshCurrentRoomView();
 }
 void UProjectProject01LobbyWidget::HandleLobbyModesClicked()
 {
     bShowingBotMatch=false;
     bShowingTutorial=false;
+    if(bMatchViewMinimized){ShowLobbyView(4);return;} // still waiting in the room / queue: back to the lobby menu only
     auto* Lobby=GameInstanceSubsystemOf<UProjectProject01LobbySubsystem>(this);
     if(!Lobby)return;
     if(Lobby->IsMatchmaking()||Lobby->IsRequestInFlight()||(Lobby->HasCurrentRoom()&&Lobby->GetCurrentRoom().bRandomMatch))return;
@@ -6059,6 +6120,7 @@ void UProjectProject01LobbyWidget::RefreshMatchmakingView()
     if(MatchStartButton)MatchStartButton->SetIsEnabled(Party&&Leader&&Lobby->GetCurrentRoom().Members.Num()==1&&!Matched&&!Waiting&&!Busy);
     if(MatchCancelButton)MatchCancelButton->SetIsEnabled(!Matched&&Leader&&Waiting&&!Lobby->IsCancellingMatchmaking());
     if(MatchBackButton)MatchBackButton->SetIsEnabled(!Matched&&!Waiting&&!Busy);
+    if(MinimizeMatchButton)MinimizeMatchButton->SetIsEnabled(Waiting&&!Matched);
     FString Text=Matched?(Lobby->GetCurrentRoom().bReturnedToRoom?TEXT("경기 종료 정리 중 — 개인 대기 상태로 돌아갑니다."):TEXT("매칭 완료 (3/3) — 매칭 취소 불가")):Waiting
         ? (Lobby->MatchmakingWaiting>=3?TEXT("매칭 확정 대기 중 — 방 또는 서버 공간을 기다리고 있습니다.")
            :FString::Printf(TEXT("인원 모집 중 (%d/3)"),FMath::Clamp(Lobby->MatchmakingWaiting,1,2)))
@@ -6805,7 +6867,12 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 		bShowingBotMatch=true;
 		Lobby->LeaveRoom();
 	}
-	ShowLobbyView(BotRoom?7:bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
+	// Put aside with "로비로": stay on the lobby menu (or the tutorial list) until the wait ends or the match starts.
+	if(bMatchViewMinimized&&!CanMinimizeMatchView())bMatchViewMinimized=false;
+	if(bMatchViewMinimized)ShowLobbyView(bShowingTutorial?6:4);
+	else ShowLobbyView(BotRoom?7:bInRoom&&Lobby->GetCurrentRoom().bRandomParty?3:bInRoom?2:bShowingMatchmaking?3:bShowingCreateRoom?1:bCodeJoinOpen?5:bShowingBotMatch?7:bShowingTutorial?6:bShowingOpenMatching?0:4);
+	if(MinimizeRoomButton)MinimizeRoomButton->SetVisibility(bInRoom&&!BotRoom&&!ShownRoom.bRandomParty?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+	if(MinimizeRoomButton)MinimizeRoomButton->SetIsEnabled(CanMinimizeMatchView());
     if(BotMatchCreateButton)BotMatchCreateButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&!bTravelRequested&&!bGameStartFadeActive);
 	if (IsValid(CreateRoomButton)) CreateRoomButton->SetIsEnabled(!bInRoom);
 	if (IsValid(JoinRoomButton)) JoinRoomButton->SetIsEnabled(!bInRoom&&!Lobby->IsRequestInFlight()&&PublicRoomLabels.Contains(SelectedPublicRoomCode));
@@ -6859,8 +6926,10 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 			*Room.Name, *Room.JoinCode, Playing,Observers,
 			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"));
         if(Room.CustomRules.bEnabled)Summary+=FString::Printf(TEXT("\n사용자 지정 · 데스카운트 %d · 마네킹 %d · %s"),Room.CustomRules.DeathCount,Room.CustomRules.MannequinCount,*(Room.CustomRules.TimeLimitSeconds==0?FString(TEXT("시간 무제한")):FString::Printf(TEXT("제한 %d분"),Room.CustomRules.TimeLimitSeconds/60)));
+        if(Room.MatchMode==EProjectMatchMode::ItemRoguelike)Summary+=TEXT("\n아이템 로그라이크 · 시작과 층마다 카드 선택 · 비공식 경기");
         CurrentRoomText->SetText(FText::FromString(Summary));
 	}
+    RefreshMatchModeSelection();
     auto DisplayMembers=Room.Members;
     for(const auto& Bot:Room.Bots)
     {
@@ -6989,6 +7058,8 @@ void UProjectProject01LobbyWidget::ShowLobbyView(const int32 ViewIndex)
 	{
 		LobbyViewSwitcher->SetActiveWidgetIndex(ViewIndex);
 	}
+	// The left wait panel stays out of the way while this screen itself shows the room or the matching state.
+	if(auto* Wait=GameInstanceSubsystemOf<UProjectMatchWait>(this))Wait->SetLobbyMatchViewShown(ViewIndex==2||ViewIndex==3);
 }
 
 void UProjectProject01LobbyWidget::HandleRoomSearchChanged(const FText& SearchText)
@@ -7065,6 +7136,9 @@ void UProjectProject01LobbyWidget::BeginGameStartCountdown()
     }
 	GameStartFadeElapsedSeconds = 0.0f;
 	GameStartCountdownNumber = 5;
+	// Counted 5..1 already where the player was waiting (practice, ProjectMatchWait): go straight on, no second count.
+	const bool bCountedAway = [this]{ auto* Wait = GameInstanceSubsystemOf<UProjectMatchWait>(this); return Wait && Wait->ConsumeCountedDownAway(); }();
+	if (bCountedAway) GameStartCountdownNumber = 1;
 	if (IsValid(StartCountdownPanel))
 	{
 		StartCountdownPanel->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
@@ -7079,7 +7153,7 @@ void UProjectProject01LobbyWidget::BeginGameStartCountdown()
 		World->GetTimerManager().SetTimer(
 			GameStartCountdownTimer, this,
 			&UProjectProject01LobbyWidget::AdvanceGameStartCountdown,
-			1.0f, true, 1.0f);
+			1.0f, true, bCountedAway ? 0.1f : 1.0f);
 	}
 }
 
@@ -7457,6 +7531,11 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     ProjectDFSDUI::Apply(RoomMatchRole);
     RoomMatchRole->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchRoleChanged);
     auto* RoleBox=WidgetTree->ConstructWidget<USizeBox>();RoleBox->SetWidthOverride(112);RoleBox->SetHeightOverride(26);RoleBox->AddChild(RoomMatchRole);RoomRoleRow->AddChildToHorizontalBox(RoleBox)->SetPadding(FMargin(0));
+    // Match mode beside the role: only the host of a waiting open room can change it; everyone sees it.
+    RoomMatchMode=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();for(const TCHAR* Mode:{TEXT("일반"),TEXT("아이템 로그라이크")})RoomMatchMode->AddOption(Mode);RoomMatchMode->SetSelectedIndex(0);
+    ProjectDFSDUI::Apply(RoomMatchMode);RoomMatchMode->SetToolTipText(FText::FromString(TEXT("아이템 로그라이크: 경기 시작과 층마다 카드 3장 중 1장을 고릅니다. 공식 기록에 남지 않습니다.")));
+    RoomMatchMode->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchModeChanged);
+    auto* ModeBox=WidgetTree->ConstructWidget<USizeBox>();ModeBox->SetWidthOverride(168);ModeBox->SetHeightOverride(26);ModeBox->AddChild(RoomMatchMode);RoomRoleRow->AddChildToHorizontalBox(ModeBox)->SetPadding(FMargin(8,0,0,0));
 	CopyJoinCodeButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomHeader,TEXT("참가 코드 복사"));
 	CastChecked<UHorizontalBoxSlot>(CopyJoinCodeButton->Slot)->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
 	RoomToolsToggleButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomHeader,TEXT("방 관리"));
@@ -7535,15 +7614,22 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	ReadyButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomActions,TEXT("준비"));
 	StartRoomButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomActions,TEXT("게임 시작"));
 	SwitchObserverButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomActions,TEXT("관전으로 전환"));SwitchObserverButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleSwitchObserver);
+	MinimizeRoomButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomActions,TEXT("로비로"));MinimizeRoomButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMinimizeMatchView);
+	MinimizeRoomButton->SetToolTipText(FText::FromString(TEXT("방에 남은 채 로비로 나갑니다. 왼쪽 패널로 준비·시작·나가기를 할 수 있습니다.")));
 	LeaveRoomButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomActions,TEXT("방 나가기"));
 	for(UWidget* Control:TArray<UWidget*>{ReadyButton.Get(),StartRoomButton.Get(),LeaveRoomButton.Get(),CopyJoinCodeButton.Get(),HostTransferFrame.Get(),TransferHostButton.Get(),DeleteRoomButton.Get()})Control->SetVisibility(ESlateVisibility::Collapsed);
     UVerticalBox* Matching=MakeScrollablePanel(); // 3: explicit random-match consent, readiness and queue.
     ProjectProject01LoginUI::AddLabel(WidgetTree,Matching,TEXT("랜덤 매칭 (솔로 전용)"),26);
     RandomMatchRole=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();for(const FString& Role:{FString(TEXT("무작위")),FString(TEXT("생존자")),FString(TEXT("마네킹"))})RandomMatchRole->AddOption(Role);RandomMatchRole->SetSelectedIndex(0);
     RandomMatchRole->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchRoleChanged);Matching->AddChildToVerticalBox(RandomMatchRole)->SetPadding(FMargin(6,4));
+    // Each mode has its own queue: pick before 시작 (locked while searching).
+    RandomMatchMode=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();for(const TCHAR* Mode:{TEXT("일반"),TEXT("아이템 로그라이크")})RandomMatchMode->AddOption(Mode);RandomMatchMode->SetSelectedIndex(0);
+    RandomMatchMode->SetToolTipText(FText::FromString(TEXT("같은 모드를 고른 사람끼리만 매칭됩니다. 아이템 로그라이크는 공식 기록에 남지 않습니다.")));
+    RandomMatchMode->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchModeChanged);Matching->AddChildToVerticalBox(RandomMatchMode)->SetPadding(FMargin(6,4));
     MatchStatusText=ProjectProject01LoginUI::AddLabel(WidgetTree,Matching,TEXT("시작 → 매칭 중…"),22);
     MatchStartButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("시작"));MatchStartButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMatchStartClicked);
     MatchCancelButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("매칭 취소"));MatchCancelButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMatchCancelClicked);
+    MinimizeMatchButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("로비로 (매칭 유지)"));MinimizeMatchButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMinimizeMatchView);
     MatchBackButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("뒤로가기"));MatchBackButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLobbyModesClicked);
     MatchLogoutButton=ProjectProject01LoginUI::AddButton(WidgetTree,Matching,TEXT("로그아웃 / 로그인 화면으로"));
     MatchLogoutButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);

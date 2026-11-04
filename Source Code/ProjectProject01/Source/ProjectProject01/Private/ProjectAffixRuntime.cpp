@@ -16,7 +16,7 @@ namespace
         Gold(1.f,.85f,.35f),Dust(.75f,.62f,.42f),Alarm(1.f,.08f,.06f),Grey(.6f,.6f,.62f),Crack(1.f,.35f,.1f);
 }
 
-bool UProjectAffixRuntime::Has(const TCHAR* Id)const{const auto* Mode=Owner.Get();return Mode&&Mode->GetMatchAffixes().Has(Id);}
+bool UProjectAffixRuntime::Has(const TCHAR* Id)const{const auto* Mode=Owner.Get();return Mode&&Mode->HasAffixRule(Id);}
 
 void UProjectAffixRuntime::Reset()
 {
@@ -25,6 +25,7 @@ void UProjectAffixRuntime::Reset()
     {Survivor->SetAffixStaminaDrainScale(1.f);Survivor->SetAffixStaminaRecoveryScale(1.f);Survivor->SetAffixSpeedScale(1.f);Survivor->SetAffixSprintBlocked(false);Survivor->SetAffixCue(FLinearColor::Black,0.f);}
     Bodies.Reset();Survivors.Reset();LastMet.Reset();Viewed.Reset();Announced.Reset();
     bRush=bShift=bQuake=bBroadcast=bLockedPicked=false;ClosingStageShown=-1;HuntUntil=-1;
+    LastCatchAt=FeedCommandBlockUntil=BatonLockUntil=FeedUntil=BatonUntil=-1;BatonLast.Reset();FeedBody.Reset();ExitWatchCooldown.Reset();bLastStandNotified=false;
 }
 
 void UProjectAffixRuntime::Notify(const FString& Message,float Hold)const
@@ -54,7 +55,7 @@ bool UProjectAffixRuntime::Cycle(FName Key,double Match,double Period,double Off
 
 bool UProjectAffixRuntime::OnWatched(AMannequinAICharacter* Body,const TArray<APlayerCharacter*>& Watchers,bool bObserved)
 {
-    auto* Mode=Owner.Get();if(!Mode||!Body||!Mode->GetMatchAffixes().IsActive())return bObserved;
+    auto* Mode=Owner.Get();if(!Mode||!Body||!Mode->AreAffixRulesActive())return bObserved;
     FBody& State=Bodies.FindOrAdd(Body);State.Watchers=Watchers.Num();
     if(bObserved)State.LastSeen=Now;
     for(APlayerCharacter* Survivor:Watchers)
@@ -76,23 +77,31 @@ bool UProjectAffixRuntime::OnWatched(AMannequinAICharacter* Body,const TArray<AP
     }
     // A09: two survivors on one body keep it frozen a second after both look away.
     if(Has(TEXT("A09"))&&Watchers.Num()>=2)State.DoubleUntil=Now+1.0;
-    return bObserved||(Has(TEXT("A09"))&&Now<State.DoubleUntil);
+    // Item roguelike S07: a body held by a taped survivor's gaze stays frozen half a second after release.
+    State.bTapeWatched=false;
+    if(bObserved)for(const APlayerCharacter* Survivor:Watchers)if(Item(Survivor,TEXT("S07"))){State.TapeUntil=Now+.5;State.bTapeWatched=true;break;}
+    return bObserved||(Has(TEXT("A09"))&&Now<State.DoubleUntil)||Now<State.TapeUntil;
 }
 
 void UProjectAffixRuntime::OnCatch(AMannequinAICharacter* Catcher)
 {
-    if(!Owner.IsValid()||!Owner->GetMatchAffixes().IsActive())return;
+    if(!Owner.IsValid()||!Owner->AreAffixRulesActive())return;
     if(Catcher&&Has(TEXT("A05"))){FBody& State=Bodies.FindOrAdd(Catcher);State.SlowUntil=Now+3.0;State.SlowAmount=.3f;State.FlashUntil=Now+3.0;State.Flash=Spark;}
     if(Has(TEXT("B10"))){HuntUntil=Now+10.0;Notify(TEXT("사냥의 열기 · 10초"));}
+    LastCatchAt=Now; // M09 starts over.
+    // M10: the catching body feeds: faster for 5 s, but no orders meanwhile.
+    if(Catcher&&MannequinItem(TEXT("M10"))){FeedBody=Catcher;FeedUntil=Now+5.0;FeedCommandBlockUntil=Now+5.0;}
 }
 
 void UProjectAffixRuntime::OnManualAttack(AMannequinAICharacter* Body,bool bHit)
 {
-    if(!Body||!Owner.IsValid()||!Owner->GetMatchAffixes().IsActive())return;
+    if(!Body||!Owner.IsValid()||!Owner->AreAffixRulesActive())return;
     FBody& State=Bodies.FindOrAdd(Body);
     if(Has(TEXT("C02")))State.AttackBlockedUntil=FMath::Max(State.AttackBlockedUntil,Now+1.0);
     // A04: a missed lunge staggers the body (visible) and costs a recovery before the next attack.
     if(!bHit&&Has(TEXT("A04"))){State.AttackBlockedUntil=FMath::Max(State.AttackBlockedUntil,Now+1.5);State.SlowUntil=Now+.6;State.SlowAmount=.3f;State.FlashUntil=Now+.6;State.Flash=Amber;}
+    // Item roguelike M04: the long reach shows on the arm and costs half a second more before the next swing.
+    if(MannequinItem(TEXT("M04"))){State.AttackBlockedUntil=FMath::Max(State.AttackBlockedUntil,Now+.5);if(Now>=State.FlashUntil){State.FlashUntil=Now+.3;State.Flash=Amber;}}
 }
 
 void UProjectAffixRuntime::OnCommand(AMannequinAICharacter* Body,EMultiplayMannequinCommand Command)
@@ -109,18 +118,18 @@ void UProjectAffixRuntime::OnSurvivorPing(const FVector&)
 bool UProjectAffixRuntime::CanManualAttack(const AMannequinAICharacter* Body)const
 {const FBody* State=Body?Bodies.Find(Body):nullptr;return !State||Now>=State->AttackBlockedUntil;}
 bool UProjectAffixRuntime::CanPossess(const AMannequinAICharacter* Body)const
-{const FBody* State=Body?Bodies.Find(Body):nullptr;return !bShift&&!(State&&State->bLocked);}
+{const FBody* State=Body?Bodies.Find(Body):nullptr;return !bShift&&!(State&&State->bLocked)&&Now>=BatonLockUntil;} // M03 wait
 bool UProjectAffixRuntime::CanCommand(const AMannequinAICharacter* Body)const
-{const FBody* State=Body?Bodies.Find(Body):nullptr;return !(State&&State->bLocked);}
+{const FBody* State=Body?Bodies.Find(Body):nullptr;return !(State&&State->bLocked)&&Now>=FeedCommandBlockUntil;} // M10 feeding
 float UProjectAffixRuntime::BotAttackIntervalScale()const{return Has(TEXT("C02"))?1.3f:1.f;}
 
 void UProjectAffixRuntime::Tick(AMultiplayTestGameMode* Mode,float DeltaSeconds)
 {
     if(!Mode||DeltaSeconds<=0.f)return;
     Owner=Mode;
-    const FProjectMatchAffixes& Set=Mode->GetMatchAffixes();
-    if(!Set.IsActive())return;
+    if(!Mode->AreAffixRulesActive())return;
     UWorld* World=Mode->GetWorld();Now=World->GetTimeSeconds();const double Match=Mode->GetElapsedMatchSeconds();
+    RogueTickStart(Mode);
 
     // Floor-wide rules (C group): warned on screen, then on for a fixed time.
     bRush=Has(TEXT("C05"))&&Cycle(TEXT("C05"),Match,RushPeriod,0,RushLength,RushWarning,TEXT("러시아워 3초 전"),TEXT("러시아워 시작 · 15초"),2.f);
@@ -172,7 +181,7 @@ void UProjectAffixRuntime::Tick(AMultiplayTestGameMode* Mode,float DeltaSeconds)
         FSurvivor& S=Survivors.FindOrAdd(Survivor);
         const FVector Here=Survivor->GetActorLocation();const bool Sprinting=Survivor->IsSprintingForBreathing();if(Sprinting)Sprinters.Add(Survivor);
         const bool Still=Survivor->GetVelocity().Size2D()<60.f;
-        float Drain=1.f,Recovery=1.f,Slow=0.f;FLinearColor Cue=FLinearColor::Black;float CueStrength=0.f;
+        float Drain=1.f,Recovery=1.f,Slow=0.f,Boost=0.f;FLinearColor Cue=FLinearColor::Black;float CueStrength=0.f;
         if(!S.bWatching){S.WatchTarget.Reset();S.WatchSince=-1;}
         if(bRush)Drain*=RushStaminaDrain;
         if(Now<S.StaminaFreeUntil)Drain=0.f; // C01
@@ -207,9 +216,10 @@ void UProjectAffixRuntime::Tick(AMultiplayTestGameMode* Mode,float DeltaSeconds)
         // B04: near an exit, the exit sign flashes.
         if(!Exits.IsEmpty()&&Now>=S.NextPulse)for(const FVector& Exit:Exits)if(FVector::Dist2D(Exit,Here)<500.f){S.NextPulse=Now+.4;Pulse(Exit+FVector(0,0,180),Alarm,.3f,260.f);break;}
         if(Now<S.FlashUntil){Cue=Gold;CueStrength=1.f;} // C01 startle
+        RogueSurvivor(Mode,Survivor,S,Active,Drain,Recovery,Slow,Boost,Cue,CueStrength); // Item roguelike items.
         if(bQuake)Slow=FMath::Max(Slow,.3f);
         Survivor->SetAffixStaminaDrainScale(Drain);Survivor->SetAffixStaminaRecoveryScale(Recovery);
-        Survivor->SetAffixSpeedScale(SpeedScale(Slow,0.f));Survivor->SetAffixSprintBlocked(bShift);
+        Survivor->SetAffixSpeedScale(SpeedScale(Slow,Boost));Survivor->SetAffixSprintBlocked(bShift);
         Survivor->SetAffixCue(Cue,CueStrength);
         S.bWatching=false; // Refilled by the next vision pass.
     }
@@ -292,6 +302,7 @@ void UProjectAffixRuntime::Tick(AMultiplayTestGameMode* Mode,float DeltaSeconds)
         if(bRush)Boost=FMath::Max(Boost,RushBoost);
         if(Closing>0)Boost=FMath::Max(Boost,.05f*Closing);
         if(State.bLocked){Boost=FMath::Max(Boost,.2f);if(CueStrength<.7f){Cue=Crack;CueStrength=.7f;}} // C09
+        RogueBody(Mode,Body,State,Active,Slow,Boost,Cue,CueStrength); // Item roguelike items.
         if(bQuake)Slow=FMath::Max(Slow,.3f);
         if(Now<State.FlashUntil){Cue=State.Flash;CueStrength=1.f;}
         Body->SetAffixSpeedScale(SpeedScale(Slow,Boost));

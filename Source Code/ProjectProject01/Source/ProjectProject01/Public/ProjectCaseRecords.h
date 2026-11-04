@@ -152,10 +152,13 @@ protected:
     virtual void ReleaseSlateResources(bool Children) override;
 private:
     void RefreshPanel();
-    void BuildStoryBook(const TSharedPtr<class FJsonObject>& Investigation,bool Archived);
+    void BuildStoryBook(const TSharedPtr<class FJsonObject>& Investigation,bool Archived,TSharedPtr<class SVerticalBox> Into=nullptr);
+    // The battle pass board and the archive season book redraw on their own when paged (see BuildStoryBook).
+    TSharedPtr<class SBox> StoryBookHost;TFunction<void()> RebuildStoryBook,RebuildArchiveSeason;FString StoryBookCaption;
     void BuildCollection(const TSharedPtr<class FJsonObject>& State);
     void BuildDraw(const TSharedPtr<class FJsonObject>& State);
     void BuildMainQuest(const TSharedPtr<class FJsonObject>& State);
+    void BuildLore(const TSharedPtr<class FJsonObject>& State);
     void RequestDrawAction(const FString& Operation,int32 Count);
     void ExecuteDrawAction(const FString& Operation,int32 Count);
     void RequestPurchase(const FString& Id);
@@ -178,10 +181,13 @@ private:
     FString CollectionCategory=TEXT("All"),DrawFeedback;
     double DrawFeedbackAt=-100;
     int32 CollectionPage=0;
+    // Paging the collection redraws only its cards: the buttons stay, so they keep their hover and press look.
+    TSharedPtr<class SBox> CollectionGridHost;TFunction<void()> RebuildCollectionGrid;int32 CollectionPages=1;
     int32 DrawExchangeCount=1;
     int32 SelectedQuestStage=-1;
     FString FocusAchievement; // Set by a profile link; that achievement is highlighted and scrolled to.
     FString QuestCategory=TEXT("Main"); // Main, Chain or Sub.
+    FString LoreId,LoreCategory; // 기본 기록: the open entry (empty = the list) and the category filter (empty = 전체).
     int32 SelectedChainQuest=0;
     int32 SelectedQuestChapter=0; // Which main quest line (탐사, ...) is open.
     TMap<int32,int32> DrawShowcase;
@@ -198,6 +204,10 @@ private:
     FString BioDraft;
     TSharedPtr<class SProjectShopFundsNotice> ShopFundsNotice;
     TSharedPtr<class SVerticalBox> Body;
+    // Page changes build the new body hidden behind the shown one for two frames (text wrap and heights settle), then swap,
+    // so the page never jumps or scrolls while it is rebuilt.
+    TSharedPtr<class SOverlay> BodyHost;TSharedPtr<class SVerticalBox> RetiringBody;int32 BodySwapFrames=0;bool bBodySwapTimer=false;
+    void BeginBodyRebuild();
     TSharedPtr<class SBorder> RequestShield;
     TSharedPtr<class SScrollBox> RecordsScroll;
     TWeakObjectPtr<UUserWidget> ReturnWidget;

@@ -19,8 +19,8 @@ internal static class CustomRoomRules
     {var rows=await CommunityEndpoints.Rows(c,tx,"SELECT enabled,death_count,mannequin_count,time_limit_seconds FROM room_custom_rules WHERE room_id=@id",ct,("id",id));return rows.Count==0?new():From(rows[0]);}
     internal static async Task<CustomRuleSet> MatchAsync(MySqlConnection c,MySqlTransaction? tx,string id,CancellationToken ct)
     {var rows=await CommunityEndpoints.Rows(c,tx,"SELECT enabled,death_count,mannequin_count,time_limit_seconds FROM match_custom_rules WHERE match_id=@id",ct,("id",id));return rows.Count==0?new():From(rows[0]);}
-    internal static async Task<bool> IsCustomAsync(MySqlConnection c,MySqlTransaction? tx,string id,CancellationToken ct)=>(await MatchAsync(c,tx,id,ct)).Enabled||await MatchAffixes.MatchModeAsync(c,tx,id,ct)=="Custom";
-    internal static string OfficialFilter(string column)=>$"NOT EXISTS (SELECT 1 FROM match_custom_rules cr WHERE cr.match_id={column} AND cr.enabled=TRUE) AND NOT EXISTS (SELECT 1 FROM match_affixes ma WHERE ma.match_id={column} AND ma.mode='Custom')";
+    internal static async Task<bool> IsCustomAsync(MySqlConnection c,MySqlTransaction? tx,string id,CancellationToken ct)=>(await MatchAsync(c,tx,id,ct)).Enabled||await MatchAffixes.MatchModeAsync(c,tx,id,ct)=="Custom"||await MatchModes.IsUnofficialAsync(c,tx,id,ct);
+    internal static string OfficialFilter(string column)=>$"NOT EXISTS (SELECT 1 FROM match_custom_rules cr WHERE cr.match_id={column} AND cr.enabled=TRUE) AND NOT EXISTS (SELECT 1 FROM match_affixes ma WHERE ma.match_id={column} AND ma.mode='Custom') AND {MatchModes.OfficialFilter(column)}";
     internal static Task CaptureAsync(MySqlConnection c,MySqlTransaction tx,string match,CancellationToken ct)=>CommunityEndpoints.Exec(c,tx,"""
         INSERT IGNORE INTO match_custom_rules(match_id,enabled,death_count,mannequin_count,time_limit_seconds)
         SELECT r.match_id,c.enabled,c.death_count,c.mannequin_count,c.time_limit_seconds FROM game_rooms r JOIN room_custom_rules c ON c.room_id=r.id

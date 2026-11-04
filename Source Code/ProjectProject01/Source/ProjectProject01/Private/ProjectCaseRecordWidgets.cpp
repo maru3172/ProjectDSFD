@@ -193,6 +193,7 @@ bool FProjectShopFundsNoticeFadeTest::RunTest(const FString&)
 #endif
 TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
 {
+    RetiringBody.Reset();bBodySwapTimer=false;BodySwapFrames=0; // A swap of the old Slate tree never finishes there.
     ShopFundsNotice=SNew(SProjectShopFundsNotice);
     auto Tabs=SNew(SWrapBox).UseAllottedSize(true);
     auto NavigationButton=[this](const FString& Caption,const FString& Id)
@@ -202,11 +203,16 @@ TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
           .OnClicked_Lambda([this,Id]{if(Page==TEXT("Draw")&&Id!=Page){bDrawResultOpen=false;bDrawRequestedHere=false;RareRevealQueue.Reset();if(RarePresentationLayer)RarePresentationLayer->ClearChildren();}Page=Id;if(Page==TEXT("Replays"))if(auto* R=GetGameInstance()->GetSubsystem<UProjectMatchReplay>())R->RefreshList();if(Page==TEXT("Archive"))if(auto* R=Records(this))R->RefreshStoryArchives();RefreshPanel();return FReply::Handled();})[Text];
         if(Page==TEXT("Track"))Compact(Control,16);return Control;
     };
-    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("개인 기록"),TEXT("Profile")},{TEXT("컬렉션"),TEXT("Collection")},{TEXT("성장 기록"),TEXT("Achievements")},{TEXT("배틀패스"),TEXT("Track")},{TEXT("이벤트"),TEXT("Events")},{TEXT("리플레이"),TEXT("Replays")},{TEXT("사건 보관함"),TEXT("Archive")}})
+    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("개인 기록"),TEXT("Profile")},{TEXT("컬렉션"),TEXT("Collection")},{TEXT("성장 기록"),TEXT("Achievements")},{TEXT("배틀패스"),TEXT("Track")},{TEXT("이벤트"),TEXT("Events")},{TEXT("리플레이"),TEXT("Replays")},{TEXT("사건 보관함"),TEXT("Lore")}})
         Tabs->AddSlot().Padding(3)[NavigationButton(Entry.Key,Entry.Value)];
     auto GrowthTabs=SNew(SWrapBox).UseAllottedSize(true).Visibility_Lambda([this]{return Page==TEXT("Achievements")||Page==TEXT("OnlineAchievements")||Page==TEXT("Quest")||Page==TEXT("Import")||Page==TEXT("Pvp")||Page==TEXT("Bot")||Page==TEXT("Shop")?EVisibility::Visible:EVisibility::Collapsed;});
     for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("업적·도전과제"),TEXT("Achievements")},{TEXT("퀘스트"),TEXT("Quest")},{TEXT("PvP 미션"),TEXT("Pvp")},{TEXT("봇전 미션"),TEXT("Bot")},{TEXT("보관소 상점"),TEXT("Shop")}})
         GrowthTabs->AddSlot().Padding(3)[NavigationButton(Entry.Key,Entry.Value)];
+    // 사건 보관함: 사건 기록 (the lore, kept across seasons) and 지난 날의 기록 (finished seasons' battle pass stories).
+    // The battle pass itself is played, so it has its own top tab.
+    auto RecordTabs=SNew(SWrapBox).UseAllottedSize(true).Visibility_Lambda([this]{return Page==TEXT("Archive")||Page==TEXT("Lore")?EVisibility::Visible:EVisibility::Collapsed;});
+    for(const auto& Entry:TArray<TPair<FString,FString>>{{TEXT("사건 기록"),TEXT("Lore")},{TEXT("지난 날의 기록"),TEXT("Archive")}})
+        RecordTabs->AddSlot().Padding(3)[NavigationButton(Entry.Key,Entry.Value)];
     auto Content=SNew(SBorder).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(22)
          [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,10)
           [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Collapsed:EVisibility::Visible;}).Text(FText::FromString(TEXT("사건 기록 / 개인 조사 파일"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),28)).ColorAndOpacity(ProjectDFSDUI::Text())]
@@ -214,8 +220,9 @@ TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
            +SVerticalBox::Slot().AutoHeight().Padding(0,5)[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Visible:EVisibility::Collapsed;}).Text(FText::FromString(TEXT("(~ 정식 출시 전까지)"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Muted())]]
           +SVerticalBox::Slot().AutoHeight()[Tabs]
           +SVerticalBox::Slot().AutoHeight()[GrowthTabs]
+          +SVerticalBox::Slot().AutoHeight()[RecordTabs]
           +SVerticalBox::Slot().FillHeight(1).Padding(0,14)[SAssignNew(RecordsScroll,SScrollBox)+SScrollBox::Slot()
-            [SNew(SOverlay)+SOverlay::Slot()[SAssignNew(Body,SVerticalBox)]
+            [SNew(SOverlay)+SOverlay::Slot()[SAssignNew(BodyHost,SOverlay)+SOverlay::Slot()[SAssignNew(Body,SVerticalBox)]]
              +SOverlay::Slot()[SAssignNew(RequestShield,SBorder).Padding(0).BorderImage(FCoreStyle::Get().GetBrush(TEXT("NoBrush"))).Visibility(EVisibility::Collapsed)
                 .OnMouseButtonDown_Lambda([](const FGeometry&,const FPointerEvent&){return FReply::Handled();})
                 .OnMouseButtonUp_Lambda([](const FGeometry&,const FPointerEvent&){return FReply::Handled();})
@@ -236,6 +243,27 @@ void UProjectCaseRecordWidget::Close()
     auto* Player=GetOwningPlayer();if(auto* Return=ReturnWidget.Get()){Return->SetVisibility(ESlateVisibility::Visible);if(Player){FInputModeGameAndUI Input;Input.SetWidgetToFocus(Return->TakeWidget());Player->SetInputMode(Input);}}
     else if(Player){FInputModeGameAndUI Input;Player->SetInputMode(Input);}RemoveFromParent();
 }
+void UProjectCaseRecordWidget::BeginBodyRebuild()
+{
+    // Off screen (tests, captures) or first fill: rebuild in place as before.
+    if(!BodyHost||!Body||!IsInViewport()||Body->NumSlots()==0){if(Body)Body->ClearChildren();return;}
+    if(RetiringBody)BodyHost->RemoveSlot(Body.ToSharedRef()); // a hidden build not shown yet: replaced, the shown page stays
+    else RetiringBody=Body;
+    TSharedRef<SVerticalBox> Fresh=SNew(SVerticalBox).Visibility(EVisibility::Hidden); // laid out (wrap widths, heights) but not drawn
+    BodyHost->AddSlot()[Fresh];Body=Fresh;BodySwapFrames=0;
+    if(bBodySwapTimer)return;
+    bBodySwapTimer=true;const TWeakObjectPtr<UProjectCaseRecordWidget> Self(this);
+    BodyHost->RegisterActiveTimer(0.f,FWidgetActiveTimerDelegate::CreateLambda([Self](double,float)
+    {
+        UProjectCaseRecordWidget* W=Self.Get();
+        if(!W||!W->BodyHost||!W->RetiringBody){if(W)W->bBodySwapTimer=false;return EActiveTimerReturnType::Stop;}
+        if(++W->BodySwapFrames<2)return EActiveTimerReturnType::Continue;
+        W->BodyHost->RemoveSlot(W->RetiringBody.ToSharedRef());W->RetiringBody.Reset();
+        W->Body->SetVisibility(EVisibility::Visible);W->bBodySwapTimer=false;
+        return EActiveTimerReturnType::Stop;
+    }));
+}
+
 void UProjectCaseRecordWidget::RefreshPanel()
 {
     if(!Body)return;auto* R=Records(this);if(!R)return;
@@ -260,14 +288,15 @@ void UProjectCaseRecordWidget::RefreshPanel()
     {auto VisibleRates=MakeShared<FJsonObject>();VisibleRates->Values=Rates->Values;VisibleRates->RemoveField(TEXT("updatedAtUtc"));FJsonSerializer::Serialize(VisibleRates,TJsonWriterFactory<>::Create(&RateFingerprint));}Encoded+=RateFingerprint;
     TArray<FString> Local=R->GetLocalAchievements().Array();Local.Sort();
     if(Page==TEXT("Archive"))if(const auto Archives=R->GetStoryArchives()){FString Json;FJsonSerializer::Serialize(Archives.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));Encoded+=Json;}
-    Encoded+=FString::Printf(TEXT("/%d/%d/%d"),InvestigationStage,InvestigationPiece,ArchiveIndex);
+    // Battle pass part/piece and archive season are not here: their pagers redraw only their own area (RebuildStoryBook, RebuildArchiveSeason).
+    Encoded+=FString::Printf(TEXT("/%s/%s"),*LoreId,*LoreCategory);
     if(R->DrawResult){FString ResultJson;FJsonSerializer::Serialize(R->DrawResult.ToSharedRef(),TJsonWriterFactory<>::Create(&ResultJson));Encoded+=ResultJson;}
     if(Page==TEXT("Draw"))Encoded+=R->Status; // Draw errors create inline feedback; ordinary success is silent.
     FString ReplayFingerprint;
     if(Page==TEXT("Replays"))if(const auto* Replays=GetGameInstance()->GetSubsystem<UProjectMatchReplay>())
     {ReplayFingerprint=Replays->GetStatus()+FString::FromInt(Replays->IsBusy()*2+Replays->IsRecordingEnabled());for(const auto& E:Replays->GetEntries())ReplayFingerprint+=E.Name;}
     const FString Fingerprint=Page+TEXT("|")+Str(R->Snapshot,TEXT("userId"))+FString::FromInt(R->IsAuthenticated())+TEXT("|")+FString::Join(Local,TEXT(","))+Encoded+ReplayFingerprint;
-    if(Fingerprint==RenderedFingerprint)return;RenderedFingerprint=Fingerprint;Body->ClearChildren();
+    if(Fingerprint==RenderedFingerprint)return;RenderedFingerprint=Fingerprint;BeginBodyRebuild();
     auto Add=[&](const FString& Text,int32 Size=18){Body->AddSlot().AutoHeight().Padding(6,7)[Label(Text,Size)];};
     const auto State=R->Snapshot;const bool Online=R->IsAuthenticated(),Ready=Online;
     if(Page==TEXT("Quest")){BuildMainQuest(State);return;}
@@ -365,13 +394,21 @@ void UProjectCaseRecordWidget::RefreshPanel()
     if(Page==TEXT("Archive"))
     {
         const auto Archives=Rows(R->GetStoryArchives(),TEXT("archives"));
-        if(Archives.IsEmpty()){Add(TEXT("공개된 시즌 기록이 없습니다."));return;}
-        ArchiveIndex=FMath::Clamp(ArchiveIndex,0,Archives.Num()-1);const auto Archive=Archives[ArchiveIndex]->AsObject();
+        if(Archives.IsEmpty()){Add(TEXT("지난 날의 기록이 아직 없습니다. 시즌이 끝나면 그 시즌 배틀패스의 이야기가 여기에 남습니다."));return;}
+        ArchiveIndex=FMath::Clamp(ArchiveIndex,0,Archives.Num()-1);
+        // 이전/다음 시즌 redraw only that season's book below; the season row stays as it is.
+        const auto SeasonBook=SNew(SVerticalBox);const int32 Count=Archives.Num();
+        RebuildArchiveSeason=[this,Archives,SeasonBook]{ArchiveIndex=FMath::Clamp(ArchiveIndex,0,Archives.Num()-1);SeasonBook->ClearChildren();BuildStoryBook(Archives[ArchiveIndex]->AsObject(),true,SeasonBook);};
         auto Seasons=SNew(SHorizontalBox);
-        Seasons->AddSlot().AutoWidth()[Button(TEXT("이전 시즌"),[this]{--ArchiveIndex;RefreshPanel();},ArchiveIndex>0)];
-        Seasons->AddSlot().FillWidth(1).HAlign(HAlign_Center)[Label(Str(Archive,TEXT("season")),20)];
-        Seasons->AddSlot().AutoWidth()[Button(TEXT("다음 시즌"),[this]{++ArchiveIndex;RefreshPanel();},ArchiveIndex+1<Archives.Num())];Body->AddSlot().AutoHeight().Padding(0,0,0,8)[Seasons];
-        BuildStoryBook(Archive,true);return;
+        auto Earlier=Button(TEXT("이전 시즌"),[this]{if(ArchiveIndex<=0)return;--ArchiveIndex;if(RebuildArchiveSeason)RebuildArchiveSeason();});
+        Earlier->SetEnabled(TAttribute<bool>::CreateLambda([this]{return ArchiveIndex>0;}));Seasons->AddSlot().AutoWidth()[Earlier];
+        auto SeasonName=Label(FString(),20);SeasonName->SetText(TAttribute<FText>::CreateLambda([this,Archives]{return FText::FromString(Archives.IsValidIndex(ArchiveIndex)?Str(Archives[ArchiveIndex]->AsObject(),TEXT("season")):FString());}));
+        Seasons->AddSlot().FillWidth(1).HAlign(HAlign_Center)[SeasonName];
+        auto Later=Button(TEXT("다음 시즌"),[this,Count]{if(ArchiveIndex+1>=Count)return;++ArchiveIndex;if(RebuildArchiveSeason)RebuildArchiveSeason();});
+        Later->SetEnabled(TAttribute<bool>::CreateLambda([this,Count]{return ArchiveIndex+1<Count;}));Seasons->AddSlot().AutoWidth()[Later];
+        Body->AddSlot().AutoHeight().Padding(0,0,0,8)[Seasons];
+        Body->AddSlot().AutoHeight()[SeasonBook];
+        RebuildArchiveSeason();return;
     }
     if(Page==TEXT("Events")){Add(TEXT("진행 중인 이벤트가 없습니다."));return;}
     if(!Online){Add(TEXT("이 항목은 로그인 후 이용할 수 있습니다. 로컬 업적·도전과제는 위의 업적·도전과제 탭에서 확인하세요."));return;}
@@ -498,6 +535,7 @@ void UProjectCaseRecordWidget::RefreshPanel()
         }
         Body->AddSlot().AutoHeight()[Shelves];return;
     }
+    if(Page==TEXT("Lore")){BuildLore(State);return;}
     if(Page==TEXT("Track"))
     {
         const auto Track=Obj(State,TEXT("season"));
@@ -510,21 +548,84 @@ void UProjectCaseRecordWidget::RefreshPanel()
         BuildStoryBook(Investigation,false);return;
     }
 }
-void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Investigation,bool Archived)
+void UProjectCaseRecordWidget::BuildLore(const TSharedPtr<FJsonObject>& State)
 {
-    auto* R=Records(this);if(!R||!Investigation)return;
+    // Locked entries arrive without title or text; the server only says which category and what opens them.
+    const auto Entries=Rows(Obj(State,TEXT("lore")),TEXT("records"));
+    if(Entries.IsEmpty()){Body->AddSlot().AutoHeight().Padding(6,7)[Label(TEXT("기록된 내용이 없습니다."))];return;}
+    auto Hint=[](const TSharedPtr<FJsonObject>& E)
+    {
+        const FString Unlock=Str(E,TEXT("unlock")),Value=Str(E,TEXT("value"));
+        if(Unlock==TEXT("achievement"))return FString::Printf(TEXT("업적 「%s」 달성 시 열림"),*ProjectCaseProfile::Achievement(Value));
+        if(Unlock==TEXT("level"))return FString::Printf(TEXT("계정 레벨 %s 달성 시 열림"),*Value);
+        if(Unlock==TEXT("part"))return FString::Printf(TEXT("조사 %s파트 완성 시 열림"),*Value);
+        return FString();
+    };
+    if(!LoreId.IsEmpty())
+    {
+        TSharedPtr<FJsonObject> Open;for(const auto& V:Entries)if(Str(V->AsObject(),TEXT("id"))==LoreId&&Flag(V->AsObject(),TEXT("unlocked")))Open=V->AsObject();
+        if(Open)
+        {
+            auto Back=Button(TEXT("목록으로"),[this]{LoreId.Reset();RefreshPanel();});Compact(Back,16);
+            auto Title=Label(Str(Open,TEXT("title")),22);
+            Body->AddSlot().AutoHeight().Padding(0,0,0,10)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Back]
+                +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(14,0,0,0)[Title]
+                +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10,0,0,0)[FixedLabel(Str(Open,TEXT("category")),16)]];
+            Body->AddSlot().AutoHeight()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(18)[Label(Str(Open,TEXT("body")),18)]];
+            return;
+        }
+        LoreId.Reset(); // the entry went away or locked again: back to the list
+    }
+    TArray<FString> Categories{FString()};int32 Read=0; // "" first: 전체
+    for(const auto& V:Entries){Categories.AddUnique(Str(V->AsObject(),TEXT("category")));Read+=Flag(V->AsObject(),TEXT("unlocked"))?1:0;}
+    if(!LoreCategory.IsEmpty()&&!Categories.Contains(LoreCategory))LoreCategory.Reset();
+    auto Filters=SNew(SWrapBox).UseAllottedSize(true);
+    for(const FString& Category:Categories)
+    {
+        auto Filter=Button((Category==LoreCategory?TEXT("◆ "):TEXT("◇ "))+(Category.IsEmpty()?FString(TEXT("전체")):Category),[this,Category]{LoreCategory=Category;RefreshPanel();});
+        Compact(Filter,16);Filters->AddSlot().Padding(3)[Filter];
+    }
+    Body->AddSlot().AutoHeight().Padding(0,0,0,8)[SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1)[Filters]
+        +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10,0,6,0)[FixedLabel(FString::Printf(TEXT("열람 %d/%d"),Read,Entries.Num()),18)]];
+    for(const auto& V:Entries)
+    {
+        const auto E=V->AsObject();if(!LoreCategory.IsEmpty()&&Str(E,TEXT("category"))!=LoreCategory)continue;
+        const bool Open=Flag(E,TEXT("unlocked"));const FString Id=Str(E,TEXT("id"));
+        auto Title=FixedLabel(Open?Str(E,TEXT("title")):TEXT("???"),18);Title->SetOverflowPolicy(ETextOverflowPolicy::Ellipsis);
+        auto Row=SNew(SHorizontalBox)
+            +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(130)[FixedLabel(Str(E,TEXT("category")),14)]]
+            +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(10,0)[Title];
+        if(Open){auto Reader=Button(TEXT("읽기"),[this,Id]{LoreId=Id;RefreshPanel();if(RecordsScroll)RecordsScroll->ScrollToStart();});Compact(Reader,14);Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(90)[Reader]];}
+        else{auto Lock=FixedLabel(Hint(E),14);Lock->SetColorAndOpacity(ProjectDFSDUI::Muted());Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[Lock];}
+        Body->AddSlot().AutoHeight().Padding(4,3)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(Open?FLinearColor(.038f,.038f,.038f):FLinearColor(.022f,.022f,.022f)).Padding(14,7)[Row]];
+    }
+}
+void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Investigation,bool Archived,TSharedPtr<SVerticalBox> Into)
+{
+    if(!Records(this)||!Investigation)return;
+    if(!Into)Into=Body;
     InvestigationStage=FMath::Clamp(InvestigationStage,1,13);InvestigationPiece=FMath::Clamp(InvestigationPiece,1,9);
+    // 이전/다음 파트 and the puzzle pieces redraw only the board below (RebuildStoryBook); this pager stays, so its
+    // buttons keep their hover and press look instead of being made anew on every click.
+    auto Pager=SNew(SHorizontalBox);
+    auto Previous=Button(TEXT("이전 파트"),[this]{if(InvestigationStage<=1)return;--InvestigationStage;InvestigationPiece=1;if(RebuildStoryBook)RebuildStoryBook();});Compact(Previous,16);
+    Previous->SetEnabled(TAttribute<bool>::CreateLambda([this]{return InvestigationStage>1;}));Pager->AddSlot().AutoWidth()[Previous];
+    auto PageCaption=FixedLabel(FString(),18);PageCaption->SetText(TAttribute<FText>::CreateLambda([this]{return FText::FromString(StoryBookCaption);}));
+    Pager->AddSlot().FillWidth(1).HAlign(HAlign_Center).VAlign(VAlign_Center)[PageCaption];
+    auto Next=Button(TEXT("다음 파트"),[this]{if(InvestigationStage>=13)return;++InvestigationStage;InvestigationPiece=1;if(RebuildStoryBook)RebuildStoryBook();});Compact(Next,16);
+    Next->SetEnabled(TAttribute<bool>::CreateLambda([this]{return InvestigationStage<13;}));Pager->AddSlot().AutoWidth()[Next];
+    Into->AddSlot().AutoHeight().Padding(0,0,0,12)[Pager];
+    SAssignNew(StoryBookHost,SBox);Into->AddSlot().AutoHeight()[StoryBookHost.ToSharedRef()];
+    RebuildStoryBook=[this,Investigation,Archived]()
+    {
+    auto* R=Records(this);if(!R||!StoryBookHost)return;
+    InvestigationStage=FMath::Clamp(InvestigationStage,1,13);InvestigationPiece=FMath::Clamp(InvestigationPiece,1,9);
+    auto Book=SNew(SVerticalBox);
     TSharedPtr<FJsonObject> Stage,Selected;TArray<TSharedPtr<FJsonObject>> Pieces;int32 Found=0;
     for(const auto& Value:Rows(Investigation,TEXT("stages")))if(int32(Num(Value->AsObject(),TEXT("stage")))==InvestigationStage){Stage=Value->AsObject();break;}
     for(const auto& Value:Rows(Investigation,TEXT("records")))
         if(int32(Num(Value->AsObject(),TEXT("stage")))==InvestigationStage){Pieces.Add(Value->AsObject());Found+=Flag(Value->AsObject(),TEXT("discovered"))?1:0;}
-    auto Pager=SNew(SHorizontalBox);
-    auto Previous=Button(TEXT("이전 파트"),[this]{--InvestigationStage;InvestigationPiece=1;RefreshPanel();},InvestigationStage>1);Compact(Previous,16);
-    Pager->AddSlot().AutoWidth()[Previous];
-    auto PageCaption=Label(FString::Printf(TEXT("%d / 13 파트%s"),InvestigationStage,Archived?TEXT(""):*FString::Printf(TEXT(" · %d / 9 조각 · 이번 주 %.0f/%.0f"),Found,Num(Investigation,TEXT("collectedThisWeek")),Num(Investigation,TEXT("weeklyLimit")))),18);PageCaption->SetAutoWrapText(false);
-    Pager->AddSlot().FillWidth(1).HAlign(HAlign_Center).VAlign(VAlign_Center)[PageCaption];
-    auto Next=Button(TEXT("다음 파트"),[this]{++InvestigationStage;InvestigationPiece=1;RefreshPanel();},InvestigationStage<13);Compact(Next,16);Pager->AddSlot().AutoWidth()[Next];
-    Body->AddSlot().AutoHeight().Padding(0,0,0,12)[Pager];
+    StoryBookCaption=FString::Printf(TEXT("%d / 13 파트%s"),InvestigationStage,Archived?TEXT(""):*FString::Printf(TEXT(" · %d / 9 조각 · 이번 주 %.0f/%.0f"),Found,Num(Investigation,TEXT("collectedThisWeek")),Num(Investigation,TEXT("weeklyLimit"))));
     auto Board=SNew(SGridPanel);
     static const FButtonStyle PuzzleButtonStyle=[] {auto Style=ProjectDFSDUI::ButtonStyle();Style.SetNormalPadding(FMargin(0)).SetPressedPadding(FMargin(0));return Style;}();
     for(int32 I=0;I<14;++I)Board->SetColumnFill(I,1.f);for(int32 I=0;I<10;++I)Board->SetRowFill(I,1.f);
@@ -535,7 +636,7 @@ void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Inv
         if(Piece==InvestigationPiece)Selected=Item;
         const bool Collected=Archived||Flag(Item,TEXT("discovered"));const auto Cell=Layout[Piece-1];
         Board->AddSlot(Cell.Min.X,Cell.Min.Y).ColumnSpan(Cell.Width()).RowSpan(Cell.Height()).Padding(1)
-          [SNew(SButton).ContentPadding(0).ButtonStyle(&PuzzleButtonStyle).OnClicked_Lambda([this,Piece]{InvestigationPiece=Piece;RefreshPanel();return FReply::Handled();})
+          [SNew(SButton).ContentPadding(0).ButtonStyle(&PuzzleButtonStyle).OnClicked_Lambda([this,Piece]{InvestigationPiece=Piece;if(RebuildStoryBook)RebuildStoryBook();return FReply::Handled();})
             [SNew(SCasePuzzleCell).Found(Collected).Selected(Piece==InvestigationPiece).Layout(FVector4(Cell.Min.X/14.f,Cell.Min.Y/10.f,Cell.Width()/14.f,Cell.Height()/10.f)).Clipping(EWidgetClipping::ClipToBounds)
               [SNew(SVerticalBox)
                 +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(FText::AsNumber(Piece)).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18)).ColorAndOpacity(Collected?ProjectDFSDUI::Text():ProjectDFSDUI::Muted()).Justification(ETextJustify::Center)]
@@ -556,7 +657,7 @@ void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Inv
          [SNew(SVerticalBox)
           +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,8)[Label(Str(Stage,TEXT("title")),18)]
           +SVerticalBox::Slot().FillHeight(1)[SNew(SScrollBox)+SScrollBox::Slot()[Label(Available?Str(Stage,TEXT("story")):TEXT("이야기 잠김"),18)]]]]];
-    Body->AddSlot().AutoHeight()[Spread];
+    Book->AddSlot().AutoHeight()[Spread];
     if(!Archived)
     {
         const bool Ready=R->IsAuthenticated();const FString Id=Str(Selected,TEXT("id"));auto Rewards=SNew(SHorizontalBox);
@@ -565,8 +666,11 @@ void UProjectCaseRecordWidget::BuildStoryBook(const TSharedPtr<FJsonObject>& Inv
         Compact(PieceReward,16);Compact(PartReward,16);
         Rewards->AddSlot().FillWidth(1).Padding(0,10,10,0)[PieceReward];
         Rewards->AddSlot().FillWidth(1).Padding(10,10,0,0)[PartReward];
-        Body->AddSlot().AutoHeight()[Rewards];
+        Book->AddSlot().AutoHeight()[Rewards];
     }
+    StoryBookHost->SetContent(Book);
+    };
+    RebuildStoryBook();
 }
 TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
 {

@@ -733,6 +733,10 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UButton> TimelineButton;
 	UPROPERTY(Transient) TObjectPtr<class USizeBox> TimelineFrame;
 	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> TimelineRows;
+	/** Item roguelike: the cards this player picked, in order (players; observers get them in the summary). */
+	UPROPERTY(Transient) TObjectPtr<class USizeBox> RogueCardsFrame;
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> RogueCardsText;
+	friend class FProjectItemRoguelikeResultTest;
 	bool bShowingTimeline = false;
 	UFUNCTION()
 	void HandleRegisterClicked();
@@ -1105,6 +1109,11 @@ private:
     UPROPERTY(Transient) TObjectPtr<class UHorizontalBox> RoomRoleRow;
     UFUNCTION() void HandleMatchRoleChanged(FString Item, ESelectInfo::Type SelectionType);
     void RefreshRoleSelection();
+    /** PvP match mode (일반 / 아이템 로그라이크): the open room's host, or the solo player before a random search. */
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RoomMatchMode;
+    UPROPERTY(Transient) TObjectPtr<class UComboBoxString> RandomMatchMode;
+    UFUNCTION() void HandleMatchModeChanged(FString Item, ESelectInfo::Type SelectionType);
+    void RefreshMatchModeSelection();
     bool bRoleWritePending=false;
     FString DesiredMatchRole,SubmittedMatchRole;
     UPROPERTY(Transient) TObjectPtr<class UComboBoxString> BotMatchDifficulty;
@@ -1164,6 +1173,15 @@ private:
     UFUNCTION() void HandleMatchStartClicked();
     UFUNCTION() void HandleMatchCancelClicked();
     UFUNCTION() void HandleLobbyModesClicked();
+    /** "로비로": leave the room / matching screen while still in the room or the queue (the left panel keeps showing it). */
+    UFUNCTION() void HandleMinimizeMatchView();
+    void HandleOpenMatchViewFromPanel();
+    /** True while waiting in a room or the queue that may be put aside (not a bot room, not starting). */
+    bool CanMinimizeMatchView()const;
+    bool bMatchViewMinimized=false;
+    FDelegateHandle MatchWaitOpenHandle;
+    UPROPERTY(Transient) TObjectPtr<class UButton> MinimizeRoomButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> MinimizeMatchButton;
     void RefreshMatchmakingView();
     void UpdateStartCountdownText();
     bool bPartyCreationRequested=false;

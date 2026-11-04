@@ -55,6 +55,17 @@ internal static class FeatureChecks
                     Check(storyInput.Text=="첫 문단입니다.\r\n\r\n두 번째 문단입니다.","파트 전환 중 스토리 초안과 줄바꿈 보존");
                     using var bitmap=new Bitmap(stories.Width,stories.Height);stories.DrawToBitmap(bitmap,new Rectangle(Point.Empty,stories.Size));bitmap.Save(Path.Combine(output,"case-part-stories.png"));
                 }
+                using(var lore=new CaseLoreForm(MockCaseRequest))
+                {
+                    PrepareRender(lore);var entries=Children(lore).OfType<ListBox>().Single(l=>l.Name=="LoreEntries");var unlock=Children(lore).OfType<ComboBox>().Single(c=>c.Name=="LoreUnlock");
+                    var loreBody=Children(lore).OfType<TextBox>().Single(t=>t.Name=="LoreBody");var add=Children(lore).OfType<Button>().Single(b=>b.Text=="추가");
+                    Check(!Children(lore).OfType<Button>().Single(b=>b.Text=="기본 기록 저장·게시").Enabled,"기본 기록은 서버 조회 전에는 게시할 수 없음");
+                    Check(unlock.Items.Count==4&&Children(lore).OfType<ComboBox>().Single(c=>c.Name=="LoreCategory").Items.Contains("플레이어"),"기본 기록 분류와 열림 조건 4종 선택");
+                    add.PerformClick();loreBody.Text="첫 문단.\r\n\r\n둘째 문단.";unlock.SelectedIndex=2;Children(lore).OfType<TextBox>().Single(t=>t.Name=="LoreUnlockValue").Text="10";
+                    add.PerformClick();entries.SelectedIndex=0;
+                    Check(entries.Items.Count==2&&loreBody.Text=="첫 문단.\r\n\r\n둘째 문단."&&unlock.SelectedIndex==2,"기록 전환 중 본문 초안과 열림 조건 보존");
+                    using var bitmap=new Bitmap(lore.Width,lore.Height);lore.DrawToBitmap(bitmap,new Rectangle(Point.Empty,lore.Size));bitmap.Save(Path.Combine(output,"case-lore.png"));
+                }
                 int publications=0;string sent="";
                 string sentTag="";int sentCount=0;
                 DateTimeOffset? sentStart=null,sentEnd=null;

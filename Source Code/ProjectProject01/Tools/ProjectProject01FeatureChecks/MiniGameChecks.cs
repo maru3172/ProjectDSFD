@@ -33,6 +33,8 @@ internal static class MiniGameChecks
         Check(frozen == (3, 1), "보고 있는 마네킹은 제자리");
         watch.Apply("L"); Check(watch.Mannequins[0] != (3, 1), "시선을 돌리면 마네킹이 다가옴");
         Check(MiniGameRules.Stars(first, first.Par) == 3 && MiniGameRules.Stars(first, first.Par + 3) == 2 && MiniGameRules.Stars(first, first.Par + 4) == 1, "별: 기준 수 3개, +3까지 2개, 그 밖 1개");
+        Check(MiniGameRules.Stars(first, first.Par, hints: 1) == 2 && MiniGameRules.Stars(first, first.Par + 4, hints: 2) == 1, "힌트를 쓴 통과는 별 2개까지");
+        Check(MiniGameRules.Stages.Take(3).All(s => s.Par <= 5) && MiniGameRules.Stages.Skip(3).All(s => s.Par >= 8), "입문 3스테이지는 5수 안팎, 그 뒤부터 본 퍼즐");
         var a = MiniGameRules.MakeSpotRound(42, 3); var b = MiniGameRules.MakeSpotRound(42, 3);
         Check(JsonSerializer.Serialize(a) == JsonSerializer.Serialize(b), "움직였다: 같은 판·라운드는 같은 그림");
         var late = MiniGameRules.MakeSpotRound(42, 9);
@@ -156,6 +158,23 @@ internal static class MiniGameChecks
             await Age(near2, 60); await Read(p2.PostAsJsonAsync("/api/minigames/finish", new { runId = near2, cleared = true, activeMs = 21000, strikes = 0 }));
             var nearBoard = await Read(p1.GetAsync("/api/minigames/leaderboard?game=approach&period=all"));
             Check(nearBoard.GetProperty("top")[0].GetProperty("secondary").GetInt32() == 0 && nearBoard.GetProperty("me").GetProperty("rank").GetInt32() == 2, "다가가기 순위: 같은 시간이면 덜 들킨 쪽이 위");
+
+            // 정전 복구 무한 · 셔터 내려 · 흉내 내기: a score bounded by the active time; 무한 keeps its own run beside 정전 복구.
+            string normal = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = "blackout" }))).GetProperty("run").GetProperty("id").GetString()!;
+            string endless = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = "endless" }))).GetProperty("run").GetProperty("id").GetString()!;
+            Check((await Read(p1.GetAsync("/api/minigames"))).GetProperty("runs").EnumerateArray().Any(r => r.GetProperty("id").GetString() == normal), "무한 모드를 시작해도 정전 복구 이어하기는 남음");
+            await Age(endless, 120);
+            await Expect(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = endless, cleared = false, activeMs = 9000, score = 10 }), HttpStatusCode.BadRequest, "무한: 시간에 비해 너무 많은 퓨즈 거부");
+            Check((await Read(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = endless, cleared = false, activeMs = 60000, score = 9 }))).GetProperty("result").GetProperty("score").GetInt32() == 9, "무한: 붙잡혀도 끼운 퓨즈 수 기록");
+            Check((await Read(p1.GetAsync("/api/minigames/leaderboard?game=endless&period=all"))).GetProperty("me").GetProperty("primary").GetInt32() == 9, "무한 순위표: 퓨즈 수");
+            foreach (var (g, many, fine) in new[] { ("shutter", 200, 30), ("mimic", 60, 12) })
+            {
+                string run = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = g }))).GetProperty("run").GetProperty("id").GetString()!;
+                await Age(run, 90);
+                await Expect(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = run, activeMs = 30000, score = many }), HttpStatusCode.BadRequest, $"{g}: 불가능한 점수 거부");
+                await Read(p1.PostAsJsonAsync("/api/minigames/finish", new { runId = run, activeMs = 60000, score = fine }));
+                Check((await Read(p1.GetAsync($"/api/minigames/leaderboard?game={g}&period=all"))).GetProperty("me").GetProperty("primary").GetInt32() == fine, $"{g}: 점수 순위표");
+            }
 
             // One open run per game; a new start replaces it, abandon closes it.
             string a1 = (await Read(p1.PostAsJsonAsync("/api/minigames/start", new { game = "blackout" }))).GetProperty("run").GetProperty("id").GetString()!;

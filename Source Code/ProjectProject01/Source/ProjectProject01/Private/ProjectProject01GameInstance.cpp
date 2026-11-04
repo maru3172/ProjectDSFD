@@ -1703,6 +1703,9 @@ void UProjectProject01GameInstance::ReceivedNetworkEncryptionToken(
             const TSharedPtr<FJsonObject>* AffixJson=nullptr;
             if(JsonResponse->HasTypedField<EJson::Object>(TEXT("affixes"))&&(!JsonResponse->TryGetObjectField(TEXT("affixes"),AffixJson)||!FProjectMatchAffixes::Parse(*AffixJson,Claim.Affixes)))
             {ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid match affixes."));return;}
+            FString MatchModeKey;
+            if(JsonResponse->HasField(TEXT("matchMode"))&&(!JsonResponse->TryGetStringField(TEXT("matchMode"),MatchModeKey)||!FProjectMatchModeKeys::FromKey(MatchModeKey,Claim.MatchMode)))
+            {ProjectProject01NetworkSecurity::CompleteEncryptionFailure(Delegate,EEncryptionResponse::InvalidToken,TEXT("Invalid match mode."));return;}
 			if (!FProjectProject01VersionContract::Matches(
 				Claim.ClientBuildVersion, Claim.DedicatedServerBuildVersion, Claim.ApiVersion, Claim.GameDataVersion,
 				Claim.NetworkProtocolVersion, VersionError))

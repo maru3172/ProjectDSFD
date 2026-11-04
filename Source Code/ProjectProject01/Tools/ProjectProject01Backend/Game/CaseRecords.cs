@@ -115,7 +115,7 @@ internal static class CaseRecords
         var collection=await CaseCollection.SnapshotAsync(c,tx,user,ct);
         return new{userId=user.ToString(),collection,level,xp,levelStartXp,nextLevelXp,levelProgress=level>=100?1.0:Math.Clamp((xp-levelStartXp)/(double)(nextLevelXp-levelStartXp),0,1),credits=Convert.ToInt64(account["credits"]),currencyName="기록 포인트",missionWeeklyEarned=budget.Earned,missionWeeklyLimit=budget.Limit,missions,
             levelRewards=Enumerable.Range(1,20).Select(n=>n*5).Select(n=>new{level=n,credits=CaseLevelRewards.Credits(n),itemId=CaseLevelRewards.Item(n),claimed=claimed.Contains(CaseLevelRewards.Key(n)),available=level>=n&&!claimed.Contains(CaseLevelRewards.Key(n))}),
-            season=new{id=Season,title="_OMINOUS ENTRY",incidentTimestamp=string.IsNullOrWhiteSpace(incident)?"202X-XX-XX 18:24:01":incident,availability="(~ 정식 출시 전까지)",free=true,investigation=await CaseInvestigation.SnapshotAsync(c,tx,user,config,ct)},
+            season=new{id=Season,title="_OMINOUS ENTRY",incidentTimestamp=string.IsNullOrWhiteSpace(incident)?"202X-XX-XX 18:24:01":incident,availability="(~ 정식 출시 전까지)",free=true,investigation=await CaseInvestigation.SnapshotAsync(c,tx,user,config,ct)},lore=await CaseLore.SnapshotAsync(c,tx,user,level,ct),
             catalogue=Catalogue,mainQuest=await MainQuest.SnapshotAsync(c,tx,user,ct),achievementRewards=await CaseCollection.AchievementRewardsAsync(c,tx,user,ct),inventory=await CommunityEndpoints.Rows(c,tx,"SELECT item_id itemId FROM case_inventory WHERE user_id=@u ORDER BY item_id",ct,("u",user)),
             loadout=await CommunityEndpoints.Rows(c,tx,"SELECT slot,item_id itemId FROM case_loadout WHERE user_id=@u ORDER BY slot",ct,("u",user)),
             achievements=await CommunityEndpoints.Rows(c,tx,"SELECT code,source,earned_at_utc earnedAtUtc FROM case_achievements WHERE user_id=@u ORDER BY code",ct,("u",user)),partyState=await OpenParties.SnapshotAsync(c,tx,user,ct)};
@@ -130,7 +130,7 @@ internal static class CaseRecords
         MainQuest.Map(app);
         CaseDebugCurrency.Map(app);
         app.MapOpenParties();
-        app.MapCaseInvestigation();
+        app.MapCaseInvestigation();app.MapCaseLore();
         app.MapGet("/api/case-records",async(HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await LobbyEndpoints.AuthenticateAsync(request,db,ct);if(user is null)return Results.Unauthorized();

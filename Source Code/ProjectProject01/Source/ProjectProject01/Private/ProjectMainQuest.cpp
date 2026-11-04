@@ -48,9 +48,10 @@ void UProjectCaseRecords::MainQuestAction(const FString& Action,const FString& R
         PendingTutorialRole=Role;PendingTutorialGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();
     }
     const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const auto Steps=Rows(Quest,TEXT("steps"));const int32 Index=int32(Num(Quest,TEXT("stage")));
-    if(!Tutorial&&!Steps.IsValidIndex(Index))return;
+    if(!Tutorial&&Role.IsEmpty()&&!Steps.IsValidIndex(Index))return;
     if(!PrepareWrite())return;
-    const FString Id=Tutorial?(Role==TEXT("Survivor")?TEXT("survivor_tutorial"):TEXT("mannequin_tutorial")):Str(Steps[Index]->AsObject(),TEXT("id"));
+    // A role names the tutorial outright (finishing it, or skipping it from the first-login prompt before the quest has loaded).
+    const FString Id=Tutorial||!Role.IsEmpty()?(Role==TEXT("Survivor")?TEXT("survivor_tutorial"):TEXT("mannequin_tutorial")):Str(Steps[Index]->AsObject(),TEXT("id"));
     if(Id!=TEXT("survivor_tutorial")&&Id!=TEXT("mannequin_tutorial"))return;
     ObserveMainQuest(); // Establish the pre-write baseline before a completion can be returned.
     auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("action"),Action);J->SetStringField(TEXT("expectedStep"),Id);J->SetStringField(TEXT("role"),Role);

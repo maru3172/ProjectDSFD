@@ -9,18 +9,22 @@ using MySqlConnector;
 /// - 한 칸씩 (steps): the server replays the submitted moves on the stage before it records anything.
 /// - 어디서 났지 (listen): like 움직였다, the server picks every round and grades the answer.
 /// - 다가가기 (approach): the mannequin's game; runs on the client, the server bounds the time.
+/// - 정전 복구 무한 (endless), 셔터 내려 (shutter), 흉내 내기 (mimic): played to a score on the client; the server bounds
+///   the score by the active time (ScorePace) and the time by the run's wall clock.
 /// </summary>
 internal static class MiniGames
 {
-    internal static readonly string[] Games = ["spot", "blackout", "steps", "listen", "approach"];
+    internal static readonly string[] Games = ["spot", "blackout", "steps", "listen", "approach", "endless", "shutter", "mimic"];
     // 정전 복구 cannot be won faster than this: three fuses to fetch and two seconds at the board for each.
     internal const int BlackoutMinimumMs = 12000;
+    /// <summary>Endless-score games: the fewest active milliseconds one point can take (seating a fuse, stopping a runner, holding a pose).</summary>
+    internal static readonly Dictionary<string, int> ScorePace = new() { ["endless"] = 3000, ["shutter"] = 600, ["mimic"] = 1200 };
     const int StateLimit = 32 * 1024;
 
     internal sealed record StartBody(string? Game, string? Stage);
     internal sealed record SaveBody(string? RunId, int ActiveMs, JsonElement? State);
     internal sealed record SpotBody(string? RunId, int Round, int[]? Picks, int ActiveMs);
-    internal sealed record FinishBody(string? RunId, bool Cleared, int ActiveMs, int Battery, string[]? Moves, int Strikes);
+    internal sealed record FinishBody(string? RunId, bool Cleared, int ActiveMs, int Battery, string[]? Moves, int Strikes, int Hints = 0, int Score = 0);
     internal sealed record ListenBody(string? RunId, int Round, int Direction, int ActiveMs);
     internal sealed record AbandonBody(string? Game);
     sealed record SpotState(int Seed, int Round, int Cleared, int Lives, int Score);
@@ -32,13 +36,16 @@ internal static class MiniGames
 
     // ---- boards: which way is better for each value ----
     // spot: rounds cleared (more), then score (more). blackout: time (less), then battery left (more).
-    // steps stage boards: actions (fewer). steps "stars": stars (more), then total actions (fewer).
+    // steps stage boards: actions (fewer), then hints used (fewer). steps "stars": stars (more), then total actions (fewer).
     internal static (bool PrimaryHigher, bool SecondaryHigher) Order(string game, string board) => game switch
     {
         "spot" => (true, true),
         "blackout" => (false, true),
         "listen" => (true, true),
         "approach" => (false, false), // time, then times seen moving
+        "endless" => (true, true),   // 정전 복구 무한: fuses seated, then time survived
+        "shutter" => (true, true),   // 셔터 내려: mannequins stopped, then time survived
+        "mimic" => (true, false),    // 흉내 내기: poses held, then time taken
         _ => board == "stars" ? (true, false) : (false, false),
     };
     internal static bool Better(string game, string board, (int P, int S) value, (int P, int S) than)
@@ -66,13 +73,13 @@ internal static class MiniGames
     {
         foreach (var period in new[] { "all", WeekPeriod() })
         {
-            var rows = await CommunityEndpoints.Rows(c, tx, "SELECT board,primary_value p FROM minigame_scores WHERE user_id=@u AND game='steps' AND board LIKE 'stage-%' AND period=@p", ct, ("u", user), ("p", period));
+            var rows = await CommunityEndpoints.Rows(c, tx, "SELECT board,primary_value p,secondary_value s FROM minigame_scores WHERE user_id=@u AND game='steps' AND board LIKE 'stage-%' AND period=@p", ct, ("u", user), ("p", period));
             int stars = 0, actions = 0;
             foreach (var row in rows)
             {
                 var stage = MiniGameRules.Stages.FirstOrDefault(s => "stage-" + s.Id == Convert.ToString(row["board"]));
                 if (stage is null) continue;
-                int a = Convert.ToInt32(row["p"]); stars += MiniGameRules.Stars(stage, a); actions += a;
+                int a = Convert.ToInt32(row["p"]); stars += MiniGameRules.Stars(stage, a, Convert.ToInt32(row["s"])); actions += a;
             }
             await CommunityEndpoints.Exec(c, tx, "INSERT INTO minigame_scores(user_id,game,board,period,primary_value,secondary_value,achieved_at) VALUES(@u,'steps','stars',@p,@v,@w,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE primary_value=@v,secondary_value=@w,achieved_at=UTC_TIMESTAMP(6)", ct,
                 ("u", user), ("p", period), ("v", stars), ("w", actions));
@@ -238,6 +245,14 @@ internal static class MiniGames
                 await RecordAsync(c, tx, user.Id, "blackout", "all", body.ActiveMs, body.Battery, ct);
                 result = new { timeMs = body.ActiveMs, battery = body.Battery };
             }
+            else if (ScorePace.TryGetValue(game, out int pace))
+            {
+                // Played on the client: a score needs at least this much active time per point, and the time itself must be plausible.
+                if (body.Score is < 0 or > 10000 || body.ActiveMs < body.Score * pace || !PlausibleActive(run, body.ActiveMs))
+                    return Results.BadRequest(new { message = "기록을 확인할 수 없습니다." });
+                if (body.Score > 0) await RecordAsync(c, tx, user.Id, game, "all", body.Score, body.ActiveMs, ct);
+                result = new { score = body.Score, timeMs = body.ActiveMs };
+            }
             else if (body.Cleared && game == "approach")
             {
                 if (body.ActiveMs < MiniGameRules.ApproachMinimumMs || !PlausibleActive(run, body.ActiveMs) || body.Strikes is < 0 or > 50)
@@ -251,9 +266,10 @@ internal static class MiniGames
                 if (stage is null || body.Moves is null || body.Moves.Length > 400) return Results.BadRequest(new { message = "기록을 확인할 수 없습니다." });
                 var (outcome, actions) = MiniGameRules.Replay(stage, body.Moves);
                 if (outcome != MiniGameRules.StepResult.Won) return Results.BadRequest(new { message = "출구에 닿지 않은 기록입니다." });
-                await RecordAsync(c, tx, user.Id, "steps", "stage-" + stage.Id, actions, 0, ct);
+                int hints = Math.Clamp(body.Hints, 0, 99);
+                await RecordAsync(c, tx, user.Id, "steps", "stage-" + stage.Id, actions, hints, ct);
                 await RecordStarsAsync(c, tx, user.Id, ct);
-                result = new { stage = stage.Id, actions, stars = MiniGameRules.Stars(stage, actions), par = stage.Par };
+                result = new { stage = stage.Id, actions, hints, stars = MiniGameRules.Stars(stage, actions, hints), par = stage.Par };
             }
             await CommunityEndpoints.Exec(c, tx, "UPDATE minigame_runs SET finished_at=UTC_TIMESTAMP(6),client_state=NULL WHERE id=@i", ct, ("i", body.RunId));
             await tx.CommitAsync(ct);

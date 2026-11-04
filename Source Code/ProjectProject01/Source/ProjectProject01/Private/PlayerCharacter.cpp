@@ -1223,7 +1223,9 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 		}
 		else
 		{
-			CurrentStamina = FMath::Min(MaxStamina, CurrentStamina + (StaminaRecoveryPerSecond * AffixStaminaRecoveryScale * DeltaTime));
+			// RogueMaxStaminaScale (item roguelike S03) keeps the refill short of full; 1 otherwise.
+			const float Cap = MaxStamina * RogueMaxStaminaScale;
+			CurrentStamina = FMath::Min(Cap, CurrentStamina + (StaminaRecoveryPerSecond * AffixStaminaRecoveryScale * DeltaTime));
 		}
 		return;
 	}
@@ -1434,6 +1436,14 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	const bool bInfinitePracticeLives=Practice && Practice->HasPracticeInfiniteLives();
 	const auto* MatchController=Cast<AMultiplayTestPlayerController>(GetController());
 	const bool bServerBot=MatchController&&MatchController->IsServerControlledBot();
+	// Item roguelike S03: the fire suit scrap takes the first catch of the match (same grace window as a hit).
+	if (auto* MatchMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); !bInfinitePracticeLives && MatchMode &&
+		MatchMode->GetAffixRuntime() && MatchMode->GetAffixRuntime()->TryShieldCatch(this, CatchingMannequin))
+	{
+		NextDeathCountDamageAllowedWorldSeconds = World->GetTimeSeconds() + DamageFeedbackIntroSeconds + DamageFeedbackFadeSeconds;
+		ForceNetUpdate();
+		return true;
+	}
 	if (RemainingDeathCount > 0 || bInfinitePracticeLives)
 	{
 		if (!bInfinitePracticeLives) --RemainingDeathCount;
@@ -2114,6 +2124,8 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
 	DOREPLIFETIME(APlayerCharacter, AffixSpeedScale);
 	DOREPLIFETIME(APlayerCharacter, AffixCue);
+	DOREPLIFETIME(APlayerCharacter, RogueFootstepScale);
+	DOREPLIFETIME(APlayerCharacter, RogueMannequinHearingScale);
 	DOREPLIFETIME(APlayerCharacter, PlayerSprintSpeed);
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 	DOREPLIFETIME_CONDITION(APlayerCharacter, CurrentStamina, COND_OwnerOnly);
@@ -2415,6 +2427,19 @@ void APlayerCharacter::SetAffixSprintBlocked(const bool bBlocked)
 	bAffixSprintBlocked = bBlocked;
 	// The owner predicts sprinting; tell it right away so it does not run ahead of the server.
 	if (bBlocked && bIsSprinting) { ApplySprintingState(false); ClientCorrectSprinting(false); }
+}
+
+void APlayerCharacter::SetRogueFootstepScale(const float Everyone, const float ForMannequin)
+{
+	const float A = FMath::Clamp(Everyone, 0.0f, 2.0f), B = FMath::Clamp(ForMannequin, 1.0f, 2.0f);
+	if (FMath::IsNearlyEqual(A, RogueFootstepScale) && FMath::IsNearlyEqual(B, RogueMannequinHearingScale)) return;
+	RogueFootstepScale = A; RogueMannequinHearingScale = B;
+}
+
+void APlayerCharacter::AddRogueStamina(const float Amount)
+{
+	if (!HasAuthority() || Amount <= 0.0f) return;
+	CurrentStamina = FMath::Min(MaxStamina * RogueMaxStaminaScale, CurrentStamina + Amount);
 }
 
 void APlayerCharacter::SetAffixCue(const FLinearColor& Color, const float Strength)

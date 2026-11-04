@@ -17,7 +17,7 @@ namespace ProjectMiniGame
         TCHAR Facing=TEXT('U');
         int32 Shutters=0,Par=0;
         static bool Parse(const TSharedPtr<FJsonObject>& Json,FStepStage& Out);
-        int32 Stars(int32 Actions)const{return Actions<=Par?3:Actions<=Par+3?2:1;}
+        int32 Stars(int32 Actions,int32 Hints=0)const{return FMath::Min(Hints>0?2:3,Actions<=Par?3:Actions<=Par+3?2:1);} // a hinted clear tops out at two stars
     };
 
     enum class EStepResult:uint8{Continue,Won,Caught,Invalid};
@@ -52,6 +52,8 @@ namespace ProjectMiniGame
 
     /** Plays a move list from the start; stops at the first result that is not Continue. */
     PROJECTPROJECT01_API EStepResult Replay(const FStepStage& Stage,const TArray<FString>& Moves,FStepState& OutState);
+    /** The fewest-action win from this position (turns are free), as moves; empty when there is none within MaxActions. */
+    PROJECTPROJECT01_API TArray<FString> SolveSteps(const FStepState& From,int32 MaxActions=40);
 
     // ---- 움직였다 (spot): the server makes the pictures; the client only shows them. ----
     struct FSpotFigure{int32 X=0,Y=0,Head=0,Arm=0;bool operator==(const FSpotFigure& O)const{return X==O.X&&Y==O.Y&&Head==O.Head&&Arm==O.Arm;}};
@@ -121,6 +123,8 @@ namespace ProjectMiniGame
      * A dark electrical room seen from above. Mannequins walk toward the player only while the torch is not on them; the
      * torch drains its battery while on. Fetch three fuses and hold E at the fuse board for each one; while installing,
      * the torch points at the board. Moving mannequins leave footprints that fade (the tell; no flashing).
+     * Endless (정전 복구 무한): fuses keep coming three at a time, each one seated refills the battery a little, and the
+     * room fills with more mannequins, sooner; it ends only when one catches the player. The score is fuses seated.
      */
     struct FBlackoutSim
     {
@@ -130,8 +134,10 @@ namespace ProjectMiniGame
         static const FVector2D Board;
         FVector2D Player=FVector2D(320,320),Aim=FVector2D(320,0);
         double Battery=100,Elapsed=0,InstallProgress=0,NextSpawn=SpawnEvery;
-        bool bLight=true,bInstalling=false;
+        bool bLight=true,bInstalling=false,bEndless=false;
         int32 Carried=0,Installed=0;
+        static constexpr double EndlessBatteryPerFuse=25,EndlessFastestSpawn=6;
+        static constexpr int32 EndlessMaxMannequins=8;
         uint32 RandomState=1;
         TArray<FVector2D> Fuses;
         TArray<FBlackoutMannequin> Mannequins;
@@ -139,8 +145,10 @@ namespace ProjectMiniGame
         enum class EOutcome:uint8{Playing,Cleared,Caught};
         EOutcome Outcome=EOutcome::Playing;
 
-        void Start(uint32 Seed);
+        void Start(uint32 Seed,bool bEndlessMode=false);
         EOutcome Tick(double Seconds,const FBlackoutInput& Input);
+        int32 MannequinLimit()const{return bEndless?FMath::Min(EndlessMaxMannequins,MaxMannequins+Installed/6):MaxMannequins;}
+        double SpawnInterval()const{return bEndless?FMath::Max(EndlessFastestSpawn,SpawnEvery-Installed*.4):SpawnEvery;}
         /** True when the torch is on and this point is inside its cone. */
         bool Lit(const FVector2D& Point)const;
         FVector2D TorchDirection()const;
@@ -149,5 +157,6 @@ namespace ProjectMiniGame
     private:
         double Random01();
         FVector2D SpawnPoint();
+        void PlaceFuses();
     };
 }

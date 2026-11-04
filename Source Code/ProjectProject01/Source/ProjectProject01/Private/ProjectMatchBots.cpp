@@ -558,7 +558,7 @@ bool UProjectMatchBots::Hear(APawn* Listener,AActor* Source,float Mistake,FVecto
 {
     if(!Listener||!IsValid(Source)||Source->IsHidden())return false;
     // C10: the broadcast drowns footsteps for bots as it does for players.
-    const float Muffle=Mode()->GetAffixRuntime()?Mode()->GetAffixRuntime()->HearingScale():1.f;
+    const float Muffle=Mode()->GetAffixRuntime()?Mode()->GetAffixRuntime()->HearingScale()*Mode()->GetAffixRuntime()->BotHearingScale(Listener,Source):1.f;
     const float Speed=Source->GetVelocity().Size2D(),Open=ProjectBots::HearingRadius(Speed,false)*Muffle;
     if(Open<=0)return false;
     const FVector From=Listener->GetActorLocation(),At=Source->GetActorLocation();const float Distance=FVector::Dist(From,At);
@@ -662,7 +662,7 @@ void UProjectMatchBots::HearPing(AMultiplayTestPlayerController* Sender,uint8 Ty
 {
     auto* GM=Mode();if(!GM||!Sender)return;
     // C07: a mannequin bot sees the marker as a human mannequin would, and goes to check it (some markers are bait).
-    if(GM->GetMatchAffixes().Has(TEXT("C07")))for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))
+    if(GM->GetMatchAffixes().Has(TEXT("C07"))||(GM->GetAffixRuntime()&&GM->GetAffixRuntime()->MannequinSeesPings()))for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))
         if(auto* PC=Controllers.FindRef(Spec.BotId).Get())if(auto* Body=PC->GetViewedMannequin())if(auto* B=Brains.Find(Body);B&&B->Initialized&&FMath::FRand()<.6f)
         {B->LostCheck=Location;B->LostCheckUntil=GM->GetWorld()->GetTimeSeconds()+6.0;}
     ScanObjectives();
@@ -1355,7 +1355,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             *GetNameSafe(Mine.Objective.Get()),Dir.ActiveCount(),C.Stamina);
     }
     // B09: a held mannequin wakes when someone sprints past it, so walk by unless fleeing.
-    const bool PassingDisplay=!Danger&&GM->GetMatchAffixes().Has(TEXT("B09"))&&[&]{for(TActorIterator<AMannequinAICharacter> It(World);It;++It)
+    const bool PassingDisplay=!Danger&&GM->HasAffixRule(TEXT("B09"))&&[&]{for(TActorIterator<AMannequinAICharacter> It(World);It;++It)
         if(It->GetMultiplayCommand()==EMultiplayMannequinCommand::HoldPosition&&!It->IsManualControlEnabled()&&FVector::DistSquared2D(It->GetActorLocation(),Here)<FMath::Square(750.f))return true;return false;}();
     Pawn->SetBotSprint(!PassingDisplay&&Moving&&!B.Recovering&&(PlayRun||(!WatchRetreating&&!(Progress&&Watching)&&((Knows&&Tactic!=Action::Search&&!Progress)||Dash))));
     FVector Look=Pawn->GetVelocity();
@@ -1539,7 +1539,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         }
     }
     // A02: a body glowing hot is handed off before it overheats (higher levels read their own heat earlier).
-    if(Body&&GM->GetMatchAffixes().Has(TEXT("A02"))&&Body->GetAffixHeat()>.85f-.25f*Level.Skill&&!Dir.BodyBusy())SwitchBodyAt=FMath::Min(SwitchBodyAt,Now);
+    if(Body&&GM->HasAffixRule(TEXT("A02"))&&Body->GetAffixHeat()>.85f-.25f*Level.Skill&&!Dir.BodyBusy())SwitchBodyAt=FMath::Min(SwitchBodyAt,Now);
     // Move off the current body only when it is held or its turn is up, so settling does not flicker either.
     const bool SettleSwitch=Settle&&Settle!=Body&&!Dir.BodyBusy()&&(!Body||Body->IsFrozenBySurvivorVision()||Now>=SwitchBodyAt);
     if(!Body||(Now>=SwitchBodyAt&&!Dir.BodyBusy()&&!Stalled)||(StuckFrozen&&!Dir.BodyBusy()&&!Stalled)||SettleSwitch)

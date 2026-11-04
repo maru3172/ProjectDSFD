@@ -5,8 +5,10 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "Containers/Ticker.h"
 #include "ProjectCustomMatchRules.h"
 #include "ProjectAffixes.h"
+#include "ProjectItemRoguelike.h"
 #include "ProjectProject01LobbySubsystem.generated.h"
 
 UENUM(BlueprintType)
@@ -28,7 +30,7 @@ enum class EProjectProject01LobbyOperation : uint8
 	RequestGameTicket,
 	RefreshLeaderboard,
 	SubmitLeaderboardRecord,
-    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty,CreateBotMatch,EditRoomBot,EditRoomParticipant
+    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty,CreateBotMatch,EditRoomBot,EditRoomParticipant,SetMatchMode
 };
 
 UENUM(BlueprintType)
@@ -220,6 +222,7 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
 	GENERATED_BODY()
     FProjectCustomMatchRules CustomRules;
     FProjectMatchAffixes Affixes; // Bot match affixes (ProjectAffixes.h).
+    EProjectMatchMode MatchMode=EProjectMatchMode::Normal; // PvP mode the host chose (ProjectItemRoguelike.h).
 	UPROPERTY(BlueprintReadOnly) FString MatchId;
     UPROPERTY(BlueprintReadOnly) bool bRandomMatch=false;
     UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;
@@ -342,6 +345,8 @@ public:
     void CreateBotMatch(const FString& Role,int32 Difficulty,EProjectAffixMode AffixMode=EProjectAffixMode::None,const TArray<FString>& Affixes={});
     void EditRoomBot(const FString& Action,const FString& BotId,int32 Difficulty);
     void EditRoomParticipant(const FString& Action,const FString& UserId=FString());
+    /** Host of a waiting open room or random-match staging room: normal or item roguelike (resets ready). */
+    void SetMatchMode(EProjectMatchMode Mode);
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void JoinRoom(const FString& RoomCode, const FString& Password);
@@ -424,7 +429,7 @@ public:
 	bool ConsumeRemovedFromRoom() { const bool b = bRemovedFromRoom; bRemovedFromRoom = false; return b; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Lobby")
-	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending || bAwaitingPartyAdmission; }
+	bool IsRequestInFlight() const { return ActiveRequest.IsValid() || bEditorServerPreparationPending || bAwaitingPartyAdmission || PendingWrite.IsSet(); }
     bool IsStateChangeInFlight() const;
     /** A state change that has lasted a noticeable time; UI greys out only then so quick edits do not flash. */
     bool IsStateChangeInFlightLong(double Seconds=.35) const { return IsStateChangeInFlight()&&FPlatformTime::Seconds()-RequestStartedAt>=Seconds; }
@@ -522,6 +527,11 @@ private:
 	FString GameTicketRole;
 
 	TSharedPtr<class IHttpRequest, ESPMode::ThreadSafe> ActiveRequest;
+    // A change (ready, start, leave, ...) pressed while a room refresh (GET) is out waits here and goes as soon as the
+    // refresh ends, instead of failing with "이전 로비 요청이 진행 중입니다". Latest wins; given up after 5 s.
+    struct FPendingLobbyWrite{EProjectProject01LobbyOperation Operation;FString Verb,Endpoint,Body,PartyProof;double Until=0;};
+    TOptional<FPendingLobbyWrite> PendingWrite;FTSTicker::FDelegateHandle PendingWriteTicker;
+    bool TickPendingWrite(float);
 	double RequestStartedAt=0;
 	uint64 ActiveCircuitTicket=0;
 };

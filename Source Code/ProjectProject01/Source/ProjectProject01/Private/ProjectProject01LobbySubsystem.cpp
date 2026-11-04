@@ -109,6 +109,7 @@ void UProjectProject01LobbySubsystem::Deinitialize()
 void UProjectProject01LobbySubsystem::ForceClearLocalSession()
 {
     bAwaitingPartyAdmission=false;
+    PendingWrite.Reset();if(PendingWriteTicker.IsValid()){FTSTicker::GetCoreTicker().RemoveTicker(PendingWriteTicker);PendingWriteTicker.Reset();}
 	++RequestGeneration;
 	bEditorServerPreparationPending=false;
 	bEditorServerPrepared=false;
@@ -355,6 +356,14 @@ void UProjectProject01LobbySubsystem::EditRoomParticipant(const FString& Action,
     SendRequest(EProjectProject01LobbyOperation::EditRoomParticipant,TEXT("POST"),TEXT("/api/rooms/current/participants"),Body);
 }
 
+void UProjectProject01LobbySubsystem::SetMatchMode(EProjectMatchMode Mode)
+{
+    if(!HasCurrentRoom()||!CurrentRoom.bIsHost||CurrentRoom.bBotMatch||CurrentRoom.bRandomMatch||CurrentRoom.bStarted||CurrentRoom.bStarting||CurrentRoom.bServerPreparing)return;
+    auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("roomId"),CurrentRoom.RoomId);Json->SetStringField(TEXT("mode"),FProjectMatchModeKeys::Key(Mode));
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    SendRequest(EProjectProject01LobbyOperation::SetMatchMode,TEXT("PUT"),TEXT("/api/rooms/current/match-mode"),Body);
+}
+
 void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
 {
 	ClearGameJoinTicket();
@@ -475,7 +484,21 @@ void UProjectProject01LobbySubsystem::ClearPendingLeaderboardRecord()
 }
 
 bool UProjectProject01LobbySubsystem::IsStateChangeInFlight() const
-{return bEditorServerPreparationPending||bAwaitingPartyAdmission||(ActiveRequest&&ActiveRequest->GetVerb()!=TEXT("GET"));}
+{return bEditorServerPreparationPending||bAwaitingPartyAdmission||PendingWrite.IsSet()||(ActiveRequest&&ActiveRequest->GetVerb()!=TEXT("GET"));}
+
+bool UProjectProject01LobbySubsystem::TickPendingWrite(float)
+{
+    if(!PendingWrite.IsSet()){PendingWriteTicker.Reset();return false;}
+    if(FPlatformTime::Seconds()>PendingWrite->Until)
+    {
+        const EProjectProject01LobbyOperation Operation=PendingWrite->Operation;PendingWrite.Reset();PendingWriteTicker.Reset();
+        Complete(Operation,false,TEXT("로비 응답이 늦어 요청을 보내지 못했습니다. 다시 눌러 주세요."));return false;
+    }
+    if(ActiveRequest.IsValid()||bEditorServerPreparationPending)return true; // The refresh (or its retry) is still out.
+    const FPendingLobbyWrite Write=PendingWrite.GetValue();PendingWrite.Reset();PendingWriteTicker.Reset();
+    SendRequest(Write.Operation,Write.Verb,Write.Endpoint,Write.Body,0,Write.PartyProof);
+    return false;
+}
 
 void UProjectProject01LobbySubsystem::SendRequest(
 	const EProjectProject01LobbyOperation Operation,
@@ -489,10 +512,26 @@ void UProjectProject01LobbySubsystem::SendRequest(
 #endif
 	if (ActiveRequest.IsValid())
 	{
+		// A refresh is out: a change waits for it (TickPendingWrite) instead of being refused.
+		if (!ProjectProject01Lobby::IsReadOperation(Operation) && RetryIndex == 0 && ActiveRequest->GetVerb() == TEXT("GET"))
+		{
+			if (PendingWrite.IsSet() && PendingWrite->Operation != Operation) Complete(PendingWrite->Operation, false, TEXT("다른 요청으로 바뀌었습니다."));
+			PendingWrite = FPendingLobbyWrite{Operation, Verb, Endpoint, JsonBody, PartyProof, FPlatformTime::Seconds() + 5.0};
+			if (!PendingWriteTicker.IsValid()) PendingWriteTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &ThisClass::TickPendingWrite), .02f);
+			return;
+		}
 		if (!ProjectProject01Lobby::IsReadOperation(Operation))
 		{
 			Complete(Operation, false, TEXT("이전 로비 요청이 진행 중입니다."));
 		}
+		return;
+	}
+	// A change is waiting for its turn: a refresh adds nothing (the change answers with the room); a newer change replaces it.
+	if (PendingWrite.IsSet() && RetryIndex == 0)
+	{
+		if (ProjectProject01Lobby::IsReadOperation(Operation)) return;
+		if (PendingWrite->Operation != Operation) Complete(PendingWrite->Operation, false, TEXT("다른 요청으로 바뀌었습니다."));
+		PendingWrite = FPendingLobbyWrite{Operation, Verb, Endpoint, JsonBody, PartyProof, FPlatformTime::Seconds() + 5.0};
 		return;
 	}
 	if (bEditorServerPreparationPending) return;
@@ -821,6 +860,9 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
     const TSharedPtr<FJsonObject>* AffixJson=nullptr;
     if(StateJson->HasTypedField<EJson::Object>(TEXT("affixes"))&&(!StateJson->TryGetObjectField(TEXT("affixes"),AffixJson)||!FProjectMatchAffixes::Parse(*AffixJson,Parsed.Affixes)))
     {OutError=TEXT("방 어픽스 응답이 올바르지 않습니다.");return false;}
+    FString MatchModeKey;
+    if(StateJson->HasTypedField<EJson::String>(TEXT("matchMode"))&&(!StateJson->TryGetStringField(TEXT("matchMode"),MatchModeKey)||!FProjectMatchModeKeys::FromKey(MatchModeKey,Parsed.MatchMode)))
+    {OutError=TEXT("방 경기 모드 응답이 올바르지 않습니다.");return false;}
 	if (!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("roomId"), Parsed.RoomId) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("joinCode"), Parsed.JoinCode) ||
 		!ProjectProject01Lobby::ReadRequiredString(StateJson, TEXT("name"), Parsed.Name) ||

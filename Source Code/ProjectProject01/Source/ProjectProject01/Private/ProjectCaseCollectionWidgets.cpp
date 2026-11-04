@@ -267,17 +267,36 @@ void UProjectCaseRecordWidget::BuildCollection(const TSharedPtr<FJsonObject>& St
     auto Header=SNew(SHorizontalBox);Header->AddSlot().FillWidth(1)[Text(TEXT("꾸미기 컬렉션"),24)];
     Header->AddSlot().AutoWidth()[Button(TEXT("시즌 뽑기"),[this]{Page=TEXT("Draw");RefreshPanel();},Ready)];Body->AddSlot().AutoHeight().Padding(4,8)[Header];
     auto Filters=SNew(SWrapBox).UseAllottedSize(true);
+    // A category switch redraws only the cards, like 이전/다음: the filter row stays and only its highlight moves.
+    // The list holds weak pointers, so each button can own it without a reference cycle.
+    const auto FilterButtons=MakeShared<TArray<TPair<TWeakPtr<SButton>,FString>>>();
     for(const auto& Filter:TArray<TPair<FString,FString>>{{TEXT("전체"),TEXT("All")},{TEXT("배너"),TEXT("Banner")},{TEXT("도장·인장"),TEXT("Stamp")},{TEXT("명찰"),TEXT("Nameplate")},{TEXT("배지"),TEXT("Badge")},{TEXT("테두리"),TEXT("Frame")},{TEXT("아이콘"),TEXT("Icon")}})
     {
-        auto Control=Button(Filter.Key,[this,Category=Filter.Value]{CollectionCategory=Category;CollectionPage=0;RenderedFingerprint.Reset();RefreshPanel();});Control->SetButtonStyle(&ProjectDFSDUI::ButtonStyle(CollectionCategory==Filter.Value));Control->SetContentPadding(FMargin(8,3));StaticCastSharedRef<STextBlock>(Control->GetContent())->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),14));Filters->AddSlot().Padding(2)[Control];
+        auto Control=Button(Filter.Key,[this,FilterButtons,Category=Filter.Value]
+        {
+            if(CollectionCategory==Category)return;
+            CollectionCategory=Category;CollectionPage=0;
+            for(const auto& B:*FilterButtons)if(const auto Pinned=B.Key.Pin())Pinned->SetButtonStyle(&ProjectDFSDUI::ButtonStyle(B.Value==Category));
+            if(RebuildCollectionGrid)RebuildCollectionGrid();
+        });
+        Control->SetButtonStyle(&ProjectDFSDUI::ButtonStyle(CollectionCategory==Filter.Value));Control->SetContentPadding(FMargin(8,3));StaticCastSharedRef<STextBlock>(Control->GetContent())->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),14));Filters->AddSlot().Padding(2)[Control];
+        FilterButtons->Add({TWeakPtr<SButton>(Control),Filter.Value});
     }
     Body->AddSlot().AutoHeight().Padding(2,0,2,8)[Filters];
     auto Items=Rows(C,TEXT("catalogue"));TSet<FString> Known,Owned;for(auto V:Items)Known.Add(Str(V->AsObject(),TEXT("id")));for(auto V:Rows(State,TEXT("inventory")))Owned.Add(Str(V->AsObject(),TEXT("itemId")));
     for(auto V:Rows(State,TEXT("catalogue"))){auto Original=V->AsObject();const FString Id=Str(Original,TEXT("id"));if(Known.Contains(Id))continue;Known.Add(Id);auto Copy=MakeShared<FJsonObject>();Copy->Values=Original->Values;Copy->SetStringField(TEXT("origin"),TEXT("Shop"));Items.Add(MakeShared<FJsonValueObject>(Copy));}
     TArray<FString> OwnedIds=Owned.Array();OwnedIds.Sort();for(const auto& Id:OwnedIds)if(!Known.Contains(Id)&&(Id.StartsWith(TEXT("level_frame_"))||Id.StartsWith(TEXT("investigation_seal_")))){auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("id"),Id);J->SetStringField(TEXT("name"),ProjectCaseProfile::Name(Id));J->SetStringField(TEXT("slot"),TEXT("Frame"));Items.Add(MakeShared<FJsonValueObject>(J));}
-    if(CollectionCategory!=TEXT("All"))Items.RemoveAll([this](const auto& V){return Str(V->AsObject(),TEXT("slot"))!=CollectionCategory;});
     TSet<FString> Displayed;for(auto V:Rows(C,TEXT("displayedBanners")))Displayed.Add(Str(V->AsObject(),TEXT("itemId")));
-    constexpr int32 PerPage=3;const int32 Pages=FMath::Max(1,FMath::DivideAndRoundUp(Items.Num(),PerPage));CollectionPage=FMath::Clamp(CollectionPage,0,Pages-1);
+    constexpr int32 PerPage=3;
+    SAssignNew(CollectionGridHost,SBox);
+    // Paging and category switches redraw only the cards (this builder); the filters and the pager stay as they are.
+    RebuildCollectionGrid=[this,AllItems=Items,Owned,Displayed,State,Ready]()
+    {
+    if(!CollectionGridHost)return;
+    TArray<TSharedPtr<FJsonValue>> Items=AllItems;
+    if(CollectionCategory!=TEXT("All"))Items.RemoveAll([this](const auto& V){return Str(V->AsObject(),TEXT("slot"))!=CollectionCategory;});
+    CollectionPages=FMath::Max(1,FMath::DivideAndRoundUp(Items.Num(),PerPage));
+    CollectionPage=FMath::Clamp(CollectionPage,0,CollectionPages-1);
     auto Grid=SNew(SUniformGridPanel).SlotPadding(6);
     for(int32 I=CollectionPage*PerPage;I<FMath::Min(Items.Num(),(CollectionPage+1)*PerPage);I++)
     {
@@ -293,10 +312,17 @@ void UProjectCaseRecordWidget::BuildCollection(const TSharedPtr<FJsonObject>& St
         else Card->AddSlot().AutoHeight()[Button(Equipped?TEXT("장착 중"):TEXT("장착"),[this,Id]{RequestCosmeticAction(TEXT("Equip"),Id);},Ready&&Has&&!Equipped)];
         Grid->AddSlot(I%PerPage,0)[SNew(SBorder).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(8)[Card]];
     }
-    Body->AddSlot().AutoHeight()[Grid];auto Pager=SNew(SHorizontalBox);
-    Pager->AddSlot().AutoWidth()[Button(TEXT("이전"),[this]{CollectionPage--;RenderedFingerprint.Reset();RefreshPanel();},CollectionPage>0)];
-    Pager->AddSlot().FillWidth(1).HAlign(HAlign_Center).VAlign(VAlign_Center)[Text(FString::Printf(TEXT("%d / %d"),CollectionPage+1,Pages))];
-    Pager->AddSlot().AutoWidth()[Button(TEXT("다음"),[this]{CollectionPage++;RenderedFingerprint.Reset();RefreshPanel();},CollectionPage+1<Pages)];Body->AddSlot().AutoHeight().Padding(4,8)[Pager];
+    CollectionGridHost->SetContent(Grid);
+    };
+    RebuildCollectionGrid();
+    Body->AddSlot().AutoHeight()[CollectionGridHost.ToSharedRef()];auto Pager=SNew(SHorizontalBox);
+    auto Prev=Button(TEXT("이전"),[this]{if(CollectionPage<=0)return;CollectionPage--;if(RebuildCollectionGrid)RebuildCollectionGrid();});
+    Prev->SetEnabled(TAttribute<bool>::CreateLambda([this]{return CollectionPage>0;}));Pager->AddSlot().AutoWidth()[Prev];
+    Pager->AddSlot().FillWidth(1).HAlign(HAlign_Center).VAlign(VAlign_Center)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Text())
+        .Text_Lambda([this]{return FText::FromString(FString::Printf(TEXT("%d / %d"),CollectionPage+1,CollectionPages));})];
+    auto Next=Button(TEXT("다음"),[this]{if(CollectionPage+1>=CollectionPages)return;CollectionPage++;if(RebuildCollectionGrid)RebuildCollectionGrid();});
+    Next->SetEnabled(TAttribute<bool>::CreateLambda([this]{return CollectionPage+1<CollectionPages;}));Pager->AddSlot().AutoWidth()[Next];
+    Body->AddSlot().AutoHeight().Padding(4,8)[Pager];
 }
 void UProjectCaseRecordWidget::RequestDrawAction(const FString& Operation,int32 Count)
 {

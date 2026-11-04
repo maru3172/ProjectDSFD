@@ -321,6 +321,7 @@ AMultiplayTestGameMode::AMultiplayTestGameMode()
 	PrimaryActorTick.bCanEverTick = true;
     MatchBots=CreateDefaultSubobject<UProjectMatchBots>(TEXT("ServerMatchBots"));
     AffixRuntime=CreateDefaultSubobject<UProjectAffixRuntime>(TEXT("ServerAffixRuntime"));
+    ItemRoguelike=CreateDefaultSubobject<UProjectItemRoguelikeRuntime>(TEXT("ServerItemRoguelike"));
 	// 맵 구간 이동 때 접속을 끊거나 일회용 티켓을 다시 소비하지 않고 컨트롤러를 넘긴다.
 	bUseSeamlessTravel = true;
 
@@ -358,7 +359,10 @@ void AMultiplayTestGameMode::BeginPlay()
 	AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
     if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>();Instance&&Instance->ServerMatchCarryover)
     {FString Error;AcceptCustomRules(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->CustomRules,Error);
-        AcceptMatchAffixes(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Affixes,Error);}
+        AcceptMatchAffixes(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Affixes,Error);
+        // The item roguelike picks so far; this floor opens its own pick round.
+        if(AcceptMatchMode(Instance->ServerMatchCarryover->MatchId,Instance->ServerMatchCarryover->Rogue.Mode,Error)&&ItemRoguelike)
+            ItemRoguelike->Import(Instance->ServerMatchCarryover->Rogue);}
 	InitializeRoleSpawnPoints();
 	if (!AProjectProject01TutorialGameMode::IsTutorialWorld(GetWorld())) BindEscapeTriggers();
 	if (UWorld* World = GetWorld(); IsValid(World))
@@ -611,6 +615,22 @@ bool AMultiplayTestGameMode::AcceptMatchAffixes(const FString& Match,const FProj
     {Error=TEXT("Another match already owns these affixes.");return false;}
     AffixesMatchId=Match;MatchAffixes=Affixes;
     for(const auto& Pair:MatchPlayerRecords)if(auto* Controller=Pair.Key.Get())Controller->SetMatchAffixes(MatchAffixes);
+    return true;
+}
+
+bool AMultiplayTestGameMode::AcceptMatchMode(const FString& Match,const EProjectMatchMode Mode,FString& Error)
+{
+    if(MatchModeMatchId==Match)
+    {
+        if(ItemRoguelike&&ItemRoguelike->GetMode()==Mode)return true;
+        Error=TEXT("Match mode changed after admission.");return false;
+    }
+    if(AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::Waiting||!MatchModeMatchId.IsEmpty())
+    {Error=TEXT("Another match already owns this match mode.");return false;}
+    // The item roguelike is a PvP mode; bot match affixes come only with bot rooms, never together with it.
+    if(Mode==EProjectMatchMode::ItemRoguelike&&MatchAffixes.IsActive()){Error=TEXT("Item roguelike cannot run with bot match affixes.");return false;}
+    if(!ItemRoguelike||!ItemRoguelike->Accept(Match,Mode,Error))return false;
+    MatchModeMatchId=Match;
     return true;
 }
 
@@ -1525,6 +1545,7 @@ void AMultiplayTestGameMode::PreLogin(
 
     if(!AcceptCustomRules(Claim.MatchId,Claim.CustomRules,ErrorMessage))return;
     if(!AcceptMatchAffixes(Claim.MatchId,Claim.Affixes,ErrorMessage))return;
+    if(!AcceptMatchMode(Claim.MatchId,Claim.MatchMode,ErrorMessage))return;
     if(MatchBots&&!MatchBots->AcceptRoster(Claim.RoomId,Claim.MatchId,Claim.Bots,ErrorMessage))return;
 	PendingValidatedJoinClaims.Add(Ticket, MoveTemp(Claim));
 }
@@ -2272,6 +2293,7 @@ void AMultiplayTestGameMode::BeginMatchTimeline()
 void AMultiplayTestGameMode::NotifySurvivorDeathCountLost(APlayerCharacter* Survivor)
 {
 	if (!HasAuthority() || !IsValid(Survivor) || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return;
+	if (AffixRuntime) AffixRuntime->OnSurvivorHit(Survivor, false); // Item roguelike S08 bell, S14 partner.
 	if (FMultiplayTestServerPlayerRecord* Record = FindSurvivorRecord(Survivor);
 		Record && Record->SurvivorState == EMultiplayTestSurvivorState::Active &&
 		Record->RemainingDeathCount != Survivor->GetRemainingDeathCount())
@@ -2545,12 +2567,14 @@ bool AMultiplayTestGameMode::TryBroadcastSurvivorPing(
 		{
 			Target->ClientReceiveTeamPing(Type, Location, SenderName);
 		}
-		// C07: the mannequin player sees the marker too (the place, never the sender).
-		else if (IsValid(Target) && MatchAffixes.Has(TEXT("C07")) && Pair.Value.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) && !Target->IsServerControlledBot())
+		// C07 (or the item roguelike M11): the mannequin player sees the marker too (the place, never the sender).
+		else if (IsValid(Target) && (MatchAffixes.Has(TEXT("C07")) || (AffixRuntime && AffixRuntime->MannequinSeesPings())) &&
+			Pair.Value.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) && !Target->IsServerControlledBot())
 			Target->ClientReceiveTeamPing(Type, Location, FString());
 	}
 	// Server-owned bot teammates have no client to show the marker; they hear the ping here.
 	if (MatchBots) MatchBots->HearPing(RequestingController, static_cast<uint8>(Type), Location);
+	if (AffixRuntime) AffixRuntime->OnSurvivorPingFrom(RequestingController, Location); // S12 chalk marks.
 	return true;
 }
 
@@ -2584,6 +2608,7 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 
 	SurvivorRecord->SurvivorState = EMultiplayTestSurvivorState::Eliminated;
 	RecordTimeline(EProjectMatchEvent::Eliminated, SurvivorRecord->DisplayName);
+	if (AffixRuntime && bCaughtByMannequin) AffixRuntime->OnSurvivorHit(Survivor, true);
 	const double CaptureSeconds = GetElapsedMatchSeconds();
 	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
 	{
@@ -2920,6 +2945,7 @@ void AMultiplayTestGameMode::PrepareLevelTransitionTravel(const float FadeSecond
     {
         auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=AuthoritativeMatchId;
         Carry->CustomRules=CustomMatchRules;Carry->Affixes=MatchAffixes;
+        if(ItemRoguelike)Carry->Rogue=ItemRoguelike->Export();
         if(MatchBots){Carry->Bots=MatchBots->GetRoster();Carry->BotRoomId=MatchBots->GetRoomId();Carry->BotLearning=MatchBots->ExportLearning();
             Carry->StandIns=MatchBots->GetStandIns();Carry->StandInOwners=MatchBots->GetStandInOwners();}
         Carry->ElapsedSeconds=GetElapsedMatchSeconds();Carry->PreparedRealSeconds=FPlatformTime::Seconds();Carry->PreparedWorldSeconds=GetWorld()->GetTimeSeconds();
@@ -3159,7 +3185,9 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 	const FMultiplayTestServerPlayerRecord& Record) const
 {
 	FMultiplayTestMatchResult Result;
-	Result.bCustomMatch=CustomMatchRules.bEnabled;
+	// Item roguelike matches are unofficial like custom-rule matches (the backend excludes both from records).
+	Result.bCustomMatch=CustomMatchRules.bEnabled||IsItemRoguelikeMatch();
+	if(IsItemRoguelikeMatch())if(FProjectRoguePickRecord Picks=ItemRoguelike->RecordFor(UProjectItemRoguelikeRuntime::KeyOf(Record));!Picks.Ids.IsEmpty())Result.RoguePicks.Add(MoveTemp(Picks));
 	Result.MatchId = AuthoritativeMatchId;
 	Result.Role = Record.Role;
 	Result.MatchDurationSeconds = GetElapsedMatchSeconds();
@@ -3456,12 +3484,20 @@ bool AMultiplayTestGameMode::TryPossessMannequin(AMultiplayTestPlayerController*
 	AMannequinAICharacter* PreviousManuallyControlledMannequin = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
 	if (IsValid(PreviousManuallyControlledMannequin))
 	{
-		// 직접 조작 중 Z/X/C 명령을 지정하지 않았다면, 손을 뗀 마네킹은 그대로 정지한다.
+		// 직접 조작 중 명령을 지정하지 않았다면: 사람 플레이어가 손을 뗀 마네킹은 직접 조작 전의 명령으로 그대로 돌아간다
+		// (멈추는 것은 정지 명령을 받았을 때뿐; 기록이 없으면 정찰). 서버 봇은 기존대로 그 자리에 정지한다(봇 승률 조정의 전제).
 		if (!RequestingController->bManualMannequinCommandIssued)
 		{
-			PreviousManuallyControlledMannequin->SetMultiplayCommand(EMultiplayMannequinCommand::HoldPosition);
+			EMultiplayMannequinCommand Resume = EMultiplayMannequinCommand::HoldPosition;
+			if (!RequestingController->IsServerControlledBot())
+			{
+				const EMultiplayMannequinCommand* Before = PreManualMannequinCommands.Find(PreviousManuallyControlledMannequin);
+				Resume = Before ? *Before : EMultiplayMannequinCommand::Patrol;
+			}
+			PreviousManuallyControlledMannequin->SetMultiplayCommand(Resume);
 			MultiplayerPatrolTargets.Remove(PreviousManuallyControlledMannequin);
 		}
+		PreManualMannequinCommands.Remove(PreviousManuallyControlledMannequin);
 		RequestingController->bManualMannequinCommandIssued = false;
 		RequestingController->ForceNetUpdate();
 		PreviousManuallyControlledMannequin->SetManualControlEnabled(false);
@@ -3525,6 +3561,7 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 		Movement->StopMovementImmediately();
 	}
 
+	PreManualMannequinCommands.Add(TargetMannequin, TargetMannequin->GetMultiplayCommand()); // Resumed when the player lets go.
 	RequestingController->Possess(TargetMannequin);
 	if (!ensureMsgf(RequestingController->GetPawn() == TargetMannequin,
 		TEXT("Failed to enable manual control for mannequin %s."), *GetNameSafe(TargetMannequin)))
@@ -3548,17 +3585,18 @@ bool AMultiplayTestGameMode::TryEnableMannequinManualControl(AMultiplayTestPlaye
 
 bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 	AMultiplayTestPlayerController* RequestingController,
-	const EMultiplayMannequinCommand Command)
+	const EMultiplayMannequinCommand Command, AMannequinAICharacter* Target)
 {
 	if (!HasAuthority() || !IsMannequinController(RequestingController))
 	{
 		return false;
 	}
 
-	AMannequinAICharacter* Target = RequestingController->GetViewedMannequin();
+	// The wheel may name another mannequin of this match; anything else (or nothing) means the viewed one.
+	if (!IsValid(Target) || FindMannequinBySlot(Target->GetControlSlot()) != Target) Target = RequestingController->GetViewedMannequin();
 	if (!IsValid(Target) || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress ||
 		(Command != EMultiplayMannequinCommand::Patrol && Command != EMultiplayMannequinCommand::ChaseInDetectionRange &&
-		 Command != EMultiplayMannequinCommand::FollowMannequinPlayer) ||
+		 Command != EMultiplayMannequinCommand::FollowMannequinPlayer && Command != EMultiplayMannequinCommand::HoldPosition) ||
 		(Target->IsManualControlEnabled() && Target->GetController() != RequestingController))
 	{
 		UE_LOG(LogProjectProject01Multiplayer, Warning,
@@ -3569,7 +3607,7 @@ bool AMultiplayTestGameMode::TryIssueMannequinCommand(
 
 	// View-only commands execute now; manual-control commands execute after release.
 	AssignMannequinCommand(Target,Command);
-	RequestingController->bManualMannequinCommandIssued = Target->IsManualControlEnabled();
+	if (Target == RequestingController->GetPawn()) RequestingController->bManualMannequinCommandIssued = Target->IsManualControlEnabled();
 	RequestingController->ForceNetUpdate();
 	UProjectProject01DiagnosticsSubsystem::RecordWorldEvent(GetWorld(), EProjectProject01DiagnosticSeverity::Normal,
 		TEXT("MultiplayerMannequinCommand"),
@@ -3645,7 +3683,8 @@ bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* 
 		Controlled != RequestingController->GetViewedMannequin()) return false;
     if(AffixRuntime&&!AffixRuntime->CanManualAttack(Controlled))return false; // A04 recovery, C02 slower attacks.
 	APlayerCharacter* Target = nullptr;
-	double BestDistance = FMath::Square(static_cast<double>(MultiplayerManualAttackRange));
+	const float AttackRange = MultiplayerManualAttackRange * (AffixRuntime ? AffixRuntime->ManualAttackRangeScale() : 1.f); // M04
+	double BestDistance = FMath::Square(static_cast<double>(AttackRange));
 	for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
 	{
 		APlayerCharacter* Survivor = *It;
@@ -3654,7 +3693,7 @@ bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* 
 			Survivor->IsGameOver()) continue;
 		const FVector Offset = Survivor->GetActorLocation() - Controlled->GetActorLocation();
 		const double Distance = Offset.SizeSquared();
-		if (IsWithinMannequinManualAttackRange(Offset, MultiplayerManualAttackRange) && Distance <= BestDistance &&
+		if (IsWithinMannequinManualAttackRange(Offset, AttackRange) && Distance <= BestDistance &&
 			FVector::DotProduct(Controlled->GetActorForwardVector(), Offset.GetSafeNormal()) >= 0.25f &&
 			RequestingController->LineOfSightTo(Survivor)) { Target=Survivor; BestDistance=Distance; }
 	}
@@ -3903,9 +3942,11 @@ bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
 
 	FCollisionQueryParams TraceParameters(SCENE_QUERY_STAT(SurvivorVision), true, SurvivorPawn);
 	TraceParameters.AddIgnoredActor(SurvivorController);
+	// Item roguelike S13/S15 narrow or widen this survivor's freezing gaze; 1 otherwise.
+	const float HalfAngle = SurvivorVisionHalfAngleDegrees * (AffixRuntime ? AffixRuntime->GazeAngleScale(Cast<const APlayerCharacter>(SurvivorPawn)) : 1.f);
 	for (const FVector& TargetPoint : TargetPoints)
 	{
-		if (!IsPointInsideVisionCone(ViewLocation, ViewRotation.Vector(), TargetPoint, SurvivorVisionHalfAngleDegrees))
+		if (!IsPointInsideVisionCone(ViewLocation, ViewRotation.Vector(), TargetPoint, HalfAngle))
 		{
 			continue;
 		}

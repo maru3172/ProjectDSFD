@@ -6,7 +6,7 @@ internal sealed class CaseInvestigationForm:Form
     private readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(8)};
     public CaseInvestigationForm(Func<HttpMethod,string,object?,HttpRequestMessage> create)
     {
-        Text="사건 기록 조사 · 수집 수량 / 시즌 종료";Width=740;Height=420;StartPosition=FormStartPosition.CenterParent;
+        Text="사건 기록 조사 · 수집 수량 / 시즌 종료";Width=880;Height=420;StartPosition=FormStartPosition.CenterParent;
         var panel=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(16)};
         panel.Controls.Add(new Label{Text="13파트 × 9조각 = 117조각 · 파트 완성 후 다음 파트 해금",AutoSize=true});
         panel.Controls.Add(new Label{Text="하루 수집 제한 없음 · 지난주 미사용 수량 이월 없음\n시즌 말 수량 증가는 운영자가 직접 적용합니다. 수집 기록은 초기화하지 않습니다.",AutoSize=true,Margin=new Padding(0,10,0,14)});
@@ -17,6 +17,7 @@ internal sealed class CaseInvestigationForm:Form
         var buttons=new FlowLayoutPanel{AutoSize=true};var refresh=new Button{Text="설정 조회",AutoSize=true};var apply=new Button{Text="설정 적용",AutoSize=true};buttons.Controls.AddRange([refresh,apply]);panel.Controls.Add(buttons);
         var catalogue=new Button{Text="117조각 문구·위치 연결 구성",AutoSize=true};buttons.Controls.Add(catalogue);catalogue.Click+=(_,_)=>{using var form=new CaseInvestigationCatalogueForm(create);form.ShowDialog(this);};
         var stories=new Button{Text="파트별 스토리 작성",AutoSize=true};buttons.Controls.Add(stories);stories.Click+=(_,_)=>{using var form=new CasePartStoriesForm(create);form.ShowDialog(this);};
+        var lore=new Button{Text="기본 기록 작성",AutoSize=true};buttons.Controls.Add(lore);lore.Click+=(_,_)=>{using var form=new CaseLoreForm(create);form.ShowDialog(this);};
         var status=new Label{AutoSize=true,MaximumSize=new Size(620,0)};panel.Controls.Add(status);
         async Task Request(bool update)
         {
