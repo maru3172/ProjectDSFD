@@ -60,6 +60,11 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->ClearValue(TEXT("TargetActor"));
 		Blackboard->ClearValue(TEXT("RoamingLocation"));
 		Blackboard->SetValueAsInt(TEXT("ChaseTier"),static_cast<int32>(ETwoStageMannequinTier::Roaming));
+		
+		Blackboard->SetValueAsBool(TEXT("HasPlayerObservation"), false);
+		Blackboard->SetValueAsFloat(TEXT("ObservationConfidence"), 0.0f);
+		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
+		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
 
 		return;
 	}
@@ -94,6 +99,22 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		// 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
 		CurrentMannequin->SetFrozen(true);
 		return;
+	}
+	
+	const FMannequinPlayerObservation& Observation = CurrentMannequin->GetPlayerObservation();
+	
+	Blackboard->SetValueAsBool(TEXT("HasPlayerObservation"), Observation.bHasObservation);
+	Blackboard->SetValueAsFloat(TEXT("ObservationConfidence"), Observation.Confidence);
+	
+	if (Observation.bHasObservation)
+	{
+		Blackboard->SetValueAsVector(TEXT("LastSeenPlayerLocation"), Observation.LastSeenLocation);
+		Blackboard->SetValueAsVector(TEXT("LastSeenPlayerVelocity"), Observation.LastSeenVelocity);
+	}
+	else
+	{
+		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
+		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
 	}
 
 	// 플레이어가 마네킹을 보고 있지 않으므로 애니메이션 정지를 해제한다.
