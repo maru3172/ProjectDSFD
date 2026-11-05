@@ -670,6 +670,57 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	}
 }
 
+void AMannequinAICharacter::UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime)
+{
+	PlayerObservation.LastSeenLocation = PlayerLocation;
+	PlayerObservation.LastSeenVelocity = PlayerVelocity;
+	PlayerObservation.LastSeenTime = ObservationTime;
+	PlayerObservation.Confidence = 1.0f;
+	PlayerObservation.bHasObservation = true;
+	PlayerObservation.bDirectlyVisible = true;
+}
+
+void AMannequinAICharacter::SetPlayerDirectlyVisible(bool bDirectlyVisible)
+{
+	PlayerObservation.bDirectlyVisible = bDirectlyVisible;
+}
+
+void AMannequinAICharacter::UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifetime)
+{
+	if (!PlayerObservation.bHasObservation)
+	{
+		PlayerObservation.Confidence = 0.0f;
+		return;
+	}
+	
+	if (PlayerObservation.bDirectlyVisible)
+	{
+		PlayerObservation.Confidence = 1.0f;
+		return;
+	}
+	
+	if (ObservationLifetime <= 0.0f)
+	{
+		PlayerObservation.Confidence = 0.0f;
+		PlayerObservation.bHasObservation = false;
+		return;
+	}
+	
+	const double ElapsedTime = FMath::Max(0.0, CurrentTime - PlayerObservation.LastSeenTime);
+	
+	PlayerObservation.Confidence = FMath::Clamp(1.0f - static_cast<float>(ElapsedTime) / ObservationLifetime, 0.0f, 1.0f);
+	
+	if (PlayerObservation.Confidence <= 0.0f)
+	{
+		PlayerObservation.bHasObservation = false;
+	}
+}
+
+bool AMannequinAICharacter::HasActivePlayerObservation() const
+{
+	return PlayerObservation.bHasObservation && PlayerObservation.Confidence > 0.0f;
+}
+
 void AMannequinAICharacter::SetAffixSpeedScale(const float Scale)
 {
 	if (!HasAuthority()) return;
