@@ -103,6 +103,12 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		return;
 	}
 	
+	// 	직접 시야 판정
+	// 1. 관측 데이터 갱신
+	// 2. 신뢰도 계산
+	// 3. Blackboard 디버그 값 기록
+	// 4. 플레이어가 보고 있다면 정지
+	// 5. 아니면 기존 추적/배회 진행
 	const FMannequinPlayerObservation& Observation = CurrentMannequin->GetPlayerObservation();
 	
 	Blackboard->SetValueAsBool(TEXT("HasPlayerObservation"), Observation.bHasObservation);
