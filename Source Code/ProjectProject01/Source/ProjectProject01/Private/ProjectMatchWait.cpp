@@ -99,7 +99,9 @@ public:
         }
         Body->AddSlot().AutoHeight().Padding(0,8,0,0)[Actions];
         if(bHint)Body->AddSlot().AutoHeight().Padding(0,6,0,0)[Line(TEXT("Alt를 누르고 있으면 마우스로 누를 수 있습니다."),11,ProjectDFSDUI::Muted())];
-        Card->SetContent(SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Panel().CopyWithNewOpacity(.94f)).Padding(FMargin(14,10))[Body]);
+        // Recording-tape card: same surface and padding, plus a static REC header row above the body.
+        // Like the former SBorder, only the card's own rectangle takes the mouse.
+        Card->SetContent(ProjectDFSDUI::TapeCard(Body,2,ProjectDFSDUI::Panel().CopyWithNewOpacity(.94f),FMargin(14,10)));
     }
 private:
     TWeakObjectPtr<UProjectMatchWait> Owner;TSharedPtr<SBox> Card;TSharedPtr<SBorder> Notice;FString Shown;

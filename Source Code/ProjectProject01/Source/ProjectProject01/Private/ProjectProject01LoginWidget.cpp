@@ -4211,6 +4211,11 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	{
 		Details = TEXT("생존자의 기권으로 승리했습니다!");
 	}
+	else if (Result.bPlaygroundInfected)
+	{
+		// Custom game infection: out as a survivor, then played on with the mannequin side.
+		Details = Result.bInfectedSideWon ? TEXT("감염되어 마네킹 편으로 이겼습니다") : TEXT("감염되었습니다 · 마네킹 편 패배");
+	}
 	else if (!Result.bSuccess)
 	{
 		Details = TEXT("패배했습니다");
@@ -4240,15 +4245,22 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
             }
         }
         else Details += FString::Printf(TEXT("\n역할: %s\n전체 경기 시간: %.2f초"),*Result.Role, Result.MatchDurationSeconds);
-		if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
+		// Custom game infinite lives: nobody is eliminated, so the catches replace the elimination lines (same line count).
+		if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) && Result.bPlaygroundInfiniteLives)
+		{
+			Details += FString::Printf(TEXT("\n무한 목숨 · 잡은 횟수: %d\n첫 포획 시간: %.2f초"),
+				Result.PlaygroundCatchCount, Result.FirstCaptureSeconds);
+		}
+		else if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase))
 		{
 			Details += FString::Printf(TEXT("\n붙잡은 횟수: %d\n첫 포획 시간: %.2f초\n전원 제거 시간: %.2f초"),
 				Result.CaptureCount, Result.FirstCaptureSeconds, Result.AllCapturedSeconds);
 		}
 		else if(Result.Role!=TEXT("Observer"))
 		{
-			Details += FString::Printf(TEXT("\n구출 횟수: %d\n탈출 시간: %.2f초"),
-				Result.RescueCount, Result.EscapeSeconds);
+			Details += Result.bPlaygroundInfiniteLives
+				? FString::Printf(TEXT("\n구출 횟수: %d · 잡힌 횟수: %d\n탈출 시간: %.2f초"),Result.RescueCount,Result.PlaygroundCatchCount,Result.EscapeSeconds)
+				: FString::Printf(TEXT("\n구출 횟수: %d\n탈출 시간: %.2f초"),Result.RescueCount, Result.EscapeSeconds);
 		}
 	}
 	ResultText->SetText(FProjectProject01Localization::Text(Details));
@@ -4388,7 +4400,12 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	}
 
 	ResultMenu = WidgetTree->ConstructWidget<UVerticalBox>();
-	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(ResultMenu))
+	// Static recording marks around the menu only (no case-file frame). The frame follows the
+	// menu's own fade and visibility and never takes input itself.
+	UProjectDFSDTapeFrame* ResultTape = WidgetTree->ConstructWidget<UProjectDFSDTapeFrame>();
+	ResultTape->Channel = 4;
+	ResultTape->SetContent(ResultMenu);
+	if (UOverlaySlot* MenuSlot = Overlay->AddChildToOverlay(ResultTape))
 	{
 		MenuSlot->SetHorizontalAlignment(HAlign_Center);
 		MenuSlot->SetVerticalAlignment(VAlign_Center);
@@ -5885,7 +5902,18 @@ void UProjectProject01LobbyWidget::RefreshMatchModeSelection()
         if(Combo->GetSelectedOption()!=Shown)Combo->SetSelectedOption(Shown);
         Combo->SetIsEnabled(Changeable&&(Combo==RandomMatchMode.Get())==Room.bRandomParty);
     }
-    if(RoomMatchMode)RoomMatchMode->SetVisibility(InRoom&&!Room.bBotMatch?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+    if(RoomMatchMode)
+    {
+        RoomMatchMode->SetVisibility(InRoom&&!Room.bBotMatch?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        // Same compact padding as the role chooser (re-applied after the shared theme pass) so the
+        // caption fits the short header slot instead of being clipped.
+        auto Style=RoomMatchMode->GetWidgetStyle();
+        if(Style.ComboButtonStyle.ButtonStyle.NormalPadding.Top>2.f)
+        {
+            Style.ComboButtonStyle.ButtonStyle.SetNormalPadding(FMargin(6,2)).SetPressedPadding(FMargin(6,2));
+            RoomMatchMode->SetWidgetStyle(Style);RoomMatchMode->SetContentPadding(FMargin(4,0));
+        }
+    }
 }
 void UProjectProject01LobbyWidget::RefreshRoleSelection()
 {
@@ -6926,6 +6954,20 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 			*Room.Name, *Room.JoinCode, Playing,Observers,
 			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"));
         if(Room.CustomRules.bEnabled)Summary+=FString::Printf(TEXT("\n사용자 지정 · 데스카운트 %d · 마네킹 %d · %s"),Room.CustomRules.DeathCount,Room.CustomRules.MannequinCount,*(Room.CustomRules.TimeLimitSeconds==0?FString(TEXT("시간 무제한")):FString::Printf(TEXT("제한 %d분"),Room.CustomRules.TimeLimitSeconds/60)));
+        // Playground switches on one more line, at most three names then "외 n개" so the summary box never grows further.
+        if(Room.CustomRules.bEnabled&&Room.CustomRules.HasPlaygroundRules())
+        {
+            const auto& R=Room.CustomRules;TArray<FString> On;
+            if(R.bInfection)On.Add(TEXT("감염"));if(R.bInfiniteLives)On.Add(TEXT("무한 목숨"));if(R.bGhosts)On.Add(TEXT("유령"));
+            if(R.HideRevealSeconds>0)On.Add(FString::Printf(TEXT("숨으면 들킴 %d초"),R.HideRevealSeconds));
+            if(R.GazeLimitSeconds>0)On.Add(FString::Printf(TEXT("바라보기 %d초"),R.GazeLimitSeconds));
+            if(R.Darkness>0)On.Add(FString::Printf(TEXT("어둠 %d"),R.Darkness));
+            if(R.SoundOnlyMeters>0)On.Add(FString::Printf(TEXT("소리 마네킹 %dm"),R.SoundOnlyMeters));
+            if(!R.AffixIds.IsEmpty())On.Add(FString::Printf(TEXT("어픽스 %d"),R.AffixIds.Num()));if(R.bItemCards)On.Add(TEXT("아이템 카드"));
+            const int32 Shown=FMath::Min(On.Num(),3);FString Line=FString::Join(TArrayView<const FString>(On.GetData(),Shown),TEXT(" · "));
+            if(On.Num()>Shown)Line+=FString::Printf(TEXT(" 외 %d개"),On.Num()-Shown);
+            Summary+=TEXT("\n")+Line;
+        }
         if(Room.MatchMode==EProjectMatchMode::ItemRoguelike)Summary+=TEXT("\n아이템 로그라이크 · 시작과 층마다 카드 선택 · 비공식 경기");
         CurrentRoomText->SetText(FText::FromString(Summary));
 	}
@@ -7531,11 +7573,12 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     ProjectDFSDUI::Apply(RoomMatchRole);
     RoomMatchRole->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchRoleChanged);
     auto* RoleBox=WidgetTree->ConstructWidget<USizeBox>();RoleBox->SetWidthOverride(112);RoleBox->SetHeightOverride(26);RoleBox->AddChild(RoomMatchRole);RoomRoleRow->AddChildToHorizontalBox(RoleBox)->SetPadding(FMargin(0));
-    // Match mode beside the role: only the host of a waiting open room can change it; everyone sees it.
+    // Match mode in the room header beside the join-code/tools buttons (not in the own participant card,
+    // where it squeezed the name): only the host of a waiting open room can change it; everyone sees it.
     RoomMatchMode=WidgetTree->ConstructWidget<UProjectDFSDComboBox>();for(const TCHAR* Mode:{TEXT("일반"),TEXT("아이템 로그라이크")})RoomMatchMode->AddOption(Mode);RoomMatchMode->SetSelectedIndex(0);
     ProjectDFSDUI::Apply(RoomMatchMode);RoomMatchMode->SetToolTipText(FText::FromString(TEXT("아이템 로그라이크: 경기 시작과 층마다 카드 3장 중 1장을 고릅니다. 공식 기록에 남지 않습니다.")));
     RoomMatchMode->OnSelectionChanged.AddUniqueDynamic(this,&ThisClass::HandleMatchModeChanged);
-    auto* ModeBox=WidgetTree->ConstructWidget<USizeBox>();ModeBox->SetWidthOverride(168);ModeBox->SetHeightOverride(26);ModeBox->AddChild(RoomMatchMode);RoomRoleRow->AddChildToHorizontalBox(ModeBox)->SetPadding(FMargin(8,0,0,0));
+    auto* ModeBox=WidgetTree->ConstructWidget<USizeBox>();ModeBox->SetWidthOverride(168);ModeBox->AddChild(RoomMatchMode); // natural height: a fixed short height clipped the caption
 	CopyJoinCodeButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomHeader,TEXT("참가 코드 복사"));
 	CastChecked<UHorizontalBoxSlot>(CopyJoinCodeButton->Slot)->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
 	RoomToolsToggleButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomHeader,TEXT("방 관리"));
@@ -7547,6 +7590,8 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     auto* HeaderControls=WidgetTree->ConstructWidget<UVerticalBox>();RoomHeader->AddChildToHorizontalBox(HeaderControls)->SetVerticalAlignment(VAlign_Center);
     HeaderControls->AddChildToVerticalBox(RoomRoleRow);
     auto* HeaderButtons=WidgetTree->ConstructWidget<UHorizontalBox>();HeaderControls->AddChildToVerticalBox(HeaderButtons);
+    // A collapsed mode chooser (bot rooms) gives its SizeBox zero desired size, so no gap remains.
+    if(auto* ModeSlot=HeaderButtons->AddChildToHorizontalBox(ModeBox)){ModeSlot->SetVerticalAlignment(VAlign_Center);ModeSlot->SetPadding(FMargin(0,0,6,0));}
     HeaderButtons->AddChildToHorizontalBox(CopyJoinCodeButton);HeaderButtons->AddChildToHorizontalBox(RoomToolsToggleButton);
     RoomRoleRow->RemoveFromParent();
 
@@ -7635,7 +7680,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     MatchLogoutButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleLogoutClicked);
     auto* Modes=MakeScrollablePanel(); // 4: lobby entry; existing room browser is only under Open Matching.
     ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("매칭 방식 선택"),26);
-    ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("[RECORD 0] _OMINOUS ENTRY"),18);
+    ProjectProject01LoginUI::AddLabel(WidgetTree,Modes,TEXT("[RECORD 0] _OMINOUS ENTRY"),18)->SetFont(ProjectDFSDUI::Mono(18)); // typewriter record line
     auto* Random=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("랜덤 매칭"));Random->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRandomMatchClicked);
     auto* Open=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("오픈 매칭"));Open->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleOpenMatchClicked);
     auto* BotMode=ProjectProject01LoginUI::AddButton(WidgetTree,Modes,TEXT("봇전"));BotMode->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchClicked);

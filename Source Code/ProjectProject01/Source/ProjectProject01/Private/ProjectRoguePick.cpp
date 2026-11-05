@@ -111,12 +111,15 @@ public:
     virtual FReply OnMouseButtonDown(const FGeometry&,const FPointerEvent&)override{return FReply::Handled();}
     virtual int32 OnPaint(const FPaintArgs& Args,const FGeometry& G,const FSlateRect& Clip,FSlateWindowElementList& Out,int32 Layer,const FWidgetStyle& Style,bool bParentEnabled)const override
     {
-        // The blackout itself, with faint ruled lines like a record sheet (static; nothing blinks).
+        // The blackout itself as a paused tape frame: fixed scanlines/grain, darker edges and a
+        // REC line in the bottom padding band, clear of the cards and the top notice area (static).
         const FSlateBrush* White=FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
-        FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(),White,ESlateDrawEffect::None,ProjectRogueUI::Paper);
+        const FLinearColor Tint=Style.GetColorAndOpacityTint();
+        FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(),White,ESlateDrawEffect::None,ProjectRogueUI::Paper*Tint);
         const FVector2D Size=G.GetLocalSize();
-        for(float Y=6.f;Y<Size.Y;Y+=6.f)
-            FSlateDrawElement::MakeLines(Out,Layer+1,G.ToPaintGeometry(),{FVector2D(0,Y),FVector2D(Size.X,Y)},ESlateDrawEffect::None,FLinearColor(1,1,1,.025f),false,1.f);
+        ProjectDFSDUI::PaintTape(Out,G,Layer+1,FVector2D::ZeroVector,Size,1.f,Tint,733,.6f); // near-black blackout: softer rules
+        ProjectDFSDUI::PaintVignette(Out,G,Layer+1,Size,Tint);
+        ProjectDFSDUI::PaintRecordMarks(Out,G,Layer+1,40.f,float(Size.X)-40.f,float(Size.Y)-24.f,1.f,Tint,7);
         return SCompoundWidget::OnPaint(Args,G,Clip,Out,Layer+2,Style,bParentEnabled);
     }
 private:

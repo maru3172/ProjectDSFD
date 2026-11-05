@@ -603,6 +603,18 @@ bool AMultiplayTestGameMode::AcceptCustomRules(const FString& Match,const FProje
     return true;
 }
 
+bool AMultiplayTestGameMode::IsPlaygroundTicketConsistent(const FProjectCustomMatchRules& Rules,const FProjectMatchAffixes& Affixes,EProjectMatchMode Mode,FString& Error)
+{
+    // The ticket carries the mix switches twice: in the custom rules and in the affix set / match mode that the runtimes
+    // read. Both come from one backend apply (Docs/CustomGamePlayground.md 2.3), so any difference is refused.
+    if(!Rules.bEnabled)return true;
+    if(Affixes.Mode!=EProjectAffixMode::None&&Affixes.Mode!=EProjectAffixMode::Custom){Error=TEXT("Custom rules cannot run with bot match affixes.");return false;}
+    const TArray<FString> Expected=Affixes.Mode==EProjectAffixMode::Custom?Affixes.Ids:TArray<FString>();
+    if(Rules.AffixIds!=Expected){Error=TEXT("Custom rule affixes do not match the match affixes.");return false;}
+    if(Rules.bItemCards!=(Mode==EProjectMatchMode::ItemRoguelike)){Error=TEXT("Custom rule item cards do not match the match mode.");return false;}
+    return true;
+}
+
 bool AMultiplayTestGameMode::AcceptMatchAffixes(const FString& Match,const FProjectMatchAffixes& Affixes,FString& Error)
 {
     if(!Affixes.IsValid()){Error=TEXT("Invalid match affixes.");return false;}
@@ -614,6 +626,7 @@ bool AMultiplayTestGameMode::AcceptMatchAffixes(const FString& Match,const FProj
     if(AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::Waiting||!AffixesMatchId.IsEmpty())
     {Error=TEXT("Another match already owns these affixes.");return false;}
     AffixesMatchId=Match;MatchAffixes=Affixes;
+    if(ItemRoguelike)ItemRoguelike->SetFixedBuffs(MatchAffixes.Ids);
     for(const auto& Pair:MatchPlayerRecords)if(auto* Controller=Pair.Key.Get())Controller->SetMatchAffixes(MatchAffixes);
     return true;
 }
@@ -627,8 +640,10 @@ bool AMultiplayTestGameMode::AcceptMatchMode(const FString& Match,const EProject
     }
     if(AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::Waiting||!MatchModeMatchId.IsEmpty())
     {Error=TEXT("Another match already owns this match mode.");return false;}
-    // The item roguelike is a PvP mode; bot match affixes come only with bot rooms, never together with it.
-    if(Mode==EProjectMatchMode::ItemRoguelike&&MatchAffixes.IsActive()){Error=TEXT("Item roguelike cannot run with bot match affixes.");return false;}
+    // The item roguelike is a PvP mode; bot match affixes come only with bot rooms, never together with it. The custom
+    // game's own affix picks (mode Custom with custom rules on) may run with it; those affixes are kept out of the cards.
+    const bool bPlaygroundAffixes=CustomMatchRules.bEnabled&&MatchAffixes.Mode==EProjectAffixMode::Custom;
+    if(Mode==EProjectMatchMode::ItemRoguelike&&MatchAffixes.IsActive()&&!bPlaygroundAffixes){Error=TEXT("Item roguelike cannot run with bot match affixes.");return false;}
     if(!ItemRoguelike||!ItemRoguelike->Accept(Match,Mode,Error))return false;
     MatchModeMatchId=Match;
     return true;
@@ -1382,12 +1397,14 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
     if(MatchBots)MatchBots->Tick(DeltaSeconds);
 	if(TickLoadingGate(DeltaSeconds))return;
     if(AffixRuntime&&AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)AffixRuntime->Tick(this,DeltaSeconds);
+    if(AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)TickPlaygroundHideReveal(DeltaSeconds);
 	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		MatchTimeLimitSeconds > 0.0f && GetElapsedMatchSeconds() >= MatchTimeLimitSeconds)
 	{
 		FinishAuthoritativeMatch(TEXT("TimeLimit"));
 	}
 	ProcessReconnectTimeouts();
+	TickGhostWhispers();
 	VoiceAudibilityAccumulator+=DeltaSeconds;
 	if(VoiceAudibilityAccumulator>=0.1f){VoiceAudibilityAccumulator=0;UpdateVoiceAudibility();}
 	if (AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress)
@@ -1452,6 +1469,8 @@ void AMultiplayTestGameMode::UpdateVoiceAudibility()
 				const float Distance=FVector::Distance(ListenerPawn->GetActorLocation(),Other.Value.SurvivorPawn->GetActorLocation());
 				Peer.Gain=Voice?Voice->CalculateDistanceGain(Distance):ProjectVoiceAudibility::DistanceGain(Distance,350,1800,1);
 			}
+			// Custom game ghost: during its whisper window only the living hear it, at full volume wherever they are.
+			else if(IsAudible(Record) && IsGhost(Other.Value) && GhostWhisperUntil.Contains(Other.Key))Peer.Gain=1.f;
 			Peers.Add(MoveTemp(Peer));
 		}
 		PC->ClientUpdateVoiceAudibility(Record.MatchId,bAllowed,Peers);
@@ -1543,6 +1562,7 @@ void AMultiplayTestGameMode::PreLogin(
 		return;
 	}
 
+    if(!IsPlaygroundTicketConsistent(Claim.CustomRules,Claim.Affixes,Claim.MatchMode,ErrorMessage))return;
     if(!AcceptCustomRules(Claim.MatchId,Claim.CustomRules,ErrorMessage))return;
     if(!AcceptMatchAffixes(Claim.MatchId,Claim.Affixes,ErrorMessage))return;
     if(!AcceptMatchMode(Claim.MatchId,Claim.MatchMode,ErrorMessage))return;
@@ -1779,6 +1799,17 @@ void AMultiplayTestGameMode::Logout(AController* Exiting)
 		MannequinController.Reset();
 		UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("The mannequin controller disconnected."));
 	}
+	// Custom game infection: the body an infected player leaves behind is played by the usual mannequin AI. A
+	// reconnecting player takes it back (SpawnInfectedForCarriedRecords).
+	else if (IsInfectedController(ExitingMultiplayController))
+	{
+		if (AMannequinAICharacter* Body = Cast<AMannequinAICharacter>(ExitingMultiplayController->GetPawn()); IsValid(Body))
+		{
+			ExitingMultiplayController->UnPossess();
+			Body->SetManualControlEnabled(false);
+			QueueDefaultAIControllerRestore(Body);
+		}
+	}
 
 	if (bHadMatchRecord && AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		!LeavingRecord.bForfeited && !ExitingMultiplayController->bVoluntaryExitDeclared)
@@ -2000,6 +2031,8 @@ void AMultiplayTestGameMode::RegisterMatchPlayer(AMultiplayTestPlayerController*
 		return;
 	}
     Controller->SetMatchAffixes(MatchAffixes);
+    Controller->SetPlaygroundDarkness(CustomMatchRules.bEnabled?CustomMatchRules.Darkness:0); // Custom game darkness on this player's screen.
+    Controller->SetPlaygroundSoundOnlyMeters(CustomMatchRules.bEnabled?CustomMatchRules.SoundOnlyMeters:0);
 
 	FMultiplayTestServerPlayerRecord Record;
     Record.bServerBot=Controller->IsServerControlledBot();
@@ -2133,6 +2166,10 @@ bool AMultiplayTestGameMode::RestoreDisconnectedMatchPlayer(AMultiplayTestPlayer
 				TryEnableMannequinManualControl(Controller);
 			}
 		}
+	}
+	else if (Restored.bInfected && HasPlaygroundInfection())
+	{
+		SpawnInfectedForCarriedRecords(); // Takes the infected body back from the mannequin AI.
 	}
 	else if (Restored.SurvivorState == EMultiplayTestSurvivorState::Eliminated ||
 		Restored.SurvivorState == EMultiplayTestSurvivorState::Escaped)
@@ -2418,7 +2455,7 @@ void AMultiplayTestGameMode::RefreshSurvivorSpectatorTargets()
 	for (const auto& Pair : MatchPlayerRecords)
 	{
 		auto* Controller=Pair.Key.Get();
-		if (!IsValid(Controller) || Controller->IsLevelTransitionCarryover() || Pair.Value.Role!=TEXT("Survivor") ||
+		if (!IsValid(Controller) || IsInfectedController(Controller) || Controller->IsLevelTransitionCarryover() || Pair.Value.Role!=TEXT("Survivor") ||
 			!Controller->SurvivorSpectatorView.bEnabled || Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active) continue;
 		auto* Current=Controller->SurvivorSpectatorView.Target.Get();
 		const auto* Record=IsValid(Current) ? FindSurvivorRecord(Current) : nullptr;
@@ -2442,8 +2479,195 @@ void AMultiplayTestGameMode::SetAuthoritativeMatchPhase(const EMultiplayTestMatc
 		if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
 		{
 			Controller->SetServerMatchState(NewPhase, Pair.Value.SurvivorState);
+			if (NewPhase == EMultiplayTestMatchPhase::InProgress && Pair.Value.SurvivorPawn.IsValid())
+				PlaygroundFloorStarts.Add(Controller, Pair.Value.SurvivorPawn->GetActorTransform());
 		}
 	}
+	// Infected players carried to this floor get their body once the floor goes live.
+	if (NewPhase == EMultiplayTestMatchPhase::InProgress) SpawnInfectedForCarriedRecords();
+}
+
+float AMultiplayTestGameMode::PlaygroundVisionRange()const
+{
+    // Docs/CustomGamePlayground.md 12.1. 0 = no limit. Darkness 1/2/3 = 30/20/12 m; sound-only bodies = its metres.
+    if(!CustomMatchRules.bEnabled)return 0.f;
+    static constexpr float DarknessRange[]={0.f,3000.f,2000.f,1200.f};
+    float Range=DarknessRange[FMath::Clamp(CustomMatchRules.Darkness,0,3)];
+    if(CustomMatchRules.SoundOnlyMeters>0){const float Sound=CustomMatchRules.SoundOnlyMeters*100.f;Range=Range>0.f?FMath::Min(Range,Sound):Sound;}
+    return Range;
+}
+
+bool AMultiplayTestGameMode::ApplyPlaygroundGazeLimit(AMannequinAICharacter* Body,const bool bObserved)
+{
+    // Docs/CustomGamePlayground.md 12.1: a body watched without a break for longer than the limit stops obeying the
+    // gaze and moves until nobody watches it; looking away (or at another body) starts that body's count again.
+    const int32 Limit=CustomMatchRules.bEnabled?CustomMatchRules.GazeLimitSeconds:0;
+    if(Limit<=0||!IsValid(Body)||!IsValid(GetWorld()))return bObserved;
+    if(!bObserved){PlaygroundGazeSince.Remove(Body);return false;}
+    const double Now=GetWorld()->GetTimeSeconds();
+    const double Since=PlaygroundGazeSince.FindOrAdd(Body,Now);
+    return Now-Since<double(Limit);
+}
+
+bool AMultiplayTestGameMode::IsInfectedController(const AMultiplayTestPlayerController* Controller)const
+{
+    if(!HasPlaygroundInfection()||!IsValid(Controller))return false;
+    for(const auto& Pair:MatchPlayerRecords)
+        if(Pair.Key.Get()==Controller&&Pair.Value.bInfected)
+        {
+            const TWeakObjectPtr<AMannequinAICharacter>* Body=InfectedBodies.Find(InfectedKey(Pair.Value));
+            return Body&&Body->IsValid()&&Controller->GetPawn()==Body->Get();
+        }
+    return false;
+}
+
+AMannequinAICharacter* AMultiplayTestGameMode::SpawnInfectedBody(AMultiplayTestPlayerController* Controller,const FTransform& At)
+{
+    // Docs/CustomGamePlayground.md 4.2: one body of the store's mannequin kind, outside the number-key slots, played
+    // directly by the infected player. It follows every mannequin rule (it freezes while watched) and can catch.
+    UWorld* World=GetWorld();FMultiplayTestServerPlayerRecord* Record=Controller?MatchPlayerRecords.Find(Controller):nullptr;
+    if(!HasAuthority()||!IsValid(World)||!Record||!Record->bInfected||Record->bForfeited||Record->bDisconnected||
+        AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::InProgress||!HasPlaygroundInfection())return nullptr;
+    if(const auto* Existing=InfectedBodies.Find(InfectedKey(*Record));Existing&&Existing->IsValid()&&Controller->GetPawn()==Existing->Get())return Existing->Get();
+    TSubclassOf<AMannequinAICharacter> Kind=AMannequinAICharacter::StaticClass();
+    for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(IsValid(*It)&&!It->IsActorBeingDestroyed()){Kind=It->GetClass();break;}
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    AMannequinAICharacter* Body=World->SpawnActor<AMannequinAICharacter>(Kind,At.GetLocation(),FRotator(0,At.Rotator().Yaw,0),Spawn);
+    if(!IsValid(Body))return nullptr;
+    // The default AI that came with the body steps aside; it comes back if the player leaves.
+    if(AController* AI=Body->GetController();IsValid(AI)&&!AI->IsA<APlayerController>()){AI->UnPossess();AI->Destroy();}
+    Controller->Possess(Body);
+    if(Controller->GetPawn()!=Body){QueueDefaultAIControllerRestore(Body);return nullptr;}
+    Body->SetManualControlEnabled(true);
+    InfectedBodies.Add(InfectedKey(*Record),Body);
+    Controller->EnterInfectedBody(Body);
+    const FString Name=Record->DisplayName;
+    for(const auto& Pair:MatchPlayerRecords)if(auto* Other=Pair.Key.Get();Other&&!Other->IsServerControlledBot())
+        Other->ClientShowAffixNotice(Other==Controller?FString(TEXT("감염되었습니다. 이제 마네킹 편입니다. 보이면 멈추고, 왼쪽 클릭으로 잡습니다.")):FString::Printf(TEXT("%s이(가) 감염되어 마네킹 편이 되었습니다."),*Name),Other==Controller?5.f:3.f);
+    UE_LOG(LogProjectProject01Multiplayer,Log,TEXT("Custom game infection: %s now plays mannequin body %s."),*Name,*GetNameSafe(Body));
+    return Body;
+}
+
+bool AMultiplayTestGameMode::FindInfectedSpawn(FTransform& Out)const
+{
+    float BestDistance=-1.f;
+    for(AProjectProject01RoleSpawnPoint* Point:GetRoleSpawnPoints(EProjectProject01SpawnRole::Mannequin))
+    {
+        if(!IsValid(Point))continue;
+        float Nearest=TNumericLimits<float>::Max();
+        for(const auto& Pair:MatchPlayerRecords)
+            if(Pair.Value.Role==TEXT("Survivor")&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active&&Pair.Value.SurvivorPawn.IsValid())
+                Nearest=FMath::Min(Nearest,float(FVector::Dist(Point->GetActorLocation(),Pair.Value.SurvivorPawn->GetActorLocation())));
+        if(Nearest>BestDistance){BestDistance=Nearest;Out=Point->GetActorTransform();}
+    }
+    return BestDistance>=0.f;
+}
+
+void AMultiplayTestGameMode::SpawnInfectedForCarriedRecords()
+{
+    // A new floor (or the first floor after a reconnect): every infected player gets a body here too.
+    if(!HasPlaygroundInfection())return;
+    for(auto& Pair:MatchPlayerRecords)
+        if(auto* Controller=Pair.Key.Get();Controller&&Pair.Value.bInfected&&!Pair.Value.bForfeited&&!Pair.Value.bDisconnected)
+        {
+            const auto* Body=InfectedBodies.Find(InfectedKey(Pair.Value));
+            if(Body&&Body->IsValid()&&Controller->GetPawn()==Body->Get())continue;
+            if(Body&&Body->IsValid()){Controller->Possess(Body->Get());if(Controller->GetPawn()==Body->Get()){Body->Get()->SetManualControlEnabled(true);Controller->EnterInfectedBody(Body->Get());}continue;}
+            FTransform At;if(FindInfectedSpawn(At))SpawnInfectedBody(Controller,At);
+        }
+}
+
+bool AMultiplayTestGameMode::IsGhost(const FMultiplayTestServerPlayerRecord& Record)const
+{
+    return HasPlaygroundGhosts()&&Record.Role==TEXT("Survivor")&&!Record.bServerBot&&!Record.bForfeited&&!Record.bDisconnected&&
+        Record.SurvivorState==EMultiplayTestSurvivorState::Eliminated&&AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress;
+}
+
+bool AMultiplayTestGameMode::TryOpenGhostWhisper(AMultiplayTestPlayerController* Ghost)
+{
+    const FMultiplayTestServerPlayerRecord* Record=Ghost?MatchPlayerRecords.Find(Ghost):nullptr;
+    if(!HasAuthority()||!Record||!IsGhost(*Record)||!IsValid(GetWorld()))return false;
+    const double Now=GetWorld()->GetTimeSeconds();
+    if(const double* Ready=GhostWhisperReadyAt.Find(Ghost);Ready&&Now<*Ready)
+    {
+        if(!Ghost->IsGhostWhisperOpen())Ghost->ClientShowAffixNotice(FString::Printf(TEXT("속삭임은 %d초 뒤에 다시 할 수 있습니다."),FMath::CeilToInt(*Ready-Now)),2.f);
+        return false;
+    }
+    GhostWhisperUntil.Add(Ghost,Now+GhostWhisperSeconds);GhostWhisperReadyAt.Add(Ghost,Now+GhostWhisperSeconds+GhostWhisperCooldown);
+    Ghost->SetGhostWhisperOpen(true);UpdateVoiceAudibility();
+    return true;
+}
+
+void AMultiplayTestGameMode::TickGhostWhispers()
+{
+    if(GhostWhisperUntil.IsEmpty()||!IsValid(GetWorld()))return;
+    const double Now=GetWorld()->GetTimeSeconds();bool bChanged=false;
+    for(auto It=GhostWhisperUntil.CreateIterator();It;++It)
+    {
+        auto* Ghost=It.Key().Get();const FMultiplayTestServerPlayerRecord* Record=Ghost?MatchPlayerRecords.Find(Ghost):nullptr;
+        if(!Ghost||!Record||!IsGhost(*Record)||Now>=It.Value()){if(Ghost)Ghost->SetGhostWhisperOpen(false);It.RemoveCurrent();bChanged=true;}
+    }
+    if(bChanged)UpdateVoiceAudibility();
+}
+
+void AMultiplayTestGameMode::ShowPlaygroundReveal(const FVector& At)const
+{
+    // The mannequin side only: a red light where the survivor stayed (client lights last at most 3 s, so a 5 s reveal
+    // is two lights). Steady fade, no blinking.
+    for(const auto& Pair:MatchPlayerRecords)
+        if(auto* Controller=Pair.Key.Get();Controller&&!Controller->IsServerControlledBot()&&Pair.Value.Role==TEXT("Mannequin"))
+            Controller->ClientAffixPulse(At+FVector(0,0,120),FColor(220,40,40),3.f,320.f);
+}
+
+void AMultiplayTestGameMode::TickPlaygroundHideReveal(float DeltaSeconds)
+{
+    // Docs/CustomGamePlayground.md 4.4. Ticks only while the match runs; the card pick and loading gate return earlier.
+    const int32 Limit=CustomMatchRules.bEnabled?CustomMatchRules.HideRevealSeconds:0;
+    if(Limit<=0||DeltaSeconds<=0.f)return;
+    for(int32 I=PlaygroundRevealEchoes.Num()-1;I>=0;--I)
+        if((PlaygroundRevealEchoes[I].In-=DeltaSeconds)<=0.f){ShowPlaygroundReveal(PlaygroundRevealEchoes[I].At);PlaygroundRevealEchoes.RemoveAtSwap(I);}
+    for(auto& Pair:MatchPlayerRecords)
+    {
+        APlayerCharacter* Survivor=Pair.Value.SurvivorPawn.Get();
+        if(Pair.Value.Role!=TEXT("Survivor")||!IsValid(Survivor))continue;
+        FPlaygroundHideTracker& Hide=PlaygroundHides.FindOrAdd(Survivor);
+        // Not counted while waiting at the exit, out of play, or moving back after an infinite-lives catch.
+        if(Pair.Value.SurvivorState!=EMultiplayTestSurvivorState::Active||Survivor->IsGameOver()||Survivor->IsPlaygroundRespawnPending()){Hide.Reset();continue;}
+        AMultiplayTestPlayerController* Controller=Pair.Key.Get();
+        const bool bTell=Controller&&!Controller->IsServerControlledBot();
+        switch(Hide.Step(Survivor->GetActorLocation(),DeltaSeconds,Limit))
+        {
+        case FPlaygroundHideTracker::EStep::Warn:
+            if(bTell)Controller->ClientShowAffixNotice(TEXT("10초 뒤 위치가 마네킹에게 드러납니다. 움직이세요."),3.f);
+            break;
+        case FPlaygroundHideTracker::EStep::Reveal:
+        {
+            const FVector At=Survivor->GetActorLocation();
+            ShowPlaygroundReveal(At);PlaygroundRevealEchoes.Add({At,2.5f});
+            if(bTell)Controller->ClientShowAffixNotice(TEXT("위치가 마네킹에게 드러났습니다."),2.f);
+            for(const auto& Other:MatchPlayerRecords)
+                if(auto* M=Other.Key.Get();M&&!M->IsServerControlledBot()&&Other.Value.Role==TEXT("Mannequin"))
+                    M->ClientShowAffixNotice(FString::Printf(TEXT("오래 숨은 %s의 위치가 드러났습니다"),*Pair.Value.DisplayName),2.f);
+            break;
+        }
+        default:break;
+        }
+    }
+}
+
+bool AMultiplayTestGameMode::HandlePlaygroundCatch(APlayerCharacter* Survivor,FTransform& OutRespawn)
+{
+    if(!HasAuthority()||!IsValid(Survivor)||!HasPlaygroundInfiniteLives()||AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::InProgress)return false;
+    if(AffixRuntime)AffixRuntime->OnSurvivorHit(Survivor,false); // Same as a lost life for items such as S08 and S14.
+    FMultiplayTestServerPlayerRecord* Record=FindSurvivorRecord(Survivor);
+    if(Record)++Record->PlaygroundCaught;
+    for(auto& Pair:MatchPlayerRecords)if(Pair.Value.Role==TEXT("Mannequin"))++Pair.Value.PlaygroundCatches;
+    RecordTimeline(EProjectMatchEvent::DeathCountLost,Record?Record->DisplayName:FString(),TEXT("∞"));
+    AController* Controller=Survivor->GetController();
+    if(const FTransform* Start=Controller?PlaygroundFloorStarts.Find(Controller):nullptr){OutRespawn=*Start;return true;}
+    // Joined or reconnected after the floor started: the spawn point this survivor was given.
+    if(const TWeakObjectPtr<AActor>* Spawn=Controller?AssignedSurvivorSpawnPoints.Find(Controller):nullptr;Spawn&&Spawn->IsValid()){OutRespawn=(*Spawn)->GetActorTransform();return true;}
+    return false;
 }
 
 FMultiplayTestServerPlayerRecord* AMultiplayTestGameMode::FindSurvivorRecord(APlayerCharacter* Survivor)
@@ -2551,6 +2775,29 @@ bool AMultiplayTestGameMode::TryBroadcastSurvivorPing(
 		return false;
 	}
 	const FMultiplayTestServerPlayerRecord* SenderRecord = MatchPlayerRecords.Find(RequestingController);
+	// Custom game ghost (Docs/CustomGamePlayground.md 4.3): one ping per 20 s, near a living survivor, to the living only.
+	// The mannequin side never sees it, even with C07 or M11.
+	if (SenderRecord != nullptr && IsGhost(*SenderRecord) && IsValid(GetWorld()))
+	{
+		const double Now = GetWorld()->GetTimeSeconds();
+		if (const double* Ready = GhostPingReadyAt.Find(RequestingController); Ready && Now < *Ready)
+		{
+			RequestingController->ClientShowAffixNotice(FString::Printf(TEXT("핑은 %d초 뒤에 다시 할 수 있습니다."), FMath::CeilToInt(*Ready - Now)), 2.f);
+			return false;
+		}
+		bool bNearLiving = false;
+		for (const auto& Pair : MatchPlayerRecords)
+			bNearLiving |= Pair.Value.Role == TEXT("Survivor") && Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active && Pair.Value.SurvivorPawn.IsValid() &&
+				FVector::DistSquared(Pair.Value.SurvivorPawn->GetActorLocation(), Location) <= FMath::Square(3100.0f);
+		if (!bNearLiving) return false;
+		GhostPingReadyAt.Add(RequestingController, Now + GhostPingCooldown);
+		const FString GhostName = FString::Printf(TEXT("유령 %s"), IsValid(RequestingController->PlayerState) ? *RequestingController->PlayerState->GetPlayerName() : TEXT("생존자"));
+		for (const auto& Pair : MatchPlayerRecords)
+			if (AMultiplayTestPlayerController* Target = Pair.Key.Get(); IsValid(Target) && Pair.Value.Role == TEXT("Survivor") && Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active)
+				Target->ClientReceiveTeamPing(Type, Location, GhostName);
+		if (MatchBots) MatchBots->HearPing(RequestingController, static_cast<uint8>(Type), Location);
+		return true;
+	}
 	if (SenderRecord == nullptr || !SenderRecord->Role.Equals(TEXT("Survivor"), ESearchCase::IgnoreCase) ||
 		SenderRecord->SurvivorState != EMultiplayTestSurvivorState::Active || !IsValid(RequestingController->GetPawn()) ||
 		FVector::DistSquared(RequestingController->GetPawn()->GetActorLocation(), Location) > FMath::Square(3100.0f))
@@ -2633,8 +2880,25 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 			if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
 			{
 				Controller->SetServerMatchState(AuthoritativeMatchPhase, SurvivorRecord->SurvivorState);
+				if (IsGhost(Pair.Value))
+					Controller->ClientShowAffixNotice(TEXT("유령이 되었습니다. 핑은 20초마다, 말하기 키는 살아 있는 동료에게 5초 동안 속삭입니다."), 5.f);
 			}
 		}
+	}
+	// Custom game infection: the caught survivor joins the mannequin side once the usual fall presentation has played.
+	// The record stays Eliminated, so wins (everyone out = mannequin side), voice and results keep their paths.
+	if (HasPlaygroundInfection() && bCaughtByMannequin && !SurvivorRecord->bServerBot)
+	{
+		SurvivorRecord->bInfected = true;
+		const FTransform CaughtAt = Survivor->GetActorTransform();
+		for (const auto& Pair : MatchPlayerRecords)
+			if (Pair.Value.SurvivorPawn.Get() == Survivor)
+				if (AMultiplayTestPlayerController* Controller = Pair.Key.Get(); IsValid(Controller))
+				{
+					FTimerHandle Handle;const TWeakObjectPtr<AMultiplayTestPlayerController> WeakController(Controller);
+					GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateWeakLambda(this, [this, WeakController, CaughtAt]()
+					{ if (auto* C = WeakController.Get()) SpawnInfectedBody(C, CaughtAt); }), 3.2f, false);
+				}
 	}
 
 	UE_LOG(LogProjectProject01Multiplayer, Log,
@@ -3192,6 +3456,16 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 	Result.Role = Record.Role;
 	Result.MatchDurationSeconds = GetElapsedMatchSeconds();
 	Result.CaptureCount = Record.CaptureCount;
+	Result.bPlaygroundInfiniteLives = HasPlaygroundInfiniteLives();
+	if (Record.bInfected && HasPlaygroundInfection())
+	{
+		// The infected play on with the mannequin side: they share its win when nobody got out.
+		bool bEscaped = false;
+		for (const auto& Pair : MatchPlayerRecords) bEscaped |= Pair.Value.Role == TEXT("Survivor") && Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Escaped;
+		Result.bPlaygroundInfected = true;
+		Result.bInfectedSideWon = !bEscaped && !bSurvivorVictoryByMannequinForfeit;
+	}
+	if (HasPlaygroundInfiniteLives()) Result.PlaygroundCatchCount =Record.Role == TEXT("Survivor") ? Record.PlaygroundCaught : Record.PlaygroundCatches;
 	Result.FirstCaptureSeconds = Record.FirstCaptureSeconds;
 	Result.AllCapturedSeconds = Record.AllCapturedSeconds;
 	Result.RescueCount = Record.RescueCount;
@@ -3203,7 +3477,11 @@ FMultiplayTestMatchResult AMultiplayTestGameMode::BuildFinalResult(
 	}
 	if (Record.Role == TEXT("Mannequin"))
 	{
-		Result.bSuccess = !Record.bForfeited && !bSurvivorVictoryByMannequinForfeit && Record.AllCapturedSeconds > 0.0;
+		// Infinite lives: nobody is ever out, so the mannequin side wins when the time ends with no survivor out the exit.
+		bool bAnyEscaped = false;
+		for (const auto& Pair : MatchPlayerRecords) bAnyEscaped |= Pair.Value.Role == TEXT("Survivor") && Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Escaped;
+		Result.bSuccess = !Record.bForfeited && !bSurvivorVictoryByMannequinForfeit &&
+			(HasPlaygroundInfiniteLives() ? !bAnyEscaped : Record.AllCapturedSeconds > 0.0);
 		Result.Outcome = Record.bForfeited ? TEXT("Forfeited")
 			: Result.bSuccess && bMatchEndedByForfeit ? TEXT("SurvivorForfeitVictory")
 			: Result.bSuccess ? TEXT("MannequinVictory") : TEXT("SurvivorVictory");
@@ -3676,11 +3954,13 @@ void AMultiplayTestGameMode::SetGlobalMannequinCatchDamage(bool bEnabled)
 
 bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* RequestingController)
 {
-	if (!HasAuthority() || !IsMannequinController(RequestingController) ||
+	// The mannequin player, or (custom game infection) an infected survivor using its own body.
+	const bool bInfected = IsInfectedController(RequestingController);
+	if (!HasAuthority() || !(IsMannequinController(RequestingController) || bInfected) ||
 		AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return false;
 	AMannequinAICharacter* Controlled = Cast<AMannequinAICharacter>(RequestingController->GetPawn());
 	if (!IsValid(Controlled) || !Controlled->IsManualControlEnabled() ||
-		Controlled != RequestingController->GetViewedMannequin()) return false;
+		(!bInfected && Controlled != RequestingController->GetViewedMannequin())) return false;
     if(AffixRuntime&&!AffixRuntime->CanManualAttack(Controlled))return false; // A04 recovery, C02 slower attacks.
 	APlayerCharacter* Target = nullptr;
 	const float AttackRange = MultiplayerManualAttackRange * (AffixRuntime ? AffixRuntime->ManualAttackRangeScale() : 1.f); // M04
@@ -3944,6 +4224,11 @@ bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
 	TraceParameters.AddIgnoredActor(SurvivorController);
 	// Item roguelike S13/S15 narrow or widen this survivor's freezing gaze; 1 otherwise.
 	const float HalfAngle = SurvivorVisionHalfAngleDegrees * (AffixRuntime ? AffixRuntime->GazeAngleScale(Cast<const APlayerCharacter>(SurvivorPawn)) : 1.f);
+	// Custom game darkness / sound-only bodies: a body further than this cannot be seen, so it does not freeze.
+	if (const float Range = PlaygroundVisionRange(); Range > 0.f && FVector::DistSquared(ViewLocation, CapsuleCenter) > FMath::Square(Range))
+	{
+		return false;
+	}
 	for (const FVector& TargetPoint : TargetPoints)
 	{
 		if (!IsPointInsideVisionCone(ViewLocation, ViewRotation.Vector(), TargetPoint, HalfAngle))
@@ -4028,6 +4313,7 @@ void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
 		}
 
 		if (AffixRuntime) bObservedByAnySurvivor = AffixRuntime->OnWatched(Mannequin, Watchers, bObservedByAnySurvivor);
+		bObservedByAnySurvivor = ApplyPlaygroundGazeLimit(Mannequin, bObservedByAnySurvivor);
 		Mannequin->SetFrozenBySurvivorVision(bObservedByAnySurvivor);
 	}
 }

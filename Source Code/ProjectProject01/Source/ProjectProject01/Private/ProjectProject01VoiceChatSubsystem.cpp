@@ -222,6 +222,11 @@ FString UProjectProject01VoiceChatSubsystem::GetConnectionStatusText() const
 
 void UProjectProject01VoiceChatSubsystem::SetPushToTalkHeld(const bool bHeld)
 {
+	// Out of play: the key asks the server for a ghost whisper (it refuses unless the custom game has ghosts).
+	if (bHeld && bConfiguredForSurvivor && !CanLocalTransmit())
+		if (auto* Controller=Cast<AMultiplayTestPlayerController>(OwnerController.Get());
+			Controller && Controller->GetMatchPhase()==EMultiplayTestMatchPhase::InProgress && Controller->GetSurvivorState()==EMultiplayTestSurvivorState::Eliminated)
+			Controller->ServerRequestGhostWhisper();
 	if (!bConfiguredForSurvivor || (bHeld && !CanLocalTransmit()))
 	{
 		bPushToTalkHeld = false;
@@ -601,7 +606,14 @@ bool UProjectProject01VoiceChatSubsystem::CanLocalTransmit() const
 {
 	const auto* Controller=Cast<AMultiplayTestPlayerController>(OwnerController.Get());
 	return bConfiguredForSurvivor && Controller && Controller->GetMatchPhase()==EMultiplayTestMatchPhase::InProgress &&
-		Controller->GetSurvivorState()==EMultiplayTestSurvivorState::Active;
+		(Controller->GetSurvivorState()==EMultiplayTestSurvivorState::Active || IsGhostWhisperOpen());
+}
+
+bool UProjectProject01VoiceChatSubsystem::IsGhostWhisperOpen() const
+{
+	// Only the server opens it, and only for an eliminated survivor in a custom game with ghosts; it closes by itself.
+	const auto* Controller=Cast<AMultiplayTestPlayerController>(OwnerController.Get());
+	return bConfiguredForSurvivor && Controller && Controller->GetSurvivorState()==EMultiplayTestSurvivorState::Eliminated && Controller->IsGhostWhisperOpen();
 }
 
 void UProjectProject01VoiceChatSubsystem::StopSpeaking()

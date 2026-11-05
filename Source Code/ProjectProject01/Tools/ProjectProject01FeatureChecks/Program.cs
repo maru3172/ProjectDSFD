@@ -144,18 +144,18 @@ internal static class FeatureChecks
             }
             var compatibility=VersionCompatibilityOptions.FromConfiguration(
                 new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
-            Check(compatibility.NetworkProtocolVersion=="7","커스텀 경기 규칙·결과 통신 프로토콜 기본값 7");
+            Check(compatibility.NetworkProtocolVersion=="8","사용자 지정 게임 규칙 통신 프로토콜 기본값 8");
             var versionHeaders=new Microsoft.AspNetCore.Http.HeaderDictionary
             {
                 [VersionCompatibilityOptions.ClientBuildHeader]=compatibility.ClientBuildVersion,
                 [VersionCompatibilityOptions.DedicatedServerBuildHeader]=compatibility.DedicatedServerBuildVersion,
                 [VersionCompatibilityOptions.ApiVersionHeader]=compatibility.ApiVersion,
                 [VersionCompatibilityOptions.GameDataVersionHeader]=compatibility.GameDataVersion,
-                [VersionCompatibilityOptions.NetworkProtocolHeader]="7"
+                [VersionCompatibilityOptions.NetworkProtocolHeader]="8"
             };
             Check(compatibility.GetMismatches(versionHeaders,false).Count==0,"프로토콜 7 클라이언트 허용");
             Check(compatibility.GetMismatches(versionHeaders,true).Count==0,"프로토콜 7 데디 서버 허용");
-            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="6";
+            versionHeaders[VersionCompatibilityOptions.NetworkProtocolHeader]="7";
             Check(compatibility.GetMismatches(versionHeaders,false).SequenceEqual(new[]{"NetworkProtocol"}),"구형 클라이언트 프로토콜 혼용 차단");
             Check(compatibility.GetMismatches(versionHeaders,true).SequenceEqual(new[]{"NetworkProtocol"}),"구형 데디 서버 프로토콜 혼용 차단");
             string id=Guid.NewGuid().ToString("D");

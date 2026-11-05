@@ -13,6 +13,7 @@ class UComboBoxString;
 class UCheckBox;
 class UWidgetTree;
 struct FGeometry;
+class FSlateWindowElementList;
 
 /** UComboBoxString exposes its caption foreground only at construction. */
 UCLASS()
@@ -44,6 +45,20 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 };
 
+/**
+ * Static recording-tape chrome around one UMG child (scanlines, grain and REC/timestamp marks).
+ * Paint only: never takes input itself, follows the child's opacity/visibility and owns no timers.
+ */
+UCLASS()
+class PROJECTPROJECT01_API UProjectDFSDTapeFrame final : public UContentWidget
+{
+	GENERATED_BODY()
+public:
+	int32 Channel = 1;
+protected:
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+};
+
 namespace ProjectDFSDUI
 {
     enum class EIcon : uint8 { Profile, Party, Friends, Whisper, Report, Bell, Add, Phone };
@@ -71,4 +86,18 @@ namespace ProjectDFSDUI
 	PROJECTPROJECT01_API void ApplyTree(class UWidgetTree* Tree);
 	PROJECTPROJECT01_API void FramePage(class UWidgetTree* Tree, float Width);
 	PROJECTPROJECT01_API TSharedRef<class SWidget> FrameSlate(TSharedRef<class SWidget> Content,float Width=1120,float Bottom=32);
+
+	// Analog-horror recording cues. All are static: fixed seeds, no timers, no blinking.
+	PROJECTPROJECT01_API FSlateFontInfo Mono(int32 Size);
+	PROJECTPROJECT01_API float TapeScanlineOpacity();
+	PROJECTPROJECT01_API FString RecordStamp();
+	PROJECTPROJECT01_API FString ChannelLabel(int32 Channel);
+	/** Fixed scanlines and film grain over a rectangle, drawn below content. */
+	PROJECTPROJECT01_API void PaintTape(FSlateWindowElementList& Out,const FGeometry& Geometry,int32 Layer,FVector2D Origin,FVector2D Size,float Scale,FLinearColor Tint,int32 Seed,float Strength=1.f);
+	/** Darkened viewport edges; content painted above it is not dimmed. */
+	PROJECTPROJECT01_API void PaintVignette(FSlateWindowElementList& Out,const FGeometry& Geometry,int32 Layer,FVector2D Size,FLinearColor Tint);
+	/** "REC CH-nn" at Left, "[RECORD 0] date time" ending at Right, on one baseline row at Y. */
+	PROJECTPROJECT01_API void PaintRecordMarks(FSlateWindowElementList& Out,const FGeometry& Geometry,int32 Layer,float Left,float Right,float Y,float Scale,FLinearColor Tint,int32 Channel,int32 FontSize=11);
+	/** Card surface with tape texture and a reserved REC header row above Content. An opaque card takes clicks on its own rectangle (like an SBorder); a transparent one never does. */
+	PROJECTPROJECT01_API TSharedRef<class SWidget> TapeCard(TSharedRef<class SWidget> Content,int32 Channel,FLinearColor Background,FMargin Padding=FMargin(14,10));
 }

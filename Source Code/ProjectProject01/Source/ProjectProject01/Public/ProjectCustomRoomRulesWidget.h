@@ -20,10 +20,21 @@ protected:
     virtual void ReleaseSlateResources(bool Children)override;
 private:
     void Close();
-    void Send(const FString& Verb,const FString& Path,const TSharedPtr<FJsonObject>& Body=nullptr);
+    void Send(const FString& Verb,const FString& Path,const TSharedPtr<FJsonObject>& Body=nullptr,TFunction<void(const TSharedPtr<FJsonObject>&)> OnJson=nullptr);
     void ReadPresets(const TSharedPtr<FJsonObject>& Json);
     bool CanEdit()const;
+    /** The draft as it will be sent: with the custom rules off, every playground switch is cleared. */
+    FProjectCustomMatchRules Outgoing()const;
+    bool CanPickAffix(const FString& Id)const;
+    void ToggleAffix(const FString& Id);
+    FString MixDetail()const;
     FProjectCustomMatchRules Draft;
+    int32 Tab=0;          // 0 기본, 1 섞기, 2 자유 규칙, 3 시야·소리, 4 프리셋·코드. Every tab is built once; switching never rebuilds widgets.
+    FString HoveredAffix; // Shown in the fixed detail line under the affix grid (no tooltips over other UI).
+    FString HoveredPreset; // Recommended preset whose one-line summary is shown (fixed line, no tooltip).
+    FString CodeLine;      // Rule code and its plain result summary (fixed two-line area).
+    TSharedPtr<class SEditableTextBox> CodeInput;
+    void ReadCodeAnswer(const TSharedPtr<FJsonObject>& Json,bool bLoadRules);
     FString RoomId,Status,SelectedName;
     bool bEditable=false;
     TArray<TSharedPtr<FString>> PresetNames;

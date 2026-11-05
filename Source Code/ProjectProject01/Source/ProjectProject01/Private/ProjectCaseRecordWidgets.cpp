@@ -216,7 +216,7 @@ TSharedRef<SWidget> UProjectCaseRecordWidget::RebuildWidget()
     auto Content=SNew(SBorder).BorderBackgroundColor(ProjectDFSDUI::Panel()).Padding(22)
          [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight().Padding(0,0,0,10)
           [SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Collapsed:EVisibility::Visible;}).Text(FText::FromString(TEXT("사건 기록 / 개인 조사 파일"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),28)).ColorAndOpacity(ProjectDFSDUI::Text())]
-           +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Visible:EVisibility::Collapsed;}).Text(FText::FromString(TEXT("[RECORD 0] 202X-XX-XX 18:24:01 _OMINOUS ENTRY"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),22)).ColorAndOpacity(ProjectDFSDUI::Text()).AutoWrapText(true)]
+           +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Visible:EVisibility::Collapsed;}).Text(FText::FromString(TEXT("[RECORD 0] 202X-XX-XX 18:24:01 _OMINOUS ENTRY"))).Font(ProjectDFSDUI::Mono(22)).ColorAndOpacity(ProjectDFSDUI::Text()).AutoWrapText(true)]
            +SVerticalBox::Slot().AutoHeight().Padding(0,5)[SNew(STextBlock).Visibility_Lambda([this]{return Page==TEXT("Track")?EVisibility::Visible:EVisibility::Collapsed;}).Text(FText::FromString(TEXT("(~ 정식 출시 전까지)"))).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ColorAndOpacity(ProjectDFSDUI::Muted())]]
           +SVerticalBox::Slot().AutoHeight()[Tabs]
           +SVerticalBox::Slot().AutoHeight()[GrowthTabs]

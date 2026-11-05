@@ -257,7 +257,8 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
     TestTrue(TEXT("Each matching flow has its own role chooser"),Lobby->RandomMatchRole&&Lobby->RoomMatchRole);
     TestEqual(TEXT("Random role choice uses requested label"),Lobby->RandomMatchRole->GetOptionAtIndex(0),FString(TEXT("무작위")));
     TestEqual(TEXT("Open room role choice uses requested label"),Lobby->RoomMatchRole->GetOptionAtIndex(0),FString(TEXT("무작위")));
-    TestEqual(TEXT("Bot setup offers exactly five difficulty levels"),Lobby->BotMatchDifficulty->GetOptionCount(),5);
+    // Plain mode: five levels plus the two affix master levels (마스터+, 마스터++); other modes drop those two.
+    TestEqual(TEXT("Bot setup offers five difficulty levels plus two master affix levels"),Lobby->BotMatchDifficulty->GetOptionCount(),7);
     TestEqual(TEXT("Solo bot entry keeps its original one-click start"),CastChecked<UTextBlock>(Lobby->BotMatchCreateButton->GetContent())->GetText().ToString(),FString(TEXT("게임 시작")));
     Lobby->RefreshCurrentRoomView();TestEqual(TEXT("Polling preserves bot match configuration"),Lobby->LobbyViewSwitcher->GetActiveWidgetIndex(),7);
     Render(Lobby,TEXT("BotMatchSetup"));
@@ -303,7 +304,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
             break;
         }
     }
-    TestEqual(TEXT("Random screen has start, cancel, back and logout; no party invitation"),MatchButtons,4);
+    TestEqual(TEXT("Random screen has start, cancel, keep-searching lobby, back and logout; no party invitation"),MatchButtons,5);
     TestEqual(TEXT("Random screen has no chat input"),MatchInputs,0);
     State->CurrentRoom.Members.Add(P);Lobby->RefreshMatchmakingView();
     TestFalse(TEXT("Legacy multi-user party cannot start a solo search"),Lobby->MatchStartButton->GetIsEnabled());
@@ -430,6 +431,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 					UTextBlock* NameText=nullptr;for(auto* Child:Row->GetAllChildren())if(auto* Text=Cast<UTextBlock>(Child)){NameText=Text;break;}
                     if(!TestNotNull(TEXT("Player name remains present beside the banner"),NameText))continue;
                     const auto LabelGeometry=NameText->GetCachedGeometry(),RoleGeometry=Lobby->RoomRoleRow->GetCachedGeometry(),RowGeometry=Row->GetCachedGeometry();
+                    TestTrue(TEXT("Match mode chooser lives in the room header, not in the participant card"),Lobby->RoomMatchMode->GetParent()&&Lobby->RoomMatchMode->GetParent()->GetParent()!=Lobby->RoomRoleRow);
                     TestTrue(TEXT("Own role chooser sits at the right edge of the participant card"),FMath::Abs(RoleGeometry.GetAbsolutePosition().X+RoleGeometry.GetAbsoluteSize().X-RowGeometry.GetAbsolutePosition().X-RowGeometry.GetAbsoluteSize().X)<1);
                     TestTrue(TEXT("Name retains space and cannot paint over the role chooser"),LabelGeometry.GetAbsoluteSize().X>24&&LabelGeometry.GetAbsolutePosition().X+LabelGeometry.GetAbsoluteSize().X<=RoleGeometry.GetAbsolutePosition().X+1&&NameText->GetClipping()==EWidgetClipping::ClipToBounds);
                 }

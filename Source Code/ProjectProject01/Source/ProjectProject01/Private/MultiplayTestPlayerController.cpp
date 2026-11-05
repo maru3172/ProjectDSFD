@@ -8,6 +8,7 @@
 
 #include "InputCoreTypes.h"
 #include "MannequinAICharacter.h"
+#include "Engine/PostProcessVolume.h"
 #include "MultiplayTestGameMode.h"
 #include "ProjectProject01Tutorial.h"
 #include "ProjectProject01GameInstance.h"
@@ -221,6 +222,7 @@ void AMultiplayTestPlayerController::PostSeamlessTravel()
 void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
     TickAffixPresentation();
+    TickPlaygroundSoundOnly(); // Custom game sound-only mannequins (local screens only).
 	Super::PlayerTick(DeltaTime);
 	TickMannequinWheel(DeltaTime);
 	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
@@ -297,6 +299,7 @@ void AMultiplayTestPlayerController::ApplySurvivorSpectatorView()
 void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	CloseMannequinWheel();
+	if (APostProcessVolume* Volume = PlaygroundDarknessVolume.Get(); IsValid(Volume)) Volume->Destroy();
 	if (ClosingWheel.IsValid()) if (ULocalPlayer* Local = GetLocalPlayer(); Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef());
 	ClosingWheel.Reset();RemoveWheelAimMarker();
 	RemoveMannequinLookBinding();
@@ -1069,6 +1072,8 @@ void AMultiplayTestPlayerController::ClientCancelLevelTransition_Implementation(
 void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
+	// A new floor (seamless travel keeps this controller) has no darkness volume yet; the level did not change.
+	if (PlaygroundDarkness > 0 && !PlaygroundDarknessVolume.IsValid()) OnRep_PlaygroundDarkness();
 	if (Cast<APlayerCharacter>(GetPawn())) RemoveMannequinLookBinding();
 	else ApplyViewedMannequinCamera(GetViewedMannequin());
 	TryRevealInitialGameplayFade();
@@ -1725,8 +1730,36 @@ void AMultiplayTestPlayerController::ServerToggleMannequinCatchDamage_Implementa
 
 void AMultiplayTestPlayerController::RequestMannequinAttack()
 {
-	if (IsLocalController() && !bShowMouseCursor && SurvivorState == EMultiplayTestSurvivorState::NotApplicable)
+	// The mannequin player, or an infected survivor playing a mannequin body (custom game; the server checks which).
+	const bool bInfectedBody = SurvivorState == EMultiplayTestSurvivorState::Eliminated && Cast<AMannequinAICharacter>(GetPawn()) != nullptr;
+	if (IsLocalController() && !bShowMouseCursor && (SurvivorState == EMultiplayTestSurvivorState::NotApplicable || bInfectedBody))
 		ServerRequestMannequinAttack();
+}
+
+void AMultiplayTestPlayerController::EnterInfectedBody(AMannequinAICharacter* Body)
+{
+	if (!HasAuthority() || !IsValid(Body) || GetPawn() != Body) return;
+	SurvivorSpectatorView.bEnabled = false;
+	SurvivorSpectatorView.Target = nullptr;
+	SurvivorSpectatorView.RequestId = ++SpectatorRequestSerial;
+	SetIgnoreMoveInput(false);
+	SetIgnoreLookInput(false);
+	SetViewedMannequin(Body);
+	if (bServerControlledBot) return;
+	ForceNetUpdate();
+	ClientEnterInfectedBody(Body, SurvivorSpectatorView);
+}
+
+void AMultiplayTestPlayerController::ClientEnterInfectedBody_Implementation(AMannequinAICharacter* Body, const FMultiplaySurvivorSpectatorView& View)
+{
+	if ((GetWorld() && GetWorld()->IsPlayingReplay()) || !IsLocalController() || bLocalMatchResultRequested) return;
+	if (View.RequestId >= SurvivorSpectatorView.RequestId) SurvivorSpectatorView = View;
+	LocalSpectatorLookTarget.Reset();
+	SetIgnoreMoveInput(false);
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = false;
+	SetInputMode(FInputModeGameOnly());
+	if (IsValid(Body)) { ViewedMannequin = Body; ApplyViewedMannequinCamera(Body); }
 }
 
 void AMultiplayTestPlayerController::ToggleMannequinWheel()
@@ -2114,6 +2147,116 @@ void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetime
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bLeavingForfeits, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, SurvivorSpectatorView, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bManualMannequinCommandIssued, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bGhostWhisperOpen, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, PlaygroundDarkness, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, PlaygroundSoundOnlyMeters, COND_OwnerOnly);
+}
+
+void AMultiplayTestPlayerController::SetPlaygroundSoundOnlyMeters(const int32 Meters)
+{
+	if (!HasAuthority()) return;
+	PlaygroundSoundOnlyMeters = static_cast<uint8>(FMath::Clamp(Meters, 0, 50));
+	ForceNetUpdate();
+}
+
+bool AMultiplayTestPlayerController::ShouldShowSoundOnlyBody(const float DistanceCm, const int32 Meters, const bool bShownNow)
+{
+	if (Meters <= 0) return true;
+	// 50 cm of hysteresis: a body standing on the edge stays as it is instead of blinking in and out.
+	const float Edge = Meters * 100.f;
+	return bShownNow ? DistanceCm <= Edge + 50.f : DistanceCm <= Edge - 50.f;
+}
+
+void AMultiplayTestPlayerController::TickPlaygroundSoundOnly()
+{
+	// Docs/CustomGamePlayground.md 12.1: on a survivor's screen (living, spectating or a ghost) bodies further than the
+	// set distance are not drawn; their footsteps still sound. The mannequin player and an infected survivor playing a
+	// body see every body. Server-side, the same distance limits the freezing gaze (PlaygroundVisionRange).
+	UWorld* World = GetWorld();
+	if (!IsLocalController() || !IsValid(World) || World->GetNetMode() == NM_DedicatedServer) return;
+	const bool bApplies = PlaygroundSoundOnlyMeters > 0 && !IsLocalMannequinPlayer() && !Cast<AMannequinAICharacter>(GetPawn()) && PlayerCameraManager;
+	if (!bApplies)
+	{
+		for (const auto& Weak : PlaygroundHiddenBodies) if (AMannequinAICharacter* Body = Weak.Get()) if (USkeletalMeshComponent* Mesh = Body->GetMesh()) Mesh->SetVisibility(true, true);
+		PlaygroundHiddenBodies.Reset();
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	if (Now < NextSoundOnlyCheckAt) return;
+	NextSoundOnlyCheckAt = Now + 0.1;
+	const FVector Eye = PlayerCameraManager->GetCameraLocation();
+	for (TActorIterator<AMannequinAICharacter> It(World); It; ++It)
+	{
+		AMannequinAICharacter* Body = *It;
+		USkeletalMeshComponent* Mesh = IsValid(Body) ? Body->GetMesh() : nullptr; // Only the body itself; the slot label and affix tells keep their own rules.
+		if (!Mesh) continue;
+		const bool bShownNow = !PlaygroundHiddenBodies.Contains(Body);
+		const bool bShow = ShouldShowSoundOnlyBody(FVector::Dist(Eye, Body->GetActorLocation()), PlaygroundSoundOnlyMeters, bShownNow);
+		if (bShow == bShownNow) continue;
+		Mesh->SetVisibility(bShow, true);
+		if (bShow) PlaygroundHiddenBodies.Remove(Body); else PlaygroundHiddenBodies.Add(Body);
+	}
+}
+
+void AMultiplayTestPlayerController::SetPlaygroundDarkness(const int32 Level)
+{
+	if (!HasAuthority()) return;
+	const uint8 Clamped = static_cast<uint8>(FMath::Clamp(Level, 0, 3));
+	if (PlaygroundDarkness == Clamped) return;
+	PlaygroundDarkness = Clamped;
+	ForceNetUpdate();
+	if (IsLocalController()) OnRep_PlaygroundDarkness(); // Listen server host.
+}
+
+void AMultiplayTestPlayerController::OnRep_PlaygroundDarkness()
+{
+	// Docs/CustomGamePlayground.md 12.1: both sides see less. One local unbound volume, set once and held steady (no
+	// flicker): darker exposure, a heavier vignette and washed-out, smoky colour. Never replicated or saved.
+	UWorld* World = GetWorld();
+	if (!IsLocalController() || !IsValid(World) || World->GetNetMode() == NM_DedicatedServer) return;
+	APostProcessVolume* Volume = PlaygroundDarknessVolume.Get();
+	if (PlaygroundDarkness == 0)
+	{
+		if (IsValid(Volume)) Volume->Destroy();
+		PlaygroundDarknessVolume.Reset();
+		return;
+	}
+	if (!IsValid(Volume))
+	{
+		FActorSpawnParameters Spawn; Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn; Spawn.ObjectFlags |= RF_Transient;
+		Volume = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), FTransform::Identity, Spawn);
+		if (!IsValid(Volume)) return;
+		Volume->bUnbound = true; Volume->Priority = 50.f; Volume->BlendWeight = 1.f;
+		PlaygroundDarknessVolume = Volume;
+	}
+	static constexpr float Exposure[] = {0.f, -0.7f, -1.4f, -2.1f};
+	static constexpr float Vignette[] = {0.f, 0.35f, 0.55f, 0.75f};
+	static constexpr float Saturation[] = {1.f, 0.85f, 0.7f, 0.55f};
+	const int32 Level = FMath::Clamp<int32>(PlaygroundDarkness, 0, 3);
+	FPostProcessSettings& Settings = Volume->Settings;
+	Settings.bOverride_AutoExposureBias = true; Settings.AutoExposureBias = Exposure[Level];
+	Settings.bOverride_VignetteIntensity = true; Settings.VignetteIntensity = Vignette[Level];
+	Settings.bOverride_ColorSaturation = true; Settings.ColorSaturation = FVector4(1, 1, 1, Saturation[Level]);
+}
+
+void AMultiplayTestPlayerController::ServerRequestGhostWhisper_Implementation()
+{
+	if (!AllowServerRequest(2, 3, 5.0f)) return;
+	if (auto* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr) GameMode->TryOpenGhostWhisper(this);
+}
+
+void AMultiplayTestPlayerController::SetGhostWhisperOpen(const bool bOpen)
+{
+	if (!HasAuthority() || bGhostWhisperOpen == bOpen) return;
+	bGhostWhisperOpen = bOpen;
+	ForceNetUpdate();
+	if (IsLocalController()) OnRep_GhostWhisper(); // Listen server host.
+}
+
+void AMultiplayTestPlayerController::OnRep_GhostWhisper()
+{
+	if (!IsLocalController() || !GetGameInstance()) return;
+	if (auto* Voice = GetGameInstance()->GetSubsystem<UProjectProject01VoiceChatSubsystem>()) Voice->RefreshTransmitMode();
 }
 
 void AMultiplayTestPlayerController::SetMatchAffixes(const FProjectMatchAffixes& Affixes)

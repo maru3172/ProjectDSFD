@@ -31,6 +31,9 @@ struct FMultiplayTestServerPlayerRecord
 	double EscapeSeconds = 0.0;
 	FTransform LastPawnTransform = FTransform::Identity;
 	int32 RemainingDeathCount = 0;
+	bool bInfected = false;       // Custom game infection: out as a survivor, now plays one mannequin body (whole match).
+	int32 PlaygroundCaught = 0;   // Custom game infinite lives: times this survivor was caught (whole match).
+	int32 PlaygroundCatches = 0;  // Custom game infinite lives: catches the mannequin side made (whole match).
 	int32 ViewedMannequinSlot = -1;
 	bool bWasManualMannequinControl = false;
 	bool bForfeited = false;
@@ -64,6 +67,12 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	GENERATED_BODY()
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectForfeitRulesTest;
+	friend class FProjectCustomRulesInfiniteLivesTest;
+	friend class FProjectCustomRulesHideRevealTest;
+	friend class FProjectCustomRulesGhostsTest;
+	friend class FProjectCustomRulesInfectionTest;
+	friend class FProjectCustomRulesGazeLimitTest;
+	friend class FProjectCustomRulesDarknessTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
 	friend class FProjectShutterTest;
@@ -98,6 +107,8 @@ public:
     const FProjectCustomMatchRules& GetCustomMatchRules()const{return CustomMatchRules;}
     /** Affixes the match ticket carried (ProjectAffixes.h). Fixed for the whole match, floors included. */
     bool AcceptMatchAffixes(const FString& Match,const FProjectMatchAffixes& Affixes,FString& Error);
+    /** Custom rules on: their affix ids and item-card switch must equal the ticket's affix set and match mode. */
+    static bool IsPlaygroundTicketConsistent(const FProjectCustomMatchRules& Rules,const FProjectMatchAffixes& Affixes,EProjectMatchMode Mode,FString& Error);
     const FProjectMatchAffixes& GetMatchAffixes()const{return MatchAffixes;}
     class UProjectAffixRuntime* GetAffixRuntime()const{return AffixRuntime;}
     /** PvP match mode from the ticket (normal or item roguelike). Fixed for the whole match like the affixes. */
@@ -105,6 +116,23 @@ public:
     class UProjectItemRoguelikeRuntime* GetItemRoguelike()const{return ItemRoguelike;}
     bool IsItemRoguelikeMatch()const{return ItemRoguelike&&ItemRoguelike->IsActive();}
     /** An affix rule is in play: from the ticket (bot match affixes) or handed over as an item roguelike buff. */
+    /** Custom game infinite lives (Docs/CustomGamePlayground.md 4.1). */
+    bool HasPlaygroundInfiniteLives()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bInfiniteLives;}
+    /** Custom game infection (Docs/CustomGamePlayground.md 4.2, 11). */
+    bool HasPlaygroundInfection()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bInfection;}
+    /** This controller is an infected survivor now playing a mannequin body (may attack with it). */
+    bool IsInfectedController(const class AMultiplayTestPlayerController* Controller)const;
+    /** Spawns the infected body at At and hands it to this survivor's controller. */
+    class AMannequinAICharacter* SpawnInfectedBody(class AMultiplayTestPlayerController* Controller,const FTransform& At);
+    /** Custom game ghost survivors (Docs/CustomGamePlayground.md 4.3). */
+    bool HasPlaygroundGhosts()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bGhosts;}
+    /** An eliminated survivor in a ghost match asks to whisper: 5 s to the living, then 15 s before the next. */
+    bool TryOpenGhostWhisper(class AMultiplayTestPlayerController* Ghost);
+    static constexpr double GhostWhisperSeconds=5.0;
+    static constexpr double GhostWhisperCooldown=15.0;
+    static constexpr double GhostPingCooldown=20.0;
+    /** Counts an infinite-lives catch and gives where this survivor starts again on this floor. False: no known start. */
+    bool HandlePlaygroundCatch(class APlayerCharacter* Survivor,FTransform& OutRespawn);
     bool HasAffixRule(const TCHAR* Id)const{return MatchAffixes.Has(Id)||(ItemRoguelike&&ItemRoguelike->HasBuff(Id));}
     /** The affix runtime has work: ticket affixes, or an item roguelike match (its items and buffs run there too). */
     bool AreAffixRulesActive()const{return MatchAffixes.IsActive()||IsItemRoguelikeMatch();}
@@ -416,6 +444,29 @@ private:
 	TMap<FString, FMultiplayTestServerPlayerRecord> DisconnectedMatchRecords;
 	TMap<FString, FMultiplayTestMatchResult> CompletedResultsByUserId;
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<AActor>> AssignedSurvivorSpawnPoints;
+	/** Where each survivor stood when this floor's match went live (custom game infinite lives returns them here). */
+	TMap<TWeakObjectPtr<AController>, FTransform> PlaygroundFloorStarts;
+	/** Custom game "hiding too long reveals you": per survivor, and the second light of each 5 s reveal. */
+	TMap<TWeakObjectPtr<class APlayerCharacter>, FPlaygroundHideTracker> PlaygroundHides;
+	struct FPlaygroundRevealEcho { FVector At = FVector::ZeroVector; float In = 0.f; };
+	TArray<FPlaygroundRevealEcho> PlaygroundRevealEchoes;
+	void TickPlaygroundHideReveal(float DeltaSeconds);
+	/** Ghost survivors: when each whisper window ends, and when the next whisper / ping may start (world seconds). */
+	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, double> GhostWhisperUntil, GhostWhisperReadyAt, GhostPingReadyAt;
+	bool IsGhost(const FMultiplayTestServerPlayerRecord& Record) const;
+	/** Custom game gaze limit: when each body started being watched without a break (world seconds). */
+	TMap<TWeakObjectPtr<class AMannequinAICharacter>, double> PlaygroundGazeSince;
+	bool ApplyPlaygroundGazeLimit(class AMannequinAICharacter* Body, bool bObserved);
+	/** Custom game darkness / sound-only: how far a survivor's freezing gaze reaches (cm). 0 = no limit. */
+	float PlaygroundVisionRange() const;
+	/** Infection: the body each infected player (by user id, or display name in ticket-free play) plays this floor. */
+	TMap<FString, TWeakObjectPtr<class AMannequinAICharacter>> InfectedBodies;
+	static FString InfectedKey(const FMultiplayTestServerPlayerRecord& Record) { return Record.UserId.IsEmpty() ? Record.DisplayName : Record.UserId; }
+	/** Next floor or a reconnect: a mannequin spawn point away from the living survivors. */
+	bool FindInfectedSpawn(FTransform& Out) const;
+	void SpawnInfectedForCarriedRecords();
+	void TickGhostWhispers();
+	void ShowPlaygroundReveal(const FVector& At) const;
 	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, bool> ResultVerificationStatus;
 	EMultiplayTestMatchPhase AuthoritativeMatchPhase = EMultiplayTestMatchPhase::Waiting;
 	FString AuthoritativeMatchId;

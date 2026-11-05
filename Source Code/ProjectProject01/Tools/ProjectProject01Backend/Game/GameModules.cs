@@ -36,8 +36,12 @@ internal sealed class BotMatchModule : IBackendModule
 internal sealed class CustomRulesModule : IBackendModule
 {
     public Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) => CustomRoomRules.EnsureAsync(c, ct);
-    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) => app.MapCustomRoomRules(canLaunchOrConnect);
-    public Task OnMatchStartedAsync(MySqlConnection c, MySqlTransaction tx, string match, CancellationToken ct) => CustomRoomRules.CaptureAsync(c, tx, match, ct);
+    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) { app.MapCustomRoomRules(canLaunchOrConnect); app.MapRuleCodes(); }
+    public async Task OnMatchStartedAsync(MySqlConnection c, MySqlTransaction tx, string match, CancellationToken ct)
+    {
+        await CustomRoomRules.CaptureAsync(c, tx, match, ct);
+        await RuleCodes.CaptureAsync(c, tx, match, ct); // Per-code records (Docs/CustomGamePlayground.md 6.2).
+    }
     public async Task AddTicketFieldsAsync(MySqlConnection c, MySqlTransaction tx, string match, IDictionary<string, object?> fields, CancellationToken ct) =>
         fields["customRules"] = await CustomRoomRules.MatchAsync(c, tx, match, ct);
 }

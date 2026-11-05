@@ -1444,6 +1444,35 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 		ForceNetUpdate();
 		return true;
 	}
+	// Custom game infinite lives (Docs/CustomGamePlayground.md 4.1): no life is lost and nobody is out. The usual hit
+	// feedback plays, then the survivor goes back to this floor's start and cannot be caught for a short while.
+	// Custom game infection + infinite lives ("nobody leaves the match"): the first catch infects, through the usual
+	// elimination below. Infection alone keeps the death count and infects on the last one.
+	if (auto* InfectionMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); !bInfinitePracticeLives && InfectionMode &&
+		InfectionMode->HasPlaygroundInfection() && InfectionMode->HasPlaygroundInfiniteLives())
+	{
+		RemainingDeathCount = 0;
+	}
+	else if (auto* PlaygroundMode = World->GetAuthGameMode<AMultiplayTestGameMode>(); !bInfinitePracticeLives && PlaygroundMode && PlaygroundMode->HasPlaygroundInfiniteLives())
+	{
+		const float FeedbackSeconds = DamageFeedbackIntroSeconds + DamageFeedbackFadeSeconds;
+		NextDeathCountDamageAllowedWorldSeconds = World->GetTimeSeconds() + FeedbackSeconds + PlaygroundRespawnProtectionSeconds;
+		MulticastPlayPainAndDeathWorldSFX(false, .55f);
+		RecordObserverFeedback(FallPitchDirection, FallRollDirection, .45f, false);
+		if (IsLocallyControlled()) PlayLocalDamageFeedback(FallPitchDirection, FallRollDirection, .45f);
+		else if (!bServerBot) ClientPlayDamageFeedback(FallPitchDirection, FallRollDirection, .45f);
+		PlaygroundMode->NotifyMannequinCaptureFeedback(false);
+		FTransform Respawn;
+		if (PlaygroundMode->HandlePlaygroundCatch(this, Respawn))
+		{
+			World->GetTimerManager().SetTimer(PlaygroundRespawnTimer,
+				FTimerDelegate::CreateWeakLambda(this, [this, Respawn]() { FinishPlaygroundRespawn(Respawn); }),
+				FMath::Max(FeedbackSeconds, .01f), false);
+		}
+		if (UProjectAffixRuntime* Affixes = PlaygroundMode->GetAffixRuntime()) Affixes->OnCatch(CatchingMannequin);
+		ForceNetUpdate();
+		return true;
+	}
 	if (RemainingDeathCount > 0 || bInfinitePracticeLives)
 	{
 		if (!bInfinitePracticeLives) --RemainingDeathCount;
@@ -1530,6 +1559,25 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	return true;
 }
 
+bool APlayerCharacter::IsPlaygroundRespawnPending() const
+{
+	const UWorld* World = GetWorld();
+	return IsValid(World) && World->GetTimerManager().TimerExists(PlaygroundRespawnTimer);
+}
+
+void APlayerCharacter::FinishPlaygroundRespawn(const FTransform& Respawn)
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !IsValid(World) || bGameOver) return;
+	World->GetTimerManager().ClearTimer(PlaygroundRespawnTimer);
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement)) Movement->StopMovementImmediately();
+	TeleportTo(Respawn.GetLocation(), Respawn.Rotator(), false, true);
+	if (APlayerController* PC = Cast<APlayerController>(GetController())) PC->ClientSetRotation(Respawn.Rotator(), true);
+	else if (AController* C = GetController()) C->SetControlRotation(Respawn.Rotator());
+	NextDeathCountDamageAllowedWorldSeconds = World->GetTimeSeconds() + PlaygroundRespawnProtectionSeconds;
+	ForceNetUpdate();
+}
+
 bool APlayerCharacter::HandleFallDeath()
 {
 	UWorld* World = GetWorld();
@@ -1538,9 +1586,10 @@ bool APlayerCharacter::HandleFallDeath()
 		return false;
 	}
 	const auto* Practice = World->GetAuthGameMode<AProjectProject01TutorialGameMode>();
-	if (Practice && Practice->HasPracticeInfiniteLives())
+	const auto* PlaygroundMode = World->GetAuthGameMode<AMultiplayTestGameMode>();
+	if ((Practice && Practice->HasPracticeInfiniteLives()) || (PlaygroundMode && PlaygroundMode->HasPlaygroundInfiniteLives()))
 	{
-		// 무한 목숨 연습: 죽지 않고 마지막 발판으로 돌아간다.
+		// 무한 목숨(연습, 사용자 지정 게임): 죽지 않고 마지막 발판으로 돌아간다.
 		if (UCharacterMovementComponent* Movement = GetCharacterMovement(); IsValid(Movement)) Movement->StopMovementImmediately();
 		if (bHasFooting) TeleportTo(LastFootingLocation, GetActorRotation(), false, true);
 		return true;

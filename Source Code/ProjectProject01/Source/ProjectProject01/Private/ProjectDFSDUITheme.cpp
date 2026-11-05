@@ -26,6 +26,7 @@
 #include "ProjectProject01GameInstance.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/SlateRenderer.h"
+#include "Fonts/FontMeasure.h"
 
 namespace
 {
@@ -47,6 +48,13 @@ namespace
             const int32 I=Vertex(A,Color);Vertex(B,Color);Vertex(C,Color);
             Indices.Append({SlateIndex(I),SlateIndex(I+1),SlateIndex(I+2)});
         }
+        // Axis-aligned quad; Near/Far colours let one edge fade out (vignette bands).
+        void Quad(FVector2D Origin,FVector2D Size,FLinearColor A,FLinearColor B,FLinearColor C,FLinearColor D)
+        {
+            const int32 I=Vertex(Origin,A);Vertex(Origin+FVector2D(Size.X,0),B);Vertex(Origin+Size,C);Vertex(Origin+FVector2D(0,Size.Y),D);
+            Indices.Append({SlateIndex(I),SlateIndex(I+1),SlateIndex(I+2),SlateIndex(I),SlateIndex(I+2),SlateIndex(I+3)});
+        }
+        void Quad(FVector2D Origin,FVector2D Size,FLinearColor Color){Quad(Origin,Size,Color,Color,Color,Color);}
         void Surface(FVector2D Origin,FVector2D Size)
         {
             // A soft, static light falloff gives the paper depth without adding objects behind it.
@@ -149,7 +157,8 @@ namespace ProjectDFSDUI
     static FLinearColor PaperEdge(){return FLinearColor(.15f,.15f,.15f,.65f);}
 	FLinearColor Text(){return FLinearColor(.90f,.90f,.90f,1);}
 	FLinearColor Muted(){return FLinearColor(.50f,.50f,.50f,1);}
-	FLinearColor Accent(){return FLinearColor(.45f,.12f,.08f,1);}
+	// Slightly faded tape red: a little less saturated than the title's original response colour.
+	FLinearColor Accent(){return FLinearColor(.40f,.12f,.09f,1);}
 	FLinearColor Danger(){return FLinearColor(1,.32f,.22f,1);}
 	const FButtonStyle& TitleButtonStyle()
 	{
@@ -305,6 +314,109 @@ namespace ProjectDFSDUI
 		}
 		else{Frame->SetContent(OldRoot);Tree->RootWidget=Frame;}
 	}
+
+	FSlateFontInfo Mono(int32 Size){return FCoreStyle::GetDefaultFontStyle(TEXT("Mono"),Size);}
+	float TapeScanlineOpacity(){return .028f;}
+	FString RecordStamp(){return TEXT("[RECORD 0] 202X-XX-XX 18:24:01");}
+	FString ChannelLabel(int32 Channel){return FString::Printf(TEXT("REC  CH-%02d"),FMath::Clamp(Channel,1,99));}
+	void PaintTape(FSlateWindowElementList& Out,const FGeometry& G,int32 Layer,FVector2D Origin,FVector2D Size,float Scale,FLinearColor Tint,int32 Seed,float Strength)
+	{
+		if(Size.X<4||Size.Y<4||Strength<=0)return;
+		// Strength < 1 for surfaces over pure black, where the same rules would read much harsher.
+		Tint.A*=FMath::Min(Strength,1.f);
+		FDocumentWear Tape{G,{},{},Tint};
+		// Fixed horizontal scanlines: faint light rules read on the near-black surfaces.
+		const float Step=FMath::Max(2.f,3.f*Scale),Thick=FMath::Max(.6f,Scale);
+		const FLinearColor Line(1,1,1,TapeScanlineOpacity());
+		for(float Y=Step*.5f;Y<Size.Y-Thick;Y+=Step)Tape.Quad(Origin+FVector2D(0,Y),FVector2D(Size.X,Thick),Line);
+		// Film grain from a fixed seed: the same specks every frame, so nothing crawls or blinks.
+		FRandomStream Random(Seed);
+		const int32 Specks=FMath::Clamp(int32(Size.X*Size.Y/(1500.f*FMath::Max(.25f,Scale*Scale))),0,1200);
+		for(int32 I=0;I<Specks;++I)
+		{
+			const FVector2D P(Random.FRandRange(0,Size.X-2*Scale),Random.FRandRange(0,Size.Y-2*Scale));
+			const float S=Random.FRandRange(.8f,1.7f)*Scale;
+			const bool Light=Random.FRand()<.45f;
+			Tape.Quad(Origin+P,FVector2D(S,S),Light?FLinearColor(1,1,1,Random.FRandRange(.025f,.06f)):FLinearColor(0,0,0,Random.FRandRange(.10f,.22f)));
+		}
+		Tape.Draw(Out,Layer);
+	}
+	void PaintVignette(FSlateWindowElementList& Out,const FGeometry& G,int32 Layer,FVector2D Size,FLinearColor Tint)
+	{
+		if(Size.X<8||Size.Y<8)return;
+		FDocumentWear Edge{G,{},{},Tint};
+		const FLinearColor Dark(0,0,0,.42f),Clear(0,0,0,0);
+		const float H=Size.Y*.16f,W=Size.X*.10f;
+		Edge.Quad(FVector2D::ZeroVector,FVector2D(Size.X,H),Dark,Dark,Clear,Clear);
+		Edge.Quad(FVector2D(0,Size.Y-H),FVector2D(Size.X,H),Clear,Clear,Dark,Dark);
+		Edge.Quad(FVector2D::ZeroVector,FVector2D(W,Size.Y),Dark,Clear,Clear,Dark);
+		Edge.Quad(FVector2D(Size.X-W,0),FVector2D(W,Size.Y),Clear,Dark,Dark,Clear);
+		Edge.Draw(Out,Layer);
+	}
+	void PaintRecordMarks(FSlateWindowElementList& Out,const FGeometry& G,int32 Layer,float Left,float Right,float Y,float Scale,FLinearColor Tint,int32 Channel,int32 FontSize)
+	{
+		if(!FSlateApplication::IsInitialized()||Right-Left<40*Scale)return;
+		const FSlateFontInfo Font=Mono(FontSize);const auto Measure=FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+		const FString Label=ChannelLabel(Channel),Stamp=RecordStamp();
+		const FVector2D LabelSize=Measure->Measure(Label,Font),StampSize=Measure->Measure(Stamp,Font);
+		const FLinearColor Ink=FLinearColor(.62f,.62f,.62f,1)*Tint;
+		// A steady red recording dot: static, never blinking.
+		static const FSlateRoundedBoxBrush Dot(FLinearColor::White,4.f);
+		const float DotSize=FMath::Max(4.f,FontSize*.62f)*Scale;
+		FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(FVector2D(DotSize,DotSize),FSlateLayoutTransform(FVector2D(Left,Y+(LabelSize.Y*Scale-DotSize)*.5f))),&Dot,ESlateDrawEffect::None,FLinearColor(.58f,.10f,.08f,1)*Tint);
+		const float LabelX=Left+DotSize+5*Scale;
+		FSlateDrawElement::MakeText(Out,Layer,G.ToPaintGeometry(LabelSize,FSlateLayoutTransform(Scale,FVector2D(LabelX,Y))),Label,Font,ESlateDrawEffect::None,Ink);
+		// The stamp is right-aligned and dropped when it would touch the channel label.
+		const float StampX=Right-StampSize.X*Scale;
+		if(StampX>LabelX+LabelSize.X*Scale+16*Scale)
+			FSlateDrawElement::MakeText(Out,Layer,G.ToPaintGeometry(StampSize,FSlateLayoutTransform(Scale,FVector2D(StampX,Y))),Stamp,Font,ESlateDrawEffect::None,Ink);
+	}
+}
+
+class SProjectDFSDTapeCard final : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SProjectDFSDTapeCard):_Channel(1),_Background(FLinearColor::Transparent),_Padding(FMargin(14,10)),_FollowChild(false){}
+		SLATE_ARGUMENT(int32,Channel) SLATE_ARGUMENT(FLinearColor,Background) SLATE_ARGUMENT(FMargin,Padding) SLATE_ARGUMENT(bool,FollowChild)
+		SLATE_DEFAULT_SLOT(FArguments,Content)
+	SLATE_END_ARGS()
+	static constexpr float Header=16.f;
+	void Construct(const FArguments& A)
+	{
+		Channel=A._Channel;Background=A._Background;Padding=A._Padding;bFollowChild=A._FollowChild;
+		// An opaque card absorbs clicks on its own surface exactly like the SBorder it replaces.
+		// A transparent frame never takes input itself; its content keeps its own hit testing.
+		SetVisibility(Background.A>0?EVisibility::Visible:EVisibility::SelfHitTestInvisible);
+		FMargin Inner=Padding;Inner.Top+=Header;
+		ChildSlot.Padding(Inner)[A._Content.Widget];
+	}
+	virtual int32 OnPaint(const FPaintArgs& Args,const FGeometry& G,const FSlateRect& Clip,FSlateWindowElementList& Out,int32 Layer,const FWidgetStyle& Style,bool bEnabled)const override
+	{
+		FLinearColor Tint=Style.GetColorAndOpacityTint();
+		if(bFollowChild)
+		{
+			// Follow the wrapped menu's own fade: hidden while it is hidden, as transparent as it is.
+			const auto& Child=ChildSlot.GetWidget();
+			if(!Child->GetVisibility().IsVisible())return SCompoundWidget::OnPaint(Args,G,Clip,Out,Layer,Style,bEnabled);
+			Tint.A*=Child->GetRenderOpacity();
+		}
+		const FVector2D Size=G.GetLocalSize();
+		if(Background.A>0)FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(),FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")),ESlateDrawEffect::None,Background*Tint);
+		const bool bOpaque=Background.A>0;
+		ProjectDFSDUI::PaintTape(Out,G,Layer+1,FVector2D::ZeroVector,Size,1.f,Tint,Channel*977+31,bOpaque?1.f:.35f);
+		ProjectDFSDUI::PaintRecordMarks(Out,G,Layer+2,Padding.Left,float(Size.X)-Padding.Right,FMath::Max(2.f,Padding.Top*.5f),1.f,Tint,Channel,bOpaque?9:10);
+		return SCompoundWidget::OnPaint(Args,G,Clip,Out,Layer+3,Style,bEnabled);
+	}
+private:
+	int32 Channel=1;FLinearColor Background;FMargin Padding;bool bFollowChild=false;
+};
+TSharedRef<SWidget> ProjectDFSDUI::TapeCard(TSharedRef<SWidget> Content,int32 Channel,FLinearColor Background,FMargin Padding)
+{
+	return SNew(SProjectDFSDTapeCard).Channel(Channel).Background(Background).Padding(Padding)[Content];
+}
+TSharedRef<SWidget> UProjectDFSDTapeFrame::RebuildWidget()
+{
+	return SNew(SProjectDFSDTapeCard).Channel(Channel).Padding(FMargin(12,8)).FollowChild(true)[GetContent()?GetContent()->TakeWidget():SNullWidget::NullWidget];
 }
 
 class SProjectDFSDPage final : public SCompoundWidget
@@ -330,7 +442,8 @@ public:
 		const auto Tint=Style.GetColorAndOpacityTint();
 		ProjectDFSDUI::PaintStoreBackdrop(Out,G,Layer,Tint); // Same abandoned-store backdrop as the single-player save screen.
 		const float Left=FMath::Max(16.f/Dpi,(static_cast<float>(Size.X)-Width*Fit)/2);
-		FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(64*Fit,2*Fit),FSlateLayoutTransform(FVector2D(Left+6*Fit,28*Fit))),White,ESlateDrawEffect::None,ProjectDFSDUI::Accent()*Tint);
+		// Dossiers carry the recording dot in their tab instead of the short accent rule.
+		if(!Dossier)FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(64*Fit,2*Fit),FSlateLayoutTransform(FVector2D(Left+6*Fit,28*Fit))),White,ESlateDrawEffect::None,ProjectDFSDUI::Accent()*Tint);
         // Restrained file-folder rules and a document header, not a bright paper texture.
         const float Right=FMath::Min(float(Size.X)-16.f/Dpi,Left+Width*Fit);
         const float FrameLeft=FMath::Max(8.f/Dpi,Left-10*Fit),FrameRight=FMath::Min(float(Size.X)-8.f/Dpi,Right+10*Fit);
@@ -346,7 +459,14 @@ public:
         FSlateDrawElement::MakeLines(Out,Layer+4,G.ToPaintGeometry(),Folder,ESlateDrawEffect::None,ProjectDFSDUI::PaperEdge()*Tint,true,1.f/Dpi);
         FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(2*Fit,FMath::Max(1.f,FrameBottom-60*Fit)),FSlateLayoutTransform(FVector2D(FrameLeft+5*Fit,60*Fit))),White,ESlateDrawEffect::None,FLinearColor(.12f,.045f,.035f,.6f)*Tint);
         FSlateDrawElement::MakeBox(Out,Layer+4,G.ToPaintGeometry(FVector2D(FMath::Max(1.f,Right-Left),1.f/Dpi),FSlateLayoutTransform(FVector2D(Left,47*Fit))),White,ESlateDrawEffect::None,FLinearColor(.10f,.105f,.11f,.8f)*Tint);
+        // Analog tape: fixed scanlines/grain on the sheet, darkened screen edges, and a recording
+        // header in the band above the content (content starts at 52*Fit, so nothing overlaps).
+        ProjectDFSDUI::PaintTape(Out,G,Layer+4,FVector2D(FrameLeft,BodyTop),FVector2D(FrameRight-FrameLeft,FrameBottom-BodyTop),Fit,Tint,WearSeed+71);
         PaintPaperWear(Out,G,Layer+5,FVector2D(FrameLeft,16*Fit),FVector2D(FrameRight-FrameLeft,FrameBottom-16*Fit),Fit,Tint,Dossier,WearSeed);
+        ProjectDFSDUI::PaintVignette(Out,G,Layer+6,Size,Tint);
+        const int32 Channel=int32(uint32(WearSeed)%12u)+1;
+        if(Dossier)ProjectDFSDUI::PaintRecordMarks(Out,G,Layer+6,FrameLeft+12*Fit,Right,19*Fit,Fit,Tint,Channel);
+        else ProjectDFSDUI::PaintRecordMarks(Out,G,Layer+6,Left+80*Fit,Right,21*Fit,Fit,Tint,Channel);
 		return SCompoundWidget::OnPaint(Args,G,Rect,Out,Layer+7,Style,bEnabled);
 	}
 private:float Width=1120,Bottom=32;int32 WearSeed=419;bool Dossier=false;
@@ -442,6 +562,7 @@ public:
 		FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(FVector2D(Width,FMath::Max(0.f,Height-22)),FSlateLayoutTransform(FVector2D(0,22))),White,ESlateDrawEffect::None,Paper*Tint);
 		FSlateDrawElement::MakeBox(Out,Layer,G.ToPaintGeometry(FVector2D(Tab,24),FSlateLayoutTransform()),White,ESlateDrawEffect::None,Paper*Tint);
 		const TArray<FVector2D> Outline{{0,0},{Tab,0},{Tab+18,22},{Width,22},{Width,Height},{0,Height},{0,0}};
+		ProjectDFSDUI::PaintTape(Out,G,Layer+1,FVector2D(0,22),FVector2D(Width,FMath::Max(0.f,Height-22)),1.f,Tint,WearSeed+5);
 		FSlateDrawElement::MakeLines(Out,Layer+1,G.ToPaintGeometry(),Outline,ESlateDrawEffect::None,Edge*Tint,true,1);
 		FSlateDrawElement::MakeBox(Out,Layer+1,G.ToPaintGeometry(FVector2D(3,FMath::Max(0.f,Height-48)),FSlateLayoutTransform(FVector2D(9,34))),White,ESlateDrawEffect::None,ProjectDFSDUI::Accent()*Tint);
 		FSlateDrawElement::MakeBox(Out,Layer+1,G.ToPaintGeometry(FVector2D(FMath::Max(0.f,Width-44),1),FSlateLayoutTransform(FVector2D(22,34))),White,ESlateDrawEffect::None,Edge*Tint);

@@ -43,6 +43,10 @@ public:
 	void ToggleOpenMic();
 	void StopSpeaking();
 	bool CanLocalTransmit() const;
+	/** Custom game ghost survivors: the server opened this out-of-play survivor's whisper window. */
+	bool IsGhostWhisperOpen() const;
+	/** Re-applies the transmit state (the ghost whisper window opened or closed). */
+	void RefreshTransmitMode() { ApplyTransmitMode(); }
 	bool PrepareAudioDevices();
 	TArray<FProjectVoiceDevice> GetInputDevices() const;
 	TArray<FProjectVoiceDevice> GetOutputDevices() const;
@@ -76,7 +80,7 @@ public:
 	bool IsPushToTalkHeld() const { return bPushToTalkHeld; }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Voice")
-	bool IsTransmitting() const { return bJoinedChannel && CanLocalTransmit() && HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld); }
+	bool IsTransmitting() const { return bJoinedChannel && CanLocalTransmit() && HasFreshAudibility() && bAuthoritativeVoiceAllowed && !IsMicrophoneTestActive() && (bOpenMic || bPushToTalkHeld || IsGhostWhisperOpen()); }
 
 private:
 	friend class FProjectVoiceParticipantIsolationTest;

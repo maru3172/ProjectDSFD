@@ -60,6 +60,8 @@ public:
     bool HasItem(const FString& UserId,const TCHAR* Id)const;
     bool HasBuff(const TCHAR* Id)const{return IsActive()&&Buffs.Contains(Id);}
     bool HasAnyBuff()const{return IsActive()&&!Buffs.IsEmpty();}
+    /** Affixes already on for the whole match (custom game mix switch); never offered as buff cards. */
+    void SetFixedBuffs(const TArray<FString>& Ids){FixedBuffs=Ids;}
     /** Uses up a one-use item this player owns. True the first time only. */
     bool Spend(const FString& Key,const TCHAR* Id){auto* P=IsActive()?Players.Find(Key):nullptr;if(!P||!P->Picks.Contains(Id)||P->Spent.Contains(Id))return false;P->Spent.Add(Id);return true;}
     bool IsSpent(const FString& Key,const TCHAR* Id)const{const auto* P=Players.Find(Key);return P&&P->Spent.Contains(Id);}
@@ -83,6 +85,7 @@ private:
     FString MatchId;
     TMap<FString,FProjectRoguePlayer> Players;
     TArray<FString> Buffs;
+    TArray<FString> FixedBuffs; // From the match ticket's affixes; set again on every floor.
     int32 Rounds=0;
     bool bPicking=false,bFloorDone=false,bFloorStartPending=false;
     double EndsAt=0,NextStatusAt=0;

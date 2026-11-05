@@ -99,6 +99,10 @@ public:
 
 	/** 마네킹 서버가 물리 접촉 포획을 확정할 때만 호출합니다. */
 	bool HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin);
+	/** Custom game infinite lives: a caught survivor is waiting to be moved back to the floor start. */
+	bool IsPlaygroundRespawnPending() const;
+	/** Custom game infinite lives: move back to the floor start and start the short catch protection (server). */
+	void FinishPlaygroundRespawn(const FTransform& Respawn);
 
 	/** 서버: 맵의 낙사 높이(GameMode::GetFallDeathZ) 또는 월드 KillZ 아래로 떨어지면 남은 데스카운트와 상관없이
 	 *  사망 처리합니다. 그 위에서는 떨어져도 죽지 않습니다. 마네킹 포획으로 집계하지 않습니다.
@@ -428,6 +432,10 @@ private:
 	bool bCameraDeathFeedbackActive = false;
 	bool bBodyFallSFXPlayed = false;
 	FTimerHandle BodyFallWorldSFXTimer;
+	/** Custom game infinite lives: moves a caught survivor back to the floor start once the hit feedback ends. */
+	FTimerHandle PlaygroundRespawnTimer;
+	/** Custom game infinite lives: no catch for this long after arriving back at the floor start. */
+	float PlaygroundRespawnProtectionSeconds = 3.0f;
 	float CameraFeedbackElapsedSeconds = 0.0f;
 	float CameraFallPitchDirection = 0.0f;
 	float CameraFallRollDirection = 0.0f;

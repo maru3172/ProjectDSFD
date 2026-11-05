@@ -33,6 +33,7 @@ TArray<FString> UProjectItemRoguelikeRuntime::TeammateBuffsOffered(const FProjec
 {
     // Two survivors pick in the same round: their buff cards never overlap, so both picks take effect.
     TArray<FString> Out=Buffs;
+    for(const FString& Id:FixedBuffs)Out.AddUnique(Id);
     for(const auto& Pair:Players)if(Pair.Key!=Except.UserId&&Pair.Value.Role==Except.Role&&!Pair.Value.bPicked)
         for(const FString& Id:Pair.Value.Offer)if(ProjectAffixes::Find(Id))Out.AddUnique(Id);
     return Out;

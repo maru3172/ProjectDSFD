@@ -115,6 +115,20 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 	UPROPERTY(BlueprintReadOnly)
 	int32 CaptureCount = 0;
 
+	/** Custom game infinite lives: times caught (survivor) or catches made (mannequin). 0 otherwise. */
+	UPROPERTY(BlueprintReadOnly)
+	int32 PlaygroundCatchCount = 0;
+
+	/** The match ran with custom game infinite lives (the result screen shows catches instead of eliminations). */
+	UPROPERTY(BlueprintReadOnly)
+	bool bPlaygroundInfiniteLives = false;
+
+	/** Custom game infection: this survivor was infected and ended on the mannequin side; whether that side won. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bPlaygroundInfected = false;
+	UPROPERTY(BlueprintReadOnly)
+	bool bInfectedSideWon = false;
+
 	UPROPERTY(BlueprintReadOnly)
 	double FirstCaptureSeconds = 0.0;
 
@@ -160,6 +174,20 @@ public:
     UFUNCTION(Client,Unreliable) void ClientAffixPulse(FVector_NetQuantize Location,FColor Color,float Seconds,float Radius);
     /** C10: footsteps sound muffled for this long. */
     UFUNCTION(Client,Reliable) void ClientSetAffixMuffle(float Seconds);
+    /** Custom game ghost survivors: asks the server for a 5 s whisper to the living (push-to-talk while out of play). */
+    UFUNCTION(Server,Reliable) void ServerRequestGhostWhisper();
+    /** Custom game ghost survivors: the server opened this player's whisper window (owner only). */
+    bool IsGhostWhisperOpen()const{return bGhostWhisperOpen;}
+    /** Server: opens or closes the whisper window. */
+    void SetGhostWhisperOpen(bool bOpen);
+    /** Server, custom game darkness (0..3): this player's screen gets darker and smokier; set once per match. */
+    void SetPlaygroundDarkness(int32 Level);
+    int32 GetPlaygroundDarkness()const{return PlaygroundDarkness;}
+    /** Server, custom game sound-only mannequins: bodies further than this many metres are hidden on survivor screens. */
+    void SetPlaygroundSoundOnlyMeters(int32 Meters);
+    int32 GetPlaygroundSoundOnlyMeters()const{return PlaygroundSoundOnlyMeters;}
+    /** Local: whether this body is shown at this distance (hysteresis so a body on the edge does not blink). */
+    static bool ShouldShowSoundOnlyBody(float DistanceCm,int32 Meters,bool bShownNow);
     FRotator GetObserverViewRotation()const{return ObserverViewRotation;}
     UFUNCTION(Client,Reliable) void ClientObserverViewStream(bool Enabled);
     UFUNCTION(Server,Unreliable) void ServerObserverViewRotation(FRotator Rotation);
@@ -187,6 +215,9 @@ public:
 	void ClientQueueDeathCamera(class APlayerCharacter* Victim,const FString& Reason);
 	void DeclareVoluntaryExit();
 	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
+	/** Server, custom game infection: stop spectating and play this mannequin body directly (already possessed). */
+	void EnterInfectedBody(class AMannequinAICharacter* Body);
+	UFUNCTION(Client, Reliable) void ClientEnterInfectedBody(class AMannequinAICharacter* Body, const FMultiplaySurvivorSpectatorView& View);
 	bool IsFreeSpectatingTarget(const AActor* Target) const;
 	/** 서버의 seamless map travel에서 이 컨트롤러와 다음 맵 생존 여부를 보존합니다. */
 	void PrepareLevelTransitionCarryover(bool bSpawnInNextLevel, float FadeSeconds = 0.6f);
@@ -481,6 +512,21 @@ private:
 	/** 직접 조작 해제 후 적용할 명령이 지정됐는지 소유 클라이언트 HUD에도 복제한다. */
 	UPROPERTY(Replicated)
 	bool bManualMannequinCommandIssued = false;
+	/** Custom game ghost survivors: whisper window open (owner only; the voice subsystem transmits while it is). */
+	UPROPERTY(ReplicatedUsing=OnRep_GhostWhisper)
+	bool bGhostWhisperOpen = false;
+	UFUNCTION() void OnRep_GhostWhisper();
+	/** Custom game darkness (owner only) and the local, unbound post-process volume that shows it. */
+	UPROPERTY(ReplicatedUsing=OnRep_PlaygroundDarkness)
+	uint8 PlaygroundDarkness = 0;
+	UFUNCTION() void OnRep_PlaygroundDarkness();
+	TWeakObjectPtr<class APostProcessVolume> PlaygroundDarknessVolume;
+	UPROPERTY(Replicated)
+	uint8 PlaygroundSoundOnlyMeters = 0;
+	/** Bodies this local survivor screen currently hides (shown again when the rule or the role no longer applies). */
+	TSet<TWeakObjectPtr<class AMannequinAICharacter>> PlaygroundHiddenBodies;
+	double NextSoundOnlyCheckAt = 0;
+	void TickPlaygroundSoundOnly();
 	/** 서버에서 seamless travel 동안만 유지되는 다음 맵 진입 정보입니다. */
 	bool bLevelTransitionCarryover = false;
 	bool bSpawnAfterLevelTransition = false;

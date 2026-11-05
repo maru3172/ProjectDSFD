@@ -26,6 +26,7 @@
 #include "Sound/SoundWave.h"
 #include "ProjectUIClickSound.h"
 #include "Sound/SoundGenerator.h"
+#include "Widgets/SNullWidget.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectDFSDUIThemeContractTest,"ProjectProject01.UITheme.Contracts",
 	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -50,6 +51,26 @@ bool FProjectDFSDUIThemeContractTest::RunTest(const FString&)
         TestTrue(TEXT("Click waveform is audible, bounded and finishes"),Peak>.01f&&Peak<.3f&&First->IsFinished());
         TestFalse(TEXT("Rapid repeated clicks have independent playback cursors"),Second->IsFinished());
     }
+	// Analog-horror tape cues stay faint and never take input outside their own cards.
+	TestTrue(TEXT("Static scanlines stay faint enough to keep text contrast"),ProjectDFSDUI::TapeScanlineOpacity()>0&&ProjectDFSDUI::TapeScanlineOpacity()<=.04f);
+	TestTrue(TEXT("Recording stamp keeps the existing RECORD 0 tone"),ProjectDFSDUI::RecordStamp().StartsWith(TEXT("[RECORD 0]")));
+	{
+		const auto Frame=ProjectDFSDUI::TapeCard(SNullWidget::NullWidget,1,FLinearColor::Transparent);
+		const auto Card=ProjectDFSDUI::TapeCard(SNullWidget::NullWidget,1,ProjectDFSDUI::Panel());
+		TestTrue(TEXT("A transparent tape frame is never hit-testable itself"),Frame->GetVisibility()==EVisibility::SelfHitTestInvisible);
+		TestTrue(TEXT("An opaque tape card takes clicks only on its own rectangle, like the border it replaces"),Card->GetVisibility()==EVisibility::Visible);
+	}
+	{
+		auto* ResultWidget=NewObject<UProjectProject01MatchResultWidget>();static_cast<UUserWidget*>(ResultWidget)->Initialize();
+		bool bTapeAroundMenu=false,bPageFrame=false;
+		ResultWidget->WidgetTree->ForEachWidget([&](UWidget* W)
+		{
+			if(auto* Tape=Cast<UProjectDFSDTapeFrame>(W))bTapeAroundMenu|=Tape->GetContent()!=nullptr&&Tape->GetParent()==ResultWidget->WidgetTree->RootWidget;
+			bPageFrame|=W->IsA<UProjectDFSDPageFrame>();
+		});
+		TestTrue(TEXT("Result menu gets recording marks"),bTapeAroundMenu);
+		TestFalse(TEXT("Result screen still has no case-file page frame"),bPageFrame);
+	}
 	const auto Normal=ProjectDFSDUI::ButtonStyle().Normal.TintColor.GetSpecifiedColor();
 	TestTrue(TEXT("Other windows have a visibly brighter surface than panels and an outline"),L(Normal)>L(ProjectDFSDUI::Panel())*1.5f&&L(Normal)<.12f&&Normal.A>.9f&&ProjectDFSDUI::ButtonStyle().Normal.OutlineSettings.Width==1.f);
 	TestTrue(TEXT("Body text stays comfortably readable on brighter buttons"),(L(ProjectDFSDUI::Text())+.05f)/(L(Normal)+.05f)>4.5f);
