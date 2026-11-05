@@ -100,4 +100,8 @@ private:
 	// 층이 다른 플레이어를 직접 관측하지 않도록 하는 최대 높이 차이
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
 	float MannequinSightMaximumHeightDifference = 300.0f;
+	
+	// 마지막 직접 관측 이후 정보를 유지할 시간
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
+	float ObservationLifetime = 8.0f;
 };

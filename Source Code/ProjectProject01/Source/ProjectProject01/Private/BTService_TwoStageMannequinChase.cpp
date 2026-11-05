@@ -70,6 +70,19 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 
 	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins);
 	const bool bMannequinCanSeePlayer = CanMannequinSeePlayer(*CurrentMannequin, *Player, AllMannequins);
+	
+	const double CurrentTime = GetWorld()->GetTimeSeconds();
+	
+	CurrentMannequin->SetPlayerDirectlyVisible(bMannequinCanSeePlayer);
+	
+	if (bMannequinCanSeePlayer)
+	{
+		CurrentMannequin->UpdatePlayerObservation(Player->GetActorLocation(), Player->GetVelocity(), CurrentTime);
+	}
+	else
+	{
+		CurrentMannequin->UpdatePlayerObservationConfidence(CurrentTime, ObservationLifetime);
+	}
 
 	Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), bObservedByPlayerOrHelper);
 	Blackboard->SetValueAsBool(TEXT("MannequinCanSeePlayer"), bMannequinCanSeePlayer);
