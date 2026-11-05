@@ -721,6 +721,11 @@ bool AMannequinAICharacter::HasActivePlayerObservation() const
 	return PlayerObservation.bHasObservation && PlayerObservation.Confidence > 0.0f;
 }
 
+void AMannequinAICharacter::ClearPlayerObservation()
+{
+	PlayerObservation = FMannequinPlayerObservation();
+}
+
 void AMannequinAICharacter::SetAffixSpeedScale(const float Scale)
 {
 	if (!HasAuthority()) return;

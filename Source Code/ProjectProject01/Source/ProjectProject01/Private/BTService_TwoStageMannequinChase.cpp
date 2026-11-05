@@ -65,6 +65,8 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->SetValueAsFloat(TEXT("ObservationConfidence"), 0.0f);
 		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
 		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
+		
+		CurrentMannequin->ClearPlayerObservation();
 
 		return;
 	}

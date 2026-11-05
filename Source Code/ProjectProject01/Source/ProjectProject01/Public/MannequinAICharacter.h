@@ -137,6 +137,9 @@ public:
 	// 아직 사용할 수 있는 관측 정보가 있는지 반환한다.
 	bool HasActivePlayerObservation() const;
 	
+	// PlayerObservation 초기화 함수
+	void ClearPlayerObservation();
+	
 private:
 	friend class AMultiplayTestGameMode;
 	friend class FProjectMannequinCameraTest;
