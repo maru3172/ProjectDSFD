@@ -129,6 +129,14 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 	UPROPERTY(BlueprintReadOnly)
 	bool bInfectedSideWon = false;
 
+	/** Custom game personal handicap of this player, as public text ("데스 +1 · 속도 -5%"); empty when none. */
+	UPROPERTY(BlueprintReadOnly)
+	FString PlaygroundHandicap;
+
+	/** Custom game rule-card vote: the card everyone's vote turned on for this match (ProjectPlaygroundVote id). */
+	UPROPERTY(BlueprintReadOnly)
+	FString PlaygroundVoteCard;
+
 	UPROPERTY(BlueprintReadOnly)
 	double FirstCaptureSeconds = 0.0;
 
@@ -183,6 +191,9 @@ public:
     /** Server, custom game darkness (0..3): this player's screen gets darker and smokier; set once per match. */
     void SetPlaygroundDarkness(int32 Level);
     int32 GetPlaygroundDarkness()const{return PlaygroundDarkness;}
+    /** Server, custom game hide-and-seek: the mannequin side sees (almost) nothing while survivors hide. */
+    void SetPlaygroundBlind(bool bBlind);
+    bool IsPlaygroundBlind()const{return bPlaygroundBlind;}
     /** Server, custom game sound-only mannequins: bodies further than this many metres are hidden on survivor screens. */
     void SetPlaygroundSoundOnlyMeters(int32 Meters);
     int32 GetPlaygroundSoundOnlyMeters()const{return PlaygroundSoundOnlyMeters;}
@@ -520,6 +531,8 @@ private:
 	UPROPERTY(ReplicatedUsing=OnRep_PlaygroundDarkness)
 	uint8 PlaygroundDarkness = 0;
 	UFUNCTION() void OnRep_PlaygroundDarkness();
+	UPROPERTY(ReplicatedUsing=OnRep_PlaygroundDarkness)
+	bool bPlaygroundBlind = false;
 	TWeakObjectPtr<class APostProcessVolume> PlaygroundDarknessVolume;
 	UPROPERTY(Replicated)
 	uint8 PlaygroundSoundOnlyMeters = 0;

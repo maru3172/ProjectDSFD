@@ -41,6 +41,7 @@
 #include "ProjectProject01TuningData.h"
 #include "UObject/ConstructorHelpers.h"
 #include "ProjectRoguePick.h"
+#include "ProjectRuleVote.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -82,6 +83,7 @@ AMultiplayTestPlayerController::AMultiplayTestPlayerController()
 	PlayerCameraManagerClass=AProjectSpectatorCameraManager::StaticClass();
 	CreateDefaultSubobject<UProjectProject01ObjectiveComponent>(TEXT("MultiplayerObjective"));
 	CreateDefaultSubobject<UProjectRoguePickComponent>(TEXT("ItemRoguelikePick")); // Card pick (ProjectRoguePick.h).
+	CreateDefaultSubobject<UProjectRuleVoteComponent>(TEXT("PlaygroundRuleVote")); // Custom game rule-card vote (ProjectRuleVote.h).
 	static ConstructorHelpers::FObjectFinder<UInputAction> Look(TEXT("/Game/MyProject/Input/IA_Player_Look.IA_Player_Look"));
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> Mapping(TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
 	MannequinCameraLookAction=Look.Object;MannequinCameraInputContext=Mapping.Object;
@@ -1073,7 +1075,7 @@ void AMultiplayTestPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();
 	// A new floor (seamless travel keeps this controller) has no darkness volume yet; the level did not change.
-	if (PlaygroundDarkness > 0 && !PlaygroundDarknessVolume.IsValid()) OnRep_PlaygroundDarkness();
+	if ((PlaygroundDarkness > 0 || bPlaygroundBlind) && !PlaygroundDarknessVolume.IsValid()) OnRep_PlaygroundDarkness();
 	if (Cast<APlayerCharacter>(GetPawn())) RemoveMannequinLookBinding();
 	else ApplyViewedMannequinCamera(GetViewedMannequin());
 	TryRevealInitialGameplayFade();
@@ -2149,6 +2151,7 @@ void AMultiplayTestPlayerController::GetLifetimeReplicatedProps(TArray<FLifetime
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bManualMannequinCommandIssued, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bGhostWhisperOpen, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, PlaygroundDarkness, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, bPlaygroundBlind, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AMultiplayTestPlayerController, PlaygroundSoundOnlyMeters, COND_OwnerOnly);
 }
 
@@ -2208,6 +2211,14 @@ void AMultiplayTestPlayerController::SetPlaygroundDarkness(const int32 Level)
 	if (IsLocalController()) OnRep_PlaygroundDarkness(); // Listen server host.
 }
 
+void AMultiplayTestPlayerController::SetPlaygroundBlind(const bool bBlind)
+{
+	if (!HasAuthority() || bPlaygroundBlind == bBlind) return;
+	bPlaygroundBlind = bBlind;
+	ForceNetUpdate();
+	if (IsLocalController()) OnRep_PlaygroundDarkness(); // Listen server host.
+}
+
 void AMultiplayTestPlayerController::OnRep_PlaygroundDarkness()
 {
 	// Docs/CustomGamePlayground.md 12.1: both sides see less. One local unbound volume, set once and held steady (no
@@ -2215,7 +2226,7 @@ void AMultiplayTestPlayerController::OnRep_PlaygroundDarkness()
 	UWorld* World = GetWorld();
 	if (!IsLocalController() || !IsValid(World) || World->GetNetMode() == NM_DedicatedServer) return;
 	APostProcessVolume* Volume = PlaygroundDarknessVolume.Get();
-	if (PlaygroundDarkness == 0)
+	if (PlaygroundDarkness == 0 && !bPlaygroundBlind)
 	{
 		if (IsValid(Volume)) Volume->Destroy();
 		PlaygroundDarknessVolume.Reset();
@@ -2229,10 +2240,11 @@ void AMultiplayTestPlayerController::OnRep_PlaygroundDarkness()
 		Volume->bUnbound = true; Volume->Priority = 50.f; Volume->BlendWeight = 1.f;
 		PlaygroundDarknessVolume = Volume;
 	}
-	static constexpr float Exposure[] = {0.f, -0.7f, -1.4f, -2.1f};
-	static constexpr float Vignette[] = {0.f, 0.35f, 0.55f, 0.75f};
-	static constexpr float Saturation[] = {1.f, 0.85f, 0.7f, 0.55f};
-	const int32 Level = FMath::Clamp<int32>(PlaygroundDarkness, 0, 3);
+	// Level 4 is the hide-and-seek blindfold: nearly black, set and lifted once (no flashing).
+	static constexpr float Exposure[] = {0.f, -0.7f, -1.4f, -2.1f, -9.f};
+	static constexpr float Vignette[] = {0.f, 0.35f, 0.55f, 0.75f, 1.f};
+	static constexpr float Saturation[] = {1.f, 0.85f, 0.7f, 0.55f, 0.f};
+	const int32 Level = bPlaygroundBlind ? 4 : FMath::Clamp<int32>(PlaygroundDarkness, 0, 3);
 	FPostProcessSettings& Settings = Volume->Settings;
 	Settings.bOverride_AutoExposureBias = true; Settings.AutoExposureBias = Exposure[Level];
 	Settings.bOverride_VignetteIntensity = true; Settings.VignetteIntensity = Vignette[Level];

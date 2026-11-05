@@ -18,9 +18,10 @@ internal static class RuleCodes
         """,ct);
 
     /// <summary>One canonical text per rule set: field order fixed, affix ids sorted.</summary>
-    internal static string Canonical(CustomRuleSet r)=>string.Join('|',"v2",r.Enabled?1:0,r.DeathCount,r.MannequinCount,r.TimeLimitSeconds,
+    internal static string Canonical(CustomRuleSet r)=>string.Join('|',"v3",r.Enabled?1:0,r.DeathCount,r.MannequinCount,r.TimeLimitSeconds,
         string.Join(',',(r.AffixIds??[]).OrderBy(id=>id,StringComparer.Ordinal)),r.ItemCards?1:0,r.InfiniteLives?1:0,r.Infection?1:0,r.Ghosts?1:0,r.HideRevealSeconds,
-        r.GazeLimitSeconds,r.Darkness,r.SoundOnlyMeters,r.EscapeMode,r.SpreadingFire?1:0);
+        r.GazeLimitSeconds,r.Darkness,r.SoundOnlyMeters,r.EscapeMode,r.SpreadingFire?1:0,
+        r.HideAndSeek?1:0,r.Waves?1:0,r.RuleVote?1:0,r.RoleSwap?1:0);
     internal static string Hash(CustomRuleSet r)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(r)))).ToLowerInvariant();
     internal static string Encode(string hexHash,int length)
     {
@@ -44,6 +45,7 @@ internal static class RuleCodes
     /// <summary>The code for these rules, created on first use. Callers pass rules that passed CustomRoomRules.Valid.</summary>
     internal static async Task<string> EnsureCodeAsync(MySqlConnection c,MySqlTransaction? tx,CustomRuleSet rules,CancellationToken ct)
     {
+        rules=rules with{Handicaps=[]}; // Handicaps name players; a code is only the rules.
         string hash=Hash(rules);
         var known=await CommunityEndpoints.Rows(c,tx,"SELECT code FROM rule_codes WHERE rules_hash=@h",ct,("h",hash));
         if(known.Count>0)return Convert.ToString(known[0]["code"])!;
@@ -115,7 +117,9 @@ internal static partial class LobbyEndpoints
             var rules=await RuleCodes.RulesAsync(c,null,key,ct);
             // A code whose rules this build no longer accepts is reported as unknown rather than half-loaded.
             if(rules is null||!CustomRoomRules.Valid(rules))return Results.NotFound(new{message="없는 코드입니다."});
-            return Results.Ok(new{code=RuleCodes.Display(key),rules,summary=await RuleCodes.SummaryAsync(c,key,user.Id,ct)});
+            // Records only: a rule code names rules (everyone with the same rules has the same code), so it is not a way to
+            // receive them. Rules travel by share codes (ShareCodes.cs), which their owner can expire or revoke.
+            return Results.Ok(new{code=RuleCodes.Display(key),summary=await RuleCodes.SummaryAsync(c,key,user.Id,ct)});
         }).RequireRateLimiting("lobby");
     }
 }

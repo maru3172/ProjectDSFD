@@ -223,6 +223,7 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
     FProjectCustomMatchRules CustomRules;
     FProjectMatchAffixes Affixes; // Bot match affixes (ProjectAffixes.h).
     EProjectMatchMode MatchMode=EProjectMatchMode::Normal; // PvP mode the host chose (ProjectItemRoguelike.h).
+    FString RoleSwapText; // Custom game role swap: up to two lines of series progress for the room screen (empty: off).
 	UPROPERTY(BlueprintReadOnly) FString MatchId;
     UPROPERTY(BlueprintReadOnly) bool bRandomMatch=false;
     UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;

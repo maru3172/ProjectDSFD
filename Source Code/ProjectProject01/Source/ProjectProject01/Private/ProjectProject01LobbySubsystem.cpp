@@ -860,6 +860,15 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
     const TSharedPtr<FJsonObject>* AffixJson=nullptr;
     if(StateJson->HasTypedField<EJson::Object>(TEXT("affixes"))&&(!StateJson->TryGetObjectField(TEXT("affixes"),AffixJson)||!FProjectMatchAffixes::Parse(*AffixJson,Parsed.Affixes)))
     {OutError=TEXT("방 어픽스 응답이 올바르지 않습니다.");return false;}
+    // Custom game role swap (RoleSwap.cs): played/total, the next mannequin and one sentence about the best mannequin.
+    if(const TSharedPtr<FJsonObject>* Swap=nullptr;StateJson->HasTypedField<EJson::Object>(TEXT("roleSwap"))&&StateJson->TryGetObjectField(TEXT("roleSwap"),Swap))
+    {
+        int32 Played=0,Total=0;FString Next,Best;(*Swap)->TryGetNumberField(TEXT("played"),Played);(*Swap)->TryGetNumberField(TEXT("total"),Total);
+        (*Swap)->TryGetStringField(TEXT("nextMannequin"),Next);(*Swap)->TryGetStringField(TEXT("best"),Best);
+        Parsed.RoleSwapText=Played>=Total&&Total>0?FString::Printf(TEXT("역할 바꾸기 %d판 모두 끝 · 다음 시리즈 첫 마네킹: %s"),Total,*Next):
+            FString::Printf(TEXT("역할 바꾸기 %d/%d판 · 다음 마네킹: %s"),Played,Total,*Next);
+        if(!Best.IsEmpty())Parsed.RoleSwapText+=TEXT("\n")+Best;
+    }
     FString MatchModeKey;
     if(StateJson->HasTypedField<EJson::String>(TEXT("matchMode"))&&(!StateJson->TryGetStringField(TEXT("matchMode"),MatchModeKey)||!FProjectMatchModeKeys::FromKey(MatchModeKey,Parsed.MatchMode)))
     {OutError=TEXT("방 경기 모드 응답이 올바르지 않습니다.");return false;}

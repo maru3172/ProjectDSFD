@@ -20,6 +20,7 @@ struct FProjectRoguePlayer
     TArray<FString> Offer;TArray<FString> FirstOffer;
     TArray<FString> Spent; // One-use items already used up this match (S03).
     bool bPicked=true,bRerollUsed=false;
+    bool bInfected=false; // Custom game infection: a survivor now playing a mannequin body; offered mannequin items only.
     int32 Serial=0;
 };
 

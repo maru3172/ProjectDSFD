@@ -48,6 +48,7 @@ struct FMultiplayTestMatchCarryover
     FProjectCustomMatchRules CustomRules;
     FProjectMatchAffixes Affixes;
     FProjectRogueCarry Rogue; // Item roguelike picks so far (ProjectItemRoguelikeRuntime.h).
+    FString PlaygroundVoteCard; bool bPlaygroundVoteDone=false; // Custom game rule-card vote, decided on the first floor.
     FString MatchId;
     FString BotRoomId;
     TArray<FProjectMatchBotSpec> Bots;
@@ -73,6 +74,11 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectCustomRulesInfectionTest;
 	friend class FProjectCustomRulesGazeLimitTest;
 	friend class FProjectCustomRulesDarknessTest;
+	friend class FProjectCustomRulesHandicapTest;
+	friend class FProjectCustomRulesEscapeModesTest;
+	friend class FProjectCustomRulesFireTest;
+	friend class FProjectCustomRulesHideAndSeekWavesTest;
+	friend class FProjectCustomRulesRuleVoteTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
 	friend class FProjectShutterTest;
@@ -124,6 +130,20 @@ public:
     bool IsInfectedController(const class AMultiplayTestPlayerController* Controller)const;
     /** Spawns the infected body at At and hands it to this survivor's controller. */
     class AMannequinAICharacter* SpawnInfectedBody(class AMultiplayTestPlayerController* Controller,const FTransform& At);
+    /** Where this survivor starts again on this floor (infinite lives, fire). False: no known start. */
+    bool FindPlaygroundFloorStart(const class APlayerCharacter* Survivor,FTransform& Out)const;
+    /** Custom game spreading fire (Docs/CustomGamePlayground.md 12.1). */
+    bool HasPlaygroundFire()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bSpreadingFire;}
+    /** Custom game hide-and-seek: the first minute, while survivors hide (bodies frozen, mannequin screen dark). */
+    bool IsPlaygroundHidePhase()const;
+    /** Custom game rule-card vote: one player's vote (Docs/CustomGamePlayground.md 12.2). False when not counted. */
+    bool VotePlaygroundRuleCard(class AMultiplayTestPlayerController* Controller,int32 Serial,int32 Index);
+    /** The card the vote turned on for this match (empty: none or no vote). */
+    const FString& GetPlaygroundVoteCard()const{return PlaygroundVote.Chosen;}
+    static constexpr double FireStartSeconds=120.0;
+    static constexpr double FireSpreadSeconds=30.0;
+    static constexpr double FireDamageSeconds=5.0;
+    static constexpr int32 FireMaxCells=24;
     /** Custom game ghost survivors (Docs/CustomGamePlayground.md 4.3). */
     bool HasPlaygroundGhosts()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bGhosts;}
     /** An eliminated survivor in a ghost match asks to whisper: 5 s to the living, then 15 s before the next. */
@@ -454,9 +474,40 @@ private:
 	/** Ghost survivors: when each whisper window ends, and when the next whisper / ping may start (world seconds). */
 	TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>, double> GhostWhisperUntil, GhostWhisperReadyAt, GhostPingReadyAt;
 	bool IsGhost(const FMultiplayTestServerPlayerRecord& Record) const;
+	/** Custom game spreading fire: the cells of this floor, when the next spread happens, and per-survivor damage pacing. */
+	TArray<TWeakObjectPtr<class AProjectPlaygroundFire>> PlaygroundFires;
+	double PlaygroundNextFireSpread = -1.0;
+	TMap<TWeakObjectPtr<class APlayerCharacter>, double> PlaygroundFireDamageAt;
+	void TickPlaygroundFire();
+	/** Custom game hide-and-seek and waves (Docs/CustomGamePlayground.md 12.2). */
+	bool bPlaygroundHideAnnounced = false, bPlaygroundHuntStarted = false;
+	void TickPlaygroundHideAndSeekAndWaves();
+	class AMannequinAICharacter* SpawnWaveBody();
+	/** Custom game rule-card vote, held at the black loading gate like the item card pick. */
+	struct FPlaygroundVote{bool bOpen=false,bDone=false;int32 Serial=0;double EndsAt=0,NextSendAt=0;TArray<FString> Cards;TMap<FString,int32> Votes;FString Chosen;};
+	FPlaygroundVote PlaygroundVote;
+	/** True while the gate must stay black for the vote. */
+	bool HoldPlaygroundRuleVote(double RealNow);
+	void ClosePlaygroundRuleVote();
+	void SendPlaygroundRuleVote(double RealNow);
+	/** Turns the voted card's rule on for the rest of the match (every floor) and updates the players' screens. */
+	void ApplyPlaygroundVoteCard(const FString& Card);
+	FString PlaygroundVoterKey(const FMultiplayTestServerPlayerRecord& Record) const;
+	float PlaygroundHandicapBodyScale() const;
+	class AProjectPlaygroundFire* SpawnPlaygroundFire(const FVector& At);
+	bool IsInPlaygroundFire(const FVector& At) const;
+	/** Custom game escape modes: the last one alone got out (teammates share the win), and who got out first. */
+	bool bPlaygroundLastSavedAll = false;
+	FString PlaygroundFirstOut;
 	/** Custom game gaze limit: when each body started being watched without a break (world seconds). */
 	TMap<TWeakObjectPtr<class AMannequinAICharacter>, double> PlaygroundGazeSince;
 	bool ApplyPlaygroundGazeLimit(class AMannequinAICharacter* Body, bool bObserved);
+	/** Custom game personal handicap: 1 + this player's percent for one field (1 when none). */
+	float PlaygroundHandicapScale(const class AController* Controller, int32 FProjectPlaygroundHandicap::* Field) const;
+	/** Survivor handicap on a newly registered pawn: speed and stamina each floor, death count on the first floor. */
+	void ApplySurvivorHandicap(class AMultiplayTestPlayerController* Controller, FMultiplayTestServerPlayerRecord& Record);
+	/** The mannequin player's body speed handicap on every mannequin body of this floor. */
+	void ApplyMannequinHandicap();
 	/** Custom game darkness / sound-only: how far a survivor's freezing gaze reaches (cm). 0 = no limit. */
 	float PlaygroundVisionRange() const;
 	/** Infection: the body each infected player (by user id, or display name in ticket-free play) plays this floor. */
@@ -489,6 +540,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
     int32 MannequinSpawnCount = 10;
     FProjectCustomMatchRules CustomMatchRules;
+    FProjectCustomMatchRules CustomRulesTicket; // As the ticket said; CustomMatchRules may also have the voted card on.
     FProjectMatchAffixes MatchAffixes;FString AffixesMatchId;
     FString CustomRulesMatchId;
     int32 StandardMannequinCount=10;

@@ -49,6 +49,11 @@
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01LobbySubsystem.h"
+#include "ProjectProject01VersionContract.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "ProjectProject01Localization.h"
 #include "ProjectProject01SaveSubsystem.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
@@ -3738,6 +3743,7 @@ void UProjectProject01MatchResultWidget::ConfigureSinglePlayerResult(const bool 
 void UProjectProject01MatchResultWidget::NativeConstruct()
 {
 	if (IsValid(TimelineButton)) TimelineButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleTimelineClicked);
+	if (IsValid(RuleCodeButton)) RuleCodeButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01MatchResultWidget::HandleRuleCodeClicked);
 	Super::NativeConstruct();
 	if (IsValid(RegisterButton))
 	{
@@ -3844,6 +3850,7 @@ void UProjectProject01MatchResultWidget::NativeDestruct()
 	{
 		LeaderboardButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleLeaderboardClicked);
 	}
+	if (IsValid(RuleCodeButton)) RuleCodeButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleRuleCodeClicked);
 	if (IsValid(ReturnToTitleButton))
 	{
 		ReturnToTitleButton->OnClicked.RemoveDynamic(this, &UProjectProject01MatchResultWidget::HandleReturnToTitleClicked);
@@ -4211,6 +4218,14 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	{
 		Details = TEXT("생존자의 기권으로 승리했습니다!");
 	}
+	else if (Result.Outcome == TEXT("SurvivedWaves"))
+	{
+		Details = TEXT("12분을 버텨 이겼습니다"); // Custom game waves.
+	}
+	else if (Result.Outcome == TEXT("SavedByLast"))
+	{
+		Details = TEXT("마지막 동료가 탈출해 함께 이겼습니다"); // Custom game "last one saves everyone".
+	}
 	else if (Result.bPlaygroundInfected)
 	{
 		// Custom game infection: out as a survivor, then played on with the mannequin side.
@@ -4245,6 +4260,8 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
             }
         }
         else Details += FString::Printf(TEXT("\n역할: %s\n전체 경기 시간: %.2f초"),*Result.Role, Result.MatchDurationSeconds);
+        if(Result.Role!=TEXT("Observer")&&!Result.PlaygroundHandicap.IsEmpty())Details+=TEXT("\n핸디캡: ")+Result.PlaygroundHandicap; // Public by design.
+        if(const ProjectPlaygroundVote::FCard* Card=ProjectPlaygroundVote::Find(Result.PlaygroundVoteCard))Details+=FString(TEXT("\n투표로 켠 규칙: "))+Card->Name;
 		// Custom game infinite lives: nobody is eliminated, so the catches replace the elimination lines (same line count).
 		if (Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) && Result.bPlaygroundInfiniteLives)
 		{
@@ -4267,7 +4284,17 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
     auto DisplayFont=ResultText->GetFont();DisplayFont.Size=Result.Role==TEXT("Observer")?22:36;ResultText->SetFont(DisplayFont);
     ResultText->SetAutoWrapText(Result.Role==TEXT("Observer"));ResultText->SetWrapTextAt(900);
 	// Item roguelike: this player's own cards under the summary (nothing carries over to the next match).
-	const FString RogueCards = !bSinglePlayer && Result.Role!=TEXT("Observer") && !Result.RoguePicks.IsEmpty() ? ProjectRoguePickSummary(Result.RoguePicks[0], false) : FString();
+	FString RogueCards = !bSinglePlayer && Result.Role!=TEXT("Observer") && !Result.RoguePicks.IsEmpty() ? ProjectRoguePickSummary(Result.RoguePicks[0], false) : FString();
+	// Custom game extras for players, in the same small frame (the big summary keeps one outcome line).
+	if (!bSinglePlayer && Result.Role!=TEXT("Observer"))
+	{
+		TArray<FString> Extras;
+		if (Result.bPlaygroundInfiniteLives)
+			Extras.Add(FString::Printf(TEXT("무한 목숨 · %s %d"), Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) ? TEXT("잡은 횟수") : TEXT("잡힌 횟수"), Result.PlaygroundCatchCount));
+		if (!Result.PlaygroundHandicap.IsEmpty()) Extras.Add(TEXT("핸디캡: ") + Result.PlaygroundHandicap);
+		if (const ProjectPlaygroundVote::FCard* Card = ProjectPlaygroundVote::Find(Result.PlaygroundVoteCard)) Extras.Add(FString(TEXT("투표로 켠 규칙: ")) + Card->Name);
+		if (!Extras.IsEmpty()) RogueCards = RogueCards.IsEmpty() ? FString::Join(Extras, TEXT("\n")) : RogueCards + TEXT("\n") + FString::Join(Extras, TEXT("\n"));
+	}
 	if (IsValid(RogueCardsText) && RogueCardsText->GetText().ToString()!=RogueCards) RogueCardsText->SetText(FText::FromString(RogueCards));
 	if (IsValid(RogueCardsFrame)) RogueCardsFrame->SetVisibility(RogueCards.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	const bool bHasTimeline = !bSinglePlayer && Result.Role==TEXT("Observer") && !Result.Timeline.IsEmpty();
@@ -4314,6 +4341,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 		RegisterButton->SetIsEnabled(bCanRegister && !bBusy);
 	}
 	if (IsValid(LeaderboardButton)) LeaderboardButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (IsValid(RuleCodeButton)) RuleCodeButton->SetVisibility(!bSinglePlayer && Result.bCustomMatch && HasRuleCodeToOffer() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IsValid(ReturnToRoomButton))
 	{
 		ReturnToRoomButton->SetVisibility(bSinglePlayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
@@ -4363,6 +4391,7 @@ void UProjectProject01MatchResultWidget::SetBusy(
 			Result.bSuccess && Result.bLeaderboardVerificationReady);
 	}
 	if (IsValid(LeaderboardButton)) LeaderboardButton->SetIsEnabled(bFadeFinished && !bBusy);
+	if (IsValid(RuleCodeButton)) RuleCodeButton->SetIsEnabled(bFadeFinished && !bBusy && (!bRuleCodeRequested || !RuleCode.IsEmpty()));
 	if (IsValid(ReturnToRoomButton)) ReturnToRoomButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(ReturnToTitleButton)) ReturnToTitleButton->SetIsEnabled(bFadeFinished && !bBusy);
 	if (IsValid(LoadLastCheckpointButton))
@@ -4442,12 +4471,59 @@ void UProjectProject01MatchResultWidget::BuildWidgetTree()
 	TimelineRows = WidgetTree->ConstructWidget<UVerticalBox>(); TimelineScroll->AddChild(TimelineRows);
 	ResultMenu->AddChildToVerticalBox(TimelineFrame);
 
+	RuleCodeButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("규칙 코드 복사"));
+	RuleCodeButton->SetVisibility(ESlateVisibility::Collapsed);
 	LeaderboardButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("리더보드"));
 	ReturnToRoomButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("방으로 돌아가기"));
 	LogoutButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("로그아웃"));
 	LoadLastCheckpointButton = ProjectProject01LoginUI::AddButton(
 		WidgetTree, ResultMenu, TEXT("마지막 체크포인트에서 시작"));
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, ResultMenu, TEXT("타이틀로 돌아가기"));
+}
+
+bool UProjectProject01MatchResultWidget::HasRuleCodeToOffer() const
+{
+	const UGameInstance* Instance = GetGameInstance();
+	const auto* Lobby = Instance ? Instance->GetSubsystem<UProjectProject01LobbySubsystem>() : nullptr;
+	return Lobby && Lobby->HasCurrentRoom() && Lobby->GetCurrentRoom().CustomRules.bEnabled && Lobby->GetCurrentRoom().CustomRules.IsValid();
+}
+
+void UProjectProject01MatchResultWidget::HandleRuleCodeClicked()
+{
+	// The code of the rules this match was played with (the room's rules; personal handicaps are not part of a code).
+	if (!RuleCode.IsEmpty())
+	{
+		FPlatformApplicationMisc::ClipboardCopy(*RuleCode);
+		ProjectProject01LoginUI::SetButtonText(RuleCodeButton, FString::Printf(TEXT("규칙 코드 %s 복사함"), *RuleCode));
+		return;
+	}
+	if (bRuleCodeRequested || !HasRuleCodeToOffer()) return;
+	auto* Auth = GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>();
+	if (!Auth || !Auth->IsSignedIn()) return;
+	FProjectCustomMatchRules Rules = GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>()->GetCurrentRoom().CustomRules;
+	Rules.Handicaps.Reset();
+	auto Body = MakeShared<FJsonObject>(); Body->SetObjectField(TEXT("rules"), Rules.ToJson());
+	FString Text; FJsonSerializer::Serialize(Body, TJsonWriterFactory<>::Create(&Text));
+	const FString Token = Auth->GetAccessTokenForAuthenticatedRequest();
+	auto Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Auth->GetApiBaseUrlForAuthenticatedRequest() + TEXT("/api/rule-codes")); Request->SetVerb(TEXT("POST")); Request->SetTimeout(5);
+	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Token); FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json; charset=utf-8")); Request->SetContentAsString(Text);
+	bRuleCodeRequested = true;
+	ProjectProject01LoginUI::SetButtonText(RuleCodeButton, TEXT("규칙 코드를 받는 중..."));
+	Request->OnProcessRequestComplete().BindWeakLambda(this, [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
+	{
+		TSharedPtr<FJsonObject> Json; FString Code;
+		if (bConnected && Response && EHttpResponseCodes::IsOk(Response->GetResponseCode()) && Response->GetContentLength() <= 64 * 1024 &&
+			FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Json) && Json && Json->TryGetStringField(TEXT("code"), Code) && !Code.IsEmpty())
+		{
+			RuleCode = Code; HandleRuleCodeClicked(); // Copies it right away.
+			return;
+		}
+		bRuleCodeRequested = false; // Lets the player try again.
+		ProjectProject01LoginUI::SetButtonText(RuleCodeButton, TEXT("규칙 코드를 받지 못했습니다 · 다시 시도"));
+	});
+	if (!Request->ProcessRequest()) { bRuleCodeRequested = false; ProjectProject01LoginUI::SetButtonText(RuleCodeButton, TEXT("규칙 코드 복사")); }
 }
 
 void UProjectProject01MatchResultWidget::HandleTimelineClicked()
@@ -6963,11 +7039,23 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
             if(R.GazeLimitSeconds>0)On.Add(FString::Printf(TEXT("바라보기 %d초"),R.GazeLimitSeconds));
             if(R.Darkness>0)On.Add(FString::Printf(TEXT("어둠 %d"),R.Darkness));
             if(R.SoundOnlyMeters>0)On.Add(FString::Printf(TEXT("소리 마네킹 %dm"),R.SoundOnlyMeters));
+            if(R.bSpreadingFire)On.Add(TEXT("번지는 불"));
+            if(R.bHideAndSeek)On.Insert(TEXT("숨바꼭질"),0);if(R.bWaves)On.Insert(TEXT("웨이브 생존"),0);
+            if(R.bRuleVote)On.Insert(TEXT("규칙 카드 투표"),0);if(R.bRoleSwap)On.Insert(TEXT("역할 바꾸기"),0);
+            static const TCHAR* EscapeNames[]={TEXT(""),TEXT("함께 탈출"),TEXT("마지막 한 명이 모두를 구한다"),TEXT("먼저 나간 사람 승리")};
+            if(R.EscapeMode>0&&R.EscapeMode<4)On.Insert(EscapeNames[R.EscapeMode],0); // The escape rule changes how to win: shown first.
             if(!R.AffixIds.IsEmpty())On.Add(FString::Printf(TEXT("어픽스 %d"),R.AffixIds.Num()));if(R.bItemCards)On.Add(TEXT("아이템 카드"));
             const int32 Shown=FMath::Min(On.Num(),3);FString Line=FString::Join(TArrayView<const FString>(On.GetData(),Shown),TEXT(" · "));
             if(On.Num()>Shown)Line+=FString::Printf(TEXT(" 외 %d개"),On.Num()-Shown);
             Summary+=TEXT("\n")+Line;
         }
+        // Personal handicaps are public: one short line per player (the room holds at most three players).
+        if(Room.CustomRules.bEnabled)for(const auto& H:Room.CustomRules.Handicaps)
+        {
+            const auto* M=Room.Members.FindByPredicate([&H](const FProjectProject01RoomMember& X){return X.UserId==H.UserId;});
+            Summary+=FString::Printf(TEXT("\n핸디캡 · %s: %s"),M&&!M->DisplayName.IsEmpty()?*M->DisplayName:*H.UserId,*H.Summary());
+        }
+        if(Room.CustomRules.bEnabled&&!Room.RoleSwapText.IsEmpty())Summary+=TEXT("\n")+Room.RoleSwapText; // Role swap series (no ranking).
         if(Room.MatchMode==EProjectMatchMode::ItemRoguelike)Summary+=TEXT("\n아이템 로그라이크 · 시작과 층마다 카드 선택 · 비공식 경기");
         CurrentRoomText->SetText(FText::FromString(Summary));
 	}

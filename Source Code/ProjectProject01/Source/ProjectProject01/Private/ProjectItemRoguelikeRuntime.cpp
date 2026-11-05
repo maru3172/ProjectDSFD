@@ -21,6 +21,7 @@ bool UProjectItemRoguelikeRuntime::Accept(const FString& Match,EProjectMatchMode
 bool UProjectItemRoguelikeRuntime::InPlay(const FMultiplayTestServerPlayerRecord& R)
 {
     if(R.bForfeited)return false;
+    if(R.bInfected)return true; // Custom game infection: plays one body for the mannequin side (mannequin items only).
     if(ProjectItemRoguelike::IsMannequinRole(R.Role))return true;
     return ProjectItemRoguelike::IsSurvivorRole(R.Role)&&(R.SurvivorState==EMultiplayTestSurvivorState::Active||R.SurvivorState==EMultiplayTestSurvivorState::TransitionWaiting);
 }
@@ -41,7 +42,17 @@ TArray<FString> UProjectItemRoguelikeRuntime::TeammateBuffsOffered(const FProjec
 
 void UProjectItemRoguelikeRuntime::RollFor(FProjectRoguePlayer& P,const TArray<FString>& Avoid)
 {
-    P.Offer=ProjectItemRoguelike::Roll(ProjectItemRoguelike::IsSurvivorRole(P.Role),P.Picks,TeammateBuffsOffered(P),Rng,Avoid);
+    if(P.bInfected)
+    {
+        // Infected survivors (custom game infection) get mannequin items only: the side's buffs stay the mannequin
+        // player's pick (Docs/CustomGamePlayground.md 11).
+        TArray<FString> Left,Fresh;
+        for(const FString& Id:ProjectItemRoguelike::Pool(false,P.Picks,{}))if(ProjectItemRoguelike::IsItemFor(Id,false)){Left.Add(Id);if(!Avoid.Contains(Id))Fresh.Add(Id);}
+        if(Fresh.Num()>=ProjectItemRoguelike::OfferSize)Left=MoveTemp(Fresh);
+        P.Offer.Reset();
+        while(P.Offer.Num()<ProjectItemRoguelike::OfferSize&&!Left.IsEmpty()){const int32 I=Rng.RandRange(0,Left.Num()-1);P.Offer.Add(Left[I]);Left.RemoveAtSwap(I);}
+    }
+    else P.Offer=ProjectItemRoguelike::Roll(ProjectItemRoguelike::IsSurvivorRole(P.Role),P.Picks,TeammateBuffsOffered(P),Rng,Avoid);
     ++P.Serial;
 }
 
@@ -54,7 +65,7 @@ void UProjectItemRoguelikeRuntime::Open(AMultiplayTestGameMode* GM,const TArray<
         const FString Key=R?KeyOf(*R):FString();
         if(!R||!InPlay(*R)||Key.IsEmpty())continue;
         FProjectRoguePlayer& P=Players.FindOrAdd(Key);
-        P.UserId=Key;P.Name=R->DisplayName;P.Role=R->Role;P.bBot=R->bServerBot;
+        P.UserId=Key;P.Name=R->DisplayName;P.Role=R->bInfected?FString(TEXT("Mannequin")):R->Role;P.bBot=R->bServerBot;P.bInfected=R->bInfected;
         if(P.Picks.Num()>=ProjectItemRoguelike::MaxFloors)continue;
         P.bPicked=false;P.bRerollUsed=false;P.Offer.Reset();
     }

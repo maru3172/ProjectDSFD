@@ -80,6 +80,12 @@ public:
 	/** Affixes (ProjectAffixRuntime): one combined speed scale, a coloured glow cue, and A02 heat (0..1). Server sets them. */
 	void SetAffixSpeedScale(float Scale);
 	float GetAffixSpeedScale() const { return AffixSpeedScale; }
+	/** Custom game personal handicap of the mannequin player (server): kept apart from the affix scale. */
+	void SetPlaygroundSpeedScale(float Scale);
+	float GetPlaygroundSpeedScale() const { return PlaygroundSpeedScale; }
+	/** Custom game spreading fire (server): a body in the fire moves at 60 %. */
+	void SetPlaygroundFireSlow(bool bSlow);
+	bool IsPlaygroundFireSlowed() const { return bPlaygroundFireSlow; }
 	float GetBaseWalkSpeed() const { return MannequinWalkSpeed; }
 	void SetAffixCue(const FLinearColor& Color, float Strength);
 	void SetAffixHeat(float Heat) { AffixHeat = FMath::Clamp(Heat, 0.0f, 1.0f); }
@@ -120,6 +126,7 @@ public:
 
 private:
 	friend class AMultiplayTestGameMode;
+	friend class FProjectCustomRulesHideAndSeekWavesTest;
 	friend class FProjectMannequinCameraTest;
 	void SetControlSlotForGameMode(int32 InControlSlot);
 
@@ -150,6 +157,10 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed)
 	float AffixSpeedScale = 1.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed)
+	float PlaygroundSpeedScale = 1.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed)
+	bool bPlaygroundFireSlow = false;
 	UPROPERTY(Replicated)
 	float RogueFootstepScale = 1.0f;
 	// RGB colour, A = strength. Zero alpha: no cue.

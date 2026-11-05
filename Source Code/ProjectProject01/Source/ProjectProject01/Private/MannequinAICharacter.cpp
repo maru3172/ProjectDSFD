@@ -261,7 +261,7 @@ void AMannequinAICharacter::ApplyMannequinWalkSpeed()
 		return;
 	}
 
-	Movement->MaxWalkSpeed = FMath::Max(0.0f, MannequinWalkSpeed * AffixSpeedScale);
+	Movement->MaxWalkSpeed = FMath::Max(0.0f, MannequinWalkSpeed * AffixSpeedScale * PlaygroundSpeedScale * (bPlaygroundFireSlow ? 0.6f : 1.0f));
 }
 
 void AMannequinAICharacter::SetManualControlEnabled(bool bEnabled)
@@ -570,6 +570,8 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, bFrozenBySurvivorVision);
 	DOREPLIFETIME(AMannequinAICharacter, MannequinWalkSpeed);
 	DOREPLIFETIME(AMannequinAICharacter, AffixSpeedScale);
+	DOREPLIFETIME(AMannequinAICharacter, PlaygroundSpeedScale);
+	DOREPLIFETIME(AMannequinAICharacter, bPlaygroundFireSlow);
 	DOREPLIFETIME(AMannequinAICharacter, RogueFootstepScale);
 	DOREPLIFETIME(AMannequinAICharacter, AffixCue);
 	DOREPLIFETIME(AMannequinAICharacter, AffixBeamRadius);
@@ -668,6 +670,22 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 			0.0f,
 			OccludedFootstepAttenuation);
 	}
+}
+
+void AMannequinAICharacter::SetPlaygroundFireSlow(const bool bSlow)
+{
+	if (!HasAuthority() || bPlaygroundFireSlow == bSlow) return;
+	bPlaygroundFireSlow = bSlow;
+	ApplyMannequinWalkSpeed();
+	ForceNetUpdate();
+}
+
+void AMannequinAICharacter::SetPlaygroundSpeedScale(const float Scale)
+{
+	if (!HasAuthority()) return;
+	PlaygroundSpeedScale = FMath::Clamp(Scale, 0.8f, 1.2f);
+	ApplyMannequinWalkSpeed();
+	ForceNetUpdate();
 }
 
 void AMannequinAICharacter::SetAffixSpeedScale(const float Scale)
