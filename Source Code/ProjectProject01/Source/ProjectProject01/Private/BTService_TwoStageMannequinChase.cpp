@@ -75,6 +75,13 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
 
+	// 직접 시야 판정
+	// 1. 직접 시야 판정
+	// 2. 관측 데이터 갱신
+	// 3. 신뢰도 계산
+	// 4. Blackboard 디버그 값 기록
+	// 5. 플레이어가 보고 있다면 이동 정지
+	// 6. 아니면 기존 추적/배회 진행
 	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins);
 	const bool bMannequinCanSeePlayer = CanMannequinSeePlayer(*CurrentMannequin, *Player, AllMannequins);
 	
@@ -93,22 +100,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 
 	Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), bObservedByPlayerOrHelper);
 	Blackboard->SetValueAsBool(TEXT("MannequinCanSeePlayer"), bMannequinCanSeePlayer);
-
-	if (bObservedByPlayerOrHelper)
-	{
-		// 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
-		AIController->StopMovement();
-		// 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
-		CurrentMannequin->SetFrozen(true);
-		return;
-	}
 	
-	// 	직접 시야 판정
-	// 1. 관측 데이터 갱신
-	// 2. 신뢰도 계산
-	// 3. Blackboard 디버그 값 기록
-	// 4. 플레이어가 보고 있다면 정지
-	// 5. 아니면 기존 추적/배회 진행
 	const FMannequinPlayerObservation& Observation = CurrentMannequin->GetPlayerObservation();
 	
 	Blackboard->SetValueAsBool(TEXT("HasPlayerObservation"), Observation.bHasObservation);
@@ -123,6 +115,15 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	{
 		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
 		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
+	}
+	
+	if (bObservedByPlayerOrHelper)
+	{
+		// 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
+		AIController->StopMovement();
+		// 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
+		CurrentMannequin->SetFrozen(true);
+		return;
 	}
 
 	// 플레이어가 마네킹을 보고 있지 않으므로 애니메이션 정지를 해제한다.
@@ -347,19 +348,18 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 	
 	const FVector MannequinForward = CurrentMannequin.GetActorForwardVector().GetSafeNormal2D();
 	const FVector DirectionToPlayer = MannequinToPlayer.GetSafeNormal2D();
-
-	if (DirectionToPlayer.IsNearlyZero())
-	{
-		return true;
-	}
-	
-	const float SightMinimumDot = FMath::Cos(FMath::DegreesToRadians(MannequinSightHalfAngle));
-	const float SightDirectionDot = FVector::DotProduct(MannequinForward, DirectionToPlayer);
 	
 	// 4. 플레이어가 마네킹 정면 시야각 안에 있는가?
-	if (SightDirectionDot < SightMinimumDot)
+	if (!DirectionToPlayer.IsNearlyZero())
 	{
-		return false;
+		const float SightMinimumDot = FMath::Cos(FMath::DegreesToRadians(MannequinSightHalfAngle));
+		const float SightDirectionDot = FVector::DotProduct(MannequinForward, DirectionToPlayer);
+		
+		// 플레이어가 마네킹 정면 시야각 안에 있는지 검사한다.
+		if (SightDirectionDot < SightMinimumDot)
+		{
+			return false;
+		}
 	}
 	
 	FVector TraceStart = MannequinLocation;
