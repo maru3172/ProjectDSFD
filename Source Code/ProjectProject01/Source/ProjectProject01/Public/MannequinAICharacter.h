@@ -7,6 +7,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputActionValue.h"
 #include "MultiplayMannequinTypes.h"
+#include "MannequinTrackingTypes.h"
 #include "MannequinAICharacter.generated.h"
 
 class UInputAction;
@@ -117,7 +118,25 @@ public:
 	// 발소리 함수
 	UFUNCTION(BlueprintCallable, Category = "Audio|Footstep")
 	void PlayFootstep(FName FootBoneName);
-
+	
+	// 현재 마네킹이 보관 중인 플레이어 관측 정보를 반환한다.
+	const FMannequinPlayerObservation& GetPlayerObservation() const
+	{
+		return PlayerObservation;
+	}
+	
+	// 플레이어를 직접 확인한 시점의 정보를 저장한다.
+	void UpdatePlayerObservation(const FVector& PlayerLoctaion, const FVector& PlayerVelocity, double ObservationTime);
+	
+	// 현재 플레이어를 직접 보고 있는지 기록한다.
+	void SetPlayerDirectlyVisible(bool bDirectlyVisible);
+	
+	// 마지막 관측 이후 경과 시간에 따라 신뢰도를 갱신한다.
+	void UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifeTime);
+	
+	// 아직 사용할 수 있는 관측 정보가 있는지 반환한다.
+	bool HasActivePlayerObservation() const;
+	
 private:
 	friend class AMultiplayTestGameMode;
 	friend class FProjectMannequinCameraTest;
@@ -259,4 +278,8 @@ private:
 	
 	// 마지막으로 발소리를 재생한 시간
 	double LastFootstepTimeSeconds = -1.0;
+	
+	// 이 마네킹이 마지막으로 직접 확인한 플레이어 정보
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	FMannequinPlayerObservation PlayerObservation;
 };
