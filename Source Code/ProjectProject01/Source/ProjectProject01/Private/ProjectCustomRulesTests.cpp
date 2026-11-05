@@ -1,6 +1,12 @@
 #if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 #include "ProjectCustomRoomRulesWidget.h"
 #include "ProjectItemRoguelikeRuntime.h"
+#include "ProjectPlaygroundFire.h"
+#include "ProjectRuleVote.h"
+#include "ProjectProject01RoleSpawnPoint.h"
+#include "Engine/SceneCapture2D.h"
+#include "ShaderCompiler.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "AIController.h"
 #include "TimerManager.h"
 #include "MultiplayTestGameMode.h"
@@ -361,6 +367,338 @@ bool FProjectCustomRulesSoundOnlyTest::RunTest(const FString&)
     return true;
 }
 
+// Docs/CustomGamePlayground.md 12.1: personal handicaps are per player, within their ranges, applied by the server to the
+// survivor (speed, stamina, death count once, gaze) or the mannequin player (body speed, attack range), and public text.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesHandicapTest,"ProjectProject01.CustomRules.Handicap",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesHandicapTest::RunTest(const FString&)
+{
+    FProjectCustomMatchRules Base;Base.bEnabled=true;Base.DeathCount=3;Base.MannequinCount=4;
+    FProjectPlaygroundHandicap Runner;Runner.UserId=TEXT("101");Runner.DeathCount=1;Runner.SpeedPct=-10;Runner.StaminaPct=20;Runner.GazePct=10;
+    FProjectPlaygroundHandicap Hunter;Hunter.UserId=TEXT("202");Hunter.BodySpeedPct=-10;Hunter.AttackRangePct=15;
+    auto Rules=Base;Rules.Handicaps={Runner,Hunter};
+    FProjectCustomMatchRules Back;TestTrue(TEXT("Handicaps cross the wire"),Rules.IsValid()&&FProjectCustomMatchRules::Parse(Rules.ToJson(),Back)&&Back==Rules);
+    {auto R=Rules;R.Handicaps[0].DeathCount=3;TestFalse(TEXT("Death count beyond +-2 rejected"),R.IsWellFormed());}
+    {auto R=Rules;R.Handicaps[0].SpeedPct=11;TestFalse(TEXT("Speed beyond +-10% rejected"),R.IsWellFormed());}
+    {auto R=Rules;R.Handicaps[1].AttackRangePct=-16;TestFalse(TEXT("Attack range beyond +-15% rejected"),R.IsWellFormed());}
+    {auto R=Rules;R.Handicaps[1].UserId=TEXT("101");TestFalse(TEXT("One entry per player"),R.IsWellFormed());}
+    {auto R=Rules;R.Handicaps[1].UserId=TEXT("a b");TestFalse(TEXT("Odd user ids rejected"),R.IsWellFormed());}
+    {auto R=Rules;R.Handicaps.SetNum(5);for(int32 I=2;I<5;++I)R.Handicaps[I].UserId=FString::Printf(TEXT("x%d"),I);TestFalse(TEXT("At most four entries"),R.IsWellFormed());}
+    {auto R=Base;R.bEnabled=false;R.Handicaps={Runner};TestFalse(TEXT("No handicaps with the custom rules off"),R.IsWellFormed());}
+    TestEqual(TEXT("Public text"),Runner.Summary(),FString(TEXT("데스 +1 · 속도 -10% · 스태미나 +20% · 시선 +10%")));
+
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+    if(!TestTrue(TEXT("Handicap rules accepted"),Mode->AcceptCustomRules(FGuid::NewGuid().ToString(),Rules,Error)))return false;
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* RunnerPC=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    auto* HunterPC=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    auto* Survivor=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(0,0,500)),Spawn);Survivor->DispatchBeginPlay();
+    auto* Body=World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(900,0,500)),Spawn);
+    FMultiplayTestServerPlayerRecord S;S.UserId=TEXT("101");S.Role=TEXT("Survivor");S.SurvivorState=EMultiplayTestSurvivorState::Active;S.SurvivorPawn=Survivor;
+    FMultiplayTestServerPlayerRecord M;M.UserId=TEXT("202");M.Role=TEXT("Mannequin");
+    Mode->MatchPlayerRecords.Add(RunnerPC,S);Mode->MatchPlayerRecords.Add(HunterPC,M);ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    const int32 Lives=Survivor->GetRemainingDeathCount();
+    Mode->ApplySurvivorHandicap(RunnerPC,Mode->MatchPlayerRecords.FindChecked(RunnerPC));
+    TestEqual(TEXT("Survivor speed -10%"),Survivor->GetPlaygroundSpeedScale(),.9f);
+    TestEqual(TEXT("Survivor stamina +20%"),Survivor->GetPlaygroundStaminaScale(),1.2f);
+    TestEqual(TEXT("Death count +1 on the first floor"),Survivor->GetRemainingDeathCount(),Lives+1);
+    TestTrue(TEXT("Gaze angle +10% for this survivor only"),FMath::IsNearlyEqual(Mode->PlaygroundHandicapScale(RunnerPC,&FProjectPlaygroundHandicap::GazePct),1.1f)
+        &&FMath::IsNearlyEqual(Mode->PlaygroundHandicapScale(HunterPC,&FProjectPlaygroundHandicap::GazePct),1.f));
+    TestTrue(TEXT("Attack range +15% for the mannequin player"),FMath::IsNearlyEqual(Mode->PlaygroundHandicapScale(HunterPC,&FProjectPlaygroundHandicap::AttackRangePct),1.15f));
+    Mode->ApplyMannequinHandicap();
+    TestEqual(TEXT("Mannequin bodies -10%"),Body->GetPlaygroundSpeedScale(),.9f);
+    TestEqual(TEXT("The result shows the handicap"),Mode->BuildFinalResult(RunnerPC,Mode->MatchPlayerRecords.FindChecked(RunnerPC)).PlaygroundHandicap,Runner.Summary());
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 12.1: escape modes. "Last one saves everyone" turns a caught teammate's result into a win;
+// "first out wins" ends the match with the first escape.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesEscapeModesTest,"ProjectProject01.CustomRules.EscapeModes",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesEscapeModesTest::RunTest(const FString&)
+{
+    for(int32 Mode=0;Mode<=3;++Mode){FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=4;R.EscapeMode=Mode;TestTrue(FString::Printf(TEXT("Escape mode %d runs"),Mode),R.IsValid());}
+    auto Run=[this](int32 Mode,TFunction<void(AMultiplayTestGameMode*,APlayerCharacter*,APlayerCharacter*,AMultiplayTestPlayerController*,AMultiplayTestPlayerController*)> Body)
+    {
+        const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+        auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+        GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+        ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+        FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!World->SetGameMode(URL))return;
+        auto* Mode2=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+        FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=4;R.EscapeMode=Mode;Mode2->AcceptCustomRules(FGuid::NewGuid().ToString(),R,Error);
+        FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        auto* PA=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+        auto* PB=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+        auto* A=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(0,0,500)),Spawn);A->DispatchBeginPlay();
+        auto* B=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(900,0,500)),Spawn);B->DispatchBeginPlay();
+        FMultiplayTestServerPlayerRecord RA;RA.UserId=TEXT("a");RA.DisplayName=TEXT("A");RA.Role=TEXT("Survivor");RA.SurvivorState=EMultiplayTestSurvivorState::Active;RA.SurvivorPawn=A;
+        FMultiplayTestServerPlayerRecord RB=RA;RB.UserId=TEXT("b");RB.DisplayName=TEXT("B");RB.SurvivorPawn=B;
+        Mode2->MatchPlayerRecords.Add(PA,RA);Mode2->MatchPlayerRecords.Add(PB,RB);
+        Mode2->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+        Body(Mode2,A,B,PA,PB);
+        Mode2->MatchPlayerRecords.Reset();
+    };
+    Run(int32(ProjectPlaygroundRules::EEscapeMode::LastSavesAll),[this](AMultiplayTestGameMode* M,APlayerCharacter* A,APlayerCharacter* B,AMultiplayTestPlayerController* PA,AMultiplayTestPlayerController* PB)
+    {
+        M->MatchPlayerRecords.FindChecked(PA).SurvivorState=EMultiplayTestSurvivorState::Eliminated;
+        TestTrue(TEXT("The one left alone escapes"),M->MarkSurvivorEscaped(B));
+        TestTrue(TEXT("...and saves everyone"),M->bPlaygroundLastSavedAll);
+        const auto Caught=M->BuildFinalResult(PA,M->MatchPlayerRecords.FindChecked(PA));
+        TestTrue(TEXT("The caught teammate shares the win"),Caught.bSuccess&&Caught.Outcome==TEXT("SavedByLast"));
+    });
+    Run(int32(ProjectPlaygroundRules::EEscapeMode::LastSavesAll),[this](AMultiplayTestGameMode* M,APlayerCharacter* A,APlayerCharacter* B,AMultiplayTestPlayerController* PA,AMultiplayTestPlayerController* PB)
+    {
+        TestTrue(TEXT("Escaping while a teammate still plays"),M->MarkSurvivorEscaped(B));
+        TestFalse(TEXT("...is not a last-one save"),M->bPlaygroundLastSavedAll);
+    });
+    Run(int32(ProjectPlaygroundRules::EEscapeMode::FirstOutWins),[this](AMultiplayTestGameMode* M,APlayerCharacter* A,APlayerCharacter* B,AMultiplayTestPlayerController* PA,AMultiplayTestPlayerController* PB)
+    {
+        TestTrue(TEXT("First escape"),M->MarkSurvivorEscaped(A));
+        TestEqual(TEXT("The first one out is recorded"),M->PlaygroundFirstOut,FString(TEXT("a")));
+        TestTrue(TEXT("The match ends at once"),M->AuthoritativeMatchPhase!=EMultiplayTestMatchPhase::InProgress);
+        TestFalse(TEXT("The other survivor did not win"),M->BuildFinalResult(PB,M->MatchPlayerRecords.FindChecked(PB)).bSuccess);
+    });
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 12.1: spreading fire. A cell grows in smoothly, standing in it burns stamina, empty in the
+// fire costs a death count (paced), and bodies in fire are slowed.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesFireTest,"ProjectProject01.CustomRules.Fire",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesFireTest::RunTest(const FString&)
+{
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+    FProjectCustomMatchRules Rules;Rules.bEnabled=true;Rules.DeathCount=3;Rules.MannequinCount=4;Rules.bSpreadingFire=true;
+    if(!TestTrue(TEXT("Fire rules accepted"),Rules.IsValid()&&Mode->AcceptCustomRules(FGuid::NewGuid().ToString(),Rules,Error)))return false;
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* PC=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    auto* Survivor=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(0,0,90)),Spawn);Survivor->DispatchBeginPlay();
+    auto* Body=World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(100,0,90)),Spawn);
+    auto* FarBody=World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(5000,0,90)),Spawn);
+    FMultiplayTestServerPlayerRecord R;R.UserId=TEXT("s");R.Role=TEXT("Survivor");R.SurvivorState=EMultiplayTestSurvivorState::Active;R.SurvivorPawn=Survivor;
+    Mode->MatchPlayerRecords.Add(PC,R);ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+
+    AProjectPlaygroundFire* Fire=Mode->SpawnPlaygroundFire(FVector::ZeroVector);
+    if(!TestNotNull(TEXT("A fire cell spawns"),Fire))return false;
+    TestTrue(TEXT("Inside the cell"),Fire->Contains(FVector(200,0,90)));
+    TestFalse(TEXT("Outside the cell"),Fire->Contains(FVector(400,0,90)));
+    TestFalse(TEXT("Another floor is not in the fire"),Fire->Contains(FVector(0,0,600)));
+    TestTrue(TEXT("A new cell starts small (grows in, no pop)"),Fire->GetGrowth()<0.5f);
+    Mode->PlaygroundNextFireSpread=1e9; // No spreading during this test.
+
+    const int32 Lives=Survivor->GetRemainingDeathCount();
+    Mode->TickPlaygroundFire();
+    TestTrue(TEXT("The survivor is in the fire"),Survivor->IsInPlaygroundFire());
+    TestTrue(TEXT("A body in the fire is slowed"),Body->IsPlaygroundFireSlowed());
+    TestFalse(TEXT("A body away from it is not"),FarBody->IsPlaygroundFireSlowed());
+    TestTrue(TEXT("With stamina left, nothing is lost yet"),Survivor->GetCurrentStamina()<=0.f||Survivor->GetRemainingDeathCount()==Lives);
+    TestTrue(TEXT("Out of stamina in the fire costs a death count"),Survivor->HandlePlaygroundFireDamage()&&Survivor->GetRemainingDeathCount()==Lives-1);
+    Survivor->SetActorLocation(FVector(3000,0,90),false,nullptr,ETeleportType::TeleportPhysics);
+    Mode->TickPlaygroundFire();
+    TestFalse(TEXT("Leaving the fire clears the state"),Survivor->IsInPlaygroundFire());
+    for(int32 I=0;I<40;++I)Mode->SpawnPlaygroundFire(FVector(I*1000.f,9000,0));
+    TestEqual(TEXT("At most 24 cells"),Mode->PlaygroundFires.Num(),AMultiplayTestGameMode::FireMaxCells);
+    return true;
+}
+
+// What the fire cell looks like: a scene capture of one grown cell in an empty world, saved for review, with a check that
+// it shows warm, bright flame colours.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesFireRenderTest,"ProjectProject01.CustomRules.FireRender",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
+bool FProjectCustomRulesFireRenderTest::RunTest(const FString&)
+{
+    // Same world and capture setup as the title-scene render test, which renders 3D reliably in this project.
+    const auto V=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&V);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};
+    auto* Fire=World->SpawnActor<AProjectPlaygroundFire>();
+    if(!TestNotNull(TEXT("Fire cell"),Fire))return false;
+    Fire->DispatchBeginPlay();Fire->ApplyLook(3.f);
+    TestTrue(TEXT("Grown in after two seconds"),Fire->GetGrowth()>.99f);
+    auto* Capture=World->SpawnActor<ASceneCapture2D>();
+    if(!TestNotNull(TEXT("Capture"),Capture))return false;
+    Capture->SetActorTransform(FTransform((FVector(0,0,120)-FVector(-650,0,260)).Rotation(),FVector(-650,0,260)));
+    USceneCaptureComponent2D* Comp=Capture->GetCaptureComponent2D();
+    Comp->bCaptureEveryFrame=false;Comp->bCaptureOnMovement=false;Comp->CaptureSource=SCS_FinalColorLDR;Comp->bAlwaysPersistRenderingState=true;Comp->FOVAngle=70.f;
+    Comp->ShowFlags.SetMotionBlur(false);Comp->ShowFlags.SetTemporalAA(true);Comp->ShowFlags.SetEyeAdaptation(true);
+    Comp->PostProcessSettings.bOverride_AutoExposureMethod=true;Comp->PostProcessSettings.AutoExposureMethod=EAutoExposureMethod::AEM_Manual;
+    Comp->PostProcessSettings.bOverride_AutoExposureApplyPhysicalCameraExposure=true;Comp->PostProcessSettings.AutoExposureApplyPhysicalCameraExposure=false;
+    Comp->PostProcessSettings.bOverride_AutoExposureBias=true;Comp->PostProcessSettings.AutoExposureBias=0.f;Comp->PostProcessBlendWeight=1;
+    auto* Target=NewObject<UTextureRenderTarget2D>();Target->ClearColor=FLinearColor::Black;Target->InitCustomFormat(640,360,PF_B8G8R8A8,false);Target->UpdateResourceImmediate(true);Comp->TextureTarget=Target;
+    if(GShaderCompilingManager)GShaderCompilingManager->FinishAllCompilation(); // Otherwise the placeholder material is drawn.
+    // A new material only starts compiling on its first draw: draw, wait for the compiler, draw again.
+    for(int32 I=0;I<8;++I){Comp->CaptureScene();FlushRenderingCommands();if(GShaderCompilingManager)GShaderCompilingManager->FinishAllCompilation();}
+    TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(false);
+    if(!TestTrue(TEXT("Read the capture"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)))return false;
+    const FString Directory=FPaths::ProjectSavedDir()/TEXT("CustomRulesUIQA");IFileManager::Get().MakeDirectory(*Directory,true);
+    for(FColor& P:Pixels)P.A=255;
+    TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(640,360,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/TEXT("Fire_640x360.png")));
+    int32 Warm=0,MaxR=0,MaxG=0,MaxB=0;for(const FColor& P:Pixels){Warm+=P.R>120&&P.R>P.B+40?1:0;MaxR=FMath::Max<int32>(MaxR,P.R);MaxG=FMath::Max<int32>(MaxG,P.G);MaxB=FMath::Max<int32>(MaxB,P.B);}
+    AddInfo(FString::Printf(TEXT("warm pixels %d, max %d/%d/%d, mesh %s, material %s, flames %d, visible %d"),Warm,MaxR,MaxG,MaxB,
+        Fire->Flames.Num()&&Fire->Flames[0]->GetStaticMesh()?*Fire->Flames[0]->GetStaticMesh()->GetName():TEXT("none"),
+        Fire->Flames.Num()&&Fire->Flames[0]->GetMaterial(0)?*Fire->Flames[0]->GetMaterial(0)->GetName():TEXT("none"),Fire->Flames.Num(),
+        Fire->Flames.Num()&&Fire->Flames[0]->IsVisible()&&Fire->Flames[0]->IsRegistered()?1:0));
+    TestTrue(TEXT("The fire shows warm flame colours"),Warm>500);
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 12.2: hide-and-seek blinds and freezes the mannequin side for the first minute; waves start
+// with three bodies, add bodies in free slots, and fix the time limit at twelve minutes.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesHideAndSeekWavesTest,"ProjectProject01.CustomRules.HideAndSeekWaves",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesHideAndSeekWavesTest::RunTest(const FString&)
+{
+    {FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=4;R.bWaves=true;R.TimeLimitSeconds=600;TestFalse(TEXT("Waves need exactly 12 minutes"),R.IsWellFormed());R.TimeLimitSeconds=720;TestTrue(TEXT("Waves run with 12 minutes"),R.IsValid());}
+    {FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=4;R.bHideAndSeek=true;TestTrue(TEXT("Hide-and-seek runs"),R.IsValid());}
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+    FProjectCustomMatchRules Rules;Rules.bEnabled=true;Rules.MannequinCount=6;Rules.bHideAndSeek=true;Rules.bWaves=true;Rules.TimeLimitSeconds=720;
+    if(!TestTrue(TEXT("Rules accepted"),Mode->AcceptCustomRules(FGuid::NewGuid().ToString(),Rules,Error)))return false;
+    TestEqual(TEXT("Waves start with three bodies"),Mode->MannequinSpawnCount,ProjectPlaygroundRules::WaveStartBodies);
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* Hunter=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    FMultiplayTestServerPlayerRecord M;M.UserId=TEXT("m");M.Role=TEXT("Mannequin");Mode->MatchPlayerRecords.Add(Hunter,M);ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+    TestTrue(TEXT("The first minute is the hiding time"),Mode->IsPlaygroundHidePhase());
+    Mode->TickPlaygroundHideAndSeekAndWaves();
+    TestTrue(TEXT("The mannequin player cannot see while survivors hide"),Hunter->IsPlaygroundBlind());
+
+    auto* Point=World->SpawnActor<AProjectProject01RoleSpawnPoint>(AProjectProject01RoleSpawnPoint::StaticClass(),FTransform(FVector(2000,0,90)),Spawn);
+    if(FProperty* Role=FindFProperty<FProperty>(AProjectProject01RoleSpawnPoint::StaticClass(),TEXT("SpawnRole")))*Role->ContainerPtrToValuePtr<uint8>(Point)=uint8(EProjectProject01SpawnRole::Mannequin);
+    auto* Existing=World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(0,0,90)),Spawn);Existing->SetControlSlotForGameMode(0);
+    AMannequinAICharacter* Added=Mode->SpawnWaveBody();
+    if(TestNotNull(TEXT("A wave body joins"),Added))
+    {
+        TestEqual(TEXT("It takes the next free number-key slot"),Added->GetControlSlot(),1);
+        TestTrue(TEXT("It starts at the mannequin spawn point"),FVector::Dist2D(Added->GetActorLocation(),Point->GetActorLocation())<200.f);
+    }
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 12.2: rule-card vote. Three cards that are not on yet, one vote per player (changeable),
+// the gate opens once everyone voted; the ticket's rules stay as admitted and the card is added on top.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesRuleVoteTest,"ProjectProject01.CustomRules.RuleVote",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesRuleVoteTest::RunTest(const FString&)
+{
+    {
+        FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=6;R.TimeLimitSeconds=900;R.bRuleVote=true;
+        TestEqual(TEXT("Every card can come up when nothing else is on"),ProjectPlaygroundVote::Candidates(R).Num(),ProjectPlaygroundVote::Cards().Num());
+        R.bGhosts=true;R.EscapeMode=int32(ProjectPlaygroundRules::EEscapeMode::Together);
+        const TArray<FString> Left=ProjectPlaygroundVote::Candidates(R);
+        TestFalse(TEXT("A rule already on is not a card"),Left.Contains(TEXT("ghosts")));
+        TestFalse(TEXT("Cards that cannot go with the rules are left out"),Left.Contains(TEXT("infection"))||Left.Contains(TEXT("infiniteLives")));
+        TestFalse(TEXT("One escape mode at a time"),Left.Contains(TEXT("escapeFirstOut")));
+        FProjectCustomMatchRules Short=R;Short.bGhosts=false;Short.TimeLimitSeconds=240;
+        TestFalse(TEXT("Infinite lives needs five minutes"),ProjectPlaygroundVote::Candidates(Short).Contains(TEXT("infiniteLives")));
+        for(const FString& Id:Left){FProjectCustomMatchRules Copy=R;TestTrue(TEXT("Each offered card turns its rule on: ")+Id,ProjectPlaygroundVote::Apply(Copy,Id)&&Copy.IsValid()&&!(Copy==R));}
+    }
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;const FString Match=FGuid::NewGuid().ToString();
+    FProjectCustomMatchRules Rules;Rules.bEnabled=true;Rules.MannequinCount=6;Rules.TimeLimitSeconds=900;Rules.bRuleVote=true;
+    if(!TestTrue(TEXT("Rules accepted"),Mode->AcceptCustomRules(Match,Rules,Error)))return false;
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* A=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    auto* B=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    FMultiplayTestServerPlayerRecord RA;RA.UserId=TEXT("s1");RA.Role=TEXT("Survivor");FMultiplayTestServerPlayerRecord RB;RB.UserId=TEXT("m");RB.Role=TEXT("Mannequin");
+    Mode->MatchPlayerRecords.Add(A,RA);Mode->MatchPlayerRecords.Add(B,RB);ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    TestTrue(TEXT("The vote holds the black gate"),Mode->HoldPlaygroundRuleVote(100.0));
+    TestEqual(TEXT("Three cards are shown"),Mode->PlaygroundVote.Cards.Num(),ProjectPlaygroundRules::VoteCards);
+    TestNotNull(TEXT("Each player has the vote panel component"),A->FindComponentByClass<UProjectRuleVoteComponent>());
+    const int32 Serial=Mode->PlaygroundVote.Serial;
+    TestTrue(TEXT("A survivor votes"),Mode->VotePlaygroundRuleCard(A,Serial,0));
+    TestTrue(TEXT("A vote can be changed while the vote is open"),Mode->VotePlaygroundRuleCard(A,Serial,2));
+    TestFalse(TEXT("An old vote round is refused"),Mode->VotePlaygroundRuleCard(B,Serial+1,2));
+    TestTrue(TEXT("Still open until everyone voted"),Mode->PlaygroundVote.bOpen);
+    const FString Expected=Mode->PlaygroundVote.Cards[2];
+    TestTrue(TEXT("The mannequin player votes too"),Mode->VotePlaygroundRuleCard(B,Serial,2));
+    TestFalse(TEXT("Everyone voted: the gate opens"),Mode->PlaygroundVote.bOpen||Mode->HoldPlaygroundRuleVote(101.0));
+    TestEqual(TEXT("The card with most votes wins"),Mode->GetPlaygroundVoteCard(),Expected);
+    TestFalse(TEXT("The card's rule is on for the match"),Mode->CustomMatchRules==Rules);
+    TestTrue(TEXT("The ticket's rules are still the admitted ones (reconnects pass)"),Mode->AcceptCustomRules(Match,Rules,Error));
+    Mode->ApplyPlaygroundVoteCard(TEXT("darkness"));
+    TestEqual(TEXT("A screen rule reaches players already in"),A->GetPlaygroundDarkness(),2);
+    // Nobody votes: the time runs out and one of the three is picked at random.
+    Mode->PlaygroundVote=AMultiplayTestGameMode::FPlaygroundVote();Mode->CustomMatchRules=Rules;
+    TestTrue(TEXT("A new vote opens"),Mode->HoldPlaygroundRuleVote(200.0));
+    const TArray<FString> Shown=Mode->PlaygroundVote.Cards;
+    TestFalse(TEXT("After 15 seconds the vote closes"),Mode->HoldPlaygroundRuleVote(200.0+ProjectPlaygroundRules::VoteSeconds));
+    TestTrue(TEXT("With no votes one of the shown cards is chosen"),Shown.Contains(Mode->GetPlaygroundVoteCard()));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesRuleVoteRenderTest,"ProjectProject01.CustomRules.RuleVoteRender",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
+bool FProjectCustomRulesRuleVoteRenderTest::RunTest(const FString&)
+{
+    FProjectRuleVoteView View;View.Serial=1;View.Cards={TEXT("escapeLastSavesAll"),TEXT("soundOnly"),TEXT("spreadingFire")};View.Counts={1,0,1};View.MyVote=0;View.Voted=2;View.Voters=3;View.SecondsLeft=9;
+    auto Slate=UProjectRuleVoteComponent::MakePanelForTest(View);
+    const FString Directory=FPaths::ProjectSavedDir()/TEXT("CustomRulesUIQA");IFileManager::Get().MakeDirectory(*Directory,true);FWidgetRenderer Renderer(false);
+    for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
+    {
+        const FString Label=FString::Printf(TEXT("[%dx%d] "),Size.X,Size.Y);
+        auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+        for(int I=0;I<6;++I){Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),.016f);FlushRenderingCommands();}
+        TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
+        if(TestTrue(Label+TEXT("Vote panel renders"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)))
+        {TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("RuleVote_%dx%d.png"),Size.X,Size.Y)));}
+        TArray<FSlateRect> Buttons;bool TextFits=true;
+        TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> Node)
+        {
+            const auto G=Node->GetCachedGeometry();const FVector2D P=G.GetAbsolutePosition(),S=G.GetAbsoluteSize();
+            if(Node->GetType()==FName(TEXT("SButton"))&&S.X>1&&S.Y>1)Buttons.Add(FSlateRect(P,P+S));
+            if(Node->GetType()==FName(TEXT("STextBlock"))&&!StaticCastSharedRef<STextBlock>(Node)->GetText().IsEmpty())
+                TextFits&=P.X>=0&&P.Y>=0&&P.X+S.X<=Size.X+1&&P.Y+S.Y<=Size.Y+1;
+            if(auto* C=Node->GetChildren())for(int I=0;I<C->Num();++I)Inspect(C->GetChildAt(I));
+        };Inspect(Slate);
+        TestEqual(Label+TEXT("Three cards"),Buttons.Num(),3);
+        bool Overlap=false;for(int32 X=0;X<Buttons.Num();++X)for(int32 Y=X+1;Y<Buttons.Num();++Y){const FSlateRect I=Buttons[X].IntersectionWith(Buttons[Y]);Overlap|=I.GetSize().X>1&&I.GetSize().Y>1;}
+        TestFalse(Label+TEXT("Cards do not overlap"),Overlap);
+        TestTrue(Label+TEXT("All text stays on screen"),TextFits);
+        Target->ReleaseResource();
+    }
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 11: with item cards and infection, an infected survivor picks mannequin items (no buffs).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesInfectedItemCardsTest,"ProjectProject01.CustomRules.InfectedItemCards",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesInfectedItemCardsTest::RunTest(const FString&)
+{
+    auto* Rogue=NewObject<UProjectItemRoguelikeRuntime>();FString Error;
+    TestTrue(TEXT("Item mode accepted"),Rogue->Accept(FGuid::NewGuid().ToString(),EProjectMatchMode::ItemRoguelike,Error));
+    FMultiplayTestServerPlayerRecord Infected;Infected.UserId=TEXT("i");Infected.DisplayName=TEXT("i");Infected.Role=TEXT("Survivor");
+    Infected.SurvivorState=EMultiplayTestSurvivorState::Eliminated;Infected.bInfected=true;
+    FMultiplayTestServerPlayerRecord Out=Infected;Out.UserId=Out.DisplayName=TEXT("o");Out.bInfected=false;
+    for(int32 Seed=0;Seed<8;++Seed)
+    {
+        Rogue->SeedForTest(Seed);Rogue->OpenForTest({Infected,Out},10.0+Seed);
+        const FProjectRoguePlayer* P=Rogue->FindPlayer(TEXT("i"));
+        if(!TestNotNull(TEXT("An infected player gets cards"),P))return false;
+        TestEqual(TEXT("Three cards"),P->Offer.Num(),ProjectItemRoguelike::OfferSize);
+        for(const FString& Id:P->Offer)TestTrue(TEXT("Only mannequin items: ")+Id,ProjectItemRoguelike::IsItemFor(Id,false));
+        TestFalse(TEXT("A player out of play (not infected) gets none"),Rogue->FindPlayer(TEXT("o"))&&!Rogue->FindPlayer(TEXT("o"))->bPicked);
+        TestTrue(TEXT("The pick is accepted"),Rogue->PickForTest(TEXT("i"),P->Serial,0));
+        Rogue->TickForTest(100.0+Seed);
+        if(Rogue->FindPlayer(TEXT("i"))->Picks.Num()>=ProjectItemRoguelike::MaxFloors)break;
+    }
+    TestTrue(TEXT("Its items count for the mannequin side"),Rogue->HasItem(TEXT("i"),*Rogue->FindPlayer(TEXT("i"))->Picks[0]));
+    return true;
+}
+
 // Docs/CustomGamePlayground.md 5: every recommended preset is well formed, and only presets the server runs are offered.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesPresetsTest,"ProjectProject01.CustomRules.Presets",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectCustomRulesPresetsTest::RunTest(const FString&)
@@ -419,10 +757,14 @@ bool FProjectCustomRulesRenderTest::RunTest(const FString&)
     ON_SCOPE_EXIT{W->ReleaseSlateResources(true);GI->Shutdown();World->SetGameInstance(nullptr);World->DestroyWorld(false);};
     L->CurrentRoom.RoomId=TEXT("offline-render");L->CurrentRoom.bIsHost=true;W->RoomId=L->CurrentRoom.RoomId;W->bEditable=true;W->Draft.bEnabled=true;W->Draft.DeathCount=6;W->Draft.MannequinCount=4;
     W->Draft.AffixIds={TEXT("B09"),TEXT("C05")};W->Draft.bItemCards=true;W->Draft.bInfiniteLives=true;W->Draft.HideRevealSeconds=40;W->Draft.GazeLimitSeconds=8;W->HoveredAffix=TEXT("B09");W->CodeLine=TEXT("ZB7K-2QXM · 지금까지 37판 · 생존자 승 12 · 마네킹 승 25\n내 결과: 3판 중 1승");
+    // Shared preset board: four posts so every fixed row is drawn (no network in the test).
+    for(int32 I=0;I<4;++I){UProjectCustomRoomRulesWidget::FBoardItem B;B.Id=I+1;B.Code=TEXT("ZB7K-2QXM");B.Name=FString::Printf(TEXT("좀비 순찰 %d단계 아주 긴 이름까지 들어가는지"),I+1);B.Author=TEXT("방장");
+        B.Summary=TEXT("어둠과 감염을 함께 켠 규칙입니다. 한 줄 설명이 길어도 칸을 넘지 않아야 합니다.");B.Stats=UProjectCustomRoomRulesWidget::MakeBoardStats(37,82,12,25);B.Likes=I*3;B.Dislikes=I;B.MyVote=I==1?1:I==2?-1:0;B.bReported=I==3;B.bHidden=I==0;B.bMine=I==0;B.bCleared=I!=0;B.ShareCode=TEXT("AB3CD-EF7GH");B.bPublished=I!=0;B.Rules=W->Draft;W->Board.Add(B);}
+    W->bBoardLoaded=true;W->bBoardMore=true;
     static_cast<UUserWidget*>(W)->Initialize();auto Slate=W->TakeWidget();
     const FString Directory=FPaths::ProjectSavedDir()/TEXT("CustomRulesUIQA");IFileManager::Get().MakeDirectory(*Directory,true);FWidgetRenderer Renderer(false);
-    FVector2D PanelSize[5];
-    for(int32 Tab:{0,1,2,3,4})for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
+    FVector2D PanelSize[7];
+    for(int32 Tab:{0,1,2,3,4,5,6})for(FIntPoint Size:{FIntPoint(1280,720),FIntPoint(800,600)})
     {
         W->Tab=Tab;const FString Label=FString::Printf(TEXT("[tab %d, %dx%d] "),Tab,Size.X,Size.Y);
         auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
@@ -430,7 +772,7 @@ bool FProjectCustomRulesRenderTest::RunTest(const FString&)
         for(int I=0;I<6;++I){Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),.016f);FlushRenderingCommands();}
         TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
         if(TestTrue(Label+TEXT("Custom editor renders"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)))
-        {TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("%s_%dx%d.png"),Tab==0?TEXT("Rules"):Tab==1?TEXT("RulesMix"):Tab==2?TEXT("RulesFree"):Tab==3?TEXT("RulesVision"):TEXT("RulesCodes"),Size.X,Size.Y)));}
+        {TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/FString::Printf(TEXT("%s_%dx%d.png"),Tab==0?TEXT("Rules"):Tab==1?TEXT("RulesMix"):Tab==2?TEXT("RulesFree"):Tab==3?TEXT("RulesVision"):Tab==4?TEXT("RulesModes"):Tab==5?TEXT("RulesCodes"):TEXT("RulesBoard"),Size.X,Size.Y)));}
         int Numbers=0,Badges=0;bool Back=false,Apply=false,Scroll=false,Fits=true;TArray<FSlateRect> Buttons;FVector2D Panel=FVector2D::ZeroVector;
         TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> Node)
         {
@@ -468,12 +810,44 @@ bool FProjectCustomRulesRenderTest::RunTest(const FString&)
         bool Overlap=false;for(int32 A=0;A<Buttons.Num();++A)for(int32 B=A+1;B<Buttons.Num();++B)
         {const FSlateRect I=Buttons[A].IntersectionWith(Buttons[B]);Overlap|=I.GetSize().X>1&&I.GetSize().Y>1;}
         TestFalse(Label+TEXT("No two buttons overlap"),Overlap);
-        if(Tab==0)TestEqual(Label+TEXT("Basic tab keeps the three numbers"),Numbers,3);
+        if(Tab==0)TestEqual(Label+TEXT("Basic tab: three numbers and the six handicap numbers"),Numbers,9);
         else if(Tab==1)TestEqual(Label+TEXT("Mix tab shows every playable affix"),Badges,ProjectAffixes::All().Num());
         if(Size.X==1280)PanelSize[Tab]=Panel;
         Target->ReleaseResource();
     }
-    TestTrue(TEXT("Switching tabs keeps the tab area size (no jump)"),PanelSize[0].Equals(PanelSize[1],.5f)&&PanelSize[0].Equals(PanelSize[2],.5f)&&PanelSize[0].Equals(PanelSize[3],.5f)&&PanelSize[0].Equals(PanelSize[4],.5f)&&PanelSize[0].Y>0);
+    // Preview of a received share code: covers the panel, every line on screen, its three buttons side by side.
+    {
+        FProjectCustomMatchRules Got=W->Draft;Got.bInfection=true;Got.Darkness=2;Got.bWaves=false;Got.bRuleVote=true;
+        W->OpenPreview(TEXT("좀비 순찰 3단계"),TEXT("보낸 사람 방장 · 공유 코드 AB3CD-EF7GH · 11월 13일 09:00까지\n기록용 규칙 코드 ZB7K-2QXM"),TEXT("좀비 순찰 3단계"),Got);
+        const FString Text=UProjectCustomRoomRulesWidget::DescribeRules(Got);
+        TestTrue(TEXT("The preview lists the rules by group"),Text.Contains(TEXT("데스카운트 6"))&&Text.Contains(TEXT("감염"))&&Text.Contains(TEXT("어둠 2"))&&Text.Contains(TEXT("규칙 카드 투표"))&&Text.Contains(TEXT("아이템 카드")));
+        const FIntPoint Size(800,600);auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+        for(int I=0;I<6;++I){Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),.016f);FlushRenderingCommands();}
+        TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
+        if(Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)){TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/TEXT("RulesPreview_800x600.png")));}
+        bool Load=false,Save=false,Close=false;
+        TFunction<void(TSharedRef<SWidget>)> Find=[&](TSharedRef<SWidget> Node)
+        {
+            if(Node->GetVisibility()==EVisibility::Collapsed)return;
+            if(Node->GetType()==FName(TEXT("STextBlock"))){const FString T=StaticCastSharedRef<STextBlock>(Node)->GetText().ToString();Load|=T==TEXT("이 방에 불러오기");Save|=T==TEXT("내 프리셋에 저장");Close|=T==TEXT("닫기");}
+            if(auto* C=Node->GetChildren())for(int I=0;I<C->Num();++I)Find(C->GetChildAt(I));
+        };Find(Slate);
+        TestTrue(TEXT("The preview offers load, save and close"),Load&&Save&&Close);
+        Target->ReleaseResource();W->bPreviewOpen=false;
+    }    // 내 프리셋 모아 보기: ten saved presets (two pages), board states, ticks; every line stays on screen.
+    {
+        for(int32 I=0;I<10;++I){FProjectCustomMatchRules R=W->Draft;R.DeathCount=1+I;const FString N=FString::Printf(TEXT("내 규칙 %d번 이름이 조금 긴 프리셋"),I+1);W->Presets.Add(N,R);W->PresetNames.Add(MakeShared<FString>(N));
+            if(I<3){UProjectCustomRoomRulesWidget::FMyPost P;P.Id=I+1;P.Name=N;P.bPublished=I!=1;P.bHidden=I==2;P.Rules=R;W->MyPosts.Add(P);}}
+        W->ManageSelected.Add(*W->PresetNames[0]);W->ManageSelected.Add(*W->PresetNames[3]);W->bManageOpen=true;W->ManagePage=0;
+        TestEqual(TEXT("Board states read from my posts"),W->PresetBoardState(*W->PresetNames[0])+W->PresetBoardState(*W->PresetNames[1])+W->PresetBoardState(*W->PresetNames[2])+W->PresetBoardState(*W->PresetNames[3]),
+            FString(TEXT("게시 중내림운영자가 숨김안 올림")));
+        TestEqual(TEXT("Eight presets per page"),W->ManagePageNames().Num(),8);
+        const FIntPoint Size(800,600);auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+        for(int I=0;I<6;++I){Renderer.DrawWidget(Target,Slate,Dpi,FVector2D(Size),.016f);FlushRenderingCommands();}
+        TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
+        if(Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)){TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/TEXT("RulesManage_800x600.png")));}
+        Target->ReleaseResource();W->bManageOpen=false;
+    }    TestTrue(TEXT("Switching tabs keeps the tab area size (no jump)"),PanelSize[0].Equals(PanelSize[1],.5f)&&PanelSize[0].Equals(PanelSize[2],.5f)&&PanelSize[0].Equals(PanelSize[3],.5f)&&PanelSize[0].Equals(PanelSize[4],.5f)&&PanelSize[0].Equals(PanelSize[5],.5f)&&PanelSize[0].Equals(PanelSize[6],.5f)&&PanelSize[0].Y>0);
     return true;
 }
 #endif

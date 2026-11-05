@@ -78,6 +78,17 @@ public:
 	void SetAffixStaminaRecoveryScale(float Scale) { AffixStaminaRecoveryScale = FMath::Clamp(Scale, 0.0f, 3.0f); }
 	/** Walk and sprint speed scale (replicated so the owner predicts it). */
 	void SetAffixSpeedScale(float Scale);
+	/** Custom game personal handicap (server): speed and stamina efficiency, kept apart from the per-tick affix scales. */
+	void SetPlaygroundHandicap(float SpeedScale, float StaminaScale);
+	float GetPlaygroundSpeedScale() const { return PlaygroundSpeedScale; }
+	float GetPlaygroundStaminaScale() const { return PlaygroundStaminaScale; }
+	/** Custom game spreading fire (server): standing in fire burns stamina and stops its recovery. */
+	void SetPlaygroundInFire(bool bInFire);
+	bool IsInPlaygroundFire() const { return bInPlaygroundFire; }
+	/** Custom game spreading fire (server): out of stamina in the fire costs a death count (or, with infinite lives, a
+	 *  trip back to the floor start; the last one ends the run like a fall). True when something was taken. */
+	bool HandlePlaygroundFireDamage();
+	static constexpr float PlaygroundFireStaminaDrain = 20.f; // per second; full stamina lasts five seconds.
 	/** C04: sprinting is not possible while set. */
 	void SetAffixSprintBlocked(bool bBlocked);
 	/** A glow on this survivor (A10 breath, B03 alarm, B07 face light, ...); zero strength removes it. */
@@ -293,6 +304,12 @@ private:
 	UPROPERTY(Replicated) float RogueMannequinHearingScale = 1.0f;
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerWalkSpeed)
 	float AffixSpeedScale = 1.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerWalkSpeed)
+	float PlaygroundSpeedScale = 1.0f;
+	UPROPERTY(Replicated)
+	float PlaygroundStaminaScale = 1.0f;
+	UPROPERTY(Replicated)
+	bool bInPlaygroundFire = false;
 	UPROPERTY(ReplicatedUsing = OnRep_AffixCue)
 	FColor AffixCue = FColor(0, 0, 0, 0);
 	UPROPERTY(Transient)

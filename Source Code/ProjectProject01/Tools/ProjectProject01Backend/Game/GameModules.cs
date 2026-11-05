@@ -35,12 +35,13 @@ internal sealed class BotMatchModule : IBackendModule
 /// <summary>Custom room rules (death count, mannequins, time limit); custom matches are unofficial.</summary>
 internal sealed class CustomRulesModule : IBackendModule
 {
-    public Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) => CustomRoomRules.EnsureAsync(c, ct);
-    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) { app.MapCustomRoomRules(canLaunchOrConnect); app.MapRuleCodes(); }
+    public async Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) { await CustomRoomRules.EnsureAsync(c, ct); await RoleSwap.EnsureAsync(c, ct); await SharedPresets.EnsureAsync(c, ct); await ShareCodes.EnsureAsync(c, ct); }
+    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) { app.MapCustomRoomRules(canLaunchOrConnect); app.MapRuleCodes(); app.MapSharedPresets(); app.MapShareCodes(); }
     public async Task OnMatchStartedAsync(MySqlConnection c, MySqlTransaction tx, string match, CancellationToken ct)
     {
         await CustomRoomRules.CaptureAsync(c, tx, match, ct);
         await RuleCodes.CaptureAsync(c, tx, match, ct); // Per-code records (Docs/CustomGamePlayground.md 6.2).
+        await RoleSwap.CaptureAsync(c, tx, match, ct);  // Role-swap series (12.2).
     }
     public async Task AddTicketFieldsAsync(MySqlConnection c, MySqlTransaction tx, string match, IDictionary<string, object?> fields, CancellationToken ct) =>
         fields["customRules"] = await CustomRoomRules.MatchAsync(c, tx, match, ct);

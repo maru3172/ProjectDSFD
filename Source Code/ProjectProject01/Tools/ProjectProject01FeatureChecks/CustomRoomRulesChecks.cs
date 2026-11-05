@@ -29,6 +29,12 @@ internal static class CustomRoomRulesChecks
         var gated=new (CustomRuleSet Rules,bool Live)[]{(basic with{AffixIds=["B09"]},CustomRoomRules.AffixesLive),(basic with{ItemCards=true},CustomRoomRules.ItemCardsLive),(basic with{InfiniteLives=true},CustomRoomRules.InfiniteLivesLive),
             (basic with{Infection=true},CustomRoomRules.InfectionLive),(basic with{Ghosts=true},CustomRoomRules.GhostsLive),(basic with{HideRevealSeconds=40},CustomRoomRules.HideRevealLive)};
         Check(gated.All(g=>CustomRoomRules.Valid(g.Rules)==g.Live),"게임 서버에 아직 없는 규칙은 적용 거부");
+        // 3단계: 규칙 카드 투표·역할 바꾸기 (Docs/CustomGamePlayground.md 12.2).
+        Check(CustomRoomRules.Valid(basic with{RuleVote=true})==CustomRoomRules.RuleVoteLive&&CustomRoomRules.Valid(basic with{RoleSwap=true})==CustomRoomRules.RoleSwapLive,"규칙 카드 투표·역할 바꾸기 적용 가능");
+        Check(RoleSwap.NextMannequin([1,2,3],new HashSet<ulong>())==1&&RoleSwap.NextMannequin([1,2,3],new HashSet<ulong>{1})==2&&RoleSwap.NextMannequin([1,2,3],new HashSet<ulong>{1,2})==3,"역할 바꾸기: 아직 마네킹을 안 한 사람이 방 순서대로 다음 마네킹");
+        Check(RoleSwap.MembersKey([3,1,2])==RoleSwap.MembersKey([2,3,1]),"역할 바꾸기: 같은 세 사람이면 같은 시리즈");
+        Check(RoleSwap.BestLine([new("A",true,true,250,2),new("B",true,true,190,2),new("C",true,false,null,1)]).Contains("B (3분 10초)"),"역할 바꾸기: 가장 빨리 전원을 잡은 마네킹 표시");
+        Check(RoleSwap.BestLine([new("A",true,false,null,1),new("B",true,false,null,0)]).Contains("A (1번)")&&RoleSwap.BestLine([new("A",false,false,null,0)])=="","역할 바꾸기: 아무도 전원을 못 잡으면 가장 많이 잡은 마네킹, 진행 중이면 빈칸");
         try
         {
             await Read(admin.PutAsJsonAsync("/api/admin/game-server-demand",new{enabled=false}));await manager.TickAsync(default);
@@ -67,6 +73,16 @@ internal static class CustomRoomRulesChecks
             Check((await Read(people[1].Client.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("customRules").GetProperty("infiniteLives").GetBoolean(),"무한 목숨 적용과 저장");
             await Read(host.PutAsJsonAsync("/api/rooms/current/custom-rules",new{roomId,rules=rules with{GazeLimitSeconds=8}}));
             Check((await Read(people[1].Client.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("customRules").GetProperty("gazeLimitSeconds").GetInt32()==8,"바라보기 시간 제한 적용과 저장");
+            // Personal handicaps (12.1): only room participants, kept with the room, never part of a rule code.
+            var handicapped=rules with{Handicaps=[new HandicapEntry(people[1].Id.ToString(),DeathCount:1,SpeedPct:-10)]};
+            await Read(host.PutAsJsonAsync("/api/rooms/current/custom-rules",new{roomId,rules=handicapped}));
+            var stored=(await Read(people[2].Client.GetAsync("/api/rooms/current"))).GetProperty("room").GetProperty("customRules").GetProperty("handicaps");
+            Check(stored.GetArrayLength()==1&&stored[0].GetProperty("userId").GetString()==people[1].Id.ToString()&&stored[0].GetProperty("speedPct").GetInt32()==-10,"핸디캡 적용과 저장(모두에게 보임)");
+            await Expect(host.PutAsJsonAsync("/api/rooms/current/custom-rules",new{roomId,rules=rules with{Handicaps=[new HandicapEntry("999999999")]}}),HttpStatusCode.BadRequest,"방 밖의 사람에게 핸디캡 거부");
+            await Expect(host.PutAsJsonAsync("/api/rooms/current/custom-rules",new{roomId,rules=rules with{Handicaps=[new HandicapEntry(people[1].Id.ToString(),DeathCount:3)]}}),HttpStatusCode.BadRequest,"핸디캡 범위 검증");
+            var codeWith=(await Read(host.PostAsJsonAsync("/api/rule-codes",new{rules=handicapped}))).GetProperty("code").GetString();
+            var codeWithout=(await Read(host.PostAsJsonAsync("/api/rule-codes",new{rules}))).GetProperty("code").GetString();
+            Check(codeWith==codeWithout,"규칙 코드에는 핸디캡이 들어가지 않음");
             await Expect(host.PutAsJsonAsync("/api/rooms/current/custom-rules",new{roomId,rules=rules with{InfiniteLives=true,TimeLimitSeconds=0}}),HttpStatusCode.BadRequest,"무한 목숨은 무제한 시간과 함께 불가");
             await Read(host.PutAsJsonAsync("/api/rooms/current/custom-rules",new{roomId,rules}));
             for(int i=0;i<20;i++)await Read(host.PostAsJsonAsync("/api/room-rule-presets",new{action="Save",name="프리셋 "+i,rules}));
@@ -112,7 +128,7 @@ internal static class CustomRoomRulesChecks
             var other=await Read(host.PostAsJsonAsync("/api/rule-codes",new{rules=rules with{DeathCount=5}}));Check(other.GetProperty("code").GetString()!=shown,"규칙이 다르면 다른 코드");
             await Expect(host.PostAsJsonAsync("/api/rule-codes",new{rules=new CustomRuleSet(false)}),HttpStatusCode.BadRequest,"사용자 지정이 꺼진 규칙은 코드 없음");
             var looked=await Read(people[2].Client.GetAsync("/api/rule-codes/"+shown.ToLowerInvariant().Replace("-","")));
-            Check(looked.GetProperty("rules").GetProperty("deathCount").GetInt32()==6&&looked.GetProperty("rules").GetProperty("itemCards").GetBoolean(),"소문자·하이픈 없이도 같은 코드로 규칙 불러오기");
+            Check(!looked.TryGetProperty("rules",out _),"규칙 코드는 기록 확인용: 소문자·하이픈 없이도 같은 코드지만 규칙은 내주지 않음");
             Check(looked.GetProperty("summary").GetProperty("games").GetInt32()==1&&looked.GetProperty("summary").GetProperty("survivorWins").GetInt32()==1&&looked.GetProperty("summary").GetProperty("myGames").GetInt32()==0,"코드별 기록: 판 수·진영 승리, 내 결과는 본인 것만");
             var mineView=await Read(host.GetAsync("/api/rule-codes/"+shown));
             Check(mineView.GetProperty("summary").GetProperty("myGames").GetInt32()==1&&mineView.GetProperty("summary").GetProperty("myWins").GetInt32()==1,"코드별 기록: 내 결과");
@@ -120,6 +136,21 @@ internal static class CustomRoomRulesChecks
             await Expect(host.GetAsync("/api/rule-codes/AB-CD"),HttpStatusCode.BadRequest,"짧은 코드 거부");
             await Expect(host.GetAsync("/api/rule-codes/ILOU0000"),HttpStatusCode.BadRequest,"코드에 쓰지 않는 글자 거부");
             await Expect(host.GetAsync("/api/rule-codes/00000000"),HttpStatusCode.NotFound,"없는 코드 404");
+            // Share codes (Docs/CustomGamePlayground.md 14): a fresh code per share, expiry, revoke.
+            await Expect(host.PostAsJsonAsync("/api/share-codes",new{name="친구용",rules,hours=5}),HttpStatusCode.BadRequest,"공유 코드: 기한은 24시간·7일·무기한만");
+            var share=await Read(host.PostAsJsonAsync("/api/share-codes",new{name="친구용",rules,hours=24}));string shareCode=share.GetProperty("code").GetString()!;
+            Check(shareCode.Length==11&&shareCode[5]=='-'&&shareCode.Replace("-","")!=shown.Replace("-",""),"공유 코드: 규칙 코드와 다른 10글자 무작위 코드");
+            var got=await Read(people[2].Client.GetAsync("/api/share-codes/"+shareCode.ToLowerInvariant().Replace("-","")));
+            Check(got.GetProperty("name").GetString()=="친구용"&&got.GetProperty("rules").GetProperty("deathCount").GetInt32()==6&&got.GetProperty("ruleCode").GetString()==shown
+                &&got.GetProperty("expiresAtUtc").ValueKind==JsonValueKind.String&&!got.GetProperty("board").GetBoolean(),"공유 코드: 받는 사람이 이름·규칙·기한을 먼저 확인");
+            var again=await Read(host.PostAsJsonAsync("/api/share-codes",new{name="친구용",rules,hours=0}));string againCode=again.GetProperty("code").GetString()!;
+            Check(againCode!=shareCode,"공유 코드: 같은 규칙도 공유할 때마다 새 코드");
+            Check((await Read(host.GetAsync("/api/share-codes"))).GetProperty("items").GetArrayLength()==2,"공유 코드: 내 공유 코드 목록");
+            await Expect(people[2].Client.DeleteAsync("/api/share-codes/"+shareCode),HttpStatusCode.Forbidden,"공유 코드: 남의 코드는 취소 불가");
+            await Read(host.DeleteAsync("/api/share-codes/"+shareCode));
+            await Expect(people[2].Client.GetAsync("/api/share-codes/"+shareCode),HttpStatusCode.NotFound,"공유 코드: 취소하면 더는 못 씀");
+            await Sql("UPDATE rule_share_codes SET expires_at_utc=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE code=@c",("c",againCode.Replace("-","")));
+            await Expect(people[2].Client.GetAsync("/api/share-codes/"+againCode),HttpStatusCode.NotFound,"공유 코드: 기한이 지나면 못 씀");
             Check(RuleCodes.Normalize("zb7k-2qxm")=="ZB7K2QXM"&&RuleCodes.Encode(RuleCodes.Hash(rules),8)==RuleCodes.Encode(RuleCodes.Hash(rules with{}),8),"코드 정규화·결정성");
             var profile=await Read(host.GetAsync("/api/social/room-profiles/"+people[0].Id));Check(profile.GetProperty("statistics").GetArrayLength()==0,"개인 공식 전적 집계에서도 커스텀 경기 제외");
             await using(var c=await db.OpenConnectionAsync(default))
@@ -127,6 +158,99 @@ internal static class CustomRoomRulesChecks
                 var receipts=await CommunityEndpoints.Rows(c,null,"SELECT match_id FROM bot_rating_receipts WHERE match_id=@m",default,("m",match));Check(receipts.Count==0,"커스텀 경기 레이팅 스냅샷 미생성");
                 await using var tx=await c.BeginTransactionAsync();await CommunityEndpoints.Exec(c,tx,"UPDATE room_custom_rules SET enabled=FALSE,death_count=3 WHERE room_id=@r",default,("r",roomId));await CustomRoomRules.CaptureAsync(c,tx,match,default);
                 Check((await CustomRoomRules.MatchAsync(c,tx,match,default))==rules,"나중에 방 설정이 달라도 기존 경기 스냅샷 불변");await tx.CommitAsync();
+            }
+            {
+                // Shared preset board (Docs/CustomGamePlayground.md 13): post after a clear, clear rate, recommend, take down.
+                await Expect(people[1].Client.PostAsJsonAsync("/api/shared-presets",new{name="안 깬 규칙",summary="",rules}),HttpStatusCode.Conflict,"공유 게시판: 한 판을 끝까지 마치지 않으면 올릴 수 없음");
+                await Expect(host.PostAsJsonAsync("/api/shared-presets",new{name="",summary="",rules}),HttpStatusCode.BadRequest,"공유 게시판: 이름 필수");
+                var posted=await Read(host.PostAsJsonAsync("/api/shared-presets",new{name="첫 공유",summary="끝까지 해 본 규칙",rules}));
+                Check(posted.GetProperty("code").GetString()==shown,"공유 게시판: 끝까지 마친 규칙은 올라가고 같은 규칙 코드");
+                string boardCode=posted.GetProperty("shareCode").GetString()!;
+                Check((await Read(people[2].Client.GetAsync("/api/share-codes/"+boardCode))).GetProperty("board").GetBoolean(),"공유 게시판: 글마다 고정 공유 코드");
+                await Expect(host.DeleteAsync("/api/share-codes/"+boardCode),HttpStatusCode.Conflict,"공유 게시판: 글의 공유 코드는 따로 취소 불가");
+                var mine=await Read(host.GetAsync("/api/shared-presets/mine"));long postId=mine.GetProperty("items")[0].GetProperty("id").GetInt64();
+                await Read(host.PutAsJsonAsync($"/api/shared-presets/{postId}",new{published=false}));
+                Check(!(await Read(people[1].Client.GetAsync("/api/shared-presets"))).GetProperty("items").EnumerateArray().Any(i=>i.GetProperty("code").GetString()==shown)
+                    &&!(await Read(host.GetAsync("/api/shared-presets/mine"))).GetProperty("items")[0].GetProperty("published").GetBoolean()
+                    &&(await Read(host.GetAsync("/api/shared-presets?sort=mine"))).GetProperty("items").GetArrayLength()==1,"공유 게시판: 내리면 게시판에서 빠지고 내 글에는 남음");
+                await Expect(people[2].Client.GetAsync("/api/share-codes/"+boardCode),HttpStatusCode.NotFound,"공유 게시판: 내린 글의 코드는 멈춤");
+                await Expect(people[1].Client.PutAsJsonAsync($"/api/shared-presets/{postId}",new{published=true}),HttpStatusCode.Forbidden,"공유 게시판: 남의 글은 게시 불가");
+                await Read(host.PutAsJsonAsync($"/api/shared-presets/{postId}",new{published=true}));
+                Check((await Read(people[2].Client.GetAsync("/api/share-codes/"+boardCode))).GetProperty("code").GetString()==boardCode,"공유 게시판: 다시 게시하면 같은 코드가 다시 살아남");
+                // My presets overview: several at once, one result per preset.
+                var other5=rules with{DeathCount=5};
+                var down=await Read(host.PostAsJsonAsync("/api/shared-presets/bulk",new{action="Unpublish",presets=new object[]{new{name="첫 공유",rules},new{name="안 올린 것",rules=other5}}}));
+                Check(down.GetProperty("results")[0].GetProperty("ok").GetBoolean()&&!down.GetProperty("results")[1].GetProperty("ok").GetBoolean()
+                    &&!(await Read(host.GetAsync("/api/shared-presets/mine"))).GetProperty("items")[0].GetProperty("published").GetBoolean(),"여러 개 내리기: 게시 중인 것만 내려가고 결과를 하나씩 알려 줌");
+                var up=await Read(host.PostAsJsonAsync("/api/shared-presets/bulk",new{action="Publish",presets=new object[]{new{name="첫 공유 (수정)",rules},new{name="안 깬 것",rules=other5}}}));
+                Check(up.GetProperty("results")[0].GetProperty("ok").GetBoolean()&&!up.GetProperty("results")[1].GetProperty("ok").GetBoolean()&&up.GetProperty("message").GetString()!.Contains("1개 게시")
+                    &&(await Post(host)).GetProperty("summary").GetString()=="끝까지 해 본 규칙","여러 개 게시: 클리어한 것만 올라가고, 다시 게시하면 설명은 그대로");
+                await Expect(host.PostAsJsonAsync("/api/shared-presets/bulk",new{action="Hide",presets=new object[]{new{name="x",rules}}}),HttpStatusCode.BadRequest,"여러 개 작업 종류 검증");
+                var before=(await Read(host.GetAsync("/api/rooms/current/custom-rules"))).GetProperty("presets").GetArrayLength();
+                var gone=await Read(host.PostAsJsonAsync("/api/room-rule-presets/delete",new{names=new[]{"프리셋 1","프리셋 2","없는 이름"}}));
+                Check(gone.GetProperty("presets").GetArrayLength()==before-2&&(await Post(host)).GetProperty("published").GetBoolean(),"여러 개 삭제: 고른 내 프리셋만 지우고 게시판 글은 그대로");
+                await Expect(people[1].Client.PostAsJsonAsync("/api/shared-presets",new{name="가로채기",summary="",rules}),HttpStatusCode.Conflict,"공유 게시판: 남이 올린 규칙은 다시 못 올림");
+                await Read(host.PostAsJsonAsync("/api/shared-presets",new{name="첫 공유 (수정)",summary="끝까지 해 본 규칙",rules}));
+                var board=await Read(people[1].Client.GetAsync("/api/shared-presets?sort=played"));
+                var item=board.GetProperty("items").EnumerateArray().Single(i=>i.GetProperty("code").GetString()==shown);
+                Check(item.GetProperty("name").GetString()=="첫 공유 (수정)"&&item.GetProperty("plays").GetInt32()==1&&item.GetProperty("clearRate").GetInt32()==100&&!item.GetProperty("mine").GetBoolean()
+                    &&item.GetProperty("rules").GetProperty("deathCount").GetInt32()==rules.DeathCount,"공유 게시판: 판 수·클리어률·규칙을 함께 보여 줌, 같은 사람이 다시 올리면 이름만 바뀜");
+                long id=item.GetProperty("id").GetInt64();
+                await Expect(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=1}),HttpStatusCode.Conflict,"공유 게시판: 끝까지 해 보지 않으면 추천 불가");
+                await Expect(host.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=-1}),HttpStatusCode.Conflict,"공유 게시판: 내 글은 추천·비추천 불가");
+                await Sql("INSERT INTO match_desertions(match_id,user_id,role,deserted_at_utc) VALUES(@m,@u,'Survivor',UTC_TIMESTAMP(6))",("m",match),("u",people[1].Id));
+                var rate=(await Read(host.GetAsync("/api/shared-presets?sort=liked"))).GetProperty("items").EnumerateArray().Single(i=>i.GetProperty("code").GetString()==shown);
+                Check(rate.GetProperty("clearRate").GetInt32()==50&&rate.GetProperty("mine").GetBoolean(),"공유 게시판: 기권한 판은 클리어률을 낮춤");
+                await Sql("DELETE FROM match_desertions WHERE match_id=@m AND user_id=@u",("m",match),("u",people[1].Id));
+                // 추천·비추천: people[1] finishes a match with the code (a verified result, no forfeit), then votes.
+                await Sql("INSERT INTO verified_match_results(match_id,room_id,user_id,role,success) VALUES(@m,@r,@u,'Survivor',FALSE)",("m",match),("r",roomId),("u",people[1].Id));
+                async Task<JsonElement> Post(HttpClient client)=>(await Read(client.GetAsync("/api/shared-presets?sort=liked"))).GetProperty("items").EnumerateArray().Single(i=>i.GetProperty("code").GetString()==shown);
+                await Read(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=1}));
+                var voted=await Post(people[1].Client);
+                Check(voted.GetProperty("likes").GetInt32()==1&&voted.GetProperty("dislikes").GetInt32()==0&&voted.GetProperty("myVote").GetInt32()==1,"공유 게시판: 끝까지 해 본 사람의 추천");
+                await Read(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=-1}));voted=await Post(people[1].Client);
+                Check(voted.GetProperty("likes").GetInt32()==0&&voted.GetProperty("dislikes").GetInt32()==1&&voted.GetProperty("myVote").GetInt32()==-1,"공유 게시판: 추천을 비추천으로 바꾸면 한 표만 남음");
+                await Read(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=0}));voted=await Post(people[1].Client);
+                Check(voted.GetProperty("likes").GetInt32()==0&&voted.GetProperty("dislikes").GetInt32()==0&&voted.GetProperty("myVote").GetInt32()==0,"공유 게시판: 비추천 취소");
+                await Expect(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=2}),HttpStatusCode.BadRequest,"공유 게시판: 추천 값 검증");
+                // 신고: goes to moderators only; the post stays until a moderator acts.
+                await Expect(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/report",new{reason="Bad"}),HttpStatusCode.BadRequest,"공유 게시판: 신고 사유 검증");
+                await Expect(host.PostAsJsonAsync($"/api/shared-presets/{id}/report",new{reason="Name"}),HttpStatusCode.Conflict,"공유 게시판: 내 글은 신고 불가");
+                Check((await Read(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/report",new{reason="Name"}))).GetProperty("message").GetString()!.Contains("접수")
+                    &&(await Read(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/report",new{reason="Summary"}))).GetProperty("message").GetString()!.Contains("이미"),"공유 게시판: 신고는 한 사람 한 번");
+                Check((await Post(people[1].Client)).GetProperty("reported").GetBoolean()&&!(await Post(host)).GetProperty("hidden").GetBoolean(),"공유 게시판: 신고만으로 숨기지 않음");
+                var queue=await Read(admin.GetAsync("/api/admin/community/shared-presets"));
+                Check(queue.GetProperty("posts").EnumerateArray().Any(p=>p.GetProperty("id").GetString()==id.ToString()&&p.GetProperty("reports").GetInt32()==1),"공유 게시판: 운영자 신고 목록");
+                await Expect(people[1].Client.GetAsync("/api/admin/community/shared-presets"),HttpStatusCode.Unauthorized,"공유 게시판: 운영자 키 없이는 신고 목록 불가");
+                await Read(admin.PutAsJsonAsync($"/api/admin/community/shared-presets/{id}",new{action="Hide"}));
+                Check(!(await Read(people[1].Client.GetAsync("/api/shared-presets"))).GetProperty("items").EnumerateArray().Any(i=>i.GetProperty("code").GetString()==shown)
+                    &&(await Post(host)).GetProperty("hidden").GetBoolean(),"공유 게시판: 운영자가 숨기면 올린 사람에게만 '숨겨짐'으로 보임");
+                await Expect(people[1].Client.PostAsJsonAsync($"/api/shared-presets/{id}/vote",new{vote=1}),HttpStatusCode.NotFound,"공유 게시판: 숨긴 글은 추천 불가");
+                await Expect(host.PostAsJsonAsync("/api/shared-presets",new{name="숨김 우회",summary="",rules}),HttpStatusCode.Conflict,"공유 게시판: 숨긴 글은 이름만 바꿔 되살릴 수 없음");
+                await Read(admin.PutAsJsonAsync($"/api/admin/community/shared-presets/{id}",new{action="Restore"}));
+                Check(!(await Post(people[1].Client)).GetProperty("reported").GetBoolean(),"공유 게시판: 운영자가 되살리면 신고도 정리");
+                await Expect(admin.PutAsJsonAsync($"/api/admin/community/shared-presets/{id}",new{action="Ban"}),HttpStatusCode.BadRequest,"공유 게시판: 운영자 처리 종류 검증");
+                await Sql("DELETE FROM verified_match_results WHERE match_id=@m AND user_id=@u",("m",match),("u",people[1].Id));
+                await Expect(people[1].Client.DeleteAsync($"/api/shared-presets/{id}"),HttpStatusCode.Forbidden,"공유 게시판: 남의 글은 못 내림");
+                await Read(host.DeleteAsync($"/api/shared-presets/{id}"));
+                Check(!(await Read(host.GetAsync("/api/shared-presets"))).GetProperty("items").EnumerateArray().Any(i=>i.GetProperty("code").GetString()==shown),"공유 게시판: 올린 사람이 내리면 사라짐");
+            }
+            await using(var c=await db.OpenConnectionAsync(default))
+            {
+                // Role swap on the same three players (rolled back): room order picks the mannequin, a started match becomes round 1.
+                await using var tx=await c.BeginTransactionAsync();
+                await CommunityEndpoints.Exec(c,tx,"UPDATE room_custom_rules SET enabled=TRUE,role_swap=TRUE WHERE room_id=@r;UPDATE game_rooms SET status='Started',match_id=@m WHERE id=@r",default,("r",roomId),("m",match));
+                var humans=people.Select(p=>p.Id).ToList();
+                Check(await RoleSwap.AssignIfNeededAsync(c,tx,roomId,humans,0,default),"역할 바꾸기: 세 사람 방에서 역할 배정");
+                async Task<ulong> Mannequin()=>Convert.ToUInt64((await CommunityEndpoints.Rows(c,tx,"SELECT user_id FROM room_members WHERE room_id=@r AND assigned_role='Mannequin'",default,("r",roomId))).Single()["user_id"]);
+                Check(await Mannequin()==people[0].Id,"역할 바꾸기: 생존자 선호와 상관없이 방 순서 첫 사람이 1판 마네킹");
+                await RoleSwap.CaptureAsync(c,tx,match,default);await RoleSwap.CaptureAsync(c,tx,match,default);
+                Check((await CommunityEndpoints.Rows(c,tx,"SELECT round_no FROM room_role_swap_rounds WHERE room_id=@r",default,("r",roomId))).Count==1,"역할 바꾸기: 시작한 경기가 한 번만 1판으로 기록");
+                Check(!await RoleSwap.AssignIfNeededAsync(c,tx,roomId,humans,1,default),"역할 바꾸기: 봇이 있는 방에는 적용 안 함");
+                Check(await RoleSwap.AssignIfNeededAsync(c,tx,roomId,humans,0,default)&&await Mannequin()==people[1].Id,"역할 바꾸기: 2판은 아직 안 한 다음 사람");
+                var progress=await RoleSwap.ProgressAsync(c,tx,roomId,default);
+                Check(progress is {Played:1,Total:3}&&progress.Rounds.Count==1&&progress.NextMannequin!="","역할 바꾸기: 방 화면 진행 1/3과 다음 마네킹");
+                await tx.RollbackAsync();
             }
             await Sql("DELETE FROM game_rooms WHERE id=@r",("r",roomId));
             await using(var c=await db.OpenConnectionAsync(default)){Check(await CustomRoomRules.IsCustomAsync(c,null,match,default),"방 삭제 이후에도 커스텀 경기 구분 유지");Check(!(await CustomRoomRules.IsCustomAsync(c,null,Guid.NewGuid().ToString(),default)),"기존 일반 경기 기본 분류 유지");}

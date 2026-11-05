@@ -2410,7 +2410,7 @@ internal static partial class LobbyEndpoints
             string.Equals(status, "Started", StringComparison.Ordinal),
             returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages,status is "Queued" or "Preparing",
             random.Count>0&&status!="Waiting"&&!string.IsNullOrEmpty(assignedRole),party.Count>0,party.Count>0?Convert.ToString(party[0]["search_id"])??"":"",matchId,
-            status is "Queued" or "Preparing" ? status : string.Empty,sessionWaitElapsedSeconds,bots,botMatch,members.Any(m=>m.UserId==userId.ToString()&&m.IsObserver),await CustomRoomRules.RoomAsync(connection,transaction,roomId,ct),await MatchAffixes.RoomAsync(connection,transaction,roomId,ct),await MatchModes.RoomAsync(connection,transaction,roomId,ct));
+            status is "Queued" or "Preparing" ? status : string.Empty,sessionWaitElapsedSeconds,bots,botMatch,members.Any(m=>m.UserId==userId.ToString()&&m.IsObserver),await CustomRoomRules.RoomAsync(connection,transaction,roomId,ct),await MatchAffixes.RoomAsync(connection,transaction,roomId,ct),await MatchModes.RoomAsync(connection,transaction,roomId,ct),await global::RoleSwap.ProgressAsync(connection,transaction,roomId,ct));
     }
 
     private static async Task ExecuteAsync(
@@ -2538,7 +2538,8 @@ internal sealed record RoomState(
     bool IsObserver=false,
     CustomRuleSet? CustomRules=null,
     AffixSet? Affixes=null,
-    string MatchMode=MatchModes.Normal);
+    string MatchMode=MatchModes.Normal,
+    RoleSwapProgress? RoleSwap=null);
 internal sealed record RoomPasswordRecord(string RoomId);
 internal sealed record LeaderboardEntry(
     int Rank,

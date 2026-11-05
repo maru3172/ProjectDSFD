@@ -44,7 +44,7 @@ bool UProjectAffixRuntime::MannequinItem(const TCHAR* Id)const
 {
     const auto* R=Rogue();if(!R)return false;
     for(const auto& Pair:Owner->MatchPlayerRecords)
-        if(ProjectItemRoguelike::IsMannequinRole(Pair.Value.Role)&&R->HasItem(UProjectItemRoguelikeRuntime::KeyOf(Pair.Value),Id))return true;
+        if((ProjectItemRoguelike::IsMannequinRole(Pair.Value.Role)||Pair.Value.bInfected)&&R->HasItem(UProjectItemRoguelikeRuntime::KeyOf(Pair.Value),Id))return true; // Infected players are on the mannequin side.
     return false;
 }
 

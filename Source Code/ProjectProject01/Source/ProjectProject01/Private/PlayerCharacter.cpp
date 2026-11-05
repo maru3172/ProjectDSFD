@@ -1212,9 +1212,17 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 
 	if (!bUsesSinglePlayerStamina)
 	{
+		// Custom game spreading fire: the fire burns stamina and nothing recovers inside; running burns it faster still.
+		if (bInPlaygroundFire)
+		{
+			const float Drain = PlaygroundFireStaminaDrain + (bActivelySprinting ? StaminaDrainPerSecond * AffixStaminaDrainScale / PlaygroundStaminaScale : 0.f);
+			CurrentStamina = FMath::Max(0.f, CurrentStamina - Drain * DeltaTime);
+			if (bActivelySprinting && CurrentStamina <= 0.f) { ApplySprintingState(false); ClientCorrectSprinting(false); }
+			return;
+		}
 		if (bActivelySprinting)
 		{
-			if (!TryConsumeFullStaminaUpdate(CurrentStamina, StaminaDrainPerSecond * AffixStaminaDrainScale, DeltaTime))
+			if (!TryConsumeFullStaminaUpdate(CurrentStamina, StaminaDrainPerSecond * AffixStaminaDrainScale / PlaygroundStaminaScale, DeltaTime))
 			{
 				// 현재 업데이트 전체 소모량을 낼 수 없으면 잔량을 부분 소모하지 않고 즉시 걷기로 돌아간다.
 				ApplySprintingState(false);
@@ -1225,7 +1233,7 @@ void APlayerCharacter::UpdateStamina(const float DeltaTime)
 		{
 			// RogueMaxStaminaScale (item roguelike S03) keeps the refill short of full; 1 otherwise.
 			const float Cap = MaxStamina * RogueMaxStaminaScale;
-			CurrentStamina = FMath::Min(Cap, CurrentStamina + (StaminaRecoveryPerSecond * AffixStaminaRecoveryScale * DeltaTime));
+			CurrentStamina = FMath::Min(Cap, CurrentStamina + (StaminaRecoveryPerSecond * AffixStaminaRecoveryScale * PlaygroundStaminaScale * DeltaTime));
 		}
 		return;
 	}
@@ -1394,7 +1402,7 @@ void APlayerCharacter::ApplyPlayerWalkSpeed()
 		return;
 	}
 
-	Movement->MaxWalkSpeed = (bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed) * AffixSpeedScale;
+	Movement->MaxWalkSpeed = (bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed) * AffixSpeedScale * PlaygroundSpeedScale;
 }
 
 void APlayerCharacter::OnRep_PlayerWalkSpeed()
@@ -2172,6 +2180,9 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, RoamingOuterRadius);
 	DOREPLIFETIME(APlayerCharacter, PlayerWalkSpeed);
 	DOREPLIFETIME(APlayerCharacter, AffixSpeedScale);
+	DOREPLIFETIME(APlayerCharacter, PlaygroundSpeedScale);
+	DOREPLIFETIME(APlayerCharacter, PlaygroundStaminaScale);
+	DOREPLIFETIME(APlayerCharacter, bInPlaygroundFire);
 	DOREPLIFETIME(APlayerCharacter, AffixCue);
 	DOREPLIFETIME(APlayerCharacter, RogueFootstepScale);
 	DOREPLIFETIME(APlayerCharacter, RogueMannequinHearingScale);
@@ -2459,6 +2470,57 @@ void APlayerCharacter::UpdateDebugCursorAim()
     const FRotator AimRotation(0.0f, AimDirection.Rotation().Yaw, 0.0f);
     PlayerController->SetControlRotation(AimRotation);
     SetActorRotation(AimRotation);
+}
+
+void APlayerCharacter::SetPlaygroundInFire(const bool bInFire)
+{
+	if (!HasAuthority() || bInPlaygroundFire == bInFire) return;
+	bInPlaygroundFire = bInFire;
+	ForceNetUpdate();
+}
+
+bool APlayerCharacter::HandlePlaygroundFireDamage()
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || bGameOver || !IsValid(World)) return false;
+	auto* Mode = World->GetAuthGameMode<AMultiplayTestGameMode>();
+	const auto* MatchController = Cast<AMultiplayTestPlayerController>(GetController());
+	const bool bServerBot = MatchController && MatchController->IsServerControlledBot();
+	auto Feedback = [this, bServerBot](float Severity)
+	{
+		MulticastPlayPainAndDeathWorldSFX(false, .6f);
+		RecordObserverFeedback(0.f, 0.f, Severity, false);
+		if (IsLocallyControlled()) PlayLocalDamageFeedback(0.f, 0.f, Severity);
+		else if (!bServerBot) ClientPlayDamageFeedback(0.f, 0.f, Severity);
+	};
+	if (Mode && Mode->HasPlaygroundInfiniteLives())
+	{
+		// Infinite lives: nobody is out; the fire sends the survivor back to the floor start like a catch would.
+		FTransform Start;
+		Feedback(.45f);
+		if (Mode->FindPlaygroundFloorStart(this, Start)) FinishPlaygroundRespawn(Start);
+		return true;
+	}
+	if (RemainingDeathCount > 1)
+	{
+		--RemainingDeathCount;
+		Feedback(UProjectProject01DamageFeedbackWidget::CalculateDamageSeverity(RemainingDeathCount, StartingDeathCount));
+		if (Mode) Mode->NotifySurvivorDeathCountLost(this);
+		ForceNetUpdate();
+		return true;
+	}
+	return HandleFallDeath(); // The last death count: out, the same way as a fatal fall.
+}
+
+void APlayerCharacter::SetPlaygroundHandicap(const float SpeedScale, const float StaminaScale)
+{
+	// Docs/CustomGamePlayground.md 12.1: stamina is applied as efficiency (drain / scale, recovery * scale), so the
+	// stamina bar keeps its usual maximum.
+	if (!HasAuthority()) return;
+	PlaygroundSpeedScale = FMath::Clamp(SpeedScale, 0.8f, 1.2f);
+	PlaygroundStaminaScale = FMath::Clamp(StaminaScale, 0.6f, 1.4f);
+	ApplyPlayerWalkSpeed();
+	ForceNetUpdate();
 }
 
 void APlayerCharacter::SetAffixSpeedScale(const float Scale)

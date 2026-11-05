@@ -90,6 +90,9 @@ bool AMultiplayTestGameMode::TickLoadingGate(float Delta)
 	}
 	// Item roguelike: everyone is in and the screen is still black, so the card pick happens now. The gate (and the
 	// match clock) wait until all have picked or the pick times out; a pick in progress keeps running if someone drops.
+	// Custom game rule-card vote: same black screen, before the item cards (Docs/CustomGamePlayground.md 12.2).
+	if(AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment&&(LoadingGate.AllReady()||PlaygroundVote.bOpen)&&
+		HoldPlaygroundRuleVote(FPlatformTime::Seconds()))return true;
 	if(IsItemRoguelikeMatch()&&AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment&&
 		(LoadingGate.AllReady()||ItemRoguelike->IsPicking())&&ItemRoguelike->HoldGate(this,FPlatformTime::Seconds()))return true;
 	if(LoadingGate.AllReady() && AuthoritativeMatchPhase==EMultiplayTestMatchPhase::RoleAssignment)

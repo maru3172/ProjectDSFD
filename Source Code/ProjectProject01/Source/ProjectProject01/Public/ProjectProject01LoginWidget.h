@@ -737,6 +737,12 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class USizeBox> RogueCardsFrame;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> RogueCardsText;
 	friend class FProjectItemRoguelikeResultTest;
+	/** Custom game: copies this match's rule code; the code is asked from the backend on the first click. */
+	UPROPERTY(Transient) TObjectPtr<class UButton> RuleCodeButton;
+	UFUNCTION() void HandleRuleCodeClicked();
+	FString RuleCode;
+	bool bRuleCodeRequested = false;
+	bool HasRuleCodeToOffer() const;
 	bool bShowingTimeline = false;
 	UFUNCTION()
 	void HandleRegisterClicked();

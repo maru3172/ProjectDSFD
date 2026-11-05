@@ -164,6 +164,7 @@ internal static partial class LobbyEndpoints
             {await CommunityEndpoints.Exec(c,tx,"UPDATE room_members SET returned_to_room=FALSE WHERE room_id=@r",ct,("r",room));return;}
         }
         int mannequin;
+        if(await RoleSwap.AssignIfNeededAsync(c,tx,room,humans,bots.Count,ct))return; // Custom game role swap (RoleSwap.cs).
         if(await RoomRoleChoices.ApplyIfNeededAsync(c,tx,room,humans,bots,ct))return;
         if(chosen.Count!=0)
         {
