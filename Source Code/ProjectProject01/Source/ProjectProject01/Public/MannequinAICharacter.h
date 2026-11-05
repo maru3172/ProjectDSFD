@@ -119,6 +119,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Audio|Footstep")
 	void PlayFootstep(FName FootBoneName);
 	
+	// 플레이어 관측 정보
 	// 현재 마네킹이 보관 중인 플레이어 관측 정보를 반환한다.
 	const FMannequinPlayerObservation& GetPlayerObservation() const
 	{
@@ -126,13 +127,13 @@ public:
 	}
 	
 	// 플레이어를 직접 확인한 시점의 정보를 저장한다.
-	void UpdatePlayerObservation(const FVector& PlayerLoctaion, const FVector& PlayerVelocity, double ObservationTime);
+	void UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime);
 	
 	// 현재 플레이어를 직접 보고 있는지 기록한다.
 	void SetPlayerDirectlyVisible(bool bDirectlyVisible);
 	
 	// 마지막 관측 이후 경과 시간에 따라 신뢰도를 갱신한다.
-	void UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifeTime);
+	void UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifetime);
 	
 	// 아직 사용할 수 있는 관측 정보가 있는지 반환한다.
 	bool HasActivePlayerObservation() const;
