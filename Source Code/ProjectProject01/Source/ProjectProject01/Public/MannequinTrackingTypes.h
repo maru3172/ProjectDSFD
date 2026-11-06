@@ -16,6 +16,10 @@ struct FMannequinPlayerObservation
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Tracking")
 	FVector LastSeenVelocity = FVector::ZeroVector;
 	
+	// 마지막 관측 정보를 이용해 계산한 플레이어 예상 위치
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Tracking")
+	FVector PredictedLocation = FVector::ZeroVector;
+	
 	// 플레이어를 마지막으로 직접 확인한 월드 시각
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Tracking")
 	double LastSeenTime = -1.0;

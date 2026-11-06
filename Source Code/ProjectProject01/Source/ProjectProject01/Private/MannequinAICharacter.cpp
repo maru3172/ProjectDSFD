@@ -676,10 +676,16 @@ void AMannequinAICharacter::UpdatePlayerObservation(const FVector& PlayerLocatio
 {
 	PlayerObservation.LastSeenLocation = PlayerLocation;
 	PlayerObservation.LastSeenVelocity = PlayerVelocity;
+	PlayerObservation.PredictedLocation = PlayerLocation;
 	PlayerObservation.LastSeenTime = ObservationTime;
 	PlayerObservation.Confidence = 1.0f;
 	PlayerObservation.bHasObservation = true;
 	PlayerObservation.bDirectlyVisible = true;
+}
+
+void AMannequinAICharacter::SetPredictedPlayerLocation(const FVector& PredictedLocation)
+{
+	PlayerObservation.PredictedLocation = PredictedLocation;
 }
 
 void AMannequinAICharacter::SetPlayerDirectlyVisible(bool bDirectlyVisible)

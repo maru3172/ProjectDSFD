@@ -135,6 +135,9 @@ public:
 	// 플레이어를 직접 확인한 시점의 정보를 저장한다.
 	void UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime);
 	
+	// 마지막 관측 정보를 이용해 계산한 예상 위치를 저장한다.
+	void SetPredictedPlayerLocation(const FVector& PredictedLocation);
+	
 	// 현재 플레이어를 직접 보고 있는지 기록한다.
 	void SetPlayerDirectlyVisible(bool bDirectlyVisible);
 	
