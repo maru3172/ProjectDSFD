@@ -426,7 +426,7 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 	const double PrimaryRadiusSquared = FMath::Square(static_cast<double>(PlayerPrimaryRadius));
 	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
 	
-	// 첫 번째 검사: 플레이어를 직접 관측한 마네킹만 1 차 마네킹으로 설정
+	// 플레이어를 직접 관측했거나 아직 유효한 관측 정보를 가진 마네킹만 1 차로 유지한다.
 	if (CurrentMannequin.HasActivePlayerObservation())
 	{
 		return ETwoStageMannequinTier::Primary;

@@ -57,16 +57,16 @@ private:
 	// 마지막 관측 정보를 이용해 플레이어 예상 위치를 계산한다.
 	bool TryCalculateTrackingLocation(
 		AMannequinAICharacter& CurrentMannequin,
-		FVector& OutTrackiingLocation
+		FVector& OutTrackingLocation
 		) const;
 	
-	// 추적 상태 적용 함수
+	// 배회 목적지 생성
 	bool TryFindRoamingLocation(
 		const AMannequinAICharacter& CurrentMannequin,
 		FVector& OutLocation
 		) const;
 	
-	// 배회 목적지 생성
+	// 추적 상태 적용 함수
 	void ApplyChaseState(
 		UBlackboardComponent& Blackboard,
 		const FVector& TrackingLocation,
