@@ -1,0 +1,14 @@
+.ue5-tracker { display:grid; gap:14px; }
+.ue5-tracker h3,.ue5-tracker h4,.ue5-tracker p { margin:0; }
+.ue5-controls { display:flex; align-items:end; gap:10px; flex-wrap:wrap; }
+.ue5-tracker label { display:grid; gap:5px; min-width:0; }
+.ue5-tracker .checkline { display:flex; }
+.ue5-stats,.ue5-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 180px),1fr)); gap:10px; }
+.ue5-stats > div,.ue5-grid > section,.ue5-tracker details { border:1px solid var(--border,#7775); border-radius:8px; padding:10px; }
+.ue5-stats strong { display:block; font-size:1.6rem; }
+.ue5-tracker .ue5-card { display:grid; text-align:left; width:100%; margin-top:8px; }
+.ue5-tracker summary { cursor:pointer; padding:4px 0; }
+.ue5-tracker details p { white-space:pre-wrap; margin:8px 0; overflow-wrap:anywhere; }
+.ue5-tracker fieldset { display:grid; gap:12px; border:0; padding:0; margin:0; min-width:0; }
+.ue5-editor { display:grid; gap:12px; }
+.ue5-output { white-space:pre-wrap; overflow-wrap:anywhere; max-height:22rem; overflow:auto; }

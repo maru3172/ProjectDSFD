@@ -4,7 +4,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 const root=process.cwd(),out=path.resolve(process.argv[2]??'outputs/Daybook-Windows');await mkdir(out,{recursive:true});
 const run=(cmd,args)=>{const p=spawnSync(cmd,args,{stdio:'inherit',shell:false});if(p.status!==0)throw new Error('배포 빌드 실패: '+cmd)};
-run(process.execPath,['self-host/build.mjs']);run('dotnet',['publish','self-host/launcher/Daybook.csproj','-c','Release','-r','win-x64','--self-contained','true','-p:PublishSingleFile=true','-p:IncludeNativeLibrariesForSelfExtract=true','-o',path.join(out,'launcher-build')]);
+run(process.execPath,['self-host/build.mjs']);run(process.execPath,['--input-type=module','-e',"await import('./self-host/server.mjs')"]);run('dotnet',['publish','self-host/launcher/Daybook.csproj','-c','Release','-r','win-x64','--self-contained','true','-p:PublishSingleFile=true','-p:IncludeNativeLibrariesForSelfExtract=true','-o',path.join(out,'launcher-build')]);
 await copyFile(path.join(out,'launcher-build','Daybook.exe'),path.join(out,'Daybook.exe'));await mkdir(path.join(out,'runtime'),{recursive:true});await copyFile(process.execPath,path.join(out,'runtime','node.exe'));
 await cp('drizzle',path.join(out,'app','drizzle'),{recursive:true,filter:p=>!p.includes(path.sep+'meta')});await cp('self-host',path.join(out,'app','self-host'),{recursive:true,filter:p=>!p.includes(path.sep+'launcher')&&!p.endsWith('package.mjs')&&!p.endsWith('build.mjs')&&!p.endsWith('client.tsx')&&!p.endsWith('desktop.css')});
 await writeFile(path.join(out,'app','package.json'),JSON.stringify({type:'module',private:true,name:'daybook-runtime',version:'1.0.0'}));
