@@ -277,7 +277,7 @@ internal sealed class TrendChart : Control
     }
 }
 
-internal sealed class DashboardForm : Form
+internal sealed partial class DashboardForm : Form
 {
     private readonly CancellationTokenSource windowLifetime=new();
     internal CancellationToken LifetimeTokenForTest=>windowLifetime.Token;
@@ -326,7 +326,7 @@ internal sealed class DashboardForm : Form
         var insights = new Button { Text = "추적 파일 열기", AutoSize = true };
         insights.Click += (_, _) => OpenSelectedTrace();
         var verify = new Button { Text = "빌드·자동 검사", AutoSize = true };
-        verify.Click += async (_, _) => await VerifySelectedRunAsync(verify, AutomationRunPlan.General);
+        verify.Click += async (_, _) => await ShowVerificationOptionsAsync(verify);
         var simulate = new Button { Text = "봇 경기 시뮬레이션", AutoSize = true };
         simulate.Click += async (_, _) =>
         {
@@ -975,12 +975,10 @@ internal sealed class DashboardForm : Form
         Process.Start(new ProcessStartInfo { FileName = insights, Arguments = $"\"{trace}\"", UseShellExecute = true });
     }
 
-    private Task VerifySelectedRunAsync(Button button, AutomationRunPlan plan)
+    private Task VerifySelectedRunAsync(Button button, AutomationRunPlan plan, bool attachToSelectedRun = true)
     {
-        var summary = SelectedRun();
-        if (summary is null) return Task.CompletedTask;
-        var projectRoot = FindProjectRoot(rootPath.Text);
-        var projectFile = projectRoot is null ? null : UnrealProject.FindProjectFile(projectRoot);
+        var summary = attachToSelectedRun ? SelectedRun() : null;
+        var projectFile = VerificationProjectFile();
         if (projectFile is null || !File.Exists(projectFile))
         {
             MessageBox.Show(this, "진단 폴더의 상위 경로에서 게임 프로젝트 파일을 찾을 수 없습니다.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -990,60 +988,52 @@ internal sealed class DashboardForm : Form
         try
         {
             var notices = new List<(string Text, MessageBoxIcon Icon)>();
+            string? attemptDirectory = null;
             using var dialog = new AutomationProgressForm(plan.Name, windowLifetime.Token,
-                (token, progress) => ExecuteVerificationAsync(summary, projectFile, plan, token, progress, (text, icon) => notices.Add((text, icon))));
+                (token, progress) => ExecuteVerificationAsync(summary, projectFile, plan, token, progress,
+                    (text, icon) => notices.Add((text, icon)), directory => attemptDirectory = directory));
             dialog.ShowDialog(this);
             if (!IsDisposed && !Disposing)
-                foreach (var notice in notices) MessageBox.Show(this, notice.Text, Text, MessageBoxButtons.OK, notice.Icon);
+                foreach (var notice in notices) ShowVerificationResult(notice.Text, notice.Icon, attemptDirectory);
         }
         finally { if (!button.IsDisposed) button.Enabled = true; }
         return Task.CompletedTask;
     }
 
-    private async Task ExecuteVerificationAsync(RunSummary summary, string projectFile, AutomationRunPlan plan,
-        CancellationToken cancellationToken, IProgress<string> progress, Action<string, MessageBoxIcon> notify)
+    private async Task ExecuteVerificationAsync(RunSummary? summary, string projectFile, AutomationRunPlan plan,
+        CancellationToken cancellationToken, IProgress<string> progress, Action<string, MessageBoxIcon> notify, Action<string> setDirectory)
     {
         VerificationAttempt? attempt=null;
         string buildStatus="NotRun";
         int? buildExitCode=null;
-        var roleOutcomesPass = reports.Where(report => report.TestRunId == summary.TestRunId).All(report => report.Outcome == "Pass");
+        string runDirectory = summary?.RunDirectory ?? VerificationWorkspace(projectFile, plan.Name);
+        string runId = summary?.TestRunId ?? Path.GetFileName(runDirectory);
+        var roleOutcomesPass = summary is null || reports.Where(report => report.TestRunId == summary.TestRunId).All(report => report.Outcome == "Pass");
         void RecordFailure(AutomationVerdict verdict)
         {
             if(attempt is null)return;
-            try{AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,verdict,roleOutcomesPass);}
+            try{AutomationVerification.Save(attempt,runId,buildStatus,buildExitCode,verdict,roleOutcomesPass);}
             catch(Exception recordError)when(recordError is IOException or UnauthorizedAccessException)
             {notify("검사 상태 파일도 저장하지 못했습니다. 실행 폴더 권한을 확인하세요.\n"+attempt.Directory+"\n"+recordError.Message,MessageBoxIcon.Warning);}
         }
         try
         {
-            attempt=AutomationVerification.CreateAttempt(plan.Simulation ? Path.Combine(summary.RunDirectory, "BotSimulation") : summary.RunDirectory);
-            AutomationVerification.Save(attempt,summary.TestRunId,"Running",null,new("Running","이번 실행의 빌드를 진행 중입니다."),roleOutcomesPass);
+            attempt=AutomationVerification.CreateAttempt(plan.Simulation ? Path.Combine(runDirectory, "BotSimulation") : runDirectory);
+            setDirectory(attempt.Directory);
+            AutomationVerification.Save(attempt,runId,"Running",null,new("Running","이번 실행의 빌드를 진행 중입니다."),roleOutcomesPass);
             var project = UnrealProject.Load(projectFile);
-            var buildTool = project.BuildTool;
-            var editorCmd = project.EngineBinary("UnrealEditor-Cmd.exe");
             progress.Report("에디터 빌드 중…");
             File.WriteAllText(Path.Combine(attempt.Directory, "Selection.txt"), $"{plan.Name}\n{plan.Filter}\n제한 시간: {plan.Timeout.TotalMinutes:0}분", Encoding.UTF8);
-            var build = await RunProcessAsync(buildTool, [project.EditorTarget, "Win64", "Development", $"-Project={projectFile}", "-WaitMutex", "-NoHotReloadFromIDE"],cancellationToken,
-                outputFile: Path.Combine(attempt.Directory, "Build.log"));
+            var build = await BuildAutomationEditorAsync(project, attempt.Directory, cancellationToken);
             buildExitCode=build.ExitCode; buildStatus=build.ExitCode==0?"Succeeded":"Failed";
             AutomationVerdict verdict=new("NotRun","빌드 실패로 자동 검사를 실행하지 않았습니다.");
             if (build.ExitCode == 0)
             {
-                AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,new("Running",plan.Name+" 실행 중입니다."),roleOutcomesPass);
+                AutomationVerification.Save(attempt,runId,buildStatus,buildExitCode,new("Running",plan.Name+" 실행 중입니다."),roleOutcomesPass);
                 progress.Report(plan.Name + " 시작 중…");
-                int completed = 0, failures = 0;
-                var automation = await RunProcessAsync(editorCmd, AutomationVerification.Arguments(projectFile,attempt,plan.Filter),cancellationToken,
-                    timeout: plan.Timeout, outputFile: Path.Combine(attempt.Directory, "Automation.log"), onLine: line =>
-                    {
-                        if (line.Contains("Test Completed.", StringComparison.Ordinal))
-                        { Interlocked.Increment(ref completed); if (line.Contains("Result={Fail}", StringComparison.Ordinal)) Interlocked.Increment(ref failures); }
-                        int start = line.IndexOf("Path={", StringComparison.Ordinal);
-                        if (start >= 0 && (line.Contains("Test Started.", StringComparison.Ordinal) || line.Contains("Test Completed.", StringComparison.Ordinal)))
-                            progress.Report($"완료 {completed}개 · 실패 {failures}개\n{line[(start+6)..].TrimEnd('}')}\n{(line.Contains("Test Started.",StringComparison.Ordinal)?"실행 중":"완료")}");
-                    });
-                verdict=AutomationVerification.Evaluate(attempt,automation.ExitCode);
+                verdict = await RunAutomationPlanAsync(project, attempt, plan, cancellationToken, progress);
             }
-            AutomationVerification.Save(attempt,summary.TestRunId,buildStatus,buildExitCode,verdict,roleOutcomesPass);
+            AutomationVerification.Save(attempt,runId,buildStatus,buildExitCode,verdict,roleOutcomesPass);
             LoadReports(rootPath.Text);
             notify($"빌드={(buildStatus=="Succeeded"?"성공":"실패")}\n자동 검사：{verdict.Description}\n"+
                 (verdict.Passed&&!roleOutcomesPass?"자동 검사는 통과했지만 선택한 게임 진단에는 검토할 항목이 남아 있습니다.\n":"")+
@@ -1062,10 +1052,78 @@ internal sealed class DashboardForm : Form
         }
     }
 
+    private static async Task<AutomationVerdict> RunAutomationPlanAsync(UnrealProject project, VerificationAttempt attempt,
+        AutomationRunPlan plan, CancellationToken token, IProgress<string> progress)
+    {
+        string[] filters = AutomationVerification.SplitFilters(plan.Filter);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(plan.Timeout);
+        string editor = project.EngineBinary("UnrealEditor-Cmd.exe");
+        int completed = 0, failures = 0;
+
+        async Task<AutomationVerdict> RunBatch(VerificationAttempt batch, string filter, string title)
+        {
+            progress.Report(title + " 시작 중…");
+            var result = await RunProcessAsync(editor, AutomationVerification.Arguments(project.ProjectFile, batch, filter), deadline.Token,
+                timeout: plan.Timeout, outputFile: Path.Combine(batch.Directory, "Automation.log"), onLine: line =>
+                {
+                    bool done = line.Contains("Test Completed.", StringComparison.Ordinal);
+                    if (done)
+                    {
+                        Interlocked.Increment(ref completed);
+                        if (line.Contains("Result={Fail}", StringComparison.Ordinal)) Interlocked.Increment(ref failures);
+                    }
+                    int start = line.IndexOf("Path={", StringComparison.Ordinal);
+                    if (start >= 0 && (done || line.Contains("Test Started.", StringComparison.Ordinal)))
+                        progress.Report($"{title} · 완료 {completed}개 · 실패 {failures}개\n{line[(start + 6)..].TrimEnd('}')}");
+                }).ConfigureAwait(false);
+            var verdict = AutomationVerification.Evaluate(batch, result.ExitCode, filter);
+            if (!verdict.Passed) AutomationVerification.WriteFailedTests(batch);
+            return verdict;
+        }
+
+        if (filters.Length == 1) return await RunBatch(attempt, filters[0], plan.Name).ConfigureAwait(false);
+        using var index = new StreamWriter(Path.Combine(attempt.Directory, "Automation.log"), false, Encoding.UTF8) { AutoFlush = true };
+        var results = new List<AutomationVerdict>();
+        for (int i = 0; i < filters.Length; i++)
+        {
+            string folder = $"Batch-{i + 1:D2}";
+            string directory = Path.Combine(attempt.Directory, folder);
+            Directory.CreateDirectory(directory);
+            var batch = attempt with { Directory = directory, StartedUtc = DateTimeOffset.UtcNow };
+            index.WriteLine($"[{i + 1}/{filters.Length}] {folder}/Unreal.log · {folder}/AutomationReport/index.json");
+            File.WriteAllText(Path.Combine(directory, "Selection.txt"), filters[i], Encoding.UTF8);
+            var verdict = await RunBatch(batch, filters[i], $"묶음 {i + 1}/{filters.Length}").ConfigureAwait(false);
+            results.Add(verdict);
+            index.WriteLine(verdict.Description);
+            if (!verdict.Passed)
+            {
+                string detail = Path.Combine(directory, "FailedTests.txt");
+                string reason = File.Exists(detail) ? File.ReadAllText(detail) : verdict.Description;
+                File.AppendAllText(Path.Combine(attempt.Directory, "FailedTests.txt"), $"[{folder}]\n{reason}\n\n", Encoding.UTF8);
+            }
+        }
+        return AutomationVerification.CombineBatches(results);
+    }
+
+    internal static Task<ProcessResult> BuildAutomationEditorAsync(UnrealProject project, string directory, CancellationToken token)
+    {
+        string log = Path.Combine(directory, "Build.log");
+        string guard = Path.Combine(project.ProjectRoot, "Tools", "BuildGuard", "SafeBuild.ps1");
+        return File.Exists(guard)
+            ? RunProcessAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", guard,
+                "-Target", project.EditorTarget, "-EngineDir", project.EngineRoot, "-Log", log], token,
+                outputFile: Path.Combine(directory, "BuildDriver.log"))
+            : RunProcessAsync(project.BuildTool, [project.EditorTarget, "Win64", "Development", $"-Project={project.ProjectFile}",
+                "-WaitMutex", "-NoHotReloadFromIDE"], token, outputFile: log);
+    }
+
     internal static async Task<ProcessResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments,CancellationToken cancellationToken=default,
-        TimeSpan? timeout=null, string? outputFile=null, Action<string>? onLine=null)
+        TimeSpan? timeout=null, string? outputFile=null, Action<string>? onLine=null, string? workingDirectory=null, Encoding? outputEncoding=null)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        if (workingDirectory is not null) startInfo.WorkingDirectory = workingDirectory;
+        if (outputEncoding is not null) startInfo.StandardOutputEncoding = startInfo.StandardErrorEncoding = outputEncoding;
         if (Path.GetExtension(fileName).Equals(".bat", StringComparison.OrdinalIgnoreCase)||Path.GetExtension(fileName).Equals(".cmd",StringComparison.OrdinalIgnoreCase))
         {
             startInfo.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";

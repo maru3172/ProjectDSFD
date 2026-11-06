@@ -11,6 +11,15 @@ dotnet run --project .\ProjectProject01DiagnosticsDashboard.csproj
 
 Choose `ProjectProject01/Saved/Diagnostics`. The dashboard groups role-specific reports by `TestRunId`, merges their CSV files, detects position/possession/AI-state mismatch candidates, and launches the selected trace with the installed UE 5.8 Unreal Insights executable.
 
+서버 도우미에서 **진단 대시보드 열기 → 빌드·자동 검사**를 누르면 아래 검사를 선택할 수 있습니다.
+
+- **유닛·기능 검사 선택**에서 Unreal에 등록된 프로젝트 테스트를 검색하거나 영역별로 골라 체크한 뒤 실행합니다. 명단은 에디터 빌드를 기준으로 갱신되며, 아직 컴파일하지 않은 테스트를 추가했으면 **빌드 후 갱신**을 선택합니다. **UI 실험 검사**는 등록된 UI 검사 묶음을 실행합니다.
+- **에셋 검증 (Unreal)**은 엔진 Data Validation을 실행합니다. **패키지 에셋 확인**은 선택한 Windows 클라이언트 또는 데디 서버 폴더의 UnrealPak 목록과 느슨한 파일에서 프로젝트 필수 파일을 대조합니다.
+- **핵심 흐름 검사 (PIE)**는 독립된 체크포인트로 저장·복원·타이틀 복귀를 검사하고, 별도의 3클라이언트 PIE 검사로 서버 맵 이동과 관전 전환을 확인합니다. 패키지에서의 실제 로그인·경기 전체 흐름 검증은 별도입니다.
+- **작업 누락 검토**는 입력 없이도 HEAD 기준 Git 변경에서 클래스·UI·함수·에셋·테스트를 찾습니다. 작업 계획을 비교하려면 항목별로 파일 경로 또는 `방 입장 | JoinRoom | /api/rooms`처럼 기능 이름과 검색어를 입력합니다. 상세 결과에서 영역과 항목을 고르면 Git 경로와 줄, 판단 근거, 위젯 이름을 참조한 테스트 파일을 볼 수 있습니다. 이름과 경로가 일치한 근거를 보여주는 검사이며, 요구사항 충족 여부와 간접 테스트 범위는 별도로 검토해야 합니다.
+
+검사 결과에서 실행 기록과 실패 로그를 바로 열 수 있습니다. 진단 실행과 별개인 검사는 `Saved/Verification`에 저장됩니다.
+
 Search and filters cover TestRunId, map, game mode, outcome, role, player/mannequin count, and tuning fingerprint. The Run Trend tab draws real FPS, frame/Game/Draw/GPU, physical/virtual memory, rolling physical-memory growth per minute, UObject/Actor counts, aggregate streaming/non-streaming texture memory and texture-pool size, network, AI work, line-trace, and path-failure samples.
 
 The aggregate `RiskCount` remains the quick overall indicator. `Risk Breakdown` explains that total by category and diagnostic code, including occurrence count, server/client role, related Actor, first/last game time, the rule that triggered the candidate, and up to three original evidence messages. These are review candidates, not confirmed root causes.

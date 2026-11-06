@@ -4,6 +4,21 @@ internal sealed record AutomationRunPlan(string Name, string Filter, TimeSpan Ti
 {
     // Test names come from the project the dashboard sits in (UnrealProject), so the tool works in any project.
     internal static AutomationRunPlan General => new("일반 자동 검사", UnrealProject.Current.GeneralTestGroup, TimeSpan.FromMinutes(30), false);
+    internal static AutomationRunPlan Frontend(string module) => new("UI 실험 검사",
+        $"{module}.UITheme+{module}.CaseRecords.RenderPages+{module}.Frontend+{module}.Editor.TitlePresentation",
+        TimeSpan.FromMinutes(10), false);
+    internal static AutomationRunPlan Gameplay(string module) => new("핵심 흐름 검사 (PIE)",
+        $"^{module}.Editor.SinglePlayerTitleReturnLoading$+^{module}.Editor.ThreeClientTravel$", TimeSpan.FromMinutes(10), false);
+
+    internal static AutomationRunPlan Selected(IEnumerable<string> names, string simulationPrefix)
+    {
+        var tests = names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (tests.Length == 0 || tests.Any(name => !AutomationTestCatalog.IsSelectableName(name)))
+            throw new ArgumentException("실행할 검사를 목록에서 선택하세요.");
+        int simulations = tests.Count(name => name.StartsWith(simulationPrefix + ".", StringComparison.OrdinalIgnoreCase));
+        return new("선택 자동 검사", string.Join('+', tests.Select(name => $"^{name}$")),
+            TimeSpan.FromMinutes((tests.Length > 20 ? 30 : 10) + simulations * 5), simulations > 0);
+    }
     internal static readonly string[] Scenarios = Enumerable.Range(1, 5).Select(i => $"Level{i}")
         .Concat(Enumerable.Range(1, 5).Select(i => $"Ladder.M{i}S3"))
         .Concat(Enumerable.Range(1, 5).Select(i => $"Ladder.H3S{i}")).ToArray();

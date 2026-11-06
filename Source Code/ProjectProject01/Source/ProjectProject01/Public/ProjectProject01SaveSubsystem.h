@@ -108,6 +108,7 @@ private:
 	friend class FProjectReviewCheckpointStoreTest;
     friend class FProjectReviewAsyncStateTest;
     friend class FProjectCheckpointAsyncPreviewWriteTest;
+    friend class FProjectSingleTitleReturnTest;
     bool ValidateActorIdentities(UWorld* World,FString& Error) const;
     static bool CheckDataCompatibility(const FString& Saved,const FString& Current,const TArray<FString>& Blocked,FString& Notice);
     void CancelPendingLoad(const FString& Error);

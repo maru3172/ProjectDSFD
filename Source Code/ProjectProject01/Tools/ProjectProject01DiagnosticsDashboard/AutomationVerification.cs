@@ -33,10 +33,44 @@ internal static class AutomationVerification
     private static string[] ArgumentsFor(string projectFile, VerificationAttempt attempt, string filter) =>
         [projectFile, "-unattended", "-nop4", "-nosplash", "-RenderOffscreen", "-TestExit=Automation Test Queue Empty",
          "-ExecCmds=Automation RunTests " + filter,
-         "-ReportExportPath=" + attempt.ReportDirectory, "-abslog=" + attempt.EngineLog,
-         "-stdout", "-FullStdOutLogOutput"];
+         "-ReportExportPath=" + attempt.ReportDirectory, "-abslog=" + attempt.EngineLog, "-stdout", "-FullStdOutLogOutput"];
 
-    internal static AutomationVerdict Evaluate(VerificationAttempt attempt, int exitCode)
+    internal static string[] SplitFilters(string filter)
+    {
+        // UE 5.8 keeps a 16,384-character internal command line even when it reads a response file.
+        // Keep room for paths and flags, and only split between complete test filters.
+        const int limit = 8_000;
+        if (filter.Length <= limit) return [filter];
+        var batches = new List<string>();
+        var batch = new List<string>();
+        int length = 0;
+        foreach (string name in filter.Split('+'))
+        {
+            if (batch.Count > 0 && length + name.Length + 1 > limit)
+            {
+                batches.Add(string.Join('+', batch));
+                batch.Clear();
+                length = 0;
+            }
+            batch.Add(name);
+            length += name.Length + 1;
+        }
+        batches.Add(string.Join('+', batch));
+        return batches.ToArray();
+    }
+
+    internal static AutomationVerdict CombineBatches(IReadOnlyList<AutomationVerdict> results)
+    {
+        int success = results.Count(result => result.Passed);
+        int Count(Func<AutomationVerdict, int?> select) => results.Sum(result => select(result) ?? 0);
+        int passed = Count(result => result.Succeeded), warnings = Count(result => result.Warnings);
+        bool complete = success == results.Count;
+        return new(complete ? "Succeeded" : "BatchFailed",
+            $"묶음 {success}/{results.Count}개 통과 · 성공 {passed}개 · 경고 포함 성공 {warnings}개. 자세한 결과는 묶음별 로그를 확인하세요.",
+            complete ? 0 : null, passed, warnings, Count(result => result.Failed), Count(result => result.NotRun), Count(result => result.InProcess));
+    }
+
+    internal static AutomationVerdict Evaluate(VerificationAttempt attempt, int exitCode, string? requestedFilter = null)
     {
         // Each invocation owns a fresh directory. Never fall back to Verification/AutomationReport.
         if (!File.Exists(attempt.ReportFile)) return new(exitCode != 0 ? "ProcessFailed" : "ReportMissing",
@@ -68,24 +102,69 @@ internal static class AutomationVerification
                 tests.EnumerateArray().Any(t => !t.TryGetProperty("state", out var state) || state.ValueKind != JsonValueKind.String ||
                     state.GetString() is not ("Success" or "SuccessWithWarnings")))
                 return Verdict("Incomplete", "집계와 검사별 완료 상태가 일치하지 않습니다.");
+            if (!string.IsNullOrEmpty(requestedFilter) && !requestedFilter.StartsWith("Group:", StringComparison.OrdinalIgnoreCase))
+            {
+                var names = tests.EnumerateArray()
+                    .Select(row => row.TryGetProperty("fullTestPath", out var name) ? name.GetString() ?? "" : "").ToArray();
+                var missing = requestedFilter.Split('+').Where(filter => !names.Any(name => MatchesFilter(name, filter))).ToArray();
+                if (missing.Length > 0) return Verdict("Incomplete", "실행 결과가 없는 검사: " + string.Join(", ", missing));
+            }
             return Verdict("Succeeded", $"성공 {passed}개, 경고 포함 성공 {warnings}개. 이번 실행의 검사 목록이 모두 완료됐습니다.");
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException)
         { return new("InvalidReport", "이번 보고서를 읽지 못했습니다: " + ex.GetType().Name, exitCode); }
     }
+
+    private static bool MatchesFilter(string name, string filter)
+    {
+        string value = filter.Trim('^', '$');
+        const StringComparison comparison = StringComparison.OrdinalIgnoreCase;
+        if (filter.StartsWith('^'))
+            return filter.EndsWith('$') ? name.Equals(value, comparison) : name.StartsWith(value, comparison);
+        return filter.EndsWith('$') ? name.EndsWith(value, comparison) : name.Contains(value, comparison);
+    }
     internal static string StatusText(string status) => status switch
     {
-        "Succeeded" => "성공", "TestFailed" => "검사 실패", "ProcessFailed" => "실행 중단", "ReportMissing" => "보고서 없음",
+        "Succeeded" => "성공", "TestFailed" => "검사 실패", "BatchFailed" => "검사 묶음 확인 필요",
+        "ProcessFailed" => "실행 중단", "ReportMissing" => "보고서 없음",
         "InvalidReport" => "보고서 오류", "StaleReport" => "과거 보고서 제외", "Incomplete" => "검사 미완료", "NoTests" => "실행된 검사 없음",
         "NotRun" => "검사 미실행", "Running" => "검사 중", "Cancelled" => "검사 취소", "TimedOut" => "검사 시간 초과", _ => "확인 필요"
     };
+
+    internal static void WriteFailedTests(VerificationAttempt attempt)
+    {
+        try
+        {
+            var file = new FileInfo(attempt.ReportFile);
+            if (!file.Exists || file.Length > 32 * 1024 * 1024) return;
+            using var report = JsonDocument.Parse(File.ReadAllText(file.FullName));
+            if (!report.RootElement.TryGetProperty("tests", out var tests)) return;
+            static string Field(JsonElement row, string key) =>
+                row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            var failures = new List<string>();
+            foreach (var test in tests.EnumerateArray())
+            {
+                string state = Field(test, "state");
+                if (state is "Success" or "SuccessWithWarnings") continue;
+                failures.Add($"[{state}] {Field(test, "fullTestPath")}");
+                if (test.TryGetProperty("entries", out var entries) && entries.ValueKind == JsonValueKind.Array)
+                    foreach (var entry in entries.EnumerateArray())
+                        if (entry.TryGetProperty("event", out var item) && Field(item, "type") is "Error" or "Warning")
+                            failures.Add("  " + Field(item, "message"));
+            }
+            if (failures.Count > 0) File.WriteAllLines(Path.Combine(attempt.Directory, "FailedTests.txt"), failures);
+        }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException) { }
+    }
     internal static void Save(VerificationAttempt attempt, string runId, string buildStatus, int? buildExitCode, AutomationVerdict verdict, bool roleOutcomesPass)
     {
         string final = buildStatus == "Succeeded" && verdict.Passed && roleOutcomesPass ? "Pass" : buildStatus == "Failed" ? "ReviewRequired" : verdict.Status is "Running" or "NotRun" or "Cancelled" ? "Inconclusive" : "ReviewRequired";
         var build = new XElement("Build", new XAttribute("Status", buildStatus), new XAttribute("Log", attempt.Relative("Build.log")));
         if (buildExitCode.HasValue) build.Add(new XAttribute("ExitCode", buildExitCode));
-        var automation = new XElement("Automation", new XAttribute("Status", verdict.Status), new XAttribute("Log", attempt.Relative("Automation.log")),
-            new XAttribute("EngineLog", attempt.Relative("Unreal.log")), new XAttribute("Report", attempt.Relative("AutomationReport/index.json")), new XElement("Reason", verdict.Reason));
+        var automation = new XElement("Automation", new XAttribute("Status", verdict.Status), new XAttribute("Log", attempt.Relative("Automation.log")));
+        if (!Directory.Exists(Path.Combine(attempt.Directory, "Batch-01")))
+            automation.Add(new XAttribute("EngineLog", attempt.Relative("Unreal.log")), new XAttribute("Report", attempt.Relative("AutomationReport/index.json")));
+        automation.Add(new XElement("Reason", verdict.Reason));
         void Attribute(string name, int? count) { if (count.HasValue) automation.Add(new XAttribute(name, count)); }
         Attribute("ExitCode", verdict.ExitCode); Attribute("SucceededCount", verdict.Succeeded); Attribute("WarningCount", verdict.Warnings);
         Attribute("FailedCount", verdict.Failed); Attribute("NotRunCount", verdict.NotRun); Attribute("InProcessCount", verdict.InProcess);

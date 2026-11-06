@@ -4,6 +4,7 @@
 #include "ProjectProject01Tutorial.h"
 #include "ProjectProject01LevelTransitionTrigger.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01SaveSubsystem.h"
 #include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "PlayerFeedbackWidgets.h"
@@ -309,24 +310,68 @@ bool FProjectSingleTitleReturnTest::RunTest(const FString&)
 	auto Request=UProjectProject01TutorialEditorLibrary::MakePracticeRequest();
 	Request.GlobalMapOverride=TEXT("/Game/MyProject/Level/LevelTest01");Request.GameModeOverride=nullptr;
 	GEditor->RequestPlaySession(Request);GEditor->StartQueuedPlaySessionRequest();
-	const double Deadline=FPlatformTime::Seconds()+60;auto Stage=MakeShared<int32>(0);
-	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,Deadline,Stage]()
+	enum class EStage { Start, Save, Restore, Title };
+	const double Deadline = FPlatformTime::Seconds() + 90;
+	auto Stage = MakeShared<EStage>(EStage::Start);
+	auto TestSave = MakeShared<TWeakObjectPtr<UProjectProject01SaveSubsystem>>();
+	auto SavedWorld = MakeShared<TWeakObjectPtr<UWorld>>();
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Deadline, Stage, TestSave, SavedWorld]()
 	{
-		if(FPlatformTime::Seconds()>Deadline){AddError(TEXT("Single-player title return stalled"));ProjectPlayTests::EndSession(this);return true;}
+		constexpr int32 Slot = 1;
+		const FName Probe(TEXT("AutomationCheckpointProbe"));
+		auto End = [this, TestSave]()
+		{
+			if (auto* Save = TestSave->Get(); Save && !Save->bSaveInProgress && !Save->PendingLoad)
+				TestTrue(TEXT("Remove isolated checkpoint fixture"), Save->DeleteSaveSlot(Slot));
+			ProjectPlayTests::EndSession(this);
+			return true;
+		};
+		if (FPlatformTime::Seconds() > Deadline)
+		{
+			AddError(FString::Printf(TEXT("Single-player checkpoint/title flow stalled at stage %d"), static_cast<int32>(*Stage)));
+			return End();
+		}
 		for(const auto& Context:GEngine->GetWorldContexts())
 		{
 			auto* World=Context.World();if(!World || World->WorldType!=EWorldType::PIE || !World->HasBegunPlay())continue;
 			auto* Loading=World->GetGameInstance()->GetSubsystem<UProjectLoadingScreenSubsystem>();
-			if(*Stage==0 && World->GetMapName().Contains(TEXT("LevelTest01")) && World->GetTimeSeconds()>1 && !Loading->IsLoading())
+			auto* Save = World->GetGameInstance()->GetSubsystem<UProjectProject01SaveSubsystem>();
+			if (!Loading || !Save) continue;
+			const bool bSingleMap = World->GetMapName().Contains(TEXT("LevelTest01"));
+			if (*Stage == EStage::Start && bSingleMap && World->GetTimeSeconds() > 1 && !Loading->IsLoading())
 			{
-				Loading->BeginLoading(false);*Stage=1;
-				UGameplayStatics::OpenLevel(World,FName(TEXT("/Game/MyProject/Level/TitleLevel")),true);return false;
+				auto* PC = World->GetFirstPlayerController();
+				auto* Player = PC ? Cast<APlayerCharacter>(PC->GetPawn()) : nullptr;
+				if (!Player) continue;
+				Save->TestSlotNamespace = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+				*TestSave = Save;
+				*SavedWorld = World;
+				Save->SetProgressValue(Probe, 1);
+				if (!TestTrue(TEXT("Request checkpoint write"), Save->SaveCheckpointToSlot(Player, Slot, Probe))) return End();
+				*Stage = EStage::Save;
+				return false;
 			}
-			if(*Stage==1 && World->GetMapName().Contains(TEXT("TitleLevel")) && World->GetTimeSeconds()>.5)
+			if (*Stage == EStage::Save && !Save->bSaveInProgress)
+			{
+				if (!TestEqual(TEXT("Checkpoint exists on disk"), Save->GetSaveSlotInfo(Slot).CheckpointId, Probe)) return End();
+				Save->SetProgressValue(Probe, 0);
+				if (!TestTrue(TEXT("Request checkpoint load"), Save->LoadCheckpointFromSlot(Slot))) return End();
+				*Stage = EStage::Restore;
+				return false;
+			}
+			if (*Stage == EStage::Restore && bSingleMap && World != SavedWorld->Get() && !Save->PendingLoad)
+			{
+				TestEqual(TEXT("Reloaded world applies saved progress"), Save->GetProgressValue(Probe), 1);
+				Loading->BeginLoading(false);
+				*Stage = EStage::Title;
+				UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/MyProject/Level/TitleLevel")), true);
+				return false;
+			}
+			if (*Stage == EStage::Title && World->GetMapName().Contains(TEXT("TitleLevel")) && World->GetTimeSeconds() > .5)
 			{
 				TestFalse(TEXT("Title return never waits for a gameplay-camera ready notification"),Loading->IsLoading());
 				TestNotNull(TEXT("Actual title controller is active after return"),Cast<AProjectProject01TitlePlayerController>(World->GetFirstPlayerController()));
-				ProjectPlayTests::EndSession(this);return true;
+				return End();
 			}
 		}
 		return false;

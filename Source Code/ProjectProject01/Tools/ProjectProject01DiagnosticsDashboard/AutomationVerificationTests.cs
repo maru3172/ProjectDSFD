@@ -18,6 +18,69 @@ internal static class AutomationVerificationTests
         Check(arguments.Single(a=>a.StartsWith("-ExecCmds=")).EndsWith("Group:ProjectDFSDGeneral")&&!arguments.Any(a=>a.Contains(";Quit")),"queue completes via TestExit, never premature Quit");
         Check(arguments.Contains("-abslog="+first.EngineLog),"each attempt keeps its full Unreal log");
         Check(arguments.Single(a=>a.StartsWith("-ExecCmds=")).Contains("Automation RunTests Group:ProjectDFSDGeneral"),"general regression uses the project group with explicit simulation exclusions");
+        const string unit = "ProjectProject01.Multiplayer.MannequinNavigationSafety";
+        const string simulation = "ProjectProject01.Simulation.BotMatch.Ladder.P5S3.Run30";
+        const string simPrefix = "ProjectProject01.Simulation.BotMatch";
+        var selected = AutomationRunPlan.Selected([unit, simulation, unit], simPrefix);
+        Check(selected.Filter == $"^{unit}$+^{simulation}$" && selected.Simulation && selected.Timeout == TimeSpan.FromMinutes(15),
+            "catalog selection is deduplicated, exact, and retains simulation runtime");
+        try
+        {
+            AutomationRunPlan.Selected(["ProjectProject01.Frontend;Quit"], simPrefix);
+            throw new InvalidOperationException("unsafe filter accepted");
+        }
+        catch (ArgumentException) { Check(true, "catalog selections cannot append engine commands"); }
+        const string display = "LogAutomationCommandLine: Display: ";
+        string[] catalogLines = [display + "Found 3 Automation Tests", display + $"\t'{unit}'", display + "'System.EngineFixture'",
+            display + $"\t'{simulation}'", display + "...Automation Test Queue Empty 0 tests performed."];
+        var names = AutomationTestCatalog.Parse(catalogLines, "ProjectProject01");
+        Check(names.SequenceEqual([unit, simulation]), "native discovery lists project leaves including complex simulation scenarios");
+        try
+        {
+            AutomationTestCatalog.Parse(catalogLines[..^1], "ProjectProject01");
+            throw new InvalidOperationException("incomplete catalog accepted");
+        }
+        catch (InvalidDataException) { Check(true, "incomplete engine output does not replace the catalog"); }
+        var bulk = AutomationRunPlan.Selected(Enumerable.Range(1, 700).Select(i => $"ProjectProject01.Simulation.BotMatch.Bulk.Run{i:D3}"), simPrefix);
+        string[] batches = AutomationVerification.SplitFilters(bulk.Filter);
+        Check(batches.Length > 1 && batches.All(batch => batch.Length <= 8_000) && string.Join('+', batches) == bulk.Filter,
+            "bulk exact selections stay below Unreal's command-line ceiling without losing names");
+        var batchVerdict = AutomationVerification.CombineBatches([new("Succeeded", "", 0, 5, 2), new("ReportMissing", "")]);
+        Check(!batchVerdict.Passed && batchVerdict.Succeeded == 5 && batchVerdict.Warnings == 2, "missing batch evidence blocks overall success");
+        using (var catalog = new AutomationCatalogForm(UnrealProject.Load(Path.GetFullPath("ProjectDFSD.uproject")), default))
+        {
+            catalog.ShowCatalog(new("", DateTimeOffset.UtcNow, names));
+            var layout = (TableLayoutPanel)catalog.Controls[0];
+            var filters = (TableLayoutPanel)layout.GetControlFromPosition(0, 0)!;
+            var search = (TextBox)filters.GetControlFromPosition(1, 0)!;
+            var list = (ListView)layout.GetControlFromPosition(0, 2)!;
+            _ = list.Handle;
+            Check(list.Items.Count == 2, "catalog UI initially exposes all registered items");
+            list.Items[0].Checked = true;
+            search.Text = "마네킹 우회";
+            Check(list.Items.Count == 1 && list.Items[0].Checked, "Korean search preserves checked items");
+            search.Text = "시뮬레이션";
+            Check(list.Items.Count == 1 && !list.Items[0].Checked, "search does not transfer a check to a different test");
+            search.Clear();
+            Check(list.Items[0].Checked && !list.Items[1].Checked, "hidden checks reappear without selecting extra tests");
+        }
+        var entries = ProjectVerification.ReadContainerEntries(
+            ["Filename, Offset, Size, Hash, Deleted, Compressed, CompressionMethod",
+                "../../../ProjectDFSD/Content/MyProject/Level/TitleLevel.umap, 0, 42, hash, false, true, 1",
+                "../../../Engine/Content/MyProject/Level/TitleLevel.umap, 42, 7, hash, false, true, 1",
+                "../../../ProjectDFSD/Content/MyProject/Level/Removed.umap, 49, 0, hash, true, false, 0"], "ProjectDFSD");
+        Check(entries.SequenceEqual(["MyProject/Level/TitleLevel.umap"]), "package audit excludes same-name Engine files and removed entries");
+        const string assetStart = "LogContentValidation: Display: Starting to validate 2 assets (0 associated objects such as actors)";
+        const string validAsset = "AssetCheck: /Game/Example/First contains valid data.";
+        Check(ProjectVerification.SummarizeAssetValidation(
+            [assetStart, validAsset, "AssetCheck: /Game/Example/Second contains valid data, but has warnings."], 0).Passed,
+            "Data Validation uses native per-asset evidence when the commandlet omits its aggregate");
+        Check(!ProjectVerification.SummarizeAssetValidation(
+            [assetStart, validAsset, "AssetCheck: /Game/Example/Second contains invalid data."], 0).Passed,
+            "invalid asset cannot pass on commandlet exit code zero");
+        Check(!ProjectVerification.SummarizeAssetValidation([assetStart, validAsset], 0).Passed,
+            "partial asset validation cannot pass");
+        WorkReviewChecks.Run(root, Check);
         int selectable=0;
         foreach(string scenario in AutomationRunPlan.Scenarios)
         {
