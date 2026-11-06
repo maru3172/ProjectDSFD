@@ -58,6 +58,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), false);
 		Blackboard->SetValueAsBool(TEXT("MannequinCanSeePlayer"), false);
 		Blackboard->ClearValue(TEXT("TargetActor"));
+		Blackboard->ClearValue(TEXT("TrackingLocation"));
 		Blackboard->ClearValue(TEXT("RoamingLocation"));
 		Blackboard->SetValueAsInt(TEXT("ChaseTier"),static_cast<int32>(ETwoStageMannequinTier::Roaming));
 		
@@ -134,8 +135,21 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	switch (Tier)
 	{
 	case ETwoStageMannequinTier::Primary:
+		{
+			FVector TrackingLocation;
+			
+			if (TryCalculateTrackingLocation(*CurrentMannequin, TrackingLocation))
+			{
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
+			}
+			else
+			{
+				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+			}
+			break;
+		}
 	case ETwoStageMannequinTier::Secondary:
-		ApplyChaseState(*Blackboard, *Player, Tier);
+		ApplyRoamingState(*Blackboard, *CurrentMannequin);
 		break;
 
 	case ETwoStageMannequinTier::Roaming:
@@ -412,65 +426,60 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 	const double PrimaryRadiusSquared = FMath::Square(static_cast<double>(PlayerPrimaryRadius));
 	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
 	
-	// 첫 번째 검사: 현재 마네킹이 플레이어 반경 안에 있으면 1 차 마네킹으로 지정
-	const double CurrentDistanceToPlayerSquared = FVector::DistSquared2D(CurrentLocation, PlayerLocation);
-	if (CurrentDistanceToPlayerSquared <= PrimaryRadiusSquared)
+	// 첫 번째 검사: 플레이어를 직접 관측한 마네킹만 1 차 마네킹으로 설정
+	if (CurrentMannequin.HasActivePlayerObservation())
 	{
 		return ETwoStageMannequinTier::Primary;
-	}
-	
-	// 두 번째 검사: 현재 마네킹 주변에 1 차 마네킹이 있는지 검사한다.
-	for (AActor* MannequinActor : AllMannequins)
-	{
-		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
-
-		if (!IsValid(OtherMannequin))
-		{
-			continue;
-		}
-
-		// 자기 자신은 검사하지 않는다.
-		if (OtherMannequin == &CurrentMannequin)
-		{
-			continue;
-		}
-
-		const FVector OtherLocation = OtherMannequin->GetActorLocation();
-		
-		// 다른 층의 마네킹이 전파원이 되는 것을 방지한다. 
-		const float HeightDifference = FMath::Abs(CurrentLocation.Z - OtherLocation.Z);
-
-		if (HeightDifference > MaximumHeightDifference)
-		{
-			continue;
-		}
-		
-		// 이 마네킹이 추적 중인지 검사하는 것이 아니다. 
-		// 반드시 플레이어 반경 안에 있는지를 직접 검사해서 1 차 마네킹인지 판단해야 한다.
-		const double OtherDistanceToPlayerSquared = FVector::DistSquared2D(OtherLocation, PlayerLocation);
-
-		const bool bOtherIsPrimary = OtherDistanceToPlayerSquared <= PrimaryRadiusSquared;
-
-		if (!bOtherIsPrimary)
-		{
-			continue;
-		}
-		
-		// 현재 마네킹이 1차 마네킹의 전파 반경 안에 있는지 검사한다. 
-		const double DistanceToPrimarySquared = FVector::DistSquared2D(CurrentLocation, OtherLocation);
-
-		if (DistanceToPrimarySquared <= PropagationRadiusSquared)
-		{
-			return ETwoStageMannequinTier::Secondary;
-		}
 	}
 	
 	return ETwoStageMannequinTier::Roaming;
 }
 
-void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Blackboard, APlayerCharacter& Player, ETwoStageMannequinTier Tier)
+bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(AMannequinAICharacter& CurrentMannequin, FVector& OutTrackingLocation) const
 {
-	Blackboard.SetValueAsObject(TEXT("TargetActor"), &Player);
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	const FMannequinPlayerObservation& Observation = CurrentMannequin.GetPlayerObservation();
+	
+	if (!Observation.bHasObservation || Observation.Confidence <= 0.0f)
+	{
+		return false;
+	}
+	
+	const double CurrentTime = World->GetTimeSeconds();
+	const double ElapsedTime = FMath::Max(0.0, CurrentTime - Observation.LastSeenTime);
+	const double PredictionTime = FMath::Min(ElapsedTime, static_cast<double>(MaximumPredictionSeconds));
+	
+	const FVector PredictedLocation = Observation.LastSeenLocation + Observation.LastSeenVelocity * PredictionTime;
+	
+	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
+	if (!IsValid(NavigationSystem))
+	{
+		return false;
+	}
+	
+	FNavLocation NavigationLocation;
+	
+	const bool bProjectedToNavigation = NavigationSystem->ProjectPointToNavigation(PredictedLocation, NavigationLocation, PredictionNavigationExtent);
+	if (!bProjectedToNavigation)
+	{
+		return false;
+	}
+	
+	OutTrackingLocation = NavigationLocation.Location;
+	CurrentMannequin.SetPredictedPlayerLocation(OutTrackingLocation);
+		
+	return true;
+}
+
+void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Blackboard, const FVector& TrackingLocation, ETwoStageMannequinTier Tier)
+{
+	Blackboard.ClearValue(TEXT("TargetActor"));
+	Blackboard.SetValueAsVector(TEXT("TrackingLocation"), TrackingLocation);
 	Blackboard.ClearValue(TEXT("RoamingLocation"));
 	Blackboard.SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
 	Blackboard.SetValueAsInt(TEXT("ChaseTier"), static_cast<int32>(Tier));
@@ -509,6 +518,7 @@ bool UBTService_TwoStageMannequinChase::TryFindRoamingLocation(const AMannequinA
 void UBTService_TwoStageMannequinChase::ApplyRoamingState(UBlackboardComponent& Blackboard, AMannequinAICharacter& CurrentMannequin)
 {
 	Blackboard.ClearValue(TEXT("TargetActor"));
+	Blackboard.ClearValue(TEXT("TrackingLocation"));
 
 	Blackboard.SetValueAsInt(TEXT("ChaseTier"), static_cast<int32>(ETwoStageMannequinTier::Roaming));
 

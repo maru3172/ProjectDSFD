@@ -54,6 +54,12 @@ private:
 		const TArray<AActor*>& AllMannequins
 		) const;
 	
+	// 마지막 관측 정보를 이용해 플레이어 예상 위치를 계산한다.
+	bool TryCalculateTrackingLocation(
+		AMannequinAICharacter& CurrentMannequin,
+		FVector& OutTrackiingLocation
+		) const;
+	
 	// 추적 상태 적용 함수
 	bool TryFindRoamingLocation(
 		const AMannequinAICharacter& CurrentMannequin,
@@ -63,7 +69,7 @@ private:
 	// 배회 목적지 생성
 	void ApplyChaseState(
 		UBlackboardComponent& Blackboard,
-		APlayerCharacter& Player,
+		const FVector& TrackingLocation,
 		ETwoStageMannequinTier Tier
 		);
 	
@@ -104,4 +110,12 @@ private:
 	// 마지막 직접 관측 이후 정보를 유지할 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
 	float ObservationLifetime = 8.0f;
+	
+	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
+	float MaximumPredictionSeconds = 3.0f;
+	
+	// 예상 위치를 NavMesh 위로 보정할 때 사용하는 검색 범위
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
+	FVector PredictionNavigationExtent = FVector(200.0f, 200.0f, 300.0f);
 };
