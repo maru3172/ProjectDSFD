@@ -364,6 +364,15 @@ void UProjectProject01LobbySubsystem::SetMatchMode(EProjectMatchMode Mode)
     SendRequest(EProjectProject01LobbyOperation::SetMatchMode,TEXT("PUT"),TEXT("/api/rooms/current/match-mode"),Body);
 }
 
+void UProjectProject01LobbySubsystem::SetRoomPublic(bool bPublic)
+{
+    if(!HasCurrentRoom()||!CurrentRoom.bIsHost||CurrentRoom.bBotMatch||CurrentRoom.bRandomMatch||CurrentRoom.bRandomParty||
+        CurrentRoom.bStarted||CurrentRoom.bStarting||CurrentRoom.bServerPreparing||CurrentRoom.bIsPublic==bPublic)return;
+    auto Json=MakeShared<FJsonObject>();Json->SetBoolField(TEXT("isPublic"),bPublic);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    SendRequest(EProjectProject01LobbyOperation::SetRoomVisibility,TEXT("PUT"),TEXT("/api/rooms/current/visibility"),Body);
+}
+
 void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
 {
 	ClearGameJoinTicket();
@@ -896,6 +905,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
     StateJson->TryGetBoolField(TEXT("randomParty"),Parsed.bRandomParty);
     StateJson->TryGetStringField(TEXT("matchSearchId"),Parsed.MatchSearchId);
     StateJson->TryGetBoolField(TEXT("botMatch"),Parsed.bBotMatch);
+    StateJson->TryGetBoolField(TEXT("isPublic"),Parsed.bIsPublic);
     StateJson->TryGetBoolField(TEXT("isObserver"),Parsed.bIsObserver);
     const TArray<TSharedPtr<FJsonValue>>* BotValues=nullptr;
     if(StateJson->TryGetArrayField(TEXT("bots"),BotValues)&&BotValues)

@@ -99,6 +99,7 @@ internal static class IntegrationChecks
                 MiniGameChecks.RunRules();await MiniGameChecks.RunAsync(database,admin);
                 await CaseLoreChecks.RunAsync(database,admin);
                 await MatchModeChecks.RunAsync(database,admin,app.Configuration); // Item roguelike mode selection and queues.
+                await RoomVisibilityChecks.RunAsync(database,admin,app.Configuration); // Host switches public/private after creation.
                 Console.WriteLine("PASS: frontend-only checks (no bot simulation or AI checks)");
                 return;
             }
@@ -237,6 +238,7 @@ internal static class IntegrationChecks
             await PartyAdmissionChecks.RunAsync(database,admin,app.Configuration,demand,output);
             await CustomRoomRulesChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await MatchModeChecks.RunAsync(database,admin,app.Configuration);
+            await RoomVisibilityChecks.RunAsync(database,admin,app.Configuration);
             await StartupRecoveryChecks.RunAsync(database,demand,Check);
             await ResultDeliveryChecks.RunAsync(database,admin,output,Check);
             if(!string.IsNullOrWhiteSpace(editorExecutable))await EditorSessionSmokeChecks.RunAsync(database,projectRoot,editorExecutable);

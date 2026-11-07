@@ -30,7 +30,7 @@ enum class EProjectProject01LobbyOperation : uint8
 	RequestGameTicket,
 	RefreshLeaderboard,
 	SubmitLeaderboardRecord,
-    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty,CreateBotMatch,EditRoomBot,EditRoomParticipant,SetMatchMode
+    JoinMatchmaking, PollMatchmaking, CancelMatchmaking,CreateMatchParty,CreateBotMatch,EditRoomBot,EditRoomParticipant,SetMatchMode,SetRoomVisibility
 };
 
 UENUM(BlueprintType)
@@ -229,6 +229,7 @@ struct PROJECTPROJECT01_API FProjectProject01RoomState
     UPROPERTY(BlueprintReadOnly) bool bRandomParty=false;
     UPROPERTY(BlueprintReadOnly) FString MatchSearchId;
     UPROPERTY(BlueprintReadOnly) bool bBotMatch=false;
+    UPROPERTY(BlueprintReadOnly) bool bIsPublic=false; // In the room list (true) or join code only.
     UPROPERTY(BlueprintReadOnly) TArray<FProjectProject01RoomBot> Bots;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -348,6 +349,8 @@ public:
     void EditRoomParticipant(const FString& Action,const FString& UserId=FString());
     /** Host of a waiting open room or random-match staging room: normal or item roguelike (resets ready). */
     void SetMatchMode(EProjectMatchMode Mode);
+    /** Host of an open waiting room: public (room list) or private (join code only). */
+    void SetRoomPublic(bool bPublic);
 
 	UFUNCTION(BlueprintCallable, Category="ProjectProject01|Lobby")
 	void JoinRoom(const FString& RoomCode, const FString& Password);

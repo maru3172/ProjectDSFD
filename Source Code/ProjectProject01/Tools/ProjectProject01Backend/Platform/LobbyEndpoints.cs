@@ -562,6 +562,56 @@ internal static partial class LobbyEndpoints
             }
         }).RequireRateLimiting("lobby");
 
+        // The host switches a waiting room between public (in the room list) and private (join code only).
+        // Random-match, party and bot rooms are made by the server and stay private. The password is unchanged.
+        app.MapPut("/api/rooms/current/visibility", async (
+            HttpRequest request, RoomVisibilityRequest body, AuthDatabase database, CancellationToken ct) =>
+        {
+            var user = await AuthenticateAsync(request, database, ct);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+            try
+            {
+                await using var connection = await database.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var membership = await LoadMembershipAsync(connection, transaction, user.Id, true, ct);
+                if (membership is null)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.NotFound(new LobbyFailure("현재 참가 중인 방이 없습니다."));
+                }
+                if (!membership.IsHost)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Json(new LobbyFailure("방장만 공개 여부를 바꿀 수 있습니다."), statusCode: 403);
+                }
+                if (!string.Equals(membership.Status, "Waiting", StringComparison.Ordinal))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("대기 중인 방에서만 공개 여부를 바꿀 수 있습니다."));
+                }
+                var system = await CommunityEndpoints.Rows(connection, transaction,
+                    "SELECT 1 FROM random_match_rooms WHERE room_id=@r UNION ALL SELECT 1 FROM random_match_parties WHERE room_id=@r LIMIT 1", ct, ("r", membership.RoomId));
+                if (system.Count > 0 || await IsBotRoomAsync(connection, transaction, membership.RoomId, ct))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Results.Conflict(new LobbyFailure("랜덤 매칭·봇 대전 방은 공개로 바꿀 수 없습니다."));
+                }
+                await ExecuteAsync(connection, transaction,
+                    "UPDATE game_rooms SET is_public = @isPublic WHERE id = @roomId;",
+                    ("@isPublic", body.IsPublic), ("@roomId", membership.RoomId), ct);
+                await transaction.CommitAsync(ct);
+                var room = await LoadCurrentRoomAsync(connection, null, user.Id, CanLaunchOrConnect(), ct);
+                return Results.Ok(new { message = body.IsPublic ? "공개방으로 바꿨습니다. 방 목록에 보입니다." : "비공개방으로 바꿨습니다. 참가 코드로만 들어올 수 있습니다.", room });
+            }
+            catch (MySqlException)
+            {
+                return DatabaseUnavailable();
+            }
+        }).RequireRateLimiting("lobby");
+
         app.MapPost("/api/rooms/current/delete", async (HttpRequest request, AuthDatabase database, CancellationToken ct) =>
         {
             var user = await AuthenticateAsync(request, database, ct);
@@ -2313,11 +2363,13 @@ internal static partial class LobbyEndpoints
         string? assignedRole;
         string matchId;
         int sessionWaitElapsedSeconds;
+        bool isPublic;
         await using (var roomCommand = new MySqlCommand(
             """
             SELECT r.id, r.join_code, r.name, r.status, r.travel_url, r.host_user_id = m.user_id AS is_host,
                    m.is_ready, m.assigned_role, m.returned_to_room, r.match_id,
-                   IF(r.status IN ('Queued','Preparing'),GREATEST(0,COALESCE(TIMESTAMPDIFF(SECOND,r.started_at_utc,UTC_TIMESTAMP(6)),0)),0)
+                   IF(r.status IN ('Queued','Preparing'),GREATEST(0,COALESCE(TIMESTAMPDIFF(SECOND,r.started_at_utc,UTC_TIMESTAMP(6)),0)),0),
+                   r.is_public
             FROM room_members m
             INNER JOIN game_rooms r ON r.id = m.room_id
             WHERE m.user_id = @userId
@@ -2341,6 +2393,7 @@ internal static partial class LobbyEndpoints
             returnedToRoom = reader.GetBoolean(8);
             matchId = reader.IsDBNull(9) ? string.Empty : ReadRoomId(reader, 9);
             sessionWaitElapsedSeconds = reader.GetInt32(10);
+            isPublic = reader.GetBoolean(11);
         }
 
         var members = new List<RoomMember>();
@@ -2410,7 +2463,7 @@ internal static partial class LobbyEndpoints
             string.Equals(status, "Started", StringComparison.Ordinal),
             returnedToRoom, travelUrl ?? string.Empty, assignedRole ?? string.Empty, members, chatMessages,status is "Queued" or "Preparing",
             random.Count>0&&status!="Waiting"&&!string.IsNullOrEmpty(assignedRole),party.Count>0,party.Count>0?Convert.ToString(party[0]["search_id"])??"":"",matchId,
-            status is "Queued" or "Preparing" ? status : string.Empty,sessionWaitElapsedSeconds,bots,botMatch,members.Any(m=>m.UserId==userId.ToString()&&m.IsObserver),await CustomRoomRules.RoomAsync(connection,transaction,roomId,ct),await MatchAffixes.RoomAsync(connection,transaction,roomId,ct),await MatchModes.RoomAsync(connection,transaction,roomId,ct),await global::RoleSwap.ProgressAsync(connection,transaction,roomId,ct));
+            status is "Queued" or "Preparing" ? status : string.Empty,sessionWaitElapsedSeconds,bots,botMatch,members.Any(m=>m.UserId==userId.ToString()&&m.IsObserver),await CustomRoomRules.RoomAsync(connection,transaction,roomId,ct),await MatchAffixes.RoomAsync(connection,transaction,roomId,ct),await MatchModes.RoomAsync(connection,transaction,roomId,ct),await global::RoleSwap.ProgressAsync(connection,transaction,roomId,ct),IsPublic:isPublic);
     }
 
     private static async Task ExecuteAsync(
@@ -2539,7 +2592,9 @@ internal sealed record RoomState(
     CustomRuleSet? CustomRules=null,
     AffixSet? Affixes=null,
     string MatchMode=MatchModes.Normal,
-    RoleSwapProgress? RoleSwap=null);
+    RoleSwapProgress? RoleSwap=null,
+    bool IsPublic=false);
+internal sealed record RoomVisibilityRequest(bool IsPublic);
 internal sealed record RoomPasswordRecord(string RoomId);
 internal sealed record LeaderboardEntry(
     int Rank,

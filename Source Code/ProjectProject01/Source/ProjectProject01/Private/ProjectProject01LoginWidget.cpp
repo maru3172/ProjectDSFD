@@ -7029,6 +7029,13 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
     int32 Observers=0;for(const auto& Member:Room.Members)Observers+=Member.bIsObserver?1:0;
     const int32 Playing=Room.Members.Num()-Observers+Room.Bots.Num();
     const bool OpenWaiting=!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty&&!Room.bStarting&&!Room.bServerPreparing&&!Room.bStarted;
+    // Public/private after creation: host only, open waiting rooms only (server-made rooms stay private).
+    if(RoomVisibilityButton)
+    {
+        RoomVisibilityButton->SetVisibility(!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        RoomVisibilityButton->SetIsEnabled(OpenWaiting&&Room.bIsHost&&!Lobby->IsRequestInFlight());
+        if(RoomVisibilityLabel)RoomVisibilityLabel->SetText(FText::FromString(Room.bIsPublic?TEXT("비공개방으로 바꾸기"):TEXT("공개방으로 바꾸기")));
+    }
     if(CustomRulesButton){CustomRulesButton->SetVisibility(!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty?ESlateVisibility::Visible:ESlateVisibility::Collapsed);CustomRulesButton->SetIsEnabled(OpenWaiting&&Room.bIsHost&&!Lobby->IsRequestInFlight());}
     if(SwitchObserverButton)
     {
@@ -7040,8 +7047,8 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
 	if (IsValid(CurrentRoomText))
 	{
         FString Summary=FString::Printf(
-			TEXT("방: %s · 참가 코드: %s\n플레이 %d/3 · 관전 %d/2 · 경기 세션: %s"),
-			*Room.Name, *Room.JoinCode, Playing,Observers,
+			TEXT("방: %s · 참가 코드: %s%s\n플레이 %d/3 · 관전 %d/2 · 경기 세션: %s"),
+			*Room.Name, *Room.JoinCode, Room.bBotMatch||Room.bRandomMatch||Room.bRandomParty?TEXT(""):Room.bIsPublic?TEXT(" · 공개방"):TEXT(" · 비공개방"), Playing,Observers,
 			Room.bServerPreparing ? (Room.SessionWaitPhase==TEXT("Preparing") ? TEXT("서버 준비 중…") : TEXT("빈자리 대기 중…")) : Room.bStarted ? TEXT("진행 중") : Room.bGameServerOnline ? TEXT("시작 가능") : TEXT("운영 비활성"));
         if(Room.CustomRules.bEnabled)Summary+=FString::Printf(TEXT("\n사용자 지정 · 데스카운트 %d · 마네킹 %d · %s"),Room.CustomRules.DeathCount,Room.CustomRules.MannequinCount,*(Room.CustomRules.TimeLimitSeconds==0?FString(TEXT("시간 무제한")):FString::Printf(TEXT("제한 %d분"),Room.CustomRules.TimeLimitSeconds/60)));
         // Playground switches on one more line, at most three names then "외 n개" so the summary box never grows further.
@@ -7539,6 +7546,10 @@ void UProjectProject01LobbyWidget::HandleRoomSessionTabClicked()
 	for(UButton* Tab:{RoomBotsTabButton.Get(),RoomMembersTabButton.Get(),RoomSessionTabButton.Get()})ProjectProject01LoginUI::CompactControls(Tab);
 }
 
+void UProjectProject01LobbyWidget::HandleRoomVisibilityClicked()
+{
+    if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())Lobby->SetRoomPublic(!Lobby->GetCurrentRoom().bIsPublic);
+}
 void UProjectProject01LobbyWidget::HandleCustomRulesClicked()
 {
     if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())
@@ -7757,6 +7768,9 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
 	auto* Play=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("플레이 참가자로 변경"));Play->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleMoveToPlayer);
 	auto* Kick=ProjectProject01LoginUI::AddButton(WidgetTree,ParticipantManagement,TEXT("선택한 인원 강제 퇴장"));Kick->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleKickParticipant);
 	auto* SessionTools=WidgetTree->ConstructWidget<UVerticalBox>();RoomToolsSwitcher->AddChild(SessionTools);
+    RoomVisibilityButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("공개방으로 바꾸기"));
+    RoomVisibilityLabel=Cast<UTextBlock>(RoomVisibilityButton->GetChildAt(0));
+    RoomVisibilityButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRoomVisibilityClicked);
     CustomRulesButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("커스텀 규칙"));
     CustomRulesButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCustomRulesClicked);
 	DeleteRoomButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("방 삭제 · 모두 로비로"));

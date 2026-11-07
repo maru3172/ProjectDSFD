@@ -1156,6 +1156,9 @@ private:
     UPROPERTY(Transient) TObjectPtr<class UButton> RoomSessionTabButton;
     UPROPERTY(Transient) TObjectPtr<class UButton> CustomRulesButton;
     UFUNCTION() void HandleCustomRulesClicked();
+    UFUNCTION() void HandleRoomVisibilityClicked();
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomVisibilityButton;
+    UPROPERTY(Transient) TObjectPtr<class UTextBlock> RoomVisibilityLabel;
     UFUNCTION() void HandleRoomBotsTabClicked();
     UFUNCTION() void HandleRoomMembersTabClicked();
     UFUNCTION() void HandleRoomSessionTabClicked();

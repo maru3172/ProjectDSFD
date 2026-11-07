@@ -475,7 +475,7 @@ bool FProjectLobbyReadabilityTest::RunTest(const FString&)
 		const auto Action=Child->GetCachedGeometry(),Panel=Lobby->RoomToolsFrame->GetCachedGeometry();
 		TestTrue(TEXT("Every administration action fits inside its panel, clear of the room footer"),Action.GetAbsolutePosition().Y+Action.GetAbsoluteSize().Y<=Panel.GetAbsolutePosition().Y+Panel.GetAbsoluteSize().Y+1);
 	}
-	Lobby->HandleRoomSessionTabClicked();RenderLayout(TEXT("FixedHostSession"),{Lobby->DeleteRoomButton,Lobby->LeaveRoomButton,Lobby->StartRoomButton});
+	Lobby->HandleRoomSessionTabClicked();RenderLayout(TEXT("FixedHostSession"),{Lobby->RoomVisibilityButton,Lobby->CustomRulesButton,Lobby->DeleteRoomButton,Lobby->LeaveRoomButton,Lobby->StartRoomButton});
 	State->CurrentRoom.bIsHost=false;Lobby->RefreshCurrentRoomView();
 	TestEqual(TEXT("Guest does not reserve a host administration column"),Lobby->RoomToolsFrame->GetVisibility(),ESlateVisibility::Collapsed);
 	RenderLayout(TEXT("FixedGuestRoom"),{Lobby->ReadyButton,Lobby->LeaveRoomButton,Lobby->SwitchObserverButton,Lobby->ChatInput});
