@@ -129,6 +129,7 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	HelpPingKeyName = EKeys::E.GetFName();
 	DangerPingKeyName = EKeys::R.GetFName();
 	LocationPingKeyName = EKeys::T.GetFName();
+	FlashlightKeyName = EKeys::F.GetFName();
 	SetFrameRateLimit(120.0f);
 	SetResolutionScaleValueEx(100.0f);
 	SetOverallScalabilityLevel(3);
@@ -201,7 +202,8 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 		GetValidatedKey(VoiceToggleKeyName, EKeys::U),
 		GetValidatedKey(HelpPingKeyName, EKeys::E),
 		GetValidatedKey(DangerPingKeyName, EKeys::R),
-		GetValidatedKey(LocationPingKeyName, EKeys::T)
+		GetValidatedKey(LocationPingKeyName, EKeys::T),
+		GetValidatedKey(FlashlightKeyName, EKeys::F)
 	};
 	TSet<FKey> UniqueKeys;
 	bool bHasInvalidOrDuplicate = false;
@@ -228,6 +230,7 @@ void UProjectProject01GameUserSettings::ValidateProjectSettings()
 		HelpPingKeyName = EKeys::E.GetFName();
 		DangerPingKeyName = EKeys::R.GetFName();
 		LocationPingKeyName = EKeys::T.GetFName();
+		FlashlightKeyName = EKeys::F.GetFName();
 	}
 }
 
@@ -355,6 +358,7 @@ FKey UProjectProject01GameUserSettings::GetVoiceToggleKey() const { return GetVa
 FKey UProjectProject01GameUserSettings::GetHelpPingKey() const { return GetValidatedKey(HelpPingKeyName, EKeys::E); }
 FKey UProjectProject01GameUserSettings::GetDangerPingKey() const { return GetValidatedKey(DangerPingKeyName, EKeys::R); }
 FKey UProjectProject01GameUserSettings::GetLocationPingKey() const { return GetValidatedKey(LocationPingKeyName, EKeys::T); }
+FKey UProjectProject01GameUserSettings::GetFlashlightKey() const { return GetValidatedKey(FlashlightKeyName, EKeys::F); }
 
 void UProjectProject01GameUserSettings::EnsureRuntimeAudioObjects()
 {

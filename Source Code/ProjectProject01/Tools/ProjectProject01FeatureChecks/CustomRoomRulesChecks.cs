@@ -29,6 +29,12 @@ internal static class CustomRoomRulesChecks
         var gated=new (CustomRuleSet Rules,bool Live)[]{(basic with{AffixIds=["B09"]},CustomRoomRules.AffixesLive),(basic with{ItemCards=true},CustomRoomRules.ItemCardsLive),(basic with{InfiniteLives=true},CustomRoomRules.InfiniteLivesLive),
             (basic with{Infection=true},CustomRoomRules.InfectionLive),(basic with{Ghosts=true},CustomRoomRules.GhostsLive),(basic with{HideRevealSeconds=40},CustomRoomRules.HideRevealLive)};
         Check(gated.All(g=>CustomRoomRules.Valid(g.Rules)==g.Live),"게임 서버에 아직 없는 규칙은 적용 거부");
+        // 4단계: 둘이 봐야 멈추는 몸체·손전등 시선 (Docs/CustomGamePlayground.md 15).
+        Check(CustomRoomRules.Valid(basic with{PairGazeBodies=1})&&CustomRoomRules.Valid(basic with{PairGazeBodies=3,MannequinCount=3})&&!CustomRoomRules.WellFormed(basic with{PairGazeBodies=4})
+            &&!CustomRoomRules.WellFormed(basic with{PairGazeBodies=2,MannequinCount=1})&&!CustomRoomRules.WellFormed(basic with{PairGazeBodies=-1}),"둘이 봐야 멈추는 몸체: 0~3개, 마네킹 수 이하");
+        Check(CustomRoomRules.Valid(basic with{Flashlight=true})&&!CustomRoomRules.WellFormed(new CustomRuleSet(false) with{Flashlight=true}),"손전등 시선: 사용자 지정이 켜진 방에서만");
+        Check(!RuleCodes.Canonical(basic).Contains("v4")&&RuleCodes.Canonical(basic with{Flashlight=true}).Contains("|v4|0|1")&&RuleCodes.Hash(basic)!=RuleCodes.Hash(basic with{PairGazeBodies=1}),
+            "규칙 코드: 4단계 규칙이 꺼져 있으면 예전 코드 그대로, 켜면 다른 코드");
         // 3단계: 규칙 카드 투표·역할 바꾸기 (Docs/CustomGamePlayground.md 12.2).
         Check(CustomRoomRules.Valid(basic with{RuleVote=true})==CustomRoomRules.RuleVoteLive&&CustomRoomRules.Valid(basic with{RoleSwap=true})==CustomRoomRules.RoleSwapLive,"규칙 카드 투표·역할 바꾸기 적용 가능");
         Check(RoleSwap.NextMannequin([1,2,3],new HashSet<ulong>())==1&&RoleSwap.NextMannequin([1,2,3],new HashSet<ulong>{1})==2&&RoleSwap.NextMannequin([1,2,3],new HashSet<ulong>{1,2})==3,"역할 바꾸기: 아직 마네킹을 안 한 사람이 방 순서대로 다음 마네킹");

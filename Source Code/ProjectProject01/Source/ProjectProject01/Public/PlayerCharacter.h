@@ -89,6 +89,21 @@ public:
 	 *  trip back to the floor start; the last one ends the run like a fall). True when something was taken. */
 	bool HandlePlaygroundFireDamage();
 	static constexpr float PlaygroundFireStaminaDrain = 20.f; // per second; full stamina lasts five seconds.
+	/** Custom game flashlight gaze (Docs/CustomGamePlayground.md 15): with the rule on, this survivor's gaze freezes bodies
+	 *  only inside the beam. The battery runs down while the light is on and fills back while it is off (server owned). */
+	void SetPlaygroundFlashlightRule(bool bRuleOn);
+	bool HasPlaygroundFlashlightRule() const { return bPlaygroundFlashlightRule; }
+	bool IsPlaygroundFlashlightOn() const { return bPlaygroundFlashlightRule && bPlaygroundFlashlightOn; }
+	float GetPlaygroundFlashlightBattery() const { return PlaygroundFlashlightBattery; }
+	bool IsPlaygroundFlashlightLocked() const { return bPlaygroundFlashlightLocked; }
+	/** Server: turn the light on or off (refused while empty-locked or without the rule). */
+	void SetPlaygroundFlashlightOn(bool bOn);
+	/** Local player: the flashlight key. */
+	void RequestTogglePlaygroundFlashlight();
+	UFUNCTION(Server, Reliable)
+	void ServerSetPlaygroundFlashlight(bool bOn);
+	/** Server: battery drain/recharge and the empty lock. Called from Tick. */
+	void TickPlaygroundFlashlight(float DeltaTime);
 	/** C04: sprinting is not possible while set. */
 	void SetAffixSprintBlocked(bool bBlocked);
 	/** A glow on this survivor (A10 breath, B03 alarm, B07 face light, ...); zero strength removes it. */
@@ -310,6 +325,20 @@ private:
 	float PlaygroundStaminaScale = 1.0f;
 	UPROPERTY(Replicated)
 	bool bInPlaygroundFire = false;
+	UPROPERTY(ReplicatedUsing = OnRep_PlaygroundFlashlight)
+	bool bPlaygroundFlashlightRule = false;
+	UPROPERTY(ReplicatedUsing = OnRep_PlaygroundFlashlight)
+	bool bPlaygroundFlashlightOn = false;
+	UPROPERTY(Replicated)
+	float PlaygroundFlashlightBattery = 30.f;
+	UPROPERTY(Replicated)
+	bool bPlaygroundFlashlightLocked = false;
+	float PlaygroundFlashlightUnlockIn = 0.f;
+	UPROPERTY(Transient)
+	TObjectPtr<class USpotLightComponent> PlaygroundFlashlightBeam;
+	UFUNCTION()
+	void OnRep_PlaygroundFlashlight();
+	void RefreshPlaygroundFlashlightBeam();
 	UPROPERTY(ReplicatedUsing = OnRep_AffixCue)
 	FColor AffixCue = FColor(0, 0, 0, 0);
 	UPROPERTY(Transient)

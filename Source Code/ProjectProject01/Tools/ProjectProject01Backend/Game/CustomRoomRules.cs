@@ -7,31 +7,31 @@ internal sealed record HandicapEntry(string UserId,int DeathCount=0,int SpeedPct
 internal sealed record CustomRuleSet(bool Enabled=false,int DeathCount=3,int MannequinCount=10,int TimeLimitSeconds=1800,
     bool ItemCards=false,bool InfiniteLives=false,bool Infection=false,bool Ghosts=false,int HideRevealSeconds=0,
     int GazeLimitSeconds=0,int Darkness=0,int SoundOnlyMeters=0,int EscapeMode=0,bool SpreadingFire=false,
-    bool HideAndSeek=false,bool Waves=false,bool RuleVote=false,bool RoleSwap=false)
+    bool HideAndSeek=false,bool Waves=false,bool RuleVote=false,bool RoleSwap=false,int PairGazeBodies=0,bool Flashlight=false)
 {
     public string[] AffixIds{get;init;}=[];
     /// <summary>Per player; kept with the room and the match snapshot, never in presets or rule codes.</summary>
     public HandicapEntry[] Handicaps{get;init;}=[];
-    internal bool HasPlaygroundRules=>(AffixIds?.Length??0)>0||ItemCards||InfiniteLives||Infection||Ghosts||HideRevealSeconds!=0||GazeLimitSeconds!=0||Darkness!=0||SoundOnlyMeters!=0||EscapeMode!=0||SpreadingFire||(Handicaps?.Length??0)>0||HideAndSeek||Waves||RuleVote||RoleSwap;
+    internal bool HasPlaygroundRules=>(AffixIds?.Length??0)>0||ItemCards||InfiniteLives||Infection||Ghosts||HideRevealSeconds!=0||GazeLimitSeconds!=0||Darkness!=0||SoundOnlyMeters!=0||EscapeMode!=0||SpreadingFire||(Handicaps?.Length??0)>0||HideAndSeek||Waves||RuleVote||RoleSwap||PairGazeBodies!=0||Flashlight;
     public bool Equals(CustomRuleSet? o)=>o is not null&&Enabled==o.Enabled&&DeathCount==o.DeathCount&&MannequinCount==o.MannequinCount&&TimeLimitSeconds==o.TimeLimitSeconds
         &&ItemCards==o.ItemCards&&InfiniteLives==o.InfiniteLives&&Infection==o.Infection&&Ghosts==o.Ghosts&&HideRevealSeconds==o.HideRevealSeconds
         &&GazeLimitSeconds==o.GazeLimitSeconds&&Darkness==o.Darkness&&SoundOnlyMeters==o.SoundOnlyMeters&&EscapeMode==o.EscapeMode&&SpreadingFire==o.SpreadingFire
-        &&HideAndSeek==o.HideAndSeek&&Waves==o.Waves&&RuleVote==o.RuleVote&&RoleSwap==o.RoleSwap
+        &&HideAndSeek==o.HideAndSeek&&Waves==o.Waves&&RuleVote==o.RuleVote&&RoleSwap==o.RoleSwap&&PairGazeBodies==o.PairGazeBodies&&Flashlight==o.Flashlight
         &&(AffixIds??[]).SequenceEqual(o.AffixIds??[])&&(Handicaps??[]).SequenceEqual(o.Handicaps??[]);
-    public override int GetHashCode()=>HashCode.Combine(Enabled,DeathCount,MannequinCount,TimeLimitSeconds,HashCode.Combine(ItemCards,InfiniteLives,Infection,Ghosts,HideRevealSeconds,GazeLimitSeconds,Darkness,HashCode.Combine(SoundOnlyMeters,EscapeMode,SpreadingFire,HideAndSeek,Waves,RuleVote,RoleSwap)),string.Join(',',AffixIds??[]));
+    public override int GetHashCode()=>HashCode.Combine(Enabled,DeathCount,MannequinCount,TimeLimitSeconds,HashCode.Combine(ItemCards,InfiniteLives,Infection,Ghosts,HideRevealSeconds,GazeLimitSeconds,Darkness,HashCode.Combine(SoundOnlyMeters,EscapeMode,SpreadingFire,HideAndSeek,Waves,RuleVote,RoleSwap)),HashCode.Combine(PairGazeBodies,Flashlight),string.Join(',',AffixIds??[]));
 }
 internal static class CustomRoomRules
 {
     internal const int MaxAffixes=6,MaxAffixesPerGroup=3,HideRevealMin=20,HideRevealMax=120,HideRevealStep=5,InfiniteLivesMinTimeLimit=300,InfectionMaxMannequins=8,
         GazeLimitMin=3,GazeLimitMax=15,DarknessMax=3,SoundOnlyMin=4,SoundOnlyMax=15,EscapeModeMax=3,
-        MaxHandicaps=4,HandicapDeathMax=2,HandicapSpeedMax=10,HandicapStaminaMax=20,HandicapGazeMax=10,HandicapBodySpeedMax=10,HandicapAttackRangeMax=15,WaveSurviveSeconds=720;
+        MaxHandicaps=4,HandicapDeathMax=2,HandicapSpeedMax=10,HandicapStaminaMax=20,HandicapGazeMax=10,HandicapBodySpeedMax=10,HandicapAttackRangeMax=15,WaveSurviveSeconds=720,PairGazeMax=3;
     // A rule may be set only once the game server runs it (same switches as ProjectPlaygroundRules in the game).
     internal const bool AffixesLive=true,ItemCardsLive=true,InfiniteLivesLive=true,InfectionLive=true,GhostsLive=true,HideRevealLive=true,
         GazeLimitLive=true,DarknessLive=true,SoundOnlyLive=true,EscapeModeLive=true,SpreadingFireLive=true,HandicapLive=true,
-        HideAndSeekLive=true,WavesLive=true,RuleVoteLive=true,RoleSwapLive=true;
-    private const string Columns="enabled,death_count,mannequin_count,time_limit_seconds,infinite_lives,infection,ghosts,hide_reveal_seconds,gaze_limit_seconds,darkness,sound_only_meters,escape_mode,spreading_fire,hide_and_seek,waves,rule_vote,role_swap";
-    private const string ValueList="@e,@d,@n,@t,@il,@inf,@g,@h,@gl,@dk,@so,@em,@sf,@hs,@wv,@rv,@rs";
-    private const string UpdateList="enabled=@e,death_count=@d,mannequin_count=@n,time_limit_seconds=@t,infinite_lives=@il,infection=@inf,ghosts=@g,hide_reveal_seconds=@h,gaze_limit_seconds=@gl,darkness=@dk,sound_only_meters=@so,escape_mode=@em,spreading_fire=@sf,hide_and_seek=@hs,waves=@wv,rule_vote=@rv,role_swap=@rs";
+        HideAndSeekLive=true,WavesLive=true,RuleVoteLive=true,RoleSwapLive=true,PairGazeLive=true,FlashlightLive=true;
+    private const string Columns="enabled,death_count,mannequin_count,time_limit_seconds,infinite_lives,infection,ghosts,hide_reveal_seconds,gaze_limit_seconds,darkness,sound_only_meters,escape_mode,spreading_fire,hide_and_seek,waves,rule_vote,role_swap,pair_gaze_bodies,flashlight";
+    private const string ValueList="@e,@d,@n,@t,@il,@inf,@g,@h,@gl,@dk,@so,@em,@sf,@hs,@wv,@rv,@rs,@pg,@fl";
+    private const string UpdateList="enabled=@e,death_count=@d,mannequin_count=@n,time_limit_seconds=@t,infinite_lives=@il,infection=@inf,ghosts=@g,hide_reveal_seconds=@h,gaze_limit_seconds=@gl,darkness=@dk,sound_only_meters=@so,escape_mode=@em,spreading_fire=@sf,hide_and_seek=@hs,waves=@wv,rule_vote=@rv,role_swap=@rs,pair_gaze_bodies=@pg,flashlight=@fl";
 
     /// <summary>Ranges and combinations, regardless of which rules are implemented yet.</summary>
     internal static bool WellFormed(CustomRuleSet? r)
@@ -47,6 +47,7 @@ internal static class CustomRoomRules
         if(r.Darkness is <0 or >DarknessMax||r.EscapeMode is <0 or >EscapeModeMax)return false;
         if(r.SoundOnlyMeters!=0&&(r.SoundOnlyMeters<SoundOnlyMin||r.SoundOnlyMeters>SoundOnlyMax))return false;
         if(r.Waves&&r.TimeLimitSeconds!=WaveSurviveSeconds)return false;
+        if(r.PairGazeBodies<0||r.PairGazeBodies>PairGazeMax||r.PairGazeBodies>r.MannequinCount)return false;
         if(r.Handicaps is null||r.Handicaps.Length>MaxHandicaps||r.Handicaps.Select(h=>h?.UserId).Distinct().Count()!=r.Handicaps.Length)return false;
         foreach(var h in r.Handicaps)
             if(h is null||string.IsNullOrEmpty(h.UserId)||h.UserId.Length>32||!h.UserId.All(ch=>char.IsAsciiLetterOrDigit(ch)||ch=='-'||ch=='_')
@@ -59,7 +60,8 @@ internal static class CustomRoomRules
     internal static bool Valid(CustomRuleSet? r)=>WellFormed(r)&&(AffixesLive||r!.AffixIds.Length==0)&&(ItemCardsLive||!r!.ItemCards)&&(InfiniteLivesLive||!r!.InfiniteLives)
         &&(InfectionLive||!r!.Infection)&&(GhostsLive||!r!.Ghosts)&&(HideRevealLive||r!.HideRevealSeconds==0)
         &&(GazeLimitLive||r!.GazeLimitSeconds==0)&&(DarknessLive||r!.Darkness==0)&&(SoundOnlyLive||r!.SoundOnlyMeters==0)&&(EscapeModeLive||r!.EscapeMode==0)&&(SpreadingFireLive||!r!.SpreadingFire)&&(HandicapLive||r!.Handicaps.Length==0)
-        &&(HideAndSeekLive||!r!.HideAndSeek)&&(WavesLive||!r!.Waves)&&(RuleVoteLive||!r!.RuleVote)&&(RoleSwapLive||!r!.RoleSwap);
+        &&(HideAndSeekLive||!r!.HideAndSeek)&&(WavesLive||!r!.Waves)&&(RuleVoteLive||!r!.RuleVote)&&(RoleSwapLive||!r!.RoleSwap)
+        &&(PairGazeLive||r!.PairGazeBodies==0)&&(FlashlightLive||!r!.Flashlight);
 
     internal static async Task EnsureAsync(MySqlConnection c,CancellationToken ct)
     {
@@ -77,7 +79,8 @@ internal static class CustomRoomRules
         foreach(var table in new[]{"room_custom_rules","match_custom_rules","room_rule_presets"})
             foreach(var (column,definition) in new[]{("infinite_lives","BOOLEAN NOT NULL DEFAULT FALSE"),("infection","BOOLEAN NOT NULL DEFAULT FALSE"),("ghosts","BOOLEAN NOT NULL DEFAULT FALSE"),("hide_reveal_seconds","INT NOT NULL DEFAULT 0"),
                 ("gaze_limit_seconds","INT NOT NULL DEFAULT 0"),("darkness","INT NOT NULL DEFAULT 0"),("sound_only_meters","INT NOT NULL DEFAULT 0"),("escape_mode","INT NOT NULL DEFAULT 0"),("spreading_fire","BOOLEAN NOT NULL DEFAULT FALSE"),
-                ("hide_and_seek","BOOLEAN NOT NULL DEFAULT FALSE"),("waves","BOOLEAN NOT NULL DEFAULT FALSE"),("rule_vote","BOOLEAN NOT NULL DEFAULT FALSE"),("role_swap","BOOLEAN NOT NULL DEFAULT FALSE")})
+                ("hide_and_seek","BOOLEAN NOT NULL DEFAULT FALSE"),("waves","BOOLEAN NOT NULL DEFAULT FALSE"),("rule_vote","BOOLEAN NOT NULL DEFAULT FALSE"),("role_swap","BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("pair_gaze_bodies","INT NOT NULL DEFAULT 0"),("flashlight","BOOLEAN NOT NULL DEFAULT FALSE")})
             {
                 var found=await CommunityEndpoints.Rows(c,null,"SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=@t AND column_name=@c",ct,("t",table),("c",column));
                 if(found.Count==0)await CommunityEndpoints.Exec(c,null,$"ALTER TABLE {table} ADD COLUMN {column} {definition}",ct);
@@ -116,11 +119,12 @@ internal static class CustomRoomRules
         return new(enabled,Convert.ToInt32(row["death_count"]),Convert.ToInt32(row["mannequin_count"]),Convert.ToInt32(row["time_limit_seconds"]),
             enabled&&itemCards,Convert.ToBoolean(row["infinite_lives"]),Convert.ToBoolean(row["infection"]),Convert.ToBoolean(row["ghosts"]),Convert.ToInt32(row["hide_reveal_seconds"]),
             Convert.ToInt32(row["gaze_limit_seconds"]),Convert.ToInt32(row["darkness"]),Convert.ToInt32(row["sound_only_meters"]),Convert.ToInt32(row["escape_mode"]),Convert.ToBoolean(row["spreading_fire"]),
-            Convert.ToBoolean(row["hide_and_seek"]),Convert.ToBoolean(row["waves"]),Convert.ToBoolean(row["rule_vote"]),Convert.ToBoolean(row["role_swap"])){AffixIds=enabled?affixIds:[],Handicaps=enabled?ReadHandicaps(row):[]};
+            Convert.ToBoolean(row["hide_and_seek"]),Convert.ToBoolean(row["waves"]),Convert.ToBoolean(row["rule_vote"]),Convert.ToBoolean(row["role_swap"]),
+            Convert.ToInt32(row["pair_gaze_bodies"]),Convert.ToBoolean(row["flashlight"])){AffixIds=enabled?affixIds:[],Handicaps=enabled?ReadHandicaps(row):[]};
     }
     private static (string,object?)[] Values(CustomRuleSet r)=>[("e",r.Enabled),("d",r.DeathCount),("n",r.MannequinCount),("t",r.TimeLimitSeconds),("il",r.InfiniteLives),("inf",r.Infection),("g",r.Ghosts),("h",r.HideRevealSeconds),
         ("gl",r.GazeLimitSeconds),("dk",r.Darkness),("so",r.SoundOnlyMeters),("em",r.EscapeMode),("sf",r.SpreadingFire),
-        ("hs",r.HideAndSeek),("wv",r.Waves),("rv",r.RuleVote),("rs",r.RoleSwap)];
+        ("hs",r.HideAndSeek),("wv",r.Waves),("rv",r.RuleVote),("rs",r.RoleSwap),("pg",r.PairGazeBodies),("fl",r.Flashlight)];
     private static string[] CustomAffixes(AffixSet set)=>set.Mode=="Custom"?set.List:[];
     internal static async Task<CustomRuleSet> RoomAsync(MySqlConnection c,MySqlTransaction? tx,string id,CancellationToken ct)
     {
@@ -136,7 +140,7 @@ internal static class CustomRoomRules
     internal static string OfficialFilter(string column)=>$"NOT EXISTS (SELECT 1 FROM match_custom_rules cr WHERE cr.match_id={column} AND cr.enabled=TRUE) AND NOT EXISTS (SELECT 1 FROM match_affixes ma WHERE ma.match_id={column} AND ma.mode='Custom') AND {MatchModes.OfficialFilter(column)}";
     internal static Task CaptureAsync(MySqlConnection c,MySqlTransaction tx,string match,CancellationToken ct)=>CommunityEndpoints.Exec(c,tx,$"""
         INSERT IGNORE INTO match_custom_rules(match_id,{Columns},handicaps_json)
-        SELECT r.match_id,c.enabled,c.death_count,c.mannequin_count,c.time_limit_seconds,c.infinite_lives,c.infection,c.ghosts,c.hide_reveal_seconds,c.gaze_limit_seconds,c.darkness,c.sound_only_meters,c.escape_mode,c.spreading_fire,c.hide_and_seek,c.waves,c.rule_vote,c.role_swap,c.handicaps_json
+        SELECT r.match_id,c.enabled,c.death_count,c.mannequin_count,c.time_limit_seconds,c.infinite_lives,c.infection,c.ghosts,c.hide_reveal_seconds,c.gaze_limit_seconds,c.darkness,c.sound_only_meters,c.escape_mode,c.spreading_fire,c.hide_and_seek,c.waves,c.rule_vote,c.role_swap,c.pair_gaze_bodies,c.flashlight,c.handicaps_json
         FROM game_rooms r JOIN room_custom_rules c ON c.room_id=r.id
         WHERE r.match_id=@m AND r.status='Started';
         """,ct,("m",match));

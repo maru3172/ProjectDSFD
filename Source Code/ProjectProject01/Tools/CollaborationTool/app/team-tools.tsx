@@ -6,10 +6,11 @@ import {Copy,Download,FileUp,GitCommit,Save} from 'lucide-react';
 import type {Data} from './types';
 import {AssetLocks,BugReports,Milestones} from './project-tools';
 import {SlideDecks} from './slide-editor';
+import TddWorkspace from './tdd-workspace';
 import Ue5Tracker from './ue5-tracker';
 import {ExportRecords} from './export-tools';
 type Row=Record<string,any>;
-const Sections=[['ue5','UE5 검증'],['decks','발표 자료'],['export','내보내기'],['locks','작업 잠금'],['bugs','버그·플레이테스트'],['milestones','마일스톤'],['meeting','회의 가져오기'],['weekly','주간 보고'],['commits','커밋 연결']] as const;
+const Sections=[['ue5','UE5 검증'],['tdd','기술 결정·TDD'],['decks','발표 자료'],['export','내보내기'],['locks','작업 잠금'],['bugs','버그·플레이테스트'],['milestones','마일스톤'],['meeting','회의 가져오기'],['weekly','주간 보고'],['commits','커밋 연결']] as const;
 // Team tools (self-host API, features.mjs → team.mjs): MeetingRecorder import, weekly report, commit links.
 async function call(url:string,value?:Row){const r=await safeRequest(url,{method:value?'POST':'GET',headers:value?{'Content-Type':'application/json'}:undefined,body:value?JSON.stringify(value):undefined});const result=await r.json() as Row;if(!r.ok)throw new Error(result.error??'요청 실패');if(value)window.dispatchEvent(new Event('daybook-saved'));return result}
 /** Same code as recordCode() in self-host/team.mjs: put it in a commit message to link the commit to the record. */
@@ -60,6 +61,7 @@ export default function TeamTools({workspace,data,selected,onOpen}:{workspace:st
   {section==='decks'&&<SlideDecks workspace={workspace} onOpen={onOpen}/>}
   {section==='export'&&<ExportRecords workspace={workspace} entry={entry}/>}
   {section==='locks'&&<AssetLocks workspace={workspace} entry={entry} onOpen={onOpen}/>}
+  {section==='tdd'&&<TddWorkspace key={workspace} workspace={workspace} canWrite={!!data&&data.workspace.role!=='viewer'&&!data.workspace.archived}/>}
   {section==='ue5'&&<Ue5Tracker key={workspace} workspace={workspace} members={data?.members??[]} entry={entry?.id??null} onOpen={onOpen} canWrite={!!data&&data.workspace.role!=='viewer'&&!data.workspace.archived}/>}
   {section==='bugs'&&<BugReports workspace={workspace} onOpen={onOpen}/>}
   {section==='milestones'&&<Milestones workspace={workspace} onOpen={onOpen}/>}

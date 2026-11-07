@@ -51,6 +51,18 @@ AMannequinAICharacter::AMannequinAICharacter()
 	ControlSlotLabel->SetCastShadow(false);
 	ControlSlotLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ControlSlotLabel->SetVisibility(false);
+	// Custom game pair gaze: "x2" over the head (amber, everyone sees it), above the mannequin player's number.
+	PairGazeLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Pair Gaze Label"));
+	PairGazeLabel->SetupAttachment(RootComponent);
+	PairGazeLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 160.0f));
+	PairGazeLabel->SetHorizontalAlignment(EHTA_Center);
+	PairGazeLabel->SetVerticalAlignment(EVRTA_TextCenter);
+	PairGazeLabel->SetWorldSize(34.0f);
+	PairGazeLabel->SetTextRenderColor(FColor(255, 190, 60));
+	PairGazeLabel->SetText(FText::FromString(TEXT("x2")));
+	PairGazeLabel->SetCastShadow(false);
+	PairGazeLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PairGazeLabel->SetVisibility(false);
 
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> MannequinInputContext(
 		TEXT("/Game/MyProject/Input/IMC_PlayerControl.IMC_PlayerControl"));
@@ -144,6 +156,12 @@ void AMannequinAICharacter::Tick(float DeltaTime)
 	{
 		RemoveSeparatedCatchContacts();
 	}
+	if (IsValid(PairGazeLabel) && PairGazeLabel->IsVisible())
+		if (const APlayerController* LocalController = GetWorld()->GetFirstPlayerController(); IsValid(LocalController) && IsValid(LocalController->PlayerCameraManager))
+		{
+			const FVector ToCamera = LocalController->PlayerCameraManager->GetCameraLocation() - PairGazeLabel->GetComponentLocation();
+			if (!ToCamera.IsNearlyZero()) PairGazeLabel->SetWorldRotation(ToCamera.Rotation());
+		}
 	if (IsValid(ControlSlotLabel) && ControlSlotLabel->IsVisible())
 	{
 		if (const APlayerController* LocalController = GetWorld()->GetFirstPlayerController();
@@ -572,6 +590,7 @@ void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AMannequinAICharacter, AffixSpeedScale);
 	DOREPLIFETIME(AMannequinAICharacter, PlaygroundSpeedScale);
 	DOREPLIFETIME(AMannequinAICharacter, bPlaygroundFireSlow);
+	DOREPLIFETIME(AMannequinAICharacter, bPlaygroundPairGaze);
 	DOREPLIFETIME(AMannequinAICharacter, RogueFootstepScale);
 	DOREPLIFETIME(AMannequinAICharacter, AffixCue);
 	DOREPLIFETIME(AMannequinAICharacter, AffixBeamRadius);
@@ -732,6 +751,19 @@ bool AMannequinAICharacter::HasActivePlayerObservation() const
 void AMannequinAICharacter::ClearPlayerObservation()
 {
 	PlayerObservation = FMannequinPlayerObservation();
+}
+
+void AMannequinAICharacter::SetPlaygroundPairGaze(const bool bPairGaze)
+{
+	if (!HasAuthority() || bPlaygroundPairGaze == bPairGaze) return;
+	bPlaygroundPairGaze = bPairGaze;
+	OnRep_PlaygroundPairGaze();
+	ForceNetUpdate();
+}
+
+void AMannequinAICharacter::OnRep_PlaygroundPairGaze()
+{
+	if (IsValid(PairGazeLabel)) PairGazeLabel->SetVisibility(bPlaygroundPairGaze);
 }
 
 void AMannequinAICharacter::SetPlaygroundFireSlow(const bool bSlow)

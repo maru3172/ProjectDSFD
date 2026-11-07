@@ -79,6 +79,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectCustomRulesFireTest;
 	friend class FProjectCustomRulesHideAndSeekWavesTest;
 	friend class FProjectCustomRulesRuleVoteTest;
+	friend class FProjectCustomRulesGazeRulesTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
 	friend class FProjectShutterTest;
@@ -134,6 +135,8 @@ public:
     bool FindPlaygroundFloorStart(const class APlayerCharacter* Survivor,FTransform& Out)const;
     /** Custom game spreading fire (Docs/CustomGamePlayground.md 12.1). */
     bool HasPlaygroundFire()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bSpreadingFire;}
+    /** Custom game flashlight gaze (Docs/CustomGamePlayground.md 15). */
+    bool HasPlaygroundFlashlight()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bFlashlight;}
     /** Custom game hide-and-seek: the first minute, while survivors hide (bodies frozen, mannequin screen dark). */
     bool IsPlaygroundHidePhase()const;
     /** Custom game rule-card vote: one player's vote (Docs/CustomGamePlayground.md 12.2). False when not counted. */
@@ -483,6 +486,11 @@ private:
 	bool bPlaygroundHideAnnounced = false, bPlaygroundHuntStarted = false;
 	void TickPlaygroundHideAndSeekAndWaves();
 	class AMannequinAICharacter* SpawnWaveBody();
+	/** Custom game phase 4: pair-gaze bodies (chosen once per floor) and the flashlight rule on survivors. */
+	bool bPlaygroundPairGazeChosen = false;
+	void TickPlaygroundGazeRules();
+	/** Eyes a pair-gaze body needs: 2, or 1 once only one survivor is still in play. */
+	int32 PlaygroundPairGazeNeeded(const TArray<APlayerController*>& SurvivorControllers) const;
 	/** Custom game rule-card vote, held at the black loading gate like the item card pick. */
 	struct FPlaygroundVote{bool bOpen=false,bDone=false;int32 Serial=0;double EndsAt=0,NextSendAt=0;TArray<FString> Cards;TMap<FString,int32> Votes;FString Chosen;};
 	FPlaygroundVote PlaygroundVote;

@@ -103,6 +103,8 @@ public:
 	FKey GetHelpPingKey() const;
 	FKey GetDangerPingKey() const;
 	FKey GetLocationPingKey() const;
+	/** Custom game flashlight gaze (Docs/CustomGamePlayground.md 15). */
+	FKey GetFlashlightKey() const;
 	bool HasSeenSurvivorGuide() const { return bHasSeenSurvivorGuide; }
 	bool HasSeenMannequinGuide() const { return bHasSeenMannequinGuide; }
 	void MarkSurvivorGuideSeen();
@@ -138,6 +140,7 @@ public:
 	void SetHelpPingKey(FKey Key) { HelpPingKeyName = Key.GetFName(); }
 	void SetDangerPingKey(FKey Key) { DangerPingKeyName = Key.GetFName(); }
 	void SetLocationPingKey(FKey Key) { LocationPingKeyName = Key.GetFName(); }
+	void SetFlashlightKey(FKey Key) { FlashlightKeyName = Key.GetFName(); }
 
 	UFUNCTION(BlueprintPure, Category="ProjectProject01|Settings|Audio")
 	class USoundClass* GetSFXSoundClass();
@@ -241,6 +244,9 @@ private:
 
 	UPROPERTY(Config)
 	FName LocationPingKeyName = TEXT("T");
+
+	UPROPERTY(Config)
+	FName FlashlightKeyName = TEXT("F");
 
 	/** 역할별 최초 게임 가이드 표시 여부. 환경설정 초기화와 별도로 유지한다. */
 	UPROPERTY(Config)

@@ -87,6 +87,10 @@ public:
 	/** Custom game spreading fire (server): a body in the fire moves at 60 %. */
 	void SetPlaygroundFireSlow(bool bSlow);
 	bool IsPlaygroundFireSlowed() const { return bPlaygroundFireSlow; }
+	/** Custom game pair gaze (Docs/CustomGamePlayground.md 15): this body freezes only while both survivors watch it. Marked
+	 *  above the head for everyone. Server sets it; the game mode applies the rule. */
+	void SetPlaygroundPairGaze(bool bPairGaze);
+	bool IsPlaygroundPairGaze() const { return bPlaygroundPairGaze; }
 	float GetBaseWalkSpeed() const { return MannequinWalkSpeed; }
 	void SetAffixCue(const FLinearColor& Color, float Strength);
 	void SetAffixHeat(float Heat) { AffixHeat = FMath::Clamp(Heat, 0.0f, 1.0f); }
@@ -153,6 +157,7 @@ public:
 private:
 	friend class AMultiplayTestGameMode;
 	friend class FProjectCustomRulesHideAndSeekWavesTest;
+	friend class FProjectCustomRulesGazeRulesTest;
 	friend class FProjectMannequinCameraTest;
 	void SetControlSlotForGameMode(int32 InControlSlot);
 
@@ -187,6 +192,12 @@ private:
 	float PlaygroundSpeedScale = 1.0f;
 	UPROPERTY(ReplicatedUsing = OnRep_MannequinWalkSpeed)
 	bool bPlaygroundFireSlow = false;
+	UPROPERTY(ReplicatedUsing = OnRep_PlaygroundPairGaze)
+	bool bPlaygroundPairGaze = false;
+	UPROPERTY(VisibleAnywhere, Category = "Multiplayer|Mannequin")
+	TObjectPtr<UTextRenderComponent> PairGazeLabel;
+	UFUNCTION()
+	void OnRep_PlaygroundPairGaze();
 	UPROPERTY(Replicated)
 	float RogueFootstepScale = 1.0f;
 	// RGB colour, A = strength. Zero alpha: no cue.

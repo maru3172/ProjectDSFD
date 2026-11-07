@@ -32,6 +32,11 @@ namespace ProjectPlaygroundRules
     constexpr int32 VoteCards=3,VoteSeconds=15;
     constexpr bool bHideAndSeekLive=true,bWavesLive=true,bRuleVoteLive=true,bRoleSwapLive=true;
     constexpr int32 RoleSwapRounds=3; // Matches in one role-swap series; the backend picks the mannequin (RoleSwap.cs).
+    // Phase 4 (Docs/CustomGamePlayground.md 15): two rules that bend "a body freezes while watched".
+    constexpr int32 PairGazeMax=3,PairGazeDefaultOn=1;    // Marked bodies that freeze only while both survivors watch.
+    constexpr float FlashlightBatterySeconds=30.f,FlashlightRechargePerSecond=1.f,FlashlightEmptyLockSeconds=3.f;
+    constexpr float FlashlightHalfAngleDegrees=20.f,FlashlightRangeCm=1500.f; // The gaze only freezes inside the beam.
+    constexpr bool bPairGazeLive=true,bFlashlightLive=true;
 }
 
 /**
@@ -92,11 +97,12 @@ struct FProjectCustomMatchRules
     int32 GazeLimitSeconds=0,Darkness=0,SoundOnlyMeters=0,EscapeMode=0; // Phase 2; 0 = off / normal.
     bool bSpreadingFire=false;
     bool bHideAndSeek=false,bWaves=false,bRuleVote=false,bRoleSwap=false; // Phase 3.
+    int32 PairGazeBodies=0; bool bFlashlight=false; // Phase 4.
     TArray<FProjectPlaygroundHandicap> Handicaps; // Per player (never part of presets or rule codes).
     const FProjectPlaygroundHandicap* FindHandicap(const FString& UserId)const
     {if(!bEnabled||UserId.IsEmpty())return nullptr;return Handicaps.FindByPredicate([&UserId](const FProjectPlaygroundHandicap& H){return H.UserId==UserId;});}
 
-    bool HasPlaygroundRules()const{return !AffixIds.IsEmpty()||bItemCards||bInfiniteLives||bInfection||bGhosts||HideRevealSeconds!=0||GazeLimitSeconds!=0||Darkness!=0||SoundOnlyMeters!=0||EscapeMode!=0||bSpreadingFire||!Handicaps.IsEmpty()||bHideAndSeek||bWaves||bRuleVote||bRoleSwap;}
+    bool HasPlaygroundRules()const{return !AffixIds.IsEmpty()||bItemCards||bInfiniteLives||bInfection||bGhosts||HideRevealSeconds!=0||GazeLimitSeconds!=0||Darkness!=0||SoundOnlyMeters!=0||EscapeMode!=0||bSpreadingFire||!Handicaps.IsEmpty()||bHideAndSeek||bWaves||bRuleVote||bRoleSwap||PairGazeBodies!=0||bFlashlight;}
     /** Ranges and combinations (Docs/CustomGamePlayground.md 2.1-2.2), regardless of which rules are implemented yet. */
     bool IsWellFormed()const
     {
@@ -111,6 +117,7 @@ struct FProjectCustomMatchRules
         if(Darkness<0||Darkness>DarknessMax||EscapeMode<0||EscapeMode>EscapeModeMax)return false;
         if(SoundOnlyMeters!=0&&(SoundOnlyMeters<SoundOnlyMin||SoundOnlyMeters>SoundOnlyMax))return false;
         if(bWaves&&TimeLimitSeconds!=WaveSurviveSeconds)return false; // Waves: survive exactly 12 minutes.
+        if(PairGazeBodies<0||PairGazeBodies>PairGazeMax||PairGazeBodies>MannequinCount)return false;
         if(Handicaps.Num()>MaxHandicaps)return false;
         {TSet<FString> Seen;for(const auto& H:Handicaps){if(!H.IsWellFormed()||Seen.Contains(H.UserId))return false;Seen.Add(H.UserId);}}
         if(AffixIds.Num()>MaxAffixes)return false;
@@ -130,12 +137,13 @@ struct FProjectCustomMatchRules
         return IsWellFormed()&&(bAffixesLive||AffixIds.IsEmpty())&&(bItemCardsLive||!bItemCards)&&(bInfiniteLivesLive||!bInfiniteLives)
             &&(bInfectionLive||!bInfection)&&(bGhostsLive||!bGhosts)&&(bHideRevealLive||HideRevealSeconds==0)
             &&(bGazeLimitLive||GazeLimitSeconds==0)&&(bDarknessLive||Darkness==0)&&(bSoundOnlyLive||SoundOnlyMeters==0)&&(bEscapeModeLive||EscapeMode==0)&&(bSpreadingFireLive||!bSpreadingFire)&&(bHandicapLive||Handicaps.IsEmpty())
-            &&(bHideAndSeekLive||!bHideAndSeek)&&(bWavesLive||!bWaves)&&(bRuleVoteLive||!bRuleVote)&&(bRoleSwapLive||!bRoleSwap);
+            &&(bHideAndSeekLive||!bHideAndSeek)&&(bWavesLive||!bWaves)&&(bRuleVoteLive||!bRuleVote)&&(bRoleSwapLive||!bRoleSwap)
+            &&(bPairGazeLive||PairGazeBodies==0)&&(bFlashlightLive||!bFlashlight);
     }
     bool operator==(const FProjectCustomMatchRules& R)const
     {
         return bEnabled==R.bEnabled&&DeathCount==R.DeathCount&&MannequinCount==R.MannequinCount&&TimeLimitSeconds==R.TimeLimitSeconds&&AffixIds==R.AffixIds
-            &&bItemCards==R.bItemCards&&bInfiniteLives==R.bInfiniteLives&&bInfection==R.bInfection&&bGhosts==R.bGhosts&&HideRevealSeconds==R.HideRevealSeconds&&GazeLimitSeconds==R.GazeLimitSeconds&&Darkness==R.Darkness&&SoundOnlyMeters==R.SoundOnlyMeters&&EscapeMode==R.EscapeMode&&bSpreadingFire==R.bSpreadingFire&&Handicaps==R.Handicaps&&bHideAndSeek==R.bHideAndSeek&&bWaves==R.bWaves&&bRuleVote==R.bRuleVote&&bRoleSwap==R.bRoleSwap;
+            &&bItemCards==R.bItemCards&&bInfiniteLives==R.bInfiniteLives&&bInfection==R.bInfection&&bGhosts==R.bGhosts&&HideRevealSeconds==R.HideRevealSeconds&&GazeLimitSeconds==R.GazeLimitSeconds&&Darkness==R.Darkness&&SoundOnlyMeters==R.SoundOnlyMeters&&EscapeMode==R.EscapeMode&&bSpreadingFire==R.bSpreadingFire&&Handicaps==R.Handicaps&&bHideAndSeek==R.bHideAndSeek&&bWaves==R.bWaves&&bRuleVote==R.bRuleVote&&bRoleSwap==R.bRoleSwap&&PairGazeBodies==R.PairGazeBodies&&bFlashlight==R.bFlashlight;
     }
     /** Strict and atomic: every field must be present and valid, otherwise Out is left unchanged. */
     static bool Parse(const TSharedPtr<FJsonObject>& Json,FProjectCustomMatchRules& Out)
@@ -154,7 +162,8 @@ struct FProjectCustomMatchRules
             ||!Whole(TEXT("gazeLimitSeconds"),R.GazeLimitSeconds)||!Whole(TEXT("darkness"),R.Darkness)||!Whole(TEXT("soundOnlyMeters"),R.SoundOnlyMeters)||!Whole(TEXT("escapeMode"),R.EscapeMode)
             ||!Json->TryGetBoolField(TEXT("spreadingFire"),R.bSpreadingFire)
             ||!Json->TryGetBoolField(TEXT("hideAndSeek"),R.bHideAndSeek)||!Json->TryGetBoolField(TEXT("waves"),R.bWaves)
-            ||!Json->TryGetBoolField(TEXT("ruleVote"),R.bRuleVote)||!Json->TryGetBoolField(TEXT("roleSwap"),R.bRoleSwap))return false;
+            ||!Json->TryGetBoolField(TEXT("ruleVote"),R.bRuleVote)||!Json->TryGetBoolField(TEXT("roleSwap"),R.bRoleSwap)
+            ||!Json->TryGetNumberField(TEXT("pairGazeBodies"),R.PairGazeBodies)||!Json->TryGetBoolField(TEXT("flashlight"),R.bFlashlight))return false;
         const TArray<TSharedPtr<FJsonValue>>* HandicapValues=nullptr;
         if(!Json->TryGetArrayField(TEXT("handicaps"),HandicapValues)||!HandicapValues||HandicapValues->Num()>ProjectPlaygroundRules::MaxHandicaps)return false;
         for(const auto& V:*HandicapValues)
@@ -191,6 +200,7 @@ struct FProjectCustomMatchRules
         }
         J->SetArrayField(TEXT("handicaps"),HandicapValues);
         J->SetBoolField(TEXT("hideAndSeek"),bHideAndSeek);J->SetBoolField(TEXT("waves"),bWaves);J->SetBoolField(TEXT("ruleVote"),bRuleVote);J->SetBoolField(TEXT("roleSwap"),bRoleSwap);
+        J->SetNumberField(TEXT("pairGazeBodies"),PairGazeBodies);J->SetBoolField(TEXT("flashlight"),bFlashlight);
         return J;
     }
 };
@@ -214,7 +224,9 @@ namespace ProjectPlaygroundVote
             {TEXT("spreadingFire"),TEXT("번지는 불"),TEXT("2분 뒤 불이 나서 30초마다 번집니다.")},
             {TEXT("escapeTogether"),TEXT("함께 탈출"),TEXT("남은 생존자가 모두 출구에 모여야 탈출합니다.")},
             {TEXT("escapeLastSavesAll"),TEXT("마지막 한 명이 모두를 구한다"),TEXT("마지막 생존자가 탈출하면 탈락자도 함께 이깁니다.")},
-            {TEXT("escapeFirstOut"),TEXT("먼저 나간 사람 승리"),TEXT("가장 먼저 탈출한 한 사람만 이깁니다.")}};
+            {TEXT("escapeFirstOut"),TEXT("먼저 나간 사람 승리"),TEXT("가장 먼저 탈출한 한 사람만 이깁니다.")},
+            {TEXT("pairGaze"),TEXT("둘이 봐야 멈추는 몸체"),TEXT("표시된 몸체 하나는 두 사람이 함께 봐야 멈춥니다.")},
+            {TEXT("flashlight"),TEXT("손전등 시선"),TEXT("손전등 빛 안에서만 몸체가 멈춥니다. 배터리 30초.")}};
         return All;
     }
     inline const FCard* Find(const FString& Id){for(const FCard& C:Cards())if(Id==C.Id)return &C;return nullptr;}
@@ -235,6 +247,8 @@ namespace ProjectPlaygroundVote
         else if(Id==TEXT("escapeTogether"))Escape(EEscapeMode::Together);
         else if(Id==TEXT("escapeLastSavesAll"))Escape(EEscapeMode::LastSavesAll);
         else if(Id==TEXT("escapeFirstOut"))Escape(EEscapeMode::FirstOutWins);
+        else if(Id==TEXT("pairGaze")){if(R.PairGazeBodies==0)R.PairGazeBodies=PairGazeDefaultOn;}
+        else if(Id==TEXT("flashlight"))R.bFlashlight=true;
         return !(R==Before);
     }
     /** Cards that would add a rule and keep the rules valid (live, allowed together). */
@@ -265,6 +279,9 @@ namespace ProjectPlaygroundPresets
         {auto R=Make(3,3,12);R.bWaves=true;Out.Add({TEXT("웨이브 생존"),TEXT("마네킹 3개로 시작해 2분마다 하나씩 늘어납니다. 12분을 버티면 승리."),R});}
         {auto R=Make(3,6,15);R.bRuleVote=true;Out.Add({TEXT("규칙 카드 투표"),TEXT("경기 전에 규칙 카드 3장 중 하나를 모두가 투표로 고릅니다."),R});}
         {auto R=Make(3,6,10);R.bRoleSwap=true;Out.Add({TEXT("역할 바꾸기"),TEXT("3판 동안 세 사람이 한 번씩 마네킹을 맡습니다."),R});}
+        {auto R=Make(3,5,15);R.PairGazeBodies=2;Out.Add({TEXT("둘이서 봐야 해"),TEXT("표시된 몸체 2개는 두 사람이 함께 봐야 멈춥니다. 떨어지지 마세요."),R});}
+        {auto R=Make(3,5,15);R.bFlashlight=true;R.Darkness=2;Out.Add({TEXT("정전된 백화점"),TEXT("어둠 속에서 손전등 빛 안의 몸체만 멈춥니다. 배터리를 아끼세요."),R});}
+        {auto R=Make(3,4,15);R.SoundOnlyMeters=8;R.GazeLimitSeconds=8;Out.Add({TEXT("보이지 않는 사냥꾼"),TEXT("8m 안에 와야 보이고, 8초 넘게 쳐다보면 시선을 무시합니다. 발소리를 들으세요."),R});}
         return Out;
     }
     /** Only presets the game server can run now. */

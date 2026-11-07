@@ -42,6 +42,14 @@
 #include "UObject/ConstructorHelpers.h"
 #include "ProjectRoguePick.h"
 #include "ProjectRuleVote.h"
+#include "ProjectCustomMatchRules.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/SOverlay.h"
+#include "Styling/CoreStyle.h"
+#include "Engine/GameViewportClient.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -225,6 +233,7 @@ void AMultiplayTestPlayerController::PlayerTick(float DeltaTime)
 {
     TickAffixPresentation();
     TickPlaygroundSoundOnly(); // Custom game sound-only mannequins (local screens only).
+    TickPlaygroundFlashlightBar(); // Custom game flashlight battery (local survivor only).
 	Super::PlayerTick(DeltaTime);
 	TickMannequinWheel(DeltaTime);
 	if(GetWorld()&&GetWorld()->IsPlayingReplay())return;
@@ -301,6 +310,8 @@ void AMultiplayTestPlayerController::ApplySurvivorSpectatorView()
 void AMultiplayTestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	CloseMannequinWheel();
+	if (PlaygroundFlashlightBar.IsValid()) if (UGameViewportClient* Viewport = PlaygroundFlashlightViewport.Get()) Viewport->RemoveViewportWidgetContent(PlaygroundFlashlightBar.ToSharedRef());
+	PlaygroundFlashlightBar.Reset();
 	if (APostProcessVolume* Volume = PlaygroundDarknessVolume.Get(); IsValid(Volume)) Volume->Destroy();
 	if (ClosingWheel.IsValid()) if (ULocalPlayer* Local = GetLocalPlayer(); Local && Local->ViewportClient) Local->ViewportClient->RemoveViewportWidgetContent(ClosingWheel.ToSharedRef());
 	ClosingWheel.Reset();RemoveWheelAimMarker();
@@ -429,6 +440,11 @@ bool AMultiplayTestPlayerController::InputKey(const FInputKeyEventArgs& Params)
 						return true;
 					}
 				}
+			}
+			else if (Params.Event == IE_Pressed && Params.Key == Settings->GetFlashlightKey() &&
+				IsValid(Cast<APlayerCharacter>(GetPawn())) && Cast<APlayerCharacter>(GetPawn())->HasPlaygroundFlashlightRule())
+			{
+				Cast<APlayerCharacter>(GetPawn())->RequestTogglePlaygroundFlashlight(); return true; // Custom game flashlight gaze.
 			}
 			else if (SurvivorState == EMultiplayTestSurvivorState::Active &&
 				Params.Event == IE_Pressed && Params.Key == Settings->GetHelpPingKey())
@@ -2168,6 +2184,69 @@ bool AMultiplayTestPlayerController::ShouldShowSoundOnlyBody(const float Distanc
 	// 50 cm of hysteresis: a body standing on the edge stays as it is instead of blinking in and out.
 	const float Edge = Meters * 100.f;
 	return bShownNow ? DistanceCm <= Edge + 50.f : DistanceCm <= Edge - 50.f;
+}
+
+void AMultiplayTestPlayerController::TickPlaygroundFlashlightBar()
+{
+	// Shown only while this local survivor has the flashlight rule; built once, values read live (no rebuild, no blink).
+	const APlayerCharacter* Survivor = IsLocalController() ? Cast<APlayerCharacter>(GetPawn()) : nullptr;
+	const bool bWant = IsValid(Survivor) && Survivor->HasPlaygroundFlashlightRule() && !Survivor->IsGameOver();
+	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+	if (bWant && !PlaygroundFlashlightBar.IsValid() && Viewport)
+	{
+		PlaygroundFlashlightBar = MakePlaygroundFlashlightBar(this);
+		Viewport->AddViewportWidgetContent(PlaygroundFlashlightBar.ToSharedRef(), 40);
+		PlaygroundFlashlightViewport = Viewport;
+	}
+	else if (!bWant && PlaygroundFlashlightBar.IsValid())
+	{
+		if (UGameViewportClient* Old = PlaygroundFlashlightViewport.Get()) Old->RemoveViewportWidgetContent(PlaygroundFlashlightBar.ToSharedRef());
+		PlaygroundFlashlightBar.Reset();
+	}
+}
+
+TSharedRef<SWidget> AMultiplayTestPlayerController::MakePlaygroundFlashlightBar(AMultiplayTestPlayerController* Owner)
+{
+	TWeakObjectPtr<AMultiplayTestPlayerController> Self(Owner);
+	auto Survivor = [Self]()->const APlayerCharacter* {const auto* PC = Self.Get(); return PC ? Cast<APlayerCharacter>(PC->GetPawn()) : nullptr;};
+	constexpr float Width = 220.f;
+	return SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(FMargin(0, 0, 0, 96)).Visibility(EVisibility::HitTestInvisible)
+	[
+		SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(0, 0, 0, .45f)).Padding(FMargin(12, 6, 12, 8))
+		[
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 0, 0, 14)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 14)).ShadowOffset(FVector2D(1, 1))
+			.ColorAndOpacity(FLinearColor(.92f, .9f, .86f, .9f))
+			.Text_Lambda([Survivor]
+			{
+				const APlayerCharacter* S = Survivor(); if (!S) return FText::GetEmpty();
+				const UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+				const FString Key = IsValid(Settings) ? Settings->GetFlashlightKey().GetDisplayName().ToString() : FString(TEXT("F"));
+				return FText::FromString(S->IsPlaygroundFlashlightLocked() ? FString(TEXT("손전등 배터리 없음 · 잠시 뒤 다시 켤 수 있습니다"))
+					: FString::Printf(TEXT("손전등 %s · %s"), S->IsPlaygroundFlashlightOn() ? TEXT("켜짐") : TEXT("꺼짐"), *Key));
+			})
+		]
+		+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
+		[
+			SNew(SBox).WidthOverride(Width).HeightOverride(8)
+			[
+				SNew(SOverlay)
+				+ SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor(0, 0, 0, .55f))]
+				+ SOverlay::Slot().HAlign(HAlign_Left)
+				[
+					SNew(SBox).WidthOverride_Lambda([Survivor]{const APlayerCharacter* S = Survivor(); return FOptionalSize(S ? Width * FMath::Clamp(S->GetPlaygroundFlashlightBattery() / ProjectPlaygroundRules::FlashlightBatterySeconds, 0.f, 1.f) : 0.f);})
+					[
+						SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")))
+						.BorderBackgroundColor_Lambda([Survivor]{const APlayerCharacter* S = Survivor();
+							return FSlateColor(S && S->IsPlaygroundFlashlightLocked() ? FLinearColor(.45f, .42f, .4f, .9f) : FLinearColor(1.f, .86f, .55f, .9f));})
+					]
+				]
+			]
+		]
+		]
+	];
 }
 
 void AMultiplayTestPlayerController::TickPlaygroundSoundOnly()

@@ -2,6 +2,8 @@
 
 
 #include "PlayerCharacter.h"
+#include "Components/SpotLightComponent.h"
+#include "ProjectCustomMatchRules.h"
 #include "ProjectReplicationBudgetComponent.h"
 #include "ProjectProject01TuningData.h"
 #include "ProjectProject01LoginWidget.h"
@@ -292,6 +294,17 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm);
+	// Custom game flashlight (off unless the rule is on): a soft, steady beam along the view; no shadows, no flicker.
+	PlaygroundFlashlightBeam = CreateDefaultSubobject<USpotLightComponent>(TEXT("Playground Flashlight"));
+	PlaygroundFlashlightBeam->SetupAttachment(Camera);
+	PlaygroundFlashlightBeam->SetIntensityUnits(ELightUnits::Candelas);
+	PlaygroundFlashlightBeam->SetIntensity(60.f);
+	PlaygroundFlashlightBeam->SetLightColor(FLinearColor(1.f, .92f, .78f));
+	PlaygroundFlashlightBeam->SetInnerConeAngle(12.f);
+	PlaygroundFlashlightBeam->SetOuterConeAngle(ProjectPlaygroundRules::FlashlightHalfAngleDegrees);
+	PlaygroundFlashlightBeam->SetAttenuationRadius(ProjectPlaygroundRules::FlashlightRangeCm);
+	PlaygroundFlashlightBeam->SetCastShadows(false);
+	PlaygroundFlashlightBeam->SetVisibility(false);
 	
 	// 플레이어 심박수 관련 컴포넌트 연결
 	HeartbeatComponent = CreateDefaultSubobject<UPlayerHeartbeatComponent>(TEXT("Heartbeat Component"));
@@ -461,6 +474,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (HasAuthority() && bPlaygroundFlashlightRule) TickPlaygroundFlashlight(DeltaTime);
 	UpdateObserverPresentation(DeltaTime);
 	if (CanUseLocomotionCamera()) LocomotionCameraFeedback.Advance(DeltaTime);
 	else LocomotionCameraFeedback.Reset();
@@ -2183,6 +2197,10 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, PlaygroundSpeedScale);
 	DOREPLIFETIME(APlayerCharacter, PlaygroundStaminaScale);
 	DOREPLIFETIME(APlayerCharacter, bInPlaygroundFire);
+	DOREPLIFETIME(APlayerCharacter, bPlaygroundFlashlightRule);
+	DOREPLIFETIME(APlayerCharacter, bPlaygroundFlashlightOn);
+	DOREPLIFETIME_CONDITION(APlayerCharacter, PlaygroundFlashlightBattery, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(APlayerCharacter, bPlaygroundFlashlightLocked, COND_OwnerOnly);
 	DOREPLIFETIME(APlayerCharacter, AffixCue);
 	DOREPLIFETIME(APlayerCharacter, RogueFootstepScale);
 	DOREPLIFETIME(APlayerCharacter, RogueMannequinHearingScale);
@@ -2470,6 +2488,65 @@ void APlayerCharacter::UpdateDebugCursorAim()
     const FRotator AimRotation(0.0f, AimDirection.Rotation().Yaw, 0.0f);
     PlayerController->SetControlRotation(AimRotation);
     SetActorRotation(AimRotation);
+}
+
+void APlayerCharacter::SetPlaygroundFlashlightRule(const bool bRuleOn)
+{
+	if (!HasAuthority() || bPlaygroundFlashlightRule == bRuleOn) return;
+	bPlaygroundFlashlightRule = bRuleOn;
+	if (!bRuleOn) { bPlaygroundFlashlightOn = false; bPlaygroundFlashlightLocked = false; }
+	PlaygroundFlashlightBattery = ProjectPlaygroundRules::FlashlightBatterySeconds;
+	RefreshPlaygroundFlashlightBeam();
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::SetPlaygroundFlashlightOn(const bool bOn)
+{
+	if (!HasAuthority() || !bPlaygroundFlashlightRule || bPlaygroundFlashlightOn == bOn) return;
+	if (bOn && (bPlaygroundFlashlightLocked || PlaygroundFlashlightBattery <= 0.f || bGameOver)) return;
+	bPlaygroundFlashlightOn = bOn;
+	RefreshPlaygroundFlashlightBeam();
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::RequestTogglePlaygroundFlashlight()
+{
+	if (!IsLocallyControlled() || !bPlaygroundFlashlightRule) return;
+	if (HasAuthority()) SetPlaygroundFlashlightOn(!bPlaygroundFlashlightOn);
+	else ServerSetPlaygroundFlashlight(!bPlaygroundFlashlightOn);
+}
+
+void APlayerCharacter::ServerSetPlaygroundFlashlight_Implementation(const bool bOn)
+{
+	SetPlaygroundFlashlightOn(bOn);
+}
+
+void APlayerCharacter::TickPlaygroundFlashlight(const float DeltaTime)
+{
+	using namespace ProjectPlaygroundRules;
+	if (bPlaygroundFlashlightOn)
+	{
+		PlaygroundFlashlightBattery = FMath::Max(0.f, PlaygroundFlashlightBattery - DeltaTime);
+		if (PlaygroundFlashlightBattery <= 0.f)
+		{
+			// Empty: the light goes out and stays out a moment, so it cannot be flicked on at once.
+			bPlaygroundFlashlightOn = false; bPlaygroundFlashlightLocked = true; PlaygroundFlashlightUnlockIn = FlashlightEmptyLockSeconds;
+			RefreshPlaygroundFlashlightBeam(); ForceNetUpdate();
+		}
+		return;
+	}
+	PlaygroundFlashlightBattery = FMath::Min(FlashlightBatterySeconds, PlaygroundFlashlightBattery + DeltaTime * FlashlightRechargePerSecond);
+	if (bPlaygroundFlashlightLocked && (PlaygroundFlashlightUnlockIn -= DeltaTime) <= 0.f) { bPlaygroundFlashlightLocked = false; ForceNetUpdate(); }
+}
+
+void APlayerCharacter::OnRep_PlaygroundFlashlight()
+{
+	RefreshPlaygroundFlashlightBeam();
+}
+
+void APlayerCharacter::RefreshPlaygroundFlashlightBeam()
+{
+	if (IsValid(PlaygroundFlashlightBeam)) PlaygroundFlashlightBeam->SetVisibility(IsPlaygroundFlashlightOn());
 }
 
 void APlayerCharacter::SetPlaygroundInFire(const bool bInFire)

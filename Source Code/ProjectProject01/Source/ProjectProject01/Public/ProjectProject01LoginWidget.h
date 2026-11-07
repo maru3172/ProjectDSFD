@@ -852,7 +852,8 @@ private:
 		VoiceToggle,
 		HelpPing,
 		DangerPing,
-		LocationPing
+		LocationPing,
+		Flashlight
 	};
 
 	UFUNCTION() void HandleMasterVolumeChanged(float Value);
@@ -895,6 +896,7 @@ private:
 	UFUNCTION() void HandleHelpPingBindingClicked();
 	UFUNCTION() void HandleDangerPingBindingClicked();
 	UFUNCTION() void HandleLocationPingBindingClicked();
+	UFUNCTION() void HandleFlashlightBindingClicked();
 	UFUNCTION() void HandleApplyClicked();
 	UFUNCTION() void HandleCancelClicked();
 	UFUNCTION() void HandleDefaultsClicked();
@@ -990,6 +992,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UButton> HelpPingKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> DangerPingKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> LocationPingKeyButton;
+	UPROPERTY(Transient) TObjectPtr<class UButton> FlashlightKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> ApplyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> CancelButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> DefaultsButton;
@@ -1036,6 +1039,7 @@ private:
 	FKey PendingHelpPingKey = EKeys::E;
 	FKey PendingDangerPingKey = EKeys::R;
 	FKey PendingLocationPingKey = EKeys::T;
+	FKey PendingFlashlightKey = EKeys::F;
 	EBindingTarget BindingTarget = EBindingTarget::None;
 	bool bRefreshingControls = false;
 	bool bAwaitingVideoConfirmation = false;

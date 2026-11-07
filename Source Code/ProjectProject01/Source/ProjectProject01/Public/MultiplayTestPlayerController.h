@@ -540,6 +540,14 @@ private:
 	TSet<TWeakObjectPtr<class AMannequinAICharacter>> PlaygroundHiddenBodies;
 	double NextSoundOnlyCheckAt = 0;
 	void TickPlaygroundSoundOnly();
+	/** Custom game flashlight gaze: the local survivor's battery bar (bottom centre). */
+	TSharedPtr<class SWidget> PlaygroundFlashlightBar;
+	TWeakObjectPtr<class UGameViewportClient> PlaygroundFlashlightViewport;
+	void TickPlaygroundFlashlightBar();
+public:
+	/** Builds the battery bar for a controller (also used by the screenshot test). */
+	static TSharedRef<class SWidget> MakePlaygroundFlashlightBar(AMultiplayTestPlayerController* Owner);
+private:
 	/** 서버에서 seamless travel 동안만 유지되는 다음 맵 진입 정보입니다. */
 	bool bLevelTransitionCarryover = false;
 	bool bSpawnAfterLevelTransition = false;

@@ -699,6 +699,89 @@ bool FProjectCustomRulesInfectedItemCardsTest::RunTest(const FString&)
     return true;
 }
 
+// Docs/CustomGamePlayground.md 15: pair-gaze bodies need both survivors' eyes (one once alone); the flashlight gaze only
+// freezes inside a lit beam, with a 30 s battery, recharge while off and a short lock when empty; bots light up near bodies.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesGazeRulesTest,"ProjectProject01.CustomRules.GazeRules",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter|EAutomationTestFlags::NonNullRHI)
+bool FProjectCustomRulesGazeRulesTest::RunTest(const FString&)
+{
+    {
+        FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=3;R.PairGazeBodies=3;TestTrue(TEXT("Up to three marked bodies"),R.IsValid());
+        R.PairGazeBodies=4;TestFalse(TEXT("Not more than three"),R.IsWellFormed());
+        R.PairGazeBodies=2;R.MannequinCount=1;TestFalse(TEXT("Not more than the bodies in play"),R.IsWellFormed());
+        FProjectCustomMatchRules Off;Off.bFlashlight=true;TestFalse(TEXT("Needs custom rules on"),Off.IsWellFormed());
+        FProjectCustomMatchRules Vote;Vote.bEnabled=true;Vote.MannequinCount=6;Vote.bRuleVote=true;
+        TestTrue(TEXT("Both can come up as vote cards"),ProjectPlaygroundVote::Candidates(Vote).Contains(TEXT("pairGaze"))&&ProjectPlaygroundVote::Candidates(Vote).Contains(TEXT("flashlight")));
+    }
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+    FProjectCustomMatchRules Rules;Rules.bEnabled=true;Rules.DeathCount=3;Rules.MannequinCount=3;Rules.PairGazeBodies=1;Rules.bFlashlight=true;
+    if(!TestTrue(TEXT("Rules accepted"),Rules.IsValid()&&Mode->AcceptCustomRules(FGuid::NewGuid().ToString(),Rules,Error)))return false;
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    AMultiplayTestPlayerController* PCs[2];APlayerCharacter* Survivors[2];
+    for(int32 I=0;I<2;++I)
+    {
+        PCs[I]=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+        Survivors[I]=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(0,I*200.f,90)),Spawn);Survivors[I]->DispatchBeginPlay();
+        PCs[I]->Possess(Survivors[I]);
+        FMultiplayTestServerPlayerRecord R;R.UserId=FString::Printf(TEXT("s%d"),I);R.Role=TEXT("Survivor");R.SurvivorState=EMultiplayTestSurvivorState::Active;R.SurvivorPawn=Survivors[I];
+        Mode->MatchPlayerRecords.Add(PCs[I],R);
+    }
+    ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    for(int32 I=0;I<3;++I){auto* Body=World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(5000+I*300.f,0,90)),Spawn);Body->SetControlSlotForGameMode(I);}
+    Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+    Mode->TickPlaygroundGazeRules();
+    int32 Marked=0;for(TActorIterator<AMannequinAICharacter> It(World);It;++It)Marked+=It->IsPlaygroundPairGaze()?1:0;
+    TestEqual(TEXT("One body is marked for pair gaze"),Marked,1);
+    Mode->TickPlaygroundGazeRules();Marked=0;for(TActorIterator<AMannequinAICharacter> It(World);It;++It)Marked+=It->IsPlaygroundPairGaze()?1:0;
+    TestEqual(TEXT("Marked once per floor"),Marked,1);
+    const TArray<APlayerController*> Controllers={PCs[0],PCs[1]};
+    TestEqual(TEXT("Two survivors in play: both must watch"),Mode->PlaygroundPairGazeNeeded(Controllers),2);
+    Mode->MatchPlayerRecords.Find(PCs[1])->SurvivorState=EMultiplayTestSurvivorState::Eliminated;PCs[1]->SetServerMatchState(EMultiplayTestMatchPhase::InProgress,EMultiplayTestSurvivorState::Eliminated);
+    TestEqual(TEXT("One survivor left: one pair of eyes is enough"),Mode->PlaygroundPairGazeNeeded(Controllers),1);
+    Mode->MatchPlayerRecords.Find(PCs[1])->SurvivorState=EMultiplayTestSurvivorState::Active;PCs[1]->SetServerMatchState(EMultiplayTestMatchPhase::InProgress,EMultiplayTestSurvivorState::Active);
+
+    APlayerCharacter* S=Survivors[0];
+    TestTrue(TEXT("Survivors carry the flashlight rule"),S->HasPlaygroundFlashlightRule()&&Survivors[1]->HasPlaygroundFlashlightRule());
+    TestFalse(TEXT("The light starts off"),S->IsPlaygroundFlashlightOn());
+    TestFalse(TEXT("With the light off the gaze freezes nothing"),Mode->CanSurvivorSeeMannequin(PCs[0],*TActorIterator<AMannequinAICharacter>(World)));
+    S->SetPlaygroundFlashlightOn(true);TestTrue(TEXT("Turned on"),S->IsPlaygroundFlashlightOn());
+    S->TickPlaygroundFlashlight(29.f);TestTrue(TEXT("Still on with battery left"),S->IsPlaygroundFlashlightOn()&&FMath::IsNearlyEqual(S->GetPlaygroundFlashlightBattery(),1.f,.01f));
+    S->TickPlaygroundFlashlight(2.f);TestTrue(TEXT("Empty: off and locked"),!S->IsPlaygroundFlashlightOn()&&S->IsPlaygroundFlashlightLocked());
+    S->SetPlaygroundFlashlightOn(true);TestFalse(TEXT("Cannot be flicked back on while locked"),S->IsPlaygroundFlashlightOn());
+    S->TickPlaygroundFlashlight(3.1f);TestTrue(TEXT("Unlocked and recharging"),!S->IsPlaygroundFlashlightLocked()&&S->GetPlaygroundFlashlightBattery()>3.f);
+    S->SetPlaygroundFlashlightOn(true);TestTrue(TEXT("On again"),S->IsPlaygroundFlashlightOn());S->SetPlaygroundFlashlightOn(false);
+
+    // Server bots light up when a body is within the beam's reach and turn it off otherwise.
+    Mode->MatchPlayerRecords.Find(PCs[1])->bServerBot=true;
+    Mode->TickPlaygroundGazeRules();TestFalse(TEXT("Bot: no body near, light off"),Survivors[1]->IsPlaygroundFlashlightOn());
+    World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(600,200,90)),Spawn);
+    Mode->TickPlaygroundGazeRules();TestTrue(TEXT("Bot: body near, light on"),Survivors[1]->IsPlaygroundFlashlightOn());
+
+    // The battery bar (bottom centre) renders and stays on screen.
+    {
+        S->SetPlaygroundFlashlightOn(true);S->TickPlaygroundFlashlight(12.f);
+        TSharedRef<SWidget> Bar=AMultiplayTestPlayerController::MakePlaygroundFlashlightBar(PCs[0]);
+        const FString Directory=FPaths::ProjectSavedDir()/TEXT("CustomRulesUIQA");IFileManager::Get().MakeDirectory(*Directory,true);FWidgetRenderer Renderer(false);
+        const FIntPoint Size(800,600);auto* Target=FWidgetRenderer::CreateTargetFor(FVector2D(Size),TF_Bilinear,false);const float Dpi=GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(Size);
+        for(int I=0;I<6;++I){Renderer.DrawWidget(Target,Bar,Dpi,FVector2D(Size),.016f);FlushRenderingCommands();}
+        TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(true);
+        if(TestTrue(TEXT("Battery bar renders"),Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags)))
+        {TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(Size.X,Size.Y,Pixels,PNG);FFileHelper::SaveArrayToFile(PNG,*(Directory/TEXT("FlashlightBar_800x600.png")));}
+        bool Fits=true;TFunction<void(TSharedRef<SWidget>)> Inspect=[&](TSharedRef<SWidget> Node)
+        {
+            if(Node->GetType()==FName(TEXT("STextBlock"))){const auto G=Node->GetCachedGeometry();const FVector2D P=G.GetAbsolutePosition(),Sz=G.GetAbsoluteSize();Fits&=P.X>=0&&P.Y>=0&&P.X+Sz.X<=Size.X+1&&P.Y+Sz.Y<=Size.Y+1;}
+            if(auto* C=Node->GetChildren())for(int I=0;I<C->Num();++I)Inspect(C->GetChildAt(I));
+        };Inspect(Bar);
+        TestTrue(TEXT("Battery text stays on screen"),Fits);
+        Target->ReleaseResource();
+    }
+    return true;
+}
+
 // Docs/CustomGamePlayground.md 5: every recommended preset is well formed, and only presets the server runs are offered.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesPresetsTest,"ProjectProject01.CustomRules.Presets",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FProjectCustomRulesPresetsTest::RunTest(const FString&)

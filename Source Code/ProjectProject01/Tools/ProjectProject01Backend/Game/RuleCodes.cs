@@ -18,10 +18,12 @@ internal static class RuleCodes
         """,ct);
 
     /// <summary>One canonical text per rule set: field order fixed, affix ids sorted.</summary>
+    // Phase 4 fields join the text only when on, so every code made before them keeps its value (and its records).
     internal static string Canonical(CustomRuleSet r)=>string.Join('|',"v3",r.Enabled?1:0,r.DeathCount,r.MannequinCount,r.TimeLimitSeconds,
         string.Join(',',(r.AffixIds??[]).OrderBy(id=>id,StringComparer.Ordinal)),r.ItemCards?1:0,r.InfiniteLives?1:0,r.Infection?1:0,r.Ghosts?1:0,r.HideRevealSeconds,
         r.GazeLimitSeconds,r.Darkness,r.SoundOnlyMeters,r.EscapeMode,r.SpreadingFire?1:0,
-        r.HideAndSeek?1:0,r.Waves?1:0,r.RuleVote?1:0,r.RoleSwap?1:0);
+        r.HideAndSeek?1:0,r.Waves?1:0,r.RuleVote?1:0,r.RoleSwap?1:0)
+        +(r.PairGazeBodies!=0||r.Flashlight?$"|v4|{r.PairGazeBodies}|{(r.Flashlight?1:0)}":"");
     internal static string Hash(CustomRuleSet r)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(r)))).ToLowerInvariant();
     internal static string Encode(string hexHash,int length)
     {

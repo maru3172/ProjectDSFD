@@ -2650,10 +2650,10 @@ void UProjectProject01GameGuideWidget::RefreshGuideText()
 				"%s : 달리기\n"
 				"%s : 도움 핑 | %s : 위험 핑 | %s : 위치 핑\n"
 				"%s : 누르는 동안 음성 송신 | %s : 음성 송신 고정 전환\n"
-				"좌/우 방향키 : 관전 대상 전환\n"
+				"좌/우 방향키 : 관전 대상 전환 | %s : 손전등 (사용자 지정 게임)\n"
 				"ESC : 게임 메뉴"),
 			*KeyName(Sprint), *KeyName(Help), *KeyName(Danger), *KeyName(Location),
-			*KeyName(PushToTalk), *KeyName(VoiceToggle))));
+			*KeyName(PushToTalk), *KeyName(VoiceToggle), *KeyName(IsValid(Settings) ? Settings->GetFlashlightKey() : EKeys::F))));
 	}
     if(IsValid(Settings))
     {
@@ -4599,6 +4599,7 @@ void UProjectProject01SettingsWidget::NativeConstruct()
 	HelpPingKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleHelpPingBindingClicked);
 	DangerPingKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleDangerPingBindingClicked);
 	LocationPingKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleLocationPingBindingClicked);
+	FlashlightKeyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleFlashlightBindingClicked);
 	ApplyButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleApplyClicked);
 	CancelButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleCancelClicked);
 	DefaultsButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleDefaultsClicked);
@@ -4657,6 +4658,7 @@ void UProjectProject01SettingsWidget::NativeDestruct()
 	if (IsValid(HelpPingKeyButton)) HelpPingKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleHelpPingBindingClicked);
 	if (IsValid(DangerPingKeyButton)) DangerPingKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleDangerPingBindingClicked);
 	if (IsValid(LocationPingKeyButton)) LocationPingKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleLocationPingBindingClicked);
+	if (IsValid(FlashlightKeyButton)) FlashlightKeyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleFlashlightBindingClicked);
 	if (IsValid(ApplyButton)) ApplyButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleApplyClicked);
 	if (IsValid(CancelButton)) CancelButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleCancelClicked);
 	if (IsValid(DefaultsButton)) DefaultsButton->OnClicked.RemoveDynamic(this, &UProjectProject01SettingsWidget::HandleDefaultsClicked);
@@ -4778,6 +4780,7 @@ void UProjectProject01SettingsWidget::HandleVoiceToggleBindingClicked() { BeginB
 void UProjectProject01SettingsWidget::HandleHelpPingBindingClicked() { BeginBindingCapture(EBindingTarget::HelpPing); }
 void UProjectProject01SettingsWidget::HandleDangerPingBindingClicked() { BeginBindingCapture(EBindingTarget::DangerPing); }
 void UProjectProject01SettingsWidget::HandleLocationPingBindingClicked() { BeginBindingCapture(EBindingTarget::LocationPing); }
+void UProjectProject01SettingsWidget::HandleFlashlightBindingClicked() { BeginBindingCapture(EBindingTarget::Flashlight); }
 void UProjectProject01SettingsWidget::HandleApplyClicked() { ApplyPendingSettings(); }
 
 void UProjectProject01SettingsWidget::HandleCancelClicked()
@@ -4876,6 +4879,7 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 	PendingHelpPingKey = Settings->GetHelpPingKey();
 	PendingDangerPingKey = Settings->GetDangerPingKey();
 	PendingLocationPingKey = Settings->GetLocationPingKey();
+	PendingFlashlightKey = Settings->GetFlashlightKey();
 	PendingDirectServerAddress = Settings->GetDirectServerAddress();
 }
 
@@ -4917,6 +4921,7 @@ void UProjectProject01SettingsWidget::SetPendingDefaults()
 	PendingHelpPingKey = EKeys::E;
 	PendingDangerPingKey = EKeys::R;
 	PendingLocationPingKey = EKeys::T;
+	PendingFlashlightKey = EKeys::F;
 	PendingDirectServerAddress.Reset();
 }
 
@@ -5007,6 +5012,7 @@ void UProjectProject01SettingsWidget::RefreshBindingLabels()
 	ProjectProject01LoginUI::SetButtonText(HelpPingKeyButton, LabelFor(EBindingTarget::HelpPing, PendingHelpPingKey));
 	ProjectProject01LoginUI::SetButtonText(DangerPingKeyButton, LabelFor(EBindingTarget::DangerPing, PendingDangerPingKey));
 	ProjectProject01LoginUI::SetButtonText(LocationPingKeyButton, LabelFor(EBindingTarget::LocationPing, PendingLocationPingKey));
+	ProjectProject01LoginUI::SetButtonText(FlashlightKeyButton, LabelFor(EBindingTarget::Flashlight, PendingFlashlightKey));
 }
 
 void UProjectProject01SettingsWidget::BeginBindingCapture(const EBindingTarget Target)
@@ -5025,7 +5031,7 @@ bool UProjectProject01SettingsWidget::TryAssignBinding(const FKey Key)
 		return false;
 	}
 	const TArray<FKey> Existing = { PendingForwardKey, PendingBackwardKey, PendingLeftKey, PendingRightKey, PendingSprintKey,
-		PendingVoicePushToTalkKey, PendingVoiceToggleKey, PendingHelpPingKey, PendingDangerPingKey, PendingLocationPingKey };
+		PendingVoicePushToTalkKey, PendingVoiceToggleKey, PendingHelpPingKey, PendingDangerPingKey, PendingLocationPingKey, PendingFlashlightKey };
 	int32 CurrentIndex = static_cast<int32>(BindingTarget) - 1;
 	for (int32 Index = 0; Index < Existing.Num(); ++Index)
 	{
@@ -5047,6 +5053,7 @@ bool UProjectProject01SettingsWidget::TryAssignBinding(const FKey Key)
 	case EBindingTarget::HelpPing: PendingHelpPingKey = Key; break;
 	case EBindingTarget::DangerPing: PendingDangerPingKey = Key; break;
 	case EBindingTarget::LocationPing: PendingLocationPingKey = Key; break;
+	case EBindingTarget::Flashlight: PendingFlashlightKey = Key; break;
 	default: return false;
 	}
 	BindingTarget = EBindingTarget::None;
@@ -5127,6 +5134,7 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetHelpPingKey(PendingHelpPingKey);
 	Settings->SetDangerPingKey(PendingDangerPingKey);
 	Settings->SetLocationPingKey(PendingLocationPingKey);
+	Settings->SetFlashlightKey(PendingFlashlightKey);
 	Settings->SetDirectServerAddress(PendingDirectServerAddress);
 	Settings->SetScreenResolution(PendingResolution);
 	Settings->SetFullscreenMode(PendingWindowMode);
@@ -5447,6 +5455,7 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	HelpPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("도움 요청 핑"));
 	DangerPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("위험 알림 핑"));
 	LocationPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("위치 표시 핑"));
+	FlashlightKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("손전등 (사용자 지정 게임)"));
 
 	DefaultsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("설정 초기화"));
 	ApplyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("적용"));
@@ -7042,6 +7051,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
             if(R.bSpreadingFire)On.Add(TEXT("번지는 불"));
             if(R.bHideAndSeek)On.Insert(TEXT("숨바꼭질"),0);if(R.bWaves)On.Insert(TEXT("웨이브 생존"),0);
             if(R.bRuleVote)On.Insert(TEXT("규칙 카드 투표"),0);if(R.bRoleSwap)On.Insert(TEXT("역할 바꾸기"),0);
+            if(R.PairGazeBodies>0)On.Add(FString::Printf(TEXT("둘이 봐야 멈춤 %d"),R.PairGazeBodies));if(R.bFlashlight)On.Add(TEXT("손전등 시선"));
             static const TCHAR* EscapeNames[]={TEXT(""),TEXT("함께 탈출"),TEXT("마지막 한 명이 모두를 구한다"),TEXT("먼저 나간 사람 승리")};
             if(R.EscapeMode>0&&R.EscapeMode<4)On.Insert(EscapeNames[R.EscapeMode],0); // The escape rule changes how to win: shown first.
             if(!R.AffixIds.IsEmpty())On.Add(FString::Printf(TEXT("어픽스 %d"),R.AffixIds.Num()));if(R.bItemCards)On.Add(TEXT("아이템 카드"));

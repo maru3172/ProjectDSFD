@@ -1404,7 +1404,7 @@ void AMultiplayTestGameMode::Tick(float DeltaSeconds)
     if(AffixRuntime&&AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)AffixRuntime->Tick(this,DeltaSeconds);
     if(AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)TickPlaygroundHideReveal(DeltaSeconds);
     if(AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)TickPlaygroundFire();
-    if(AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)TickPlaygroundHideAndSeekAndWaves();
+    if(AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress){TickPlaygroundHideAndSeekAndWaves();TickPlaygroundGazeRules();}
 	if (AuthoritativeMatchPhase == EMultiplayTestMatchPhase::InProgress &&
 		MatchTimeLimitSeconds > 0.0f && GetElapsedMatchSeconds() >= MatchTimeLimitSeconds)
 	{
@@ -4485,9 +4485,18 @@ bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
 	{
 		return false;
 	}
+	// Custom game flashlight gaze: only a lit beam freezes, and only inside it (Docs/CustomGamePlayground.md 15).
+	float GazeHalfAngle = HalfAngle;
+	if (HasPlaygroundFlashlight())
+	{
+		const APlayerCharacter* Holder = Cast<const APlayerCharacter>(SurvivorPawn);
+		if (!Holder || !Holder->IsPlaygroundFlashlightOn() ||
+			FVector::DistSquared(ViewLocation, CapsuleCenter) > FMath::Square(ProjectPlaygroundRules::FlashlightRangeCm)) return false;
+		GazeHalfAngle = FMath::Min(HalfAngle, ProjectPlaygroundRules::FlashlightHalfAngleDegrees);
+	}
 	for (const FVector& TargetPoint : TargetPoints)
 	{
-		if (!IsPointInsideVisionCone(ViewLocation, ViewRotation.Vector(), TargetPoint, HalfAngle))
+		if (!IsPointInsideVisionCone(ViewLocation, ViewRotation.Vector(), TargetPoint, GazeHalfAngle))
 		{
 			continue;
 		}
@@ -4568,6 +4577,11 @@ void AMultiplayTestGameMode::UpdateSurvivorVisionFrozenStates()
 			}
 		}
 
+		// Custom game pair gaze: a marked body needs both survivors' eyes (one is enough once only one is left in play).
+		if (bObservedByAnySurvivor && Mannequin->IsPlaygroundPairGaze() && Watchers.Num() < PlaygroundPairGazeNeeded(SurvivorControllers))
+		{
+			bObservedByAnySurvivor = false;
+		}
 		if (AffixRuntime) bObservedByAnySurvivor = AffixRuntime->OnWatched(Mannequin, Watchers, bObservedByAnySurvivor);
 		if (IsPlaygroundHidePhase()) bObservedByAnySurvivor = true; // Hide-and-seek: every body stays frozen while survivors hide.
 		bObservedByAnySurvivor = ApplyPlaygroundGazeLimit(Mannequin, bObservedByAnySurvivor);
@@ -4679,4 +4693,45 @@ void AMultiplayTestGameMode::ApplyPlaygroundVoteCard(const FString& Card)
 			PC->SetPlaygroundDarkness(CustomMatchRules.Darkness);
 			PC->SetPlaygroundSoundOnlyMeters(CustomMatchRules.SoundOnlyMeters);
 		}
+}
+
+// Custom game phase 4 (Docs/CustomGamePlayground.md 15): pair-gaze bodies and the flashlight gaze.
+int32 AMultiplayTestGameMode::PlaygroundPairGazeNeeded(const TArray<APlayerController*>& SurvivorControllers) const
+{
+	int32 InPlay = 0;
+	for (const APlayerController* Controller : SurvivorControllers)
+		if (IsActiveSurvivorTarget(Cast<APlayerCharacter>(Controller ? Controller->GetPawn() : nullptr))) ++InPlay;
+	return FMath::Clamp(InPlay, 1, 2);
+}
+
+void AMultiplayTestGameMode::TickPlaygroundGazeRules()
+{
+	const bool bRules = CustomMatchRules.bEnabled;
+	// Pair gaze: marked once per floor, at random among the numbered bodies (wave bodies that come later stay unmarked).
+	if (bRules && CustomMatchRules.PairGazeBodies > 0 && !bPlaygroundPairGazeChosen)
+	{
+		TArray<AMannequinAICharacter*> Bodies;
+		for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+			if (IsValid(*It) && It->GetControlSlot() >= 0) Bodies.Add(*It); // Infected bodies have no number.
+		if (!Bodies.IsEmpty())
+		{
+			for (int32 I = Bodies.Num() - 1; I > 0; --I) Bodies.Swap(I, FMath::RandRange(0, I));
+			for (int32 I = 0; I < FMath::Min(CustomMatchRules.PairGazeBodies, Bodies.Num()); ++I) Bodies[I]->SetPlaygroundPairGaze(true);
+			bPlaygroundPairGazeChosen = true;
+			BroadcastMatchNotice(FString::Printf(TEXT("머리 위에 x2가 붙은 몸체 %d개는 두 사람이 함께 봐야 멈춥니다"), FMath::Min(CustomMatchRules.PairGazeBodies, Bodies.Num())), false, 5.f);
+		}
+	}
+	// Flashlight: every survivor pawn carries the rule; server bots light up when a body is within the beam's reach.
+	const bool bFlashlight = HasPlaygroundFlashlight();
+	for (const auto& Pair : MatchPlayerRecords)
+	{
+		APlayerCharacter* Survivor = Pair.Value.SurvivorPawn.Get();
+		if (!IsValid(Survivor)) continue;
+		Survivor->SetPlaygroundFlashlightRule(bFlashlight);
+		if (!bFlashlight || !Pair.Value.bServerBot) continue;
+		bool bBodyNear = false;
+		for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It && !bBodyNear; ++It)
+			bBodyNear = IsValid(*It) && FVector::DistSquared(It->GetActorLocation(), Survivor->GetActorLocation()) <= FMath::Square(ProjectPlaygroundRules::FlashlightRangeCm);
+		Survivor->SetPlaygroundFlashlightOn(bBodyNear);
+	}
 }

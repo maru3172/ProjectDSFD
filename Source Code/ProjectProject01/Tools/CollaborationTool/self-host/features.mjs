@@ -1,3 +1,4 @@
+import {tddAction} from './tdd.mjs';
 import {ue5Inspection} from './ue5-inspection.mjs';
 import {ue5Action} from './ue5.mjs';
 import {statfsSync,readFileSync} from 'node:fs';
@@ -41,7 +42,7 @@ export async function featureRoute(request,url){const me=requireUser(),value=req
   return json({...result,locks});
  }
  return transaction(()=>{const before=current().atomic;current().atomic=true;try{
- if(request.method!=='POST'&&!['system','overview','entry','page','weeklyReport','locks','bugs','milestones','decks','exportEntries','pulse','dmThread','ue5List'].includes(action))throw new Problem(405,'변경은 저장 버튼으로 요청하세요.');
+ if(request.method!=='POST'&&!['system','overview','entry','page','weeklyReport','locks','bugs','milestones','decks','exportEntries','pulse','dmThread','ue5List','tddList'].includes(action))throw new Problem(405,'변경은 저장 버튼으로 요청하세요.');
  if(action==='system'){requireOperator();const disk=statfsSync(dataRoot);return json({settings,dataRoot,freeBytes:disk.bavail*disk.bsize,backups:rows('SELECT * FROM backup_events ORDER BY created_at DESC LIMIT 20'),recentErrors:readFileSync(path.join(dataRoot,'logs','server.log'),'utf8').split('\n').filter(x=>x.includes('failed')||x.includes('error')).slice(-15),loopback:!!current()?.loopback})}
  if(action==='settings'){requireOperator();return json({settings:saveSettings(value.settings??{})})}
 
@@ -50,6 +51,7 @@ export async function featureRoute(request,url){const me=requireUser(),value=req
  const entry=()=>getEntry(w,text(value.entry,80,true));
  if(contactActions.includes(action))return json(contactAction(action,value,w,me));
  if(purgeActions.includes(action))return json(purgeAction(action,value,w,me,role.role));
+ if((action==='tddList'&&request.method==='GET')||(action==='tddSave'&&request.method==='POST'))return json(tddAction(action,value,w,role.name??me.userId));
  if(action==='ue5List' && request.method==='GET' || action==='ue5Save' && request.method==='POST')return json({...ue5Action(action,value,w,role.name??me.userId),userId:me.userId});
  if(['locks','lock','unlock','bugReport','bugs','milestones','deckType','decks','exportEntries'].includes(action))return json(projectAction(action,value,w,me,role.role));
  if(action==='meetingImport'||action==='weeklyReport'){if(action==='weeklyReport'&&value.save&&request.method!=='POST')throw new Problem(405,'저장은 저장 버튼으로 요청하세요.');return json(teamAction(action,value,w,me))}
