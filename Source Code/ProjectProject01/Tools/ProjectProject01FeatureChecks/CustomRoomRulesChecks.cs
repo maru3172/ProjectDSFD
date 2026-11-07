@@ -33,6 +33,13 @@ internal static class CustomRoomRulesChecks
         Check(CustomRoomRules.Valid(basic with{PairGazeBodies=1})&&CustomRoomRules.Valid(basic with{PairGazeBodies=3,MannequinCount=3})&&!CustomRoomRules.WellFormed(basic with{PairGazeBodies=4})
             &&!CustomRoomRules.WellFormed(basic with{PairGazeBodies=2,MannequinCount=1})&&!CustomRoomRules.WellFormed(basic with{PairGazeBodies=-1}),"둘이 봐야 멈추는 몸체: 0~3개, 마네킹 수 이하");
         Check(CustomRoomRules.Valid(basic with{Flashlight=true})&&!CustomRoomRules.WellFormed(new CustomRuleSet(false) with{Flashlight=true}),"손전등 시선: 사용자 지정이 켜진 방에서만");
+        Check(CustomRoomRules.Valid(basic with{Escort=true})&&!CustomRoomRules.WellFormed(basic with{Escort=true,InfiniteLives=true})&&!CustomRoomRules.WellFormed(basic with{Escort=true,EscapeMode=1})
+            &&!CustomRoomRules.WellFormed(basic with{Escort=true,Waves=true,TimeLimitSeconds=720})&&CustomRoomRules.Valid(basic with{Escort=true,Flashlight=true,PairGazeBodies=1}),"호위: 승패를 따로 정하는 규칙과는 함께 불가, 환경 규칙과는 가능");
+        Check(CustomRoomRules.Valid(basic with{TeamHandicap=new(1,-10,20,10,10,-15),FloorRules=2})&&!CustomRoomRules.WellFormed(basic with{TeamHandicap=new(SpeedPct:11)})&&!CustomRoomRules.WellFormed(basic with{FloorRules=4})
+            &&RuleCodes.Canonical(basic with{TeamHandicap=new(DeathCount:1)}).Contains("|v7|1|")&&!RuleCodes.Canonical(basic).Contains("v7"),"단체 핸디캡·층마다 바뀌는 규칙: 범위 검사, 규칙 코드에 들어감, 꺼져 있으면 예전 코드 그대로");
+        Check(CustomRoomRules.Valid(basic with{EscalatorWorking=2})&&!CustomRoomRules.WellFormed(basic with{EscalatorWorking=3})&&RuleCodes.Canonical(basic with{EscalatorWorking=1}).EndsWith("|v6|1")
+            &&!RuleCodes.Canonical(basic).Contains("v6"),"고장 난 에스컬레이터: 작동 최대 1~2개, 꺼져 있으면 예전 코드 그대로");
+        Check(!RuleCodes.Canonical(basic with{Flashlight=true}).Contains("v5")&&RuleCodes.Canonical(basic with{Escort=true}).EndsWith("|v5|1"),"규칙 코드: 호위가 꺼져 있으면 예전 코드 그대로");
         Check(!RuleCodes.Canonical(basic).Contains("v4")&&RuleCodes.Canonical(basic with{Flashlight=true}).Contains("|v4|0|1")&&RuleCodes.Hash(basic)!=RuleCodes.Hash(basic with{PairGazeBodies=1}),
             "규칙 코드: 4단계 규칙이 꺼져 있으면 예전 코드 그대로, 켜면 다른 코드");
         // 3단계: 규칙 카드 투표·역할 바꾸기 (Docs/CustomGamePlayground.md 12.2).

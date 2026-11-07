@@ -4222,6 +4222,10 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 	{
 		Details = TEXT("12분을 버텨 이겼습니다"); // Custom game waves.
 	}
+	else if (Result.Outcome == TEXT("EscortWon")) Details = TEXT("탈출자를 지켜 냈습니다"); // Custom game escort.
+	else if (Result.Outcome == TEXT("EscortLost")) Details = TEXT("탈출자를 지키지 못했습니다");
+	else if (Result.Outcome == TEXT("EscortCaught")) Details = TEXT("탈출자를 붙잡았습니다");
+	else if (Result.Outcome == TEXT("EscortGotAway")) Details = TEXT("탈출자를 놓쳤습니다");
 	else if (Result.Outcome == TEXT("SavedByLast"))
 	{
 		Details = TEXT("마지막 동료가 탈출해 함께 이겼습니다"); // Custom game "last one saves everyone".
@@ -4292,6 +4296,7 @@ void UProjectProject01MatchResultWidget::RefreshResultText()
 		if (Result.bPlaygroundInfiniteLives)
 			Extras.Add(FString::Printf(TEXT("무한 목숨 · %s %d"), Result.Role.Equals(TEXT("Mannequin"), ESearchCase::IgnoreCase) ? TEXT("잡은 횟수") : TEXT("잡힌 횟수"), Result.PlaygroundCatchCount));
 		if (!Result.PlaygroundHandicap.IsEmpty()) Extras.Add(TEXT("핸디캡: ") + Result.PlaygroundHandicap);
+		if (!Result.PlaygroundEscortScore.IsEmpty()) Extras.Add(TEXT("호위 라운드: ") + Result.PlaygroundEscortScore);
 		if (const ProjectPlaygroundVote::FCard* Card = ProjectPlaygroundVote::Find(Result.PlaygroundVoteCard)) Extras.Add(FString(TEXT("투표로 켠 규칙: ")) + Card->Name);
 		if (!Extras.IsEmpty()) RogueCards = RogueCards.IsEmpty() ? FString::Join(Extras, TEXT("\n")) : RogueCards + TEXT("\n") + FString::Join(Extras, TEXT("\n"));
 	}
@@ -7052,6 +7057,9 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
             if(R.bHideAndSeek)On.Insert(TEXT("숨바꼭질"),0);if(R.bWaves)On.Insert(TEXT("웨이브 생존"),0);
             if(R.bRuleVote)On.Insert(TEXT("규칙 카드 투표"),0);if(R.bRoleSwap)On.Insert(TEXT("역할 바꾸기"),0);
             if(R.PairGazeBodies>0)On.Add(FString::Printf(TEXT("둘이 봐야 멈춤 %d"),R.PairGazeBodies));if(R.bFlashlight)On.Add(TEXT("손전등 시선"));
+            if(R.bEscort)On.Insert(TEXT("호위"),0);
+            if(R.EscalatorWorking>0)On.Add(TEXT("고장 에스컬레이터"));
+            if(R.FloorRules>0)On.Insert(FString::Printf(TEXT("층마다 규칙 %d"),R.FloorRules),0); // Changes the floors: shown early.
             static const TCHAR* EscapeNames[]={TEXT(""),TEXT("함께 탈출"),TEXT("마지막 한 명이 모두를 구한다"),TEXT("먼저 나간 사람 승리")};
             if(R.EscapeMode>0&&R.EscapeMode<4)On.Insert(EscapeNames[R.EscapeMode],0); // The escape rule changes how to win: shown first.
             if(!R.AffixIds.IsEmpty())On.Add(FString::Printf(TEXT("어픽스 %d"),R.AffixIds.Num()));if(R.bItemCards)On.Add(TEXT("아이템 카드"));
@@ -7065,6 +7073,7 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
             const auto* M=Room.Members.FindByPredicate([&H](const FProjectProject01RoomMember& X){return X.UserId==H.UserId;});
             Summary+=FString::Printf(TEXT("\n핸디캡 · %s: %s"),M&&!M->DisplayName.IsEmpty()?*M->DisplayName:*H.UserId,*H.Summary());
         }
+        if(Room.CustomRules.bEnabled&&!Room.CustomRules.TeamHandicap.IsNeutral())Summary+=TEXT("\n핸디캡 · 팀 전체: ")+Room.CustomRules.TeamHandicap.Summary();
         if(Room.CustomRules.bEnabled&&!Room.RoleSwapText.IsEmpty())Summary+=TEXT("\n")+Room.RoleSwapText; // Role swap series (no ranking).
         if(Room.MatchMode==EProjectMatchMode::ItemRoguelike)Summary+=TEXT("\n아이템 로그라이크 · 시작과 층마다 카드 선택 · 비공식 경기");
         CurrentRoomText->SetText(FText::FromString(Summary));

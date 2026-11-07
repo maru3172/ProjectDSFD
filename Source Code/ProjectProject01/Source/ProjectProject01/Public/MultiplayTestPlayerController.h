@@ -137,6 +137,10 @@ struct PROJECTPROJECT01_API FMultiplayTestMatchResult
 	UPROPERTY(BlueprintReadOnly)
 	FString PlaygroundVoteCard;
 
+	/** Custom game escort: the floor rounds, "생존자 2 : 마네킹 1" (empty otherwise). */
+	UPROPERTY(BlueprintReadOnly)
+	FString PlaygroundEscortScore;
+
 	UPROPERTY(BlueprintReadOnly)
 	double FirstCaptureSeconds = 0.0;
 

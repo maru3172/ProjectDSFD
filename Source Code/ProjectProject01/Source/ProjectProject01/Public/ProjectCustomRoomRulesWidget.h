@@ -83,6 +83,7 @@ private:
     TArray<TSharedPtr<FString>> HandicapNames;
     TArray<FString> HandicapUserIds;
     FString HandicapUserId,HandicapMembersKey;
+    static constexpr const TCHAR* TeamHandicapKey=TEXT("#team"); // The "팀 전체" entry (never a user id: # is not allowed).
     TSharedPtr<SComboBox<TSharedPtr<FString>>> HandicapCombo;
     void RefreshHandicapMembers();
     void SetHandicapValue(int32 FProjectPlaygroundHandicap::* Member,int32 Value);

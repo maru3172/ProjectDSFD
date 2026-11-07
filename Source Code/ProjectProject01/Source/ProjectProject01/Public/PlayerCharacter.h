@@ -104,6 +104,12 @@ public:
 	void ServerSetPlaygroundFlashlight(bool bOn);
 	/** Server: battery drain/recharge and the empty lock. Called from Tick. */
 	void TickPlaygroundFlashlight(float DeltaTime);
+	/** Custom game escort (Docs/CustomGamePlayground.md 16): this pawn is the AI escapee survivors walk to the way out.
+	 *  It walks slower, wears a soft marker light, shows "!" while frozen in fear, and a catch ends the round. */
+	void SetPlaygroundEscapee(bool bEscapee);
+	bool IsPlaygroundEscapee() const { return bPlaygroundEscapee; }
+	void SetPlaygroundEscapeeAfraid(bool bAfraid);
+	bool IsPlaygroundEscapeeAfraid() const { return bPlaygroundEscapeeAfraid; }
 	/** C04: sprinting is not possible while set. */
 	void SetAffixSprintBlocked(bool bBlocked);
 	/** A glow on this survivor (A10 breath, B03 alarm, B07 face light, ...); zero strength removes it. */
@@ -336,6 +342,16 @@ private:
 	float PlaygroundFlashlightUnlockIn = 0.f;
 	UPROPERTY(Transient)
 	TObjectPtr<class USpotLightComponent> PlaygroundFlashlightBeam;
+	UPROPERTY(ReplicatedUsing = OnRep_PlaygroundEscapee)
+	bool bPlaygroundEscapee = false;
+	UPROPERTY(ReplicatedUsing = OnRep_PlaygroundEscapee)
+	bool bPlaygroundEscapeeAfraid = false;
+	UPROPERTY(Transient)
+	TObjectPtr<class UPointLightComponent> PlaygroundEscapeeMarker;
+	UPROPERTY(Transient)
+	TObjectPtr<class UTextRenderComponent> PlaygroundEscapeeFearLabel;
+	UFUNCTION()
+	void OnRep_PlaygroundEscapee();
 	UFUNCTION()
 	void OnRep_PlaygroundFlashlight();
 	void RefreshPlaygroundFlashlightBeam();

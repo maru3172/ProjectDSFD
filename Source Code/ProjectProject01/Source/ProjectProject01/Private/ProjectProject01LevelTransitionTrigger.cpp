@@ -70,6 +70,25 @@ bool AProjectProject01LevelTransitionTrigger::RequestTransition(APlayerCharacter
 	return bTransitionStarted || AcceptedSurvivors.Contains(Cast<AMultiplayTestPlayerController>(Survivor->GetController()));
 }
 
+bool AProjectProject01LevelTransitionTrigger::RequestEscortTransition()
+{
+	// Every survivor still in play goes along (none is left behind as out), then the usual travel and carryover run.
+	UWorld* World = GetWorld();
+	AMultiplayTestGameMode* GameMode = IsValid(World) ? World->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr;
+	if (!HasAuthority() || bTransitionStarted || !IsDestinationAvailable() || !IsValid(GameMode)) return false;
+	bEscortForcing = true;
+	for (TActorIterator<APlayerCharacter> It(World); It; ++It)
+	{
+		APlayerCharacter* Survivor = *It;
+		AMultiplayTestPlayerController* Controller = IsEligibleLivingPlayer(Survivor) ? Cast<AMultiplayTestPlayerController>(Survivor->GetController()) : nullptr;
+		if (Controller && GameMode->MarkSurvivorWaitingForLevelTransition(Survivor, ShouldFadeToWaitingSpectator())) AcceptedSurvivors.Add(Controller);
+	}
+	bEscortForcing = false;
+	if (AcceptedSurvivors.IsEmpty()) return false;
+	BeginTransition();
+	return bTransitionStarted;
+}
+
 void AProjectProject01LevelTransitionTrigger::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (UWorld* World = GetWorld(); IsValid(World))
@@ -110,6 +129,17 @@ void AProjectProject01LevelTransitionTrigger::HandleBeginOverlap(
 	{
 		return;
 	}
+	// Custom game broken escalators (Docs/CustomGamePlayground.md 17): this one does not move; say so and keep looking.
+	if (bPlaygroundBroken && !bEscortForcing)
+	{
+		if (AMultiplayTestPlayerController* Told = Cast<AMultiplayTestPlayerController>(Survivor->GetController()); Told && !Told->IsServerControlledBot())
+			Told->ClientShowAffixNotice(TEXT("이 에스컬레이터는 고장 나서 움직이지 않습니다. 다른 길을 찾으세요."), 3.f);
+		return;
+	}
+	// Custom game escort (Docs/CustomGamePlayground.md 16): survivors do not move floors themselves; the round's end does.
+	if (const UWorld* EscortWorld = GetWorld(); !bEscortForcing && IsValid(EscortWorld))
+		if (const AMultiplayTestGameMode* EscortMode = EscortWorld->GetAuthGameMode<AMultiplayTestGameMode>(); EscortMode && EscortMode->HasPlaygroundEscort())
+			return;
 
 	UWorld* World = GetWorld();
 	// A local multiplayer PIE/listen test can report Standalone. Use its actual

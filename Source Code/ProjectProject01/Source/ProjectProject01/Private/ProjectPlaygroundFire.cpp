@@ -2,6 +2,10 @@
 // Target: ProjectProject01 / ProjectProject01Editor Win64 Development, Unreal Engine 5.8.2
 #include "ProjectPlaygroundFire.h"
 #include "Components/PointLightComponent.h"
+#include "Components/TextRenderComponent.h"
+#include "MultiplayTestPlayerController.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -130,4 +134,53 @@ void AProjectPlaygroundFire::ApplyLook(const float Seconds)
     }
     if (IsValid(Embers)) Embers->SetRelativeScale3D(FVector(Radius * 1.6f / 100.f * FMath::Max(Growth, 0.01f), Radius * 1.6f / 100.f * FMath::Max(Growth, 0.01f), 0.02f));
     if (IsValid(Glow)) Glow->SetIntensity(4200.f * Growth * (0.92f + 0.08f * FMath::Sin(Seconds * 3.1f + Seed)));
+}
+
+AProjectPlaygroundExitMark::AProjectPlaygroundExitMark()
+{
+    bReplicates = true;
+    bAlwaysRelevant = true;
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.TickInterval = .25f;
+    SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
+    Glow = CreateDefaultSubobject<UPointLightComponent>(TEXT("Glow"));
+    Glow->SetupAttachment(RootComponent);
+    Glow->SetRelativeLocation(FVector(0.f, 0.f, 160.f));
+    Glow->SetIntensityUnits(ELightUnits::Candelas);
+    Glow->SetIntensity(30.f);
+    Glow->SetLightColor(FLinearColor(.4f, 1.f, .55f));
+    Glow->SetAttenuationRadius(450.f);
+    Glow->SetCastShadows(false);
+    Glow->SetVisibility(false);
+    Label = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
+    Label->SetupAttachment(RootComponent);
+    Label->SetRelativeLocation(FVector(0.f, 0.f, 220.f));
+    Label->SetHorizontalAlignment(EHTA_Center);
+    Label->SetVerticalAlignment(EVRTA_TextCenter);
+    Label->SetWorldSize(56.f);
+    Label->SetTextRenderColor(FColor(110, 255, 150));
+    Label->SetText(FText::FromString(TEXT("EXIT")));
+    Label->SetCastShadow(false);
+    Label->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Label->SetVisibility(false);
+}
+
+bool AProjectPlaygroundExitMark::IsSeenBy(const APlayerController* Local)
+{
+    const AMultiplayTestPlayerController* PC = Cast<AMultiplayTestPlayerController>(Local);
+    return PC && PC->IsLocalMannequinPlayer();
+}
+
+void AProjectPlaygroundExitMark::Tick(const float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    if (GetNetMode() == NM_DedicatedServer) return;
+    const APlayerController* Local = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+    const bool bShow = IsSeenBy(Local);
+    if (Glow->IsVisible() != bShow) { Glow->SetVisibility(bShow); Label->SetVisibility(bShow); }
+    if (bShow && Local->PlayerCameraManager)
+    {
+        const FVector ToCamera = Local->PlayerCameraManager->GetCameraLocation() - Label->GetComponentLocation();
+        if (!ToCamera.IsNearlyZero()) Label->SetWorldRotation(ToCamera.Rotation());
+    }
 }

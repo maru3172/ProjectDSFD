@@ -37,6 +37,13 @@ public:
 
 	/** Bot routing may approach ordinary enabled overlap exits, never bypass button devices. */
 	bool IsAutomaticBotObjective() const { return bUseOverlapActivation && !bTransitionStarted && IsDestinationAvailable(); }
+	/** Custom game escort: this way out leads to another floor (buttons included; the round end presses it). */
+	bool IsEscortObjective() const { return !bTransitionStarted && IsDestinationAvailable(); }
+	/** Custom game escort: moves every survivor still in play to the next floor (the round is over). */
+	bool RequestEscortTransition();
+	/** Custom game broken escalators: a broken way refuses survivors (the game mode picks which ones per floor). */
+	void SetPlaygroundBroken(bool bBroken) { bPlaygroundBroken = bBroken; }
+	bool IsPlaygroundBroken() const { return bPlaygroundBroken; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -49,6 +56,9 @@ protected:
 	bool HasStartedTransition() const { return bTransitionStarted; }
 	/** 파생 장치는 진입만으로 이동하지 않고 버튼으로만 확정할 수 있습니다. */
 	bool bUseOverlapActivation = true;
+	/** True while RequestEscortTransition accepts survivors (the escort block is lifted for it). */
+	bool bEscortForcing = false;
+	bool bPlaygroundBroken = false;
 	/** 목적지 엘리베이터 내부 스폰을 선택하는 URL 옵션입니다. 일반 트리거는 비워둡니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Level Transition")
 	FName DestinationArrivalId;

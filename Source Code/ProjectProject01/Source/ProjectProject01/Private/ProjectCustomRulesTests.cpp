@@ -8,11 +8,14 @@
 #include "ShaderCompiler.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "AIController.h"
+#include "Engine/TriggerBox.h"
+#include "ProjectProject01LevelTransitionTrigger.h"
 #include "TimerManager.h"
 #include "MultiplayTestGameMode.h"
 #include "PlayerCharacter.h"
 #include "MannequinAICharacter.h"
 #include "ProjectProject01LobbySubsystem.h"
+#include "ProjectProject01GameInstance.h"
 #include "ProjectCaseRecords.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
@@ -779,6 +782,196 @@ bool FProjectCustomRulesGazeRulesTest::RunTest(const FString&)
         TestTrue(TEXT("Battery text stays on screen"),Fits);
         Target->ReleaseResource();
     }
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 16: escort. The escapee spawns at the floor start and heads for the floor's way out, freezes
+// in fear when alone near a body, listens to pings, ends the round when caught or when it arrives; survivors respawn with
+// a wear-down; the match result follows the round score.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesEscortTest,"ProjectProject01.CustomRules.Escort",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesEscortTest::RunTest(const FString&)
+{
+    {
+        FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=4;R.bEscort=true;TestTrue(TEXT("Escort runs"),R.IsValid());
+        FProjectCustomMatchRules Lives=R;Lives.bInfiniteLives=true;TestFalse(TEXT("Not with infinite lives (escort gives its own)"),Lives.IsWellFormed());
+        FProjectCustomMatchRules Exit=R;Exit.EscapeMode=1;TestFalse(TEXT("Not with an escape mode"),Exit.IsWellFormed());
+        FProjectCustomMatchRules Env=R;Env.bFlashlight=true;Env.PairGazeBodies=1;Env.Darkness=2;TestTrue(TEXT("With the sight rules"),Env.IsValid());
+    }
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+    FProjectCustomMatchRules Rules;Rules.bEnabled=true;Rules.DeathCount=3;Rules.MannequinCount=4;Rules.bEscort=true;
+    if(!TestTrue(TEXT("Rules accepted"),Mode->AcceptCustomRules(FGuid::NewGuid().ToString(),Rules,Error)))return false;
+    TestTrue(TEXT("Survivors respawn without end"),Mode->HasPlaygroundInfiniteLives());
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* PC=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    auto* Survivor=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(0,0,90)),Spawn);Survivor->DispatchBeginPlay();PC->Possess(Survivor);
+    FMultiplayTestServerPlayerRecord R;R.UserId=TEXT("s");R.Role=TEXT("Survivor");R.SurvivorState=EMultiplayTestSurvivorState::Active;R.SurvivorPawn=Survivor;
+    Mode->MatchPlayerRecords.Add(PC,R);ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    auto* Exit=World->SpawnActor<ATriggerBox>(ATriggerBox::StaticClass(),FTransform(FVector(5000,0,90)),Spawn);Exit->Tags.Add(Mode->EscapeTriggerActorTag);
+    Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+
+    Mode->TickPlaygroundEscort();
+    APlayerCharacter* Escapee=Mode->PlaygroundEscapee.Get();
+    if(!TestNotNull(TEXT("The escapee spawns at the floor start"),Escapee))return false;
+    TestTrue(TEXT("It is marked as the escapee and AI driven"),Escapee->IsPlaygroundEscapee()&&Cast<AAIController>(Escapee->GetController())!=nullptr);
+    TestTrue(TEXT("Its goal is the exit on the last floor"),Mode->EscortGoal.Get()==Exit&&Mode->bEscortGoalFinal);
+    TestTrue(TEXT("It starts near the survivors"),FVector::Dist2D(Escapee->GetActorLocation(),Survivor->GetActorLocation())<400.f);
+
+    // Fear: a body ahead and nobody at its side.
+    Escapee->SetActorRotation(FRotator::ZeroRotator);
+    World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(Escapee->GetActorLocation()+FVector(600,0,0)),Spawn);
+    TestFalse(TEXT("A survivor at its side: not afraid"),Mode->IsPlaygroundEscapeeAfraid(Escapee));
+    Survivor->SetActorLocation(FVector(-9000,0,90));
+    TestTrue(TEXT("Alone with a body in sight: afraid"),Mode->IsPlaygroundEscapeeAfraid(Escapee));
+    Mode->TickPlaygroundEscort();TestTrue(TEXT("The fear shows ('!')"),Escapee->IsPlaygroundEscapeeAfraid());
+    Survivor->SetActorLocation(Escapee->GetActorLocation()+FVector(-200,0,0));
+
+    // Pings: danger = wait, location = go there.
+    Mode->HearPlaygroundEscortPing(EProjectProject01PingType::Danger,FVector::ZeroVector,PC);
+    TestTrue(TEXT("Danger ping: it waits"),Mode->EscortHoldUntil>World->GetTimeSeconds());
+    Mode->HearPlaygroundEscortPing(EProjectProject01PingType::Location,FVector(1234,0,90),PC);
+    TestTrue(TEXT("Location ping: it heads there"),Mode->EscortPingTarget.Equals(FVector(1234,0,90))&&Mode->EscortPingUntil>World->GetTimeSeconds()&&Mode->EscortHoldUntil==0);
+
+    // Survivors respawn worn down: two respawns = speed -10%, stamina -20%.
+    FTransform Start;Mode->HandlePlaygroundCatch(Survivor,Start);Mode->HandlePlaygroundCatch(Survivor,Start);
+    TestTrue(TEXT("Respawns wear the survivor down"),FMath::IsNearlyEqual(Survivor->GetPlaygroundStaminaScale(),.8f,.01f));
+
+    // A catch ends the round for the mannequin side.
+    auto* Body=World->SpawnActor<AMannequinAICharacter>(AMannequinAICharacter::StaticClass(),FTransform(FVector(0,3000,90)),Spawn);
+    TestTrue(TEXT("Catching the escapee counts"),Escapee->HandleMannequinCatch(Body));
+    TestTrue(TEXT("Round lost: 0 : 1"),Mode->bEscortRoundOver&&Mode->EscortMannequinWins==1&&Mode->EscortSurvivorWins==0&&!Mode->PlaygroundEscapee.IsValid());
+
+    // Next round (as on the next floor): the escapee arriving wins it for the survivors.
+    Mode->bEscortRoundOver=false;Mode->TickPlaygroundEscort();Escapee=Mode->PlaygroundEscapee.Get();
+    if(!TestNotNull(TEXT("A new escapee for the next round"),Escapee))return false;
+    TestTrue(TEXT("Wear-down starts over each round"),FMath::IsNearlyEqual(Survivor->GetPlaygroundStaminaScale(),1.f,.01f));
+    Escapee->SetActorLocation(Exit->GetActorLocation());Mode->TickPlaygroundEscort();
+    TestTrue(TEXT("Round won: 1 : 1"),Mode->EscortSurvivorWins==1&&Mode->EscortMannequinWins==1);
+
+    // The result follows the rounds: a tie is not a survivor win; two round wins is.
+    const FMultiplayTestServerPlayerRecord& Rec=*Mode->MatchPlayerRecords.Find(PC);
+    FMultiplayTestMatchResult Tie=Mode->BuildFinalResult(PC,Rec);
+    TestTrue(TEXT("Tie: survivors did not win"),!Tie.bSuccess&&Tie.Outcome==TEXT("EscortLost")&&Tie.PlaygroundEscortScore.Contains(TEXT("1 : 마네킹 1")));
+    Mode->EscortSurvivorWins=2;
+    FMultiplayTestMatchResult Won=Mode->BuildFinalResult(PC,Rec);
+    TestTrue(TEXT("Two round wins: survivors win"),Won.bSuccess&&Won.Outcome==TEXT("EscortWon"));
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 17: broken escalators. Of several ways to the next floor 1..N work (rolled per floor), the
+// rest refuse survivors; working ones carry a mannequin-only mark; the escort escapee learns broken ones by walking up.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesEscalatorsTest,"ProjectProject01.CustomRules.Escalators",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesEscalatorsTest::RunTest(const FString&)
+{
+    {
+        FProjectCustomMatchRules R;R.bEnabled=true;R.MannequinCount=4;R.EscalatorWorking=2;TestTrue(TEXT("Up to two working"),R.IsValid());
+        R.EscalatorWorking=3;TestFalse(TEXT("Not three"),R.IsWellFormed());
+        FProjectCustomMatchRules Vote;Vote.bEnabled=true;Vote.MannequinCount=4;Vote.bRuleVote=true;TestTrue(TEXT("A vote card"),ProjectPlaygroundVote::Candidates(Vote).Contains(TEXT("escalators")));
+    }
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};World->SetGameInstance(NewObject<UGameInstance>());
+    FURL URL;URL.AddOption(TEXT("game=/Script/ProjectProject01.MultiplayTestGameMode"));if(!TestTrue(TEXT("Authoritative fixture"),World->SetGameMode(URL)))return false;
+    auto* Mode=World->GetAuthGameMode<AMultiplayTestGameMode>();FString Error;
+    FProjectCustomMatchRules Rules;Rules.bEnabled=true;Rules.DeathCount=3;Rules.MannequinCount=4;Rules.EscalatorWorking=2;Rules.bEscort=true;
+    if(!TestTrue(TEXT("Rules accepted"),Mode->AcceptCustomRules(FGuid::NewGuid().ToString(),Rules,Error)))return false;
+    FActorSpawnParameters Spawn;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    FSoftObjectProperty* Destination=FindFProperty<FSoftObjectProperty>(AProjectProject01LevelTransitionTrigger::StaticClass(),TEXT("DestinationLevel"));
+    if(!TestNotNull(TEXT("Destination property"),Destination))return false;
+    TArray<AProjectProject01LevelTransitionTrigger*> Ways;
+    for(int32 I=0;I<3;++I)
+    {
+        auto* Way=World->SpawnActor<AProjectProject01LevelTransitionTrigger>(AProjectProject01LevelTransitionTrigger::StaticClass(),FTransform(FVector(2000.f*(I+1),0,90)),Spawn);
+        Destination->SetPropertyValue_InContainer(Way,FSoftObjectPtr(FSoftObjectPath(TEXT("/Game/MyProject/Level/MultiplayTest.MultiplayTest"))));
+        Ways.Add(Way);
+    }
+    TestTrue(TEXT("The test ways lead somewhere"),Ways[0]->IsEscortObjective());
+    // Rolled per floor: with "at most 2", some floors have one working way and some two, never none.
+    bool bSawOne=false,bSawTwo=false,bNeverNone=true;
+    for(int32 Roll=0;Roll<40;++Roll)
+    {
+        Mode->bPlaygroundEscalatorsChosen=false;Mode->TickPlaygroundEscalators();
+        int32 Working=0;for(auto* Way:Ways)Working+=Way->IsPlaygroundBroken()?0:1;
+        bSawOne|=Working==1;bSawTwo|=Working==2;bNeverNone&=Working>=1&&Working<=2;
+    }
+    TestTrue(TEXT("One or two work per floor, never none"),bSawOne&&bSawTwo&&bNeverNone);
+    TestTrue(TEXT("Working ways get a mark"),Mode->PlaygroundExitMarks.Num()>0);
+    TestFalse(TEXT("A survivor's screen does not show the mark"),AProjectPlaygroundExitMark::IsSeenBy(nullptr));
+    TestNotNull(TEXT("A working way is found for travel"),Mode->FindWorkingFloorTrigger());
+
+    // A broken way refuses a survivor.
+    auto* PC=World->SpawnActor<AMultiplayTestPlayerController>(AMultiplayTestPlayerController::StaticClass(),FTransform::Identity,Spawn);
+    auto* Survivor=World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(),FTransform(FVector(0,0,90)),Spawn);Survivor->DispatchBeginPlay();PC->Possess(Survivor);
+    FMultiplayTestServerPlayerRecord R;R.UserId=TEXT("s");R.Role=TEXT("Survivor");R.SurvivorState=EMultiplayTestSurvivorState::Active;R.SurvivorPawn=Survivor;
+    Mode->MatchPlayerRecords.Add(PC,R);ON_SCOPE_EXIT{Mode->MatchPlayerRecords.Reset();};
+    Mode->SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::InProgress);
+    Ways[0]->SetPlaygroundBroken(true);Ways[1]->SetPlaygroundBroken(false);Ways[2]->SetPlaygroundBroken(true);
+    TestFalse(TEXT("A broken escalator does not move a survivor"),Ways[0]->RequestTransition(Survivor));
+
+    // Escort: the escapee does not know; it walks to the nearest way, learns it is broken there, and picks another.
+    Mode->TickPlaygroundEscort();APlayerCharacter* Escapee=Mode->PlaygroundEscapee.Get();
+    if(!TestNotNull(TEXT("Escapee"),Escapee))return false;
+    TestTrue(TEXT("It first heads for the nearest way (broken, it does not know)"),Mode->EscortGoal.Get()==Ways[0]);
+    Escapee->SetActorLocation(Ways[0]->GetActorLocation());Mode->TickPlaygroundEscort();
+    TestTrue(TEXT("At a broken way it learns and heads for another"),Mode->EscortKnownBroken.Contains(Ways[0])&&Mode->EscortGoal.Get()==Ways[1]&&!Mode->bEscortRoundOver);
+    Escapee->SetActorLocation(Ways[1]->GetActorLocation());Mode->TickPlaygroundEscort();
+    TestTrue(TEXT("At the working way the round is won"),Mode->bEscortRoundOver&&Mode->EscortSurvivorWins==1&&Mode->EscortTravel.Get()==Ways[1]);
+    return true;
+}
+
+// Docs/CustomGamePlayground.md 18: team handicap (summed with the personal one, kept in range) and per-floor rules (a
+// random few of the host's sight/environment rules per floor, never the same set twice in a row, carried between floors).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectCustomRulesTeamAndFloorTest,"ProjectProject01.CustomRules.TeamAndFloor",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectCustomRulesTeamAndFloorTest::RunTest(const FString&)
+{
+    FProjectCustomMatchRules Base;Base.bEnabled=true;Base.MannequinCount=4;
+    {
+        auto R=Base;R.TeamHandicap.SpeedPct=-10;R.TeamHandicap.DeathCount=1;R.TeamHandicap.AttackRangePct=15;R.FloorRules=2;R.Darkness=1;R.GazeLimitSeconds=8;
+        FProjectCustomMatchRules Back;TestTrue(TEXT("Team handicap and floor count cross the wire"),R.IsValid()&&FProjectCustomMatchRules::Parse(R.ToJson(),Back)&&Back==R);
+        {auto X=R;X.TeamHandicap.SpeedPct=11;TestFalse(TEXT("Team speed beyond +-10% rejected"),X.IsWellFormed());}
+        {auto X=R;X.TeamHandicap.UserId=TEXT("101");TestFalse(TEXT("The team entry has no user id"),X.IsWellFormed());}
+        {auto X=R;X.FloorRules=4;TestFalse(TEXT("At most three per floor"),X.IsWellFormed());}
+        FProjectPlaygroundHandicap Me;Me.UserId=TEXT("101");Me.SpeedPct=-10;Me.DeathCount=2;R.Handicaps={Me};
+        const auto Mine=R.EffectiveHandicap(TEXT("101"));const auto Other=R.EffectiveHandicap(TEXT("202"));
+        TestTrue(TEXT("Personal + team, kept inside the range"),Mine.SpeedPct==-10&&Mine.DeathCount==2&&Mine.AttackRangePct==15);
+        TestTrue(TEXT("Someone without a personal entry gets the team values"),Other.SpeedPct==-10&&Other.DeathCount==1);
+        auto Off=R;Off.bEnabled=false;TestTrue(TEXT("Nothing with the custom rules off"),Off.EffectiveHandicap(TEXT("101")).IsNeutral());
+    }
+    {
+        const TArray<FString> Pool={TEXT("gazeLimit"),TEXT("darkness"),TEXT("spreadingFire")};FRandomStream Rng(7);
+        auto Same=[](TArray<FString> A,TArray<FString> B){A.Sort();B.Sort();return A==B;};
+        bool bNeverRepeat=true,bSizeRight=true;TArray<FString> Prev=ProjectPlaygroundFloorRules::Draw(Pool,2,{},Rng);
+        for(int32 I=0;I<60;++I){const auto Next=ProjectPlaygroundFloorRules::Draw(Pool,2,Prev,Rng);bNeverRepeat&=!Same(Next,Prev);bSizeRight&=Next.Num()==2;Prev=Next;}
+        TestTrue(TEXT("Never the same set on two floors in a row"),bNeverRepeat&&bSizeRight);
+        TestTrue(TEXT("A pool no bigger than the count is kept whole"),ProjectPlaygroundFloorRules::Draw(Pool,3,Pool,Rng).Num()==3);
+        auto R=Base;R.GazeLimitSeconds=8;R.Darkness=2;R.bSpreadingFire=true;R.bInfiniteLives=true;R.TimeLimitSeconds=600;
+        TestTrue(TEXT("The pool is the sight/environment rules turned on"),Same(ProjectPlaygroundFloorRules::Pool(R),Pool));
+        ProjectPlaygroundFloorRules::Apply(R,Pool,{TEXT("darkness")});
+        TestTrue(TEXT("Only the drawn ones stay, with the host's value; match-wide rules stay"),R.Darkness==2&&R.GazeLimitSeconds==0&&!R.bSpreadingFire&&R.bInfiniteLives);
+        TestEqual(TEXT("Names for the notice"),ProjectPlaygroundFloorRules::Names({}),FString(TEXT("없음")));
+    }
+    // The game mode: the first floor draws, a later floor takes the carried set; the admission ticket keeps the whole pool.
+    const auto Values=UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+    auto* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+    GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+    ON_SCOPE_EXIT{GEngine->DestroyWorldContext(World);World->DestroyWorld(false);};
+    auto* Instance=NewObject<UProjectProject01GameInstance>();World->SetGameInstance(Instance);
+    auto Rules=Base;Rules.GazeLimitSeconds=8;Rules.Darkness=2;Rules.bSpreadingFire=true;Rules.FloorRules=1;FString Error;
+    const FString Match=FGuid::NewGuid().ToString();
+    auto* First=World->SpawnActor<AMultiplayTestGameMode>();
+    if(!TestTrue(TEXT("Rules accepted"),First->AcceptCustomRules(Match,Rules,Error)))return false;
+    TestTrue(TEXT("The first floor keeps exactly one of the three"),First->PlaygroundFloorDrawn.Num()==1&&ProjectPlaygroundFloorRules::Pool(First->CustomMatchRules).Num()==1);
+    TestTrue(TEXT("The ticket keeps the whole pool"),First->CustomRulesTicket==Rules&&First->AcceptCustomRules(Match,Rules,Error));
+    auto Carry=MakeShared<FMultiplayTestMatchCarryover>();Carry->MatchId=Match;Carry->CustomRules=Rules;Carry->PlaygroundFloorRules={TEXT("spreadingFire")};Carry->bPlaygroundFloorRulesSet=true;
+    Instance->ServerMatchCarryover=Carry;ON_SCOPE_EXIT{Instance->ServerMatchCarryover.Reset();};
+    auto* Next=World->SpawnActor<AMultiplayTestGameMode>();
+    if(!TestTrue(TEXT("Next floor accepted"),Next->AcceptCustomRules(Match,Rules,Error)))return false;
+    TestTrue(TEXT("The next floor takes the set told before the travel"),Next->CustomMatchRules.bSpreadingFire&&Next->CustomMatchRules.Darkness==0&&Next->CustomMatchRules.GazeLimitSeconds==0);
     return true;
 }
 

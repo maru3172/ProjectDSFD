@@ -84,7 +84,7 @@ bool UProjectCustomRoomRulesWidget::CanEdit()const
 FProjectCustomMatchRules UProjectCustomRoomRulesWidget::Outgoing()const
 {
     FProjectCustomMatchRules R=Draft;
-    if(!R.bEnabled){R.AffixIds.Reset();R.bItemCards=R.bInfiniteLives=R.bInfection=R.bGhosts=false;R.HideRevealSeconds=0;R.GazeLimitSeconds=R.Darkness=R.SoundOnlyMeters=R.EscapeMode=0;R.bSpreadingFire=false;R.Handicaps.Reset();R.bHideAndSeek=R.bWaves=R.bRuleVote=R.bRoleSwap=false;R.PairGazeBodies=0;R.bFlashlight=false;}
+    if(!R.bEnabled){R.AffixIds.Reset();R.bItemCards=R.bInfiniteLives=R.bInfection=R.bGhosts=false;R.HideRevealSeconds=0;R.GazeLimitSeconds=R.Darkness=R.SoundOnlyMeters=R.EscapeMode=0;R.bSpreadingFire=false;R.Handicaps.Reset();R.bHideAndSeek=R.bWaves=R.bRuleVote=R.bRoleSwap=false;R.PairGazeBodies=0;R.bFlashlight=false;R.bEscort=false;R.EscalatorWorking=0;R.TeamHandicap=FProjectPlaygroundHandicap();R.FloorRules=0;}
     return R;
 }
 bool UProjectCustomRoomRulesWidget::CanPickAffix(const FString& Id)const
@@ -131,7 +131,8 @@ TSharedRef<SWidget> UProjectCustomRoomRulesWidget::RebuildWidget()
     Number(TEXT("제한 시간 (분)"),&FProjectCustomMatchRules::TimeLimitSeconds,0,120,60);
     // 개인 핸디캡 (12.1): pick a participant, then six numbers in a fixed 3 x 2 grid. A player whose numbers are all 0
     // has no entry. Everyone sees the result in the room summary and on the result screen.
-    Basic->AddSlot().AutoHeight().Padding(0,12,0,4)[Caption(TEXT("개인 핸디캡"))];
+    // 팀 전체 (18) is the first entry: survivor numbers for every survivor, body/attack for the mannequin side.
+    Basic->AddSlot().AutoHeight().Padding(0,12,0,4)[Caption(TEXT("핸디캡 (참가자 한 명 또는 팀 전체)"))];
     Basic->AddSlot().AutoHeight().Padding(0,2)
     [SAssignNew(HandicapCombo,SComboBox<TSharedPtr<FString>>).OptionsSource(&HandicapNames).ButtonStyle(&ProjectDFSDUI::ButtonStyle()).ItemStyle(&ProjectDFSDUI::RowStyle()).HasDownArrow(false)
       .IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled&&!HandicapNames.IsEmpty();})
@@ -160,7 +161,8 @@ TSharedRef<SWidget> UProjectCustomRoomRulesWidget::RebuildWidget()
                 Line->AddSlot().AutoWidth()[SNew(SBox).WidthOverride(84)
                  [SNew(SSpinBox<int32>).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),16)).ContentPadding(FMargin(6,3)).MinValue(-Max).MaxValue(Max).MinSliderValue(-Max).MaxSliderValue(Max).Delta(1)
                    .IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled&&!HandicapUserId.IsEmpty();})
-                   .Value_Lambda([this,Member]{const auto* H=Draft.Handicaps.FindByPredicate([this](const auto& E){return E.UserId==HandicapUserId;});return H?(*H).*Member:0;})
+                   .Value_Lambda([this,Member]{if(HandicapUserId==TeamHandicapKey)return Draft.TeamHandicap.*Member;
+                       const auto* H=Draft.Handicaps.FindByPredicate([this](const auto& E){return E.UserId==HandicapUserId;});return H?(*H).*Member:0;})
                    .OnValueChanged_Lambda([this,Member,Max](int32 V){SetHandicapValue(Member,FMath::Clamp(V,-Max,Max));})]];
             }
             Grid->AddSlot().AutoHeight().Padding(0,3)[Line];
@@ -390,7 +392,7 @@ TSharedRef<SWidget> UProjectCustomRoomRulesWidget::RebuildWidget()
     auto Vision=SNew(SVerticalBox);
     auto NumberSwitch=[this,&Vision](const FString& Label,const FString& Explain,int32 FProjectCustomMatchRules::* Member,int32 Min,int32 Max,int32 DefaultOn)
     {
-        Vision->AddSlot().AutoHeight().Padding(0,4,0,2)
+        Vision->AddSlot().AutoHeight().Padding(0,3,0,1)
         [SNew(SHorizontalBox)
          +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
          [SNew(SCheckBox).Style(&ToggleStyle()).Padding(FMargin(8,0,0,0)).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
@@ -401,57 +403,62 @@ TSharedRef<SWidget> UProjectCustomRoomRulesWidget::RebuildWidget()
             .IsEnabled_Lambda([this,Member]{return CanEdit()&&Draft.bEnabled&&Draft.*Member>0;})
             .Value_Lambda([this,Member,DefaultOn]{return Draft.*Member>0?Draft.*Member:DefaultOn;})
             .OnValueChanged_Lambda([this,Member,Min,Max](int32 V){if(Draft.*Member>0)Draft.*Member=FMath::Clamp(V,Min,Max);})]]];
-        Vision->AddSlot().AutoHeight().Padding(28,0,0,10)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted()).Text(FText::FromString(Explain))];
+        Vision->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted()).Text(FText::FromString(Explain))];
     };
-    NumberSwitch(TEXT("바라보기 시간 제한 (초)"),TEXT("같은 몸체를 이 시간보다 오래 계속 보면 그 몸체가 시선을 무시하고 움직입니다. 눈을 떼거나 다른 몸체를 보면 다시 셉니다."),
+    NumberSwitch(TEXT("층마다 바뀌는 규칙 (개)"),TEXT("켠 환경·시선 규칙 중 층마다 이 수만큼 무작위 적용 (연달아 같은 조합 없음)."),
+        &FProjectCustomMatchRules::FloorRules,1,ProjectPlaygroundRules::FloorRulesMax,1);
+    NumberSwitch(TEXT("바라보기 시간 제한 (초)"),TEXT("같은 몸체를 이 시간보다 오래 보면 시선을 무시하고 움직입니다."),
         &FProjectCustomMatchRules::GazeLimitSeconds,ProjectPlaygroundRules::GazeLimitMin,ProjectPlaygroundRules::GazeLimitMax,ProjectPlaygroundRules::GazeLimitDefaultOn);
     // 어둠·연기: one number, 0 = off. Both sides' screens and the survivors' freezing gaze reach shrink with it.
-    Vision->AddSlot().AutoHeight().Padding(0,4,0,2)
+    Vision->AddSlot().AutoHeight().Padding(0,3,0,1)
     [SNew(SHorizontalBox)
      +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(28,0,0,0)[Caption(TEXT("어둠·연기 (0 끄기 ~ 3 아주 어두움)"))]
      +SHorizontalBox::Slot().AutoWidth()[SNew(SBox).WidthOverride(140)
       [SNew(SSpinBox<int32>).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18)).ContentPadding(FMargin(8,4)).MinValue(0).MaxValue(ProjectPlaygroundRules::DarknessMax)
         .MinSliderValue(0).MaxSliderValue(ProjectPlaygroundRules::DarknessMax).Delta(1).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
         .Value_Lambda([this]{return Draft.Darkness;}).OnValueChanged_Lambda([this](int32 V){Draft.Darkness=FMath::Clamp(V,0,ProjectPlaygroundRules::DarknessMax);})]]];
-    Vision->AddSlot().AutoHeight().Padding(28,0,0,10)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
-      .Text(FText::FromString(TEXT("생존자와 마네킹 플레이어 화면이 모두 어두워집니다. 생존자 시선이 몸체를 멈추게 하는 거리도 30m / 20m / 12m로 줄어듭니다.")))];
-    NumberSwitch(TEXT("소리만 들리는 마네킹 (m)"),TEXT("생존자 화면에서 이 거리보다 먼 몸체는 보이지 않고 발소리만 들립니다. 보이지 않는 몸체는 시선에 멈추지도 않습니다. 마네킹 쪽은 그대로 봅니다."),
+    Vision->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
+      .Text(FText::FromString(TEXT("양쪽 화면이 어두워지고 시선 거리가 30m / 20m / 12m로 줄어듭니다.")))];
+    NumberSwitch(TEXT("소리만 들리는 마네킹 (m)"),TEXT("이보다 먼 몸체는 보이지 않고 발소리만 들리며, 멈추지도 않습니다."),
         &FProjectCustomMatchRules::SoundOnlyMeters,ProjectPlaygroundRules::SoundOnlyMin,ProjectPlaygroundRules::SoundOnlyMax,ProjectPlaygroundRules::SoundOnlyDefaultOn);
     // 번지는 불: a plain switch; the numbers (2 min, 30 s, 6 m, 24 cells, 5 s) are the decided ones (12.1).
-    Vision->AddSlot().AutoHeight().Padding(0,4,0,2)
+    Vision->AddSlot().AutoHeight().Padding(0,3,0,1)
     [SNew(SCheckBox).Style(&ToggleStyle()).Padding(FMargin(8,0,0,0)).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
       .IsChecked_Lambda([this]{return Draft.bSpreadingFire?ECheckBoxState::Checked:ECheckBoxState::Unchecked;})
       .OnCheckStateChanged_Lambda([this](ECheckBoxState S){Draft.bSpreadingFire=S==ECheckBoxState::Checked;})[Caption(TEXT("번지는 불"))]];
-    Vision->AddSlot().AutoHeight().Padding(28,0,0,10)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
-      .Text(FText::FromString(TEXT("2분 뒤 불이 나서 30초마다 번집니다. 불 속에서는 스태미나가 줄고, 바닥나면 데스카운트를 잃습니다. 마네킹은 불 속에서 느려집니다.")))];
+    Vision->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
+      .Text(FText::FromString(TEXT("2분 뒤 불이 나 번집니다. 불 속에선 스태미나가 줄고 마네킹은 느려집니다.")))];
     // 손전등 시선 (phase 4, Docs/CustomGamePlayground.md 15): the numbers are the decided ones.
-    Vision->AddSlot().AutoHeight().Padding(0,4,0,2)
+    Vision->AddSlot().AutoHeight().Padding(0,3,0,1)
     [SNew(SCheckBox).Style(&ToggleStyle()).Padding(FMargin(8,0,0,0)).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
       .IsChecked_Lambda([this]{return Draft.bFlashlight?ECheckBoxState::Checked:ECheckBoxState::Unchecked;})
       .OnCheckStateChanged_Lambda([this](ECheckBoxState S){Draft.bFlashlight=S==ECheckBoxState::Checked;})[Caption(TEXT("손전등 시선"))]];
-    Vision->AddSlot().AutoHeight().Padding(28,0,0,10)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
-      .Text(FText::FromString(TEXT("손전등 빛 안(15m)의 몸체만 시선에 멈춥니다. 배터리 30초, 끄면 다시 찹니다. 켜고 끄기는 F(설정에서 변경).")))];
+    Vision->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
+      .Text(FText::FromString(TEXT("빛 안(15m)의 몸체만 멈춥니다. 배터리 30초, 켜고 끄기 F (설정에서 변경).")))];
     Vision->AddSlot().AutoHeight().Padding(0,4)
-    [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
+    [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted()).Visibility_Lambda([this]{return Draft.bEnabled?EVisibility::Collapsed:EVisibility::Visible;})
       .Text_Lambda([this]{return FText::FromString(Draft.bEnabled?TEXT(""):TEXT("기본 탭에서 사용자 지정을 켜면 고를 수 있습니다."));})];
 
     // 놀이 방식 (phase 3): how a match (or a run of matches) is played. Waves fix the time limit at 12 minutes (기본).
     auto Modes=SNew(SVerticalBox);
     auto ModeSwitch=[this,&Modes](const FString& Label,const FString& Explain,bool FProjectCustomMatchRules::* Member,TFunction<void()> OnOn)
     {
-        Modes->AddSlot().AutoHeight().Padding(0,4,0,2)
+        Modes->AddSlot().AutoHeight().Padding(0,3,0,1)
         [SNew(SCheckBox).Style(&ToggleStyle()).Padding(FMargin(8,0,0,0)).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
           .IsChecked_Lambda([this,Member]{return Draft.*Member?ECheckBoxState::Checked:ECheckBoxState::Unchecked;})
           .OnCheckStateChanged_Lambda([this,Member,OnOn](ECheckBoxState S){Draft.*Member=S==ECheckBoxState::Checked;if(Draft.*Member&&OnOn)OnOn();})[Caption(Label)]];
-        Modes->AddSlot().AutoHeight().Padding(28,0,0,10)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted()).Text(FText::FromString(Explain))];
+        Modes->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted()).Text(FText::FromString(Explain))];
     };
-    ModeSwitch(TEXT("숨바꼭질 (60초)"),TEXT("처음 60초 동안 마네킹은 보지도 움직이지도 못합니다. 그동안 생존자가 숨습니다."),&FProjectCustomMatchRules::bHideAndSeek,nullptr);
-    ModeSwitch(TEXT("웨이브 생존 (12분)"),TEXT("마네킹 3개로 시작해 2분마다 하나씩 늘어 8개까지 갑니다. 12분을 버티면 생존자가 이깁니다."),&FProjectCustomMatchRules::bWaves,
+    ModeSwitch(TEXT("숨바꼭질 (60초)"),TEXT("처음 60초는 마네킹이 보지도 움직이지도 못합니다."),&FProjectCustomMatchRules::bHideAndSeek,nullptr);
+    ModeSwitch(TEXT("웨이브 생존 (12분)"),TEXT("마네킹 3개에서 2분마다 1개씩 늘어납니다(최대 8). 12분을 버티면 승리."),&FProjectCustomMatchRules::bWaves,
         [this]{Draft.TimeLimitSeconds=ProjectPlaygroundRules::WaveSurviveSeconds;});
-    ModeSwitch(TEXT("규칙 카드 투표"),TEXT("경기 전 암전 화면에서 아직 꺼진 규칙 3장을 보여 주고 15초 동안 투표합니다. 마네킹 플레이어도 한 표, 동점이면 무작위입니다."),&FProjectCustomMatchRules::bRuleVote,nullptr);
-    ModeSwitch(TEXT("역할 바꾸기 (3판)"),TEXT("이 방에서 3판을 이어 하며 세 사람이 한 번씩 마네킹을 맡습니다. 방 화면에 누가 가장 빨리 전원을 잡았는지 보여 줍니다."),&FProjectCustomMatchRules::bRoleSwap,nullptr);
+    ModeSwitch(TEXT("규칙 카드 투표"),TEXT("경기 전에 꺼진 규칙 3장 중 하나를 15초 동안 모두가 투표로 고릅니다."),&FProjectCustomMatchRules::bRuleVote,nullptr);
+    ModeSwitch(TEXT("역할 바꾸기 (3판)"),TEXT("3판 동안 세 사람이 한 번씩 마네킹을 맡습니다."),&FProjectCustomMatchRules::bRoleSwap,nullptr);
+    // 호위 (Docs/CustomGamePlayground.md 16): decides the winner by floor rounds, so it excludes rules that end the match otherwise.
+    ModeSwitch(TEXT("호위 (층마다 1라운드)"),TEXT("AI 탈출자를 층마다 다음 층 입구(마지막 층은 출구)까지 데려갑니다. 잡히면 그 층은 마네킹 승, 2층을 먼저 이기면 승리."),&FProjectCustomMatchRules::bEscort,
+        [this]{Draft.bInfiniteLives=Draft.bInfection=Draft.bGhosts=Draft.bWaves=Draft.bHideAndSeek=Draft.bRoleSwap=false;Draft.EscapeMode=0;});
     // 둘이 봐야 멈추는 몸체 (phase 4): a switch with its count on the same row (1~3, not more than the mannequin count).
-    Modes->AddSlot().AutoHeight().Padding(0,4,0,2)
+    Modes->AddSlot().AutoHeight().Padding(0,3,0,1)
     [SNew(SHorizontalBox)
      +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
      [SNew(SCheckBox).Style(&ToggleStyle()).Padding(FMargin(8,0,0,0)).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
@@ -464,14 +471,31 @@ TSharedRef<SWidget> UProjectCustomRoomRulesWidget::RebuildWidget()
         .IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled&&Draft.PairGazeBodies>0;})
         .Value_Lambda([this]{return Draft.PairGazeBodies>0?Draft.PairGazeBodies:ProjectPlaygroundRules::PairGazeDefaultOn;})
         .OnValueChanged_Lambda([this](int32 V){if(Draft.PairGazeBodies>0)Draft.PairGazeBodies=FMath::Clamp(V,1,FMath::Min(ProjectPlaygroundRules::PairGazeMax,Draft.MannequinCount));})]]];
-    Modes->AddSlot().AutoHeight().Padding(28,0,0,10)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
-      .Text(FText::FromString(TEXT("머리 위에 x2가 붙은 몸체는 두 사람이 함께 봐야 멈춥니다. 한 명만 남으면 혼자 봐도 멈춥니다.")))];
+    Modes->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
+      .Text(FText::FromString(TEXT("x2가 붙은 몸체는 둘이 함께 봐야 멈춥니다(혼자 남으면 혼자서도).")))];
+    // 고장 난 에스컬레이터 (17): the most ways that work per floor (1~2); the actual count is rolled per floor.
+    Modes->AddSlot().AutoHeight().Padding(0,3,0,1)
+    [SNew(SHorizontalBox)
+     +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+     [SNew(SCheckBox).Style(&ToggleStyle()).Padding(FMargin(8,0,0,0)).IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled;})
+       .IsChecked_Lambda([this]{return Draft.EscalatorWorking>0?ECheckBoxState::Checked:ECheckBoxState::Unchecked;})
+       .OnCheckStateChanged_Lambda([this](ECheckBoxState S){Draft.EscalatorWorking=S==ECheckBoxState::Checked?ProjectPlaygroundRules::EscalatorWorkingDefaultOn:0;})
+       [Caption(TEXT("고장 난 에스컬레이터 (최대 작동)"))]]
+     +SHorizontalBox::Slot().AutoWidth()[SNew(SBox).WidthOverride(140)
+      [SNew(SSpinBox<int32>).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18)).ContentPadding(FMargin(8,4)).MinValue(1).MaxValue(ProjectPlaygroundRules::EscalatorWorkingMax)
+        .MinSliderValue(1).MaxSliderValue(ProjectPlaygroundRules::EscalatorWorkingMax).Delta(1)
+        .IsEnabled_Lambda([this]{return CanEdit()&&Draft.bEnabled&&Draft.EscalatorWorking>0;})
+        .Value_Lambda([this]{return Draft.EscalatorWorking>0?Draft.EscalatorWorking:ProjectPlaygroundRules::EscalatorWorkingDefaultOn;})
+        .OnValueChanged_Lambda([this](int32 V){if(Draft.EscalatorWorking>0)Draft.EscalatorWorking=FMath::Clamp(V,1,ProjectPlaygroundRules::EscalatorWorkingMax);})]]];
+    Modes->AddSlot().AutoHeight().Padding(28,0,0,5)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
+      .Text(FText::FromString(TEXT("층마다 1곳~최대 수만 움직입니다. 찾아야 합니다(마네킹은 압니다).")))];
     Modes->AddSlot().AutoHeight().Padding(0,4)
     [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15)).AutoWrapText(true).ColorAndOpacity(ProjectDFSDUI::Muted())
       .Text_Lambda([this]
       {
           if(!Draft.bEnabled)return FText::FromString(TEXT("기본 탭에서 사용자 지정을 켜면 고를 수 있습니다."));
           if(Draft.bWaves&&Draft.TimeLimitSeconds!=ProjectPlaygroundRules::WaveSurviveSeconds)return FText::FromString(TEXT("웨이브 생존은 제한 시간이 12분이어야 합니다. 기본 탭에서 바꾸세요."));
+          if(Draft.bEscort&&!Outgoing().IsValid())return FText::FromString(TEXT("호위는 무한 목숨·감염·유령·웨이브·숨바꼭질·탈출 방식·역할 바꾸기와 함께 켤 수 없습니다."));
           return FText::GetEmpty();
       })];
 
@@ -752,9 +776,11 @@ FString UProjectCustomRoomRulesWidget::DescribeRules(const FProjectCustomMatchRu
     if(R.HideRevealSeconds>0)Free.Add(FString::Printf(TEXT("숨으면 들킴 %d초"),R.HideRevealSeconds));
     static const TCHAR* Escape[]={TEXT(""),TEXT("함께 탈출"),TEXT("마지막 한 명이 모두를 구한다"),TEXT("먼저 나간 사람 승리")};if(R.EscapeMode>0&&R.EscapeMode<4)Free.Add(Escape[R.EscapeMode]);
     TArray<FString> Env;if(R.GazeLimitSeconds>0)Env.Add(FString::Printf(TEXT("바라보기 %d초"),R.GazeLimitSeconds));if(R.Darkness>0)Env.Add(FString::Printf(TEXT("어둠 %d"),R.Darkness));
-    if(R.SoundOnlyMeters>0)Env.Add(FString::Printf(TEXT("소리만 들리는 마네킹 %dm"),R.SoundOnlyMeters));if(R.bSpreadingFire)Env.Add(TEXT("번지는 불"));if(R.bFlashlight)Env.Add(TEXT("손전등 시선"));
-    TArray<FString> Modes;if(R.bHideAndSeek)Modes.Add(TEXT("숨바꼭질"));if(R.bWaves)Modes.Add(TEXT("웨이브 생존"));if(R.bRuleVote)Modes.Add(TEXT("규칙 카드 투표"));if(R.bRoleSwap)Modes.Add(TEXT("역할 바꾸기"));if(R.PairGazeBodies>0)Modes.Add(FString::Printf(TEXT("둘이 봐야 멈추는 몸체 %d개"),R.PairGazeBodies));
+    if(R.SoundOnlyMeters>0)Env.Add(FString::Printf(TEXT("소리만 들리는 마네킹 %dm"),R.SoundOnlyMeters));if(R.bSpreadingFire)Env.Add(TEXT("번지는 불"));if(R.bFlashlight)Env.Add(TEXT("손전등 시선"));if(R.EscalatorWorking>0)Env.Add(FString::Printf(TEXT("고장 난 에스컬레이터 (최대 %d곳 작동)"),R.EscalatorWorking));
+    if(R.FloorRules>0)Env.Insert(FString::Printf(TEXT("층마다 바뀌는 규칙 (환경·시선 중 %d개)"),R.FloorRules),0);
+    TArray<FString> Modes;if(R.bHideAndSeek)Modes.Add(TEXT("숨바꼭질"));if(R.bWaves)Modes.Add(TEXT("웨이브 생존"));if(R.bRuleVote)Modes.Add(TEXT("규칙 카드 투표"));if(R.bRoleSwap)Modes.Add(TEXT("역할 바꾸기"));if(R.PairGazeBodies>0)Modes.Add(FString::Printf(TEXT("둘이 봐야 멈추는 몸체 %d개"),R.PairGazeBodies));if(R.bEscort)Modes.Insert(TEXT("호위"),0);
     Group(TEXT("섞기"),Mix);Group(TEXT("자유 규칙"),Free);Group(TEXT("환경"),Env);Group(TEXT("놀이 방식"),Modes);
+    if(!R.TeamHandicap.IsNeutral())Lines.Add(TEXT("팀 핸디캡: ")+R.TeamHandicap.Summary());
     if(Lines.Num()==1)Lines.Add(TEXT("놀이터 규칙 없음"));
     return FString::Join(Lines,TEXT("\n"));
 }
@@ -945,7 +971,7 @@ void UProjectCustomRoomRulesWidget::ReadCodeAnswer(const TSharedPtr<FJsonObject>
 void UProjectCustomRoomRulesWidget::RefreshHandicapMembers()
 {
     auto* GI=GetGameInstance();auto* L=GI?GI->GetSubsystem<UProjectProject01LobbySubsystem>():nullptr;if(!L)return;
-    TArray<FString> Ids,Names;
+    TArray<FString> Ids={TeamHandicapKey},Names={TEXT("팀 전체")};
     for(const auto& M:L->GetCurrentRoom().Members)if(!M.bIsBot&&!M.bIsObserver&&!M.UserId.IsEmpty()){Ids.Add(M.UserId);Names.Add(M.DisplayName.IsEmpty()?M.UserId:M.DisplayName);}
     const FString Key=FString::Join(Ids,TEXT(","))+TEXT("|")+FString::Join(Names,TEXT(","));
     if(Key==HandicapMembersKey)return;
@@ -958,6 +984,7 @@ void UProjectCustomRoomRulesWidget::RefreshHandicapMembers()
 void UProjectCustomRoomRulesWidget::SetHandicapValue(int32 FProjectPlaygroundHandicap::* Member,int32 Value)
 {
     if(HandicapUserId.IsEmpty()||!CanEdit())return;
+    if(HandicapUserId==TeamHandicapKey){Draft.TeamHandicap.*Member=Value;return;} // Part of the rules (18).
     FProjectPlaygroundHandicap* H=Draft.Handicaps.FindByPredicate([this](const FProjectPlaygroundHandicap& E){return E.UserId==HandicapUserId;});
     if(!H){if(Value==0||Draft.Handicaps.Num()>=ProjectPlaygroundRules::MaxHandicaps)return;H=&Draft.Handicaps.AddDefaulted_GetRef();H->UserId=HandicapUserId;}
     H->*Member=Value;

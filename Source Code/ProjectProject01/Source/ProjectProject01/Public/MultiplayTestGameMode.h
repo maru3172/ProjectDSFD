@@ -49,6 +49,8 @@ struct FMultiplayTestMatchCarryover
     FProjectMatchAffixes Affixes;
     FProjectRogueCarry Rogue; // Item roguelike picks so far (ProjectItemRoguelikeRuntime.h).
     FString PlaygroundVoteCard; bool bPlaygroundVoteDone=false; // Custom game rule-card vote, decided on the first floor.
+    int32 EscortSurvivorWins=0,EscortMannequinWins=0,EscortRoundsPlayed=0; // Custom game escort rounds so far.
+    TArray<FString> PlaygroundFloorRules; bool bPlaygroundFloorRulesSet=false; // Per-floor rules: the next floor's draw.
     FString MatchId;
     FString BotRoomId;
     TArray<FProjectMatchBotSpec> Bots;
@@ -80,6 +82,9 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	friend class FProjectCustomRulesHideAndSeekWavesTest;
 	friend class FProjectCustomRulesRuleVoteTest;
 	friend class FProjectCustomRulesGazeRulesTest;
+	friend class FProjectCustomRulesEscortTest;
+	friend class FProjectCustomRulesEscalatorsTest;
+	friend class FProjectCustomRulesTeamAndFloorTest;
 	friend class FProjectReviewTravelRollbackTest;
 	friend class FProjectElevatorTest;
 	friend class FProjectShutterTest;
@@ -124,7 +129,8 @@ public:
     bool IsItemRoguelikeMatch()const{return ItemRoguelike&&ItemRoguelike->IsActive();}
     /** An affix rule is in play: from the ticket (bot match affixes) or handed over as an item roguelike buff. */
     /** Custom game infinite lives (Docs/CustomGamePlayground.md 4.1). */
-    bool HasPlaygroundInfiniteLives()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bInfiniteLives;}
+    // Escort gives survivors endless respawns too (with the escort wear-down).
+    bool HasPlaygroundInfiniteLives()const{return CustomMatchRules.bEnabled&&(CustomMatchRules.bInfiniteLives||CustomMatchRules.bEscort);}
     /** Custom game infection (Docs/CustomGamePlayground.md 4.2, 11). */
     bool HasPlaygroundInfection()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bInfection;}
     /** This controller is an infected survivor now playing a mannequin body (may attack with it). */
@@ -137,6 +143,12 @@ public:
     bool HasPlaygroundFire()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bSpreadingFire;}
     /** Custom game flashlight gaze (Docs/CustomGamePlayground.md 15). */
     bool HasPlaygroundFlashlight()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bFlashlight;}
+    /** Custom game escort (Docs/CustomGamePlayground.md 16). */
+    bool HasPlaygroundEscort()const{return CustomMatchRules.bEnabled&&CustomMatchRules.bEscort;}
+    /** Custom game broken escalators (Docs/CustomGamePlayground.md 17). */
+    bool HasPlaygroundEscalators()const{return CustomMatchRules.bEnabled&&CustomMatchRules.EscalatorWorking>0;}
+    /** The escapee was caught (contact or direct attack): the mannequin side takes this floor's round. */
+    void OnPlaygroundEscapeeCaught(class APlayerCharacter* Escapee);
     /** Custom game hide-and-seek: the first minute, while survivors hide (bodies frozen, mannequin screen dark). */
     bool IsPlaygroundHidePhase()const;
     /** Custom game rule-card vote: one player's vote (Docs/CustomGamePlayground.md 12.2). False when not counted. */
@@ -491,6 +503,35 @@ private:
 	void TickPlaygroundGazeRules();
 	/** Eyes a pair-gaze body needs: 2, or 1 once only one survivor is still in play. */
 	int32 PlaygroundPairGazeNeeded(const TArray<APlayerController*>& SurvivorControllers) const;
+	/** Custom game escort: one round per floor, best of three; carried between floors. */
+	int32 EscortSurvivorWins = 0, EscortMannequinWins = 0, EscortRoundsPlayed = 0;
+	bool bEscortRoundOver = false, bEscortGoalFinal = false, bEscortAfraidNoticed = false;
+	TWeakObjectPtr<class APlayerCharacter> PlaygroundEscapee;
+	TWeakObjectPtr<class AActor> EscortGoal;
+	TWeakObjectPtr<class AProjectProject01LevelTransitionTrigger> EscortTravel;
+	FVector EscortPingTarget = FVector::ZeroVector;
+	double EscortPingUntil = 0, EscortHoldUntil = 0, EscortNextMoveAt = 0, EscortNextFearNoticeAt = 0;
+	TMap<FString, int32> EscortDowns; // Respawns this round per survivor (the wear-down).
+	TSet<TWeakObjectPtr<class AProjectProject01LevelTransitionTrigger>> EscortKnownBroken; // Broken ways the escapee has found.
+	/** Custom game broken escalators: which ways work is rolled once per floor; the working ones get a mannequin-only mark. */
+	bool bPlaygroundEscalatorsChosen = false;
+	/** Per-floor rules (Docs/CustomGamePlayground.md 18): this floor's drawn sight/environment rules. */
+	TArray<FString> PlaygroundFloorDrawn;
+	bool bPlaygroundFloorNoticeSent = false;
+	TArray<TWeakObjectPtr<class AActor>> PlaygroundExitMarks;
+	void TickPlaygroundEscalators();
+	/** A way to the next floor that works (for the escort's forced travel); null when none. */
+	class AProjectProject01LevelTransitionTrigger* FindWorkingFloorTrigger() const;
+	void TickPlaygroundEscort();
+	class APlayerCharacter* SpawnPlaygroundEscapee();
+	void ChoosePlaygroundEscortGoal();
+	/** True when the escapee is alone (no survivor within 8 m) and a body is in its sight within 12 m. */
+	bool IsPlaygroundEscapeeAfraid(const class APlayerCharacter* Escapee) const;
+	void EndPlaygroundEscortRound(bool bSurvivorsWon);
+	void ContinuePlaygroundEscort();
+	void HearPlaygroundEscortPing(EProjectProject01PingType Type, const FVector& Location, const class AMultiplayTestPlayerController* Sender);
+	void ApplyPlaygroundEscortWear(class APlayerCharacter* Survivor, const FMultiplayTestServerPlayerRecord& Record);
+	FString PlaygroundEscortScore() const { return FString::Printf(TEXT("생존자 %d : 마네킹 %d"), EscortSurvivorWins, EscortMannequinWins); }
 	/** Custom game rule-card vote, held at the black loading gate like the item card pick. */
 	struct FPlaygroundVote{bool bOpen=false,bDone=false;int32 Serial=0;double EndsAt=0,NextSendAt=0;TArray<FString> Cards;TMap<FString,int32> Votes;FString Chosen;};
 	FPlaygroundVote PlaygroundVote;

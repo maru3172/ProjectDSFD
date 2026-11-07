@@ -23,7 +23,10 @@ internal static class RuleCodes
         string.Join(',',(r.AffixIds??[]).OrderBy(id=>id,StringComparer.Ordinal)),r.ItemCards?1:0,r.InfiniteLives?1:0,r.Infection?1:0,r.Ghosts?1:0,r.HideRevealSeconds,
         r.GazeLimitSeconds,r.Darkness,r.SoundOnlyMeters,r.EscapeMode,r.SpreadingFire?1:0,
         r.HideAndSeek?1:0,r.Waves?1:0,r.RuleVote?1:0,r.RoleSwap?1:0)
-        +(r.PairGazeBodies!=0||r.Flashlight?$"|v4|{r.PairGazeBodies}|{(r.Flashlight?1:0)}":"");
+        +(r.PairGazeBodies!=0||r.Flashlight?$"|v4|{r.PairGazeBodies}|{(r.Flashlight?1:0)}":"")
+        +(r.Escort?"|v5|1":"") // Escort joins the text only when on (earlier codes keep their value).
+        +(r.EscalatorWorking!=0?$"|v6|{r.EscalatorWorking}":"") // Broken escalators, same way.
+        +((r.TeamHandicap??new()).IsNeutral&&r.FloorRules==0?"":$"|v7|{(r.TeamHandicap??new()).DeathCount}|{(r.TeamHandicap??new()).SpeedPct}|{(r.TeamHandicap??new()).StaminaPct}|{(r.TeamHandicap??new()).GazePct}|{(r.TeamHandicap??new()).BodySpeedPct}|{(r.TeamHandicap??new()).AttackRangePct}|{r.FloorRules}"); // Team handicap, per-floor rules.
     internal static string Hash(CustomRuleSet r)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(r)))).ToLowerInvariant();
     internal static string Encode(string hexHash,int length)
     {

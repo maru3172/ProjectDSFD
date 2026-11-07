@@ -5,6 +5,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "ProjectAffixes.h"
+#include "Math/RandomStream.h"
 
 // Custom game "playground" rules (Docs/CustomGamePlayground.md). Every field is required on the wire; the backend
 // (Tools/ProjectProject01Backend/Game/CustomRoomRules.cs) and the game server apply the same checks.
@@ -37,6 +38,19 @@ namespace ProjectPlaygroundRules
     constexpr float FlashlightBatterySeconds=30.f,FlashlightRechargePerSecond=1.f,FlashlightEmptyLockSeconds=3.f;
     constexpr float FlashlightHalfAngleDegrees=20.f,FlashlightRangeCm=1500.f; // The gaze only freezes inside the beam.
     constexpr bool bPairGazeLive=true,bFlashlightLive=true;
+    // Escort (Docs/CustomGamePlayground.md 16): survivors walk an AI escapee to each floor's way out, one round per floor.
+    constexpr int32 EscortWinsNeeded=2;                    // Best of three floors.
+    constexpr float EscortSpeedScale=.6f;                  // The escapee walks at 60% of a survivor's walk.
+    constexpr float EscortCompanionCm=800.f,EscortFearSightCm=1200.f,EscortFearHalfAngleDegrees=60.f;
+    constexpr int32 EscortDegradeSpeedStep=5,EscortDegradeSpeedMax=20,EscortDegradeStaminaStep=10,EscortDegradeStaminaMax=40;
+    constexpr float EscortHoldSeconds=5.f,EscortPingFollowSeconds=20.f,EscortArriveCm=200.f;
+    constexpr bool bEscortLive=true;
+    // Broken escalators (17): of several ways to the next floor, only 1..N work (N = 1 or 2, rolled per floor).
+    constexpr int32 EscalatorWorkingMax=2,EscalatorWorkingDefaultOn=1;
+    constexpr bool bEscalatorsLive=true;
+    // Team handicap and per-floor rules (18).
+    constexpr int32 FloorRulesMax=3;
+    constexpr bool bTeamHandicapLive=true,bFloorRulesLive=true;
 }
 
 /**
@@ -67,13 +81,28 @@ struct FProjectPlaygroundHandicap
     FString UserId;
     int32 DeathCount=0,SpeedPct=0,StaminaPct=0,GazePct=0,BodySpeedPct=0,AttackRangePct=0;
     bool IsNeutral()const{return DeathCount==0&&SpeedPct==0&&StaminaPct==0&&GazePct==0&&BodySpeedPct==0&&AttackRangePct==0;}
-    bool IsWellFormed()const
+    bool HasValidRanges()const
     {
         using namespace ProjectPlaygroundRules;
-        if(UserId.IsEmpty()||UserId.Len()>32)return false;
-        for(const TCHAR C:UserId)if(!FChar::IsAlnum(C)&&C!=TEXT('-')&&C!=TEXT('_'))return false;
         return FMath::Abs(DeathCount)<=HandicapDeathMax&&FMath::Abs(SpeedPct)<=HandicapSpeedMax&&FMath::Abs(StaminaPct)<=HandicapStaminaMax
             &&FMath::Abs(GazePct)<=HandicapGazeMax&&FMath::Abs(BodySpeedPct)<=HandicapBodySpeedMax&&FMath::Abs(AttackRangePct)<=HandicapAttackRangeMax;
+    }
+    bool IsWellFormed()const
+    {
+        if(UserId.IsEmpty()||UserId.Len()>32)return false;
+        for(const TCHAR C:UserId)if(!FChar::IsAlnum(C)&&C!=TEXT('-')&&C!=TEXT('_'))return false;
+        return HasValidRanges();
+    }
+    /** Personal + team, each value kept inside the handicap range (Docs/CustomGamePlayground.md 18). */
+    static FProjectPlaygroundHandicap Combine(const FProjectPlaygroundHandicap* Personal,const FProjectPlaygroundHandicap& Team)
+    {
+        using namespace ProjectPlaygroundRules;
+        FProjectPlaygroundHandicap H;if(Personal)H.UserId=Personal->UserId;
+        auto Sum=[](int32 A,int32 B,int32 Max){return FMath::Clamp(A+B,-Max,Max);};
+        H.DeathCount=Sum(Personal?Personal->DeathCount:0,Team.DeathCount,HandicapDeathMax);H.SpeedPct=Sum(Personal?Personal->SpeedPct:0,Team.SpeedPct,HandicapSpeedMax);
+        H.StaminaPct=Sum(Personal?Personal->StaminaPct:0,Team.StaminaPct,HandicapStaminaMax);H.GazePct=Sum(Personal?Personal->GazePct:0,Team.GazePct,HandicapGazeMax);
+        H.BodySpeedPct=Sum(Personal?Personal->BodySpeedPct:0,Team.BodySpeedPct,HandicapBodySpeedMax);H.AttackRangePct=Sum(Personal?Personal->AttackRangePct:0,Team.AttackRangePct,HandicapAttackRangeMax);
+        return H;
     }
     bool operator==(const FProjectPlaygroundHandicap& R)const
     {return UserId==R.UserId&&DeathCount==R.DeathCount&&SpeedPct==R.SpeedPct&&StaminaPct==R.StaminaPct&&GazePct==R.GazePct&&BodySpeedPct==R.BodySpeedPct&&AttackRangePct==R.AttackRangePct;}
@@ -98,11 +127,20 @@ struct FProjectCustomMatchRules
     bool bSpreadingFire=false;
     bool bHideAndSeek=false,bWaves=false,bRuleVote=false,bRoleSwap=false; // Phase 3.
     int32 PairGazeBodies=0; bool bFlashlight=false; // Phase 4.
+    bool bEscort=false; // Escort mode (16).
+    int32 EscalatorWorking=0; // Broken escalators (17): 0 off, else the most that work per floor.
+    /** Team handicap (18): survivor fields apply to every survivor, body/attack fields to the mannequin side. No user id;
+     *  unlike personal handicaps it belongs to the rules, so presets and rule codes keep it. */
+    FProjectPlaygroundHandicap TeamHandicap;
+    int32 FloorRules=0; // Per-floor rules (18): 0 off, else how many of the host's sight/environment rules each floor draws.
     TArray<FProjectPlaygroundHandicap> Handicaps; // Per player (never part of presets or rule codes).
     const FProjectPlaygroundHandicap* FindHandicap(const FString& UserId)const
     {if(!bEnabled||UserId.IsEmpty())return nullptr;return Handicaps.FindByPredicate([&UserId](const FProjectPlaygroundHandicap& H){return H.UserId==UserId;});}
+    /** What applies to this player: their own handicap plus the team handicap (neutral with custom rules off). */
+    FProjectPlaygroundHandicap EffectiveHandicap(const FString& UserId)const
+    {return bEnabled?FProjectPlaygroundHandicap::Combine(FindHandicap(UserId),TeamHandicap):FProjectPlaygroundHandicap();}
 
-    bool HasPlaygroundRules()const{return !AffixIds.IsEmpty()||bItemCards||bInfiniteLives||bInfection||bGhosts||HideRevealSeconds!=0||GazeLimitSeconds!=0||Darkness!=0||SoundOnlyMeters!=0||EscapeMode!=0||bSpreadingFire||!Handicaps.IsEmpty()||bHideAndSeek||bWaves||bRuleVote||bRoleSwap||PairGazeBodies!=0||bFlashlight;}
+    bool HasPlaygroundRules()const{return !AffixIds.IsEmpty()||bItemCards||bInfiniteLives||bInfection||bGhosts||HideRevealSeconds!=0||GazeLimitSeconds!=0||Darkness!=0||SoundOnlyMeters!=0||EscapeMode!=0||bSpreadingFire||!Handicaps.IsEmpty()||bHideAndSeek||bWaves||bRuleVote||bRoleSwap||PairGazeBodies!=0||bFlashlight||bEscort||EscalatorWorking!=0||!TeamHandicap.IsNeutral()||FloorRules!=0;}
     /** Ranges and combinations (Docs/CustomGamePlayground.md 2.1-2.2), regardless of which rules are implemented yet. */
     bool IsWellFormed()const
     {
@@ -118,6 +156,11 @@ struct FProjectCustomMatchRules
         if(SoundOnlyMeters!=0&&(SoundOnlyMeters<SoundOnlyMin||SoundOnlyMeters>SoundOnlyMax))return false;
         if(bWaves&&TimeLimitSeconds!=WaveSurviveSeconds)return false; // Waves: survive exactly 12 minutes.
         if(PairGazeBodies<0||PairGazeBodies>PairGazeMax||PairGazeBodies>MannequinCount)return false;
+        // Escort decides the winner by rounds and gives survivors endless respawns itself, so rules that decide the end
+        // another way (or give lives) cannot ride with it.
+        if(bEscort&&(bInfiniteLives||bInfection||bGhosts||bWaves||bHideAndSeek||EscapeMode!=0||bRoleSwap))return false;
+        if(EscalatorWorking<0||EscalatorWorking>EscalatorWorkingMax)return false;
+        if(!TeamHandicap.UserId.IsEmpty()||!TeamHandicap.HasValidRanges()||FloorRules<0||FloorRules>FloorRulesMax)return false;
         if(Handicaps.Num()>MaxHandicaps)return false;
         {TSet<FString> Seen;for(const auto& H:Handicaps){if(!H.IsWellFormed()||Seen.Contains(H.UserId))return false;Seen.Add(H.UserId);}}
         if(AffixIds.Num()>MaxAffixes)return false;
@@ -138,12 +181,12 @@ struct FProjectCustomMatchRules
             &&(bInfectionLive||!bInfection)&&(bGhostsLive||!bGhosts)&&(bHideRevealLive||HideRevealSeconds==0)
             &&(bGazeLimitLive||GazeLimitSeconds==0)&&(bDarknessLive||Darkness==0)&&(bSoundOnlyLive||SoundOnlyMeters==0)&&(bEscapeModeLive||EscapeMode==0)&&(bSpreadingFireLive||!bSpreadingFire)&&(bHandicapLive||Handicaps.IsEmpty())
             &&(bHideAndSeekLive||!bHideAndSeek)&&(bWavesLive||!bWaves)&&(bRuleVoteLive||!bRuleVote)&&(bRoleSwapLive||!bRoleSwap)
-            &&(bPairGazeLive||PairGazeBodies==0)&&(bFlashlightLive||!bFlashlight);
+            &&(bPairGazeLive||PairGazeBodies==0)&&(bFlashlightLive||!bFlashlight)&&(bEscortLive||!bEscort)&&(bEscalatorsLive||EscalatorWorking==0)&&(bTeamHandicapLive||TeamHandicap.IsNeutral())&&(bFloorRulesLive||FloorRules==0);
     }
     bool operator==(const FProjectCustomMatchRules& R)const
     {
         return bEnabled==R.bEnabled&&DeathCount==R.DeathCount&&MannequinCount==R.MannequinCount&&TimeLimitSeconds==R.TimeLimitSeconds&&AffixIds==R.AffixIds
-            &&bItemCards==R.bItemCards&&bInfiniteLives==R.bInfiniteLives&&bInfection==R.bInfection&&bGhosts==R.bGhosts&&HideRevealSeconds==R.HideRevealSeconds&&GazeLimitSeconds==R.GazeLimitSeconds&&Darkness==R.Darkness&&SoundOnlyMeters==R.SoundOnlyMeters&&EscapeMode==R.EscapeMode&&bSpreadingFire==R.bSpreadingFire&&Handicaps==R.Handicaps&&bHideAndSeek==R.bHideAndSeek&&bWaves==R.bWaves&&bRuleVote==R.bRuleVote&&bRoleSwap==R.bRoleSwap&&PairGazeBodies==R.PairGazeBodies&&bFlashlight==R.bFlashlight;
+            &&bItemCards==R.bItemCards&&bInfiniteLives==R.bInfiniteLives&&bInfection==R.bInfection&&bGhosts==R.bGhosts&&HideRevealSeconds==R.HideRevealSeconds&&GazeLimitSeconds==R.GazeLimitSeconds&&Darkness==R.Darkness&&SoundOnlyMeters==R.SoundOnlyMeters&&EscapeMode==R.EscapeMode&&bSpreadingFire==R.bSpreadingFire&&Handicaps==R.Handicaps&&bHideAndSeek==R.bHideAndSeek&&bWaves==R.bWaves&&bRuleVote==R.bRuleVote&&bRoleSwap==R.bRoleSwap&&PairGazeBodies==R.PairGazeBodies&&bFlashlight==R.bFlashlight&&bEscort==R.bEscort&&EscalatorWorking==R.EscalatorWorking&&TeamHandicap==R.TeamHandicap&&FloorRules==R.FloorRules;
     }
     /** Strict and atomic: every field must be present and valid, otherwise Out is left unchanged. */
     static bool Parse(const TSharedPtr<FJsonObject>& Json,FProjectCustomMatchRules& Out)
@@ -163,7 +206,15 @@ struct FProjectCustomMatchRules
             ||!Json->TryGetBoolField(TEXT("spreadingFire"),R.bSpreadingFire)
             ||!Json->TryGetBoolField(TEXT("hideAndSeek"),R.bHideAndSeek)||!Json->TryGetBoolField(TEXT("waves"),R.bWaves)
             ||!Json->TryGetBoolField(TEXT("ruleVote"),R.bRuleVote)||!Json->TryGetBoolField(TEXT("roleSwap"),R.bRoleSwap)
-            ||!Json->TryGetNumberField(TEXT("pairGazeBodies"),R.PairGazeBodies)||!Json->TryGetBoolField(TEXT("flashlight"),R.bFlashlight))return false;
+            ||!Json->TryGetNumberField(TEXT("pairGazeBodies"),R.PairGazeBodies)||!Json->TryGetBoolField(TEXT("flashlight"),R.bFlashlight)
+            ||!Json->TryGetBoolField(TEXT("escort"),R.bEscort)||!Json->TryGetNumberField(TEXT("escalatorWorking"),R.EscalatorWorking)
+            ||!Json->TryGetNumberField(TEXT("floorRules"),R.FloorRules))return false;
+        {
+            const TSharedPtr<FJsonObject>* T=nullptr;if(!Json->TryGetObjectField(TEXT("teamHandicap"),T)||!T)return false;
+            auto TeamWhole=[&T](const TCHAR* Key,int32& Out){double D=0;if(!(*T)->TryGetNumberField(Key,D)||!FMath::IsFinite(D)||D!=FMath::FloorToDouble(D)||FMath::Abs(D)>1000.0)return false;Out=int32(D);return true;};
+            if(!TeamWhole(TEXT("deathCount"),R.TeamHandicap.DeathCount)||!TeamWhole(TEXT("speedPct"),R.TeamHandicap.SpeedPct)||!TeamWhole(TEXT("staminaPct"),R.TeamHandicap.StaminaPct)
+                ||!TeamWhole(TEXT("gazePct"),R.TeamHandicap.GazePct)||!TeamWhole(TEXT("bodySpeedPct"),R.TeamHandicap.BodySpeedPct)||!TeamWhole(TEXT("attackRangePct"),R.TeamHandicap.AttackRangePct))return false;
+        }
         const TArray<TSharedPtr<FJsonValue>>* HandicapValues=nullptr;
         if(!Json->TryGetArrayField(TEXT("handicaps"),HandicapValues)||!HandicapValues||HandicapValues->Num()>ProjectPlaygroundRules::MaxHandicaps)return false;
         for(const auto& V:*HandicapValues)
@@ -200,7 +251,13 @@ struct FProjectCustomMatchRules
         }
         J->SetArrayField(TEXT("handicaps"),HandicapValues);
         J->SetBoolField(TEXT("hideAndSeek"),bHideAndSeek);J->SetBoolField(TEXT("waves"),bWaves);J->SetBoolField(TEXT("ruleVote"),bRuleVote);J->SetBoolField(TEXT("roleSwap"),bRoleSwap);
-        J->SetNumberField(TEXT("pairGazeBodies"),PairGazeBodies);J->SetBoolField(TEXT("flashlight"),bFlashlight);
+        J->SetNumberField(TEXT("pairGazeBodies"),PairGazeBodies);J->SetBoolField(TEXT("flashlight"),bFlashlight);J->SetBoolField(TEXT("escort"),bEscort);J->SetNumberField(TEXT("escalatorWorking"),EscalatorWorking);
+        {
+            auto T=MakeShared<FJsonObject>();T->SetNumberField(TEXT("deathCount"),TeamHandicap.DeathCount);T->SetNumberField(TEXT("speedPct"),TeamHandicap.SpeedPct);
+            T->SetNumberField(TEXT("staminaPct"),TeamHandicap.StaminaPct);T->SetNumberField(TEXT("gazePct"),TeamHandicap.GazePct);
+            T->SetNumberField(TEXT("bodySpeedPct"),TeamHandicap.BodySpeedPct);T->SetNumberField(TEXT("attackRangePct"),TeamHandicap.AttackRangePct);
+            J->SetObjectField(TEXT("teamHandicap"),T);J->SetNumberField(TEXT("floorRules"),FloorRules);
+        }
         return J;
     }
 };
@@ -226,7 +283,8 @@ namespace ProjectPlaygroundVote
             {TEXT("escapeLastSavesAll"),TEXT("마지막 한 명이 모두를 구한다"),TEXT("마지막 생존자가 탈출하면 탈락자도 함께 이깁니다.")},
             {TEXT("escapeFirstOut"),TEXT("먼저 나간 사람 승리"),TEXT("가장 먼저 탈출한 한 사람만 이깁니다.")},
             {TEXT("pairGaze"),TEXT("둘이 봐야 멈추는 몸체"),TEXT("표시된 몸체 하나는 두 사람이 함께 봐야 멈춥니다.")},
-            {TEXT("flashlight"),TEXT("손전등 시선"),TEXT("손전등 빛 안에서만 몸체가 멈춥니다. 배터리 30초.")}};
+            {TEXT("flashlight"),TEXT("손전등 시선"),TEXT("손전등 빛 안에서만 몸체가 멈춥니다. 배터리 30초.")},
+            {TEXT("escalators"),TEXT("고장 난 에스컬레이터"),TEXT("다음 층으로 가는 길 중 하나만 움직입니다. 찾아야 합니다.")}};
         return All;
     }
     inline const FCard* Find(const FString& Id){for(const FCard& C:Cards())if(Id==C.Id)return &C;return nullptr;}
@@ -249,6 +307,7 @@ namespace ProjectPlaygroundVote
         else if(Id==TEXT("escapeFirstOut"))Escape(EEscapeMode::FirstOutWins);
         else if(Id==TEXT("pairGaze")){if(R.PairGazeBodies==0)R.PairGazeBodies=PairGazeDefaultOn;}
         else if(Id==TEXT("flashlight"))R.bFlashlight=true;
+        else if(Id==TEXT("escalators")){if(R.EscalatorWorking==0)R.EscalatorWorking=EscalatorWorkingDefaultOn;}
         return !(R==Before);
     }
     /** Cards that would add a rule and keep the rules valid (live, allowed together). */
@@ -258,6 +317,46 @@ namespace ProjectPlaygroundVote
         for(const FCard& C:Cards()){FProjectCustomMatchRules Copy=R;if(Apply(Copy,C.Id)&&Copy.IsValid())Out.Add(C.Id);}
         return Out;
     }
+}
+
+// Per-floor rules (Docs/CustomGamePlayground.md 18): the host's sight/environment rules are the pool; each floor keeps a
+// random few of them (never the same set as the floor before when another set exists). Match-wide rules are never drawn.
+namespace ProjectPlaygroundFloorRules
+{
+    inline const TArray<FString>& Ids()
+    {static const TArray<FString> All={TEXT("gazeLimit"),TEXT("darkness"),TEXT("soundOnly"),TEXT("spreadingFire"),TEXT("flashlight"),TEXT("pairGaze"),TEXT("hideReveal")};return All;}
+    inline bool IsOn(const FProjectCustomMatchRules& R,const FString& Id)
+    {
+        if(Id==TEXT("gazeLimit"))return R.GazeLimitSeconds>0;if(Id==TEXT("darkness"))return R.Darkness>0;if(Id==TEXT("soundOnly"))return R.SoundOnlyMeters>0;
+        if(Id==TEXT("spreadingFire"))return R.bSpreadingFire;if(Id==TEXT("flashlight"))return R.bFlashlight;if(Id==TEXT("pairGaze"))return R.PairGazeBodies>0;
+        if(Id==TEXT("hideReveal"))return R.HideRevealSeconds>0;return false;
+    }
+    inline void TurnOff(FProjectCustomMatchRules& R,const FString& Id)
+    {
+        if(Id==TEXT("gazeLimit"))R.GazeLimitSeconds=0;else if(Id==TEXT("darkness"))R.Darkness=0;else if(Id==TEXT("soundOnly"))R.SoundOnlyMeters=0;
+        else if(Id==TEXT("spreadingFire"))R.bSpreadingFire=false;else if(Id==TEXT("flashlight"))R.bFlashlight=false;else if(Id==TEXT("pairGaze"))R.PairGazeBodies=0;
+        else if(Id==TEXT("hideReveal"))R.HideRevealSeconds=0;
+    }
+    /** The pool: the drawable rules the host turned on. */
+    inline TArray<FString> Pool(const FProjectCustomMatchRules& R){TArray<FString> Out;for(const FString& Id:Ids())if(IsOn(R,Id))Out.Add(Id);return Out;}
+    /** A random set of Count from the pool, not equal to Previous while another set exists. */
+    inline TArray<FString> Draw(const TArray<FString>& Pool,int32 Count,const TArray<FString>& Previous,FRandomStream& Rng)
+    {
+        if(Count<=0||Pool.Num()<=Count)return Pool;
+        auto Same=[](TArray<FString> A,TArray<FString> B){A.Sort();B.Sort();return A==B;};
+        TArray<FString> Out;
+        for(int32 Try=0;Try<16;++Try)
+        {
+            TArray<FString> Bag=Pool;Out.Reset();
+            while(Out.Num()<Count){const int32 I=Rng.RandRange(0,Bag.Num()-1);Out.Add(Bag[I]);Bag.RemoveAtSwap(I);}
+            if(!Same(Out,Previous))break;
+        }
+        return Out;
+    }
+    /** Keeps only the drawn rules of the pool on (values as the host set them). */
+    inline void Apply(FProjectCustomMatchRules& R,const TArray<FString>& Pool,const TArray<FString>& Drawn){for(const FString& Id:Pool)if(!Drawn.Contains(Id))TurnOff(R,Id);}
+    inline FString Names(const TArray<FString>& Drawn)
+    {TArray<FString> N;for(const FString& Id:Drawn)if(const auto* C=ProjectPlaygroundVote::Find(Id))N.Add(C->Name);return N.IsEmpty()?FString(TEXT("없음")):FString::Join(N,TEXT(", "));}
 }
 
 // Recommended presets (Docs/CustomGamePlayground.md 5). Read-only; loading one fills the editor and the host still

@@ -3,6 +3,7 @@
 
 #include "PlayerCharacter.h"
 #include "Components/SpotLightComponent.h"
+#include "Components/TextRenderComponent.h"
 #include "ProjectCustomMatchRules.h"
 #include "ProjectReplicationBudgetComponent.h"
 #include "ProjectProject01TuningData.h"
@@ -305,6 +306,27 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	PlaygroundFlashlightBeam->SetAttenuationRadius(ProjectPlaygroundRules::FlashlightRangeCm);
 	PlaygroundFlashlightBeam->SetCastShadows(false);
 	PlaygroundFlashlightBeam->SetVisibility(false);
+	// Custom game escort: a soft, steady green light over the escapee's head, and "!" while it is frozen in fear.
+	PlaygroundEscapeeMarker = CreateDefaultSubobject<UPointLightComponent>(TEXT("Playground Escapee Marker"));
+	PlaygroundEscapeeMarker->SetupAttachment(RootComponent);
+	PlaygroundEscapeeMarker->SetRelativeLocation(FVector(0.f, 0.f, 120.f));
+	PlaygroundEscapeeMarker->SetIntensityUnits(ELightUnits::Candelas);
+	PlaygroundEscapeeMarker->SetIntensity(8.f);
+	PlaygroundEscapeeMarker->SetLightColor(FLinearColor(.45f, 1.f, .6f));
+	PlaygroundEscapeeMarker->SetAttenuationRadius(260.f);
+	PlaygroundEscapeeMarker->SetCastShadows(false);
+	PlaygroundEscapeeMarker->SetVisibility(false);
+	PlaygroundEscapeeFearLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Playground Escapee Fear"));
+	PlaygroundEscapeeFearLabel->SetupAttachment(RootComponent);
+	PlaygroundEscapeeFearLabel->SetRelativeLocation(FVector(0.f, 0.f, 135.f));
+	PlaygroundEscapeeFearLabel->SetHorizontalAlignment(EHTA_Center);
+	PlaygroundEscapeeFearLabel->SetVerticalAlignment(EVRTA_TextCenter);
+	PlaygroundEscapeeFearLabel->SetWorldSize(48.f);
+	PlaygroundEscapeeFearLabel->SetTextRenderColor(FColor(255, 190, 60));
+	PlaygroundEscapeeFearLabel->SetText(FText::FromString(TEXT("!")));
+	PlaygroundEscapeeFearLabel->SetCastShadow(false);
+	PlaygroundEscapeeFearLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PlaygroundEscapeeFearLabel->SetVisibility(false);
 	
 	// 플레이어 심박수 관련 컴포넌트 연결
 	HeartbeatComponent = CreateDefaultSubobject<UPlayerHeartbeatComponent>(TEXT("Heartbeat Component"));
@@ -1416,7 +1438,8 @@ void APlayerCharacter::ApplyPlayerWalkSpeed()
 		return;
 	}
 
-	Movement->MaxWalkSpeed = (bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed) * AffixSpeedScale * PlaygroundSpeedScale;
+	Movement->MaxWalkSpeed = (bIsSprinting ? PlayerSprintSpeed : PlayerWalkSpeed) * AffixSpeedScale * PlaygroundSpeedScale
+		* (bPlaygroundEscapee ? ProjectPlaygroundRules::EscortSpeedScale : 1.0f); // Custom game escort: the escapee walks slowly.
 }
 
 void APlayerCharacter::OnRep_PlayerWalkSpeed()
@@ -1444,6 +1467,12 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 	if (!IsValid(World))
 	{
 		return false;
+	}
+	// Custom game escort: catching the escapee ends the round (it has no lives of its own).
+	if (bPlaygroundEscapee)
+	{
+		if (auto* EscortMode = World->GetAuthGameMode<AMultiplayTestGameMode>()) EscortMode->OnPlaygroundEscapeeCaught(this);
+		return true;
 	}
 	// 화면 피격 연출이 끝날 때까지 같은 접촉이나 다른 마네킹이 데스카운트를 연속으로 깎지 못한다.
 	if (World->GetTimeSeconds() < NextDeathCountDamageAllowedWorldSeconds)
@@ -2201,6 +2230,8 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, bPlaygroundFlashlightOn);
 	DOREPLIFETIME_CONDITION(APlayerCharacter, PlaygroundFlashlightBattery, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(APlayerCharacter, bPlaygroundFlashlightLocked, COND_OwnerOnly);
+	DOREPLIFETIME(APlayerCharacter, bPlaygroundEscapee);
+	DOREPLIFETIME(APlayerCharacter, bPlaygroundEscapeeAfraid);
 	DOREPLIFETIME(APlayerCharacter, AffixCue);
 	DOREPLIFETIME(APlayerCharacter, RogueFootstepScale);
 	DOREPLIFETIME(APlayerCharacter, RogueMannequinHearingScale);
@@ -2537,6 +2568,29 @@ void APlayerCharacter::TickPlaygroundFlashlight(const float DeltaTime)
 	}
 	PlaygroundFlashlightBattery = FMath::Min(FlashlightBatterySeconds, PlaygroundFlashlightBattery + DeltaTime * FlashlightRechargePerSecond);
 	if (bPlaygroundFlashlightLocked && (PlaygroundFlashlightUnlockIn -= DeltaTime) <= 0.f) { bPlaygroundFlashlightLocked = false; ForceNetUpdate(); }
+}
+
+void APlayerCharacter::SetPlaygroundEscapee(const bool bEscapee)
+{
+	if (!HasAuthority() || bPlaygroundEscapee == bEscapee) return;
+	bPlaygroundEscapee = bEscapee;
+	ApplyPlayerWalkSpeed();
+	OnRep_PlaygroundEscapee();
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::SetPlaygroundEscapeeAfraid(const bool bAfraid)
+{
+	if (!HasAuthority() || bPlaygroundEscapeeAfraid == bAfraid) return;
+	bPlaygroundEscapeeAfraid = bAfraid;
+	OnRep_PlaygroundEscapee();
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::OnRep_PlaygroundEscapee()
+{
+	if (IsValid(PlaygroundEscapeeMarker)) PlaygroundEscapeeMarker->SetVisibility(bPlaygroundEscapee);
+	if (IsValid(PlaygroundEscapeeFearLabel)) PlaygroundEscapeeFearLabel->SetVisibility(bPlaygroundEscapee && bPlaygroundEscapeeAfraid);
 }
 
 void APlayerCharacter::OnRep_PlaygroundFlashlight()

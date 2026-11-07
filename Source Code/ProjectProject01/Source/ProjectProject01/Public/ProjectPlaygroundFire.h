@@ -40,3 +40,21 @@ private:
     float Seed = 0, Growth = 0;
     void ApplyLook(float Seconds);
 };
+
+/**
+ * Custom game broken escalators (Docs/CustomGamePlayground.md 17): marks a way to the next floor that works. Replicated,
+ * but drawn only on the mannequin player's screen (survivors have to find it). A steady soft green light and "EXIT".
+ */
+UCLASS(NotBlueprintable)
+class PROJECTPROJECT01_API AProjectPlaygroundExitMark final : public AActor
+{
+    GENERATED_BODY()
+public:
+    AProjectPlaygroundExitMark();
+    virtual void Tick(float DeltaSeconds) override;
+    /** True when this screen belongs to the mannequin player (the only one who sees the mark). */
+    static bool IsSeenBy(const class APlayerController* Local);
+private:
+    UPROPERTY(VisibleAnywhere) TObjectPtr<class UPointLightComponent> Glow;
+    UPROPERTY(VisibleAnywhere) TObjectPtr<class UTextRenderComponent> Label;
+};
