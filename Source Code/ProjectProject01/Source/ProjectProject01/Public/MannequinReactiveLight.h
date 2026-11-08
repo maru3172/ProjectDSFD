@@ -5,6 +5,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Components/SynthComponent.h"
+#include "ProjectReactiveLightPattern.h"
 #include "MannequinReactiveLight.generated.h"
 
 class AMannequinAICharacter;
@@ -14,8 +16,26 @@ class USphereComponent;
 class USpotLightComponent;
 class UStaticMeshComponent;
 
+/** Quiet fixture-local electrical hum and arcing, generated without an external audio asset. */
+UCLASS(ClassGroup=(Audio))
+class PROJECTPROJECT01_API UReactiveLightElectricalSynth final : public USynthComponent
+{
+	GENERATED_BODY()
+	friend class FProjectReactiveLightPresentationTest;
+public:
+	UReactiveLightElectricalSynth(const FObjectInitializer& Initializer);
+	void SetFault(float Amount);
+protected:
+	virtual bool Init(int32& SampleRate) override;
+	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
+private:
+	int32 Rate=48000;
+	float Phase=0, Gain=0, TargetGain=0, FilteredNoise=0;
+	uint32 Noise=0xA341316Cu;
+};
+
 /**
- * 감지 반경 안의 마네킹 수에 따라 더 빠르게 점멸하는 로컬 연출용 조명이다.
+ * 주변 마네킹 3개 단위로 불규칙한 전압 저하·점등 실패·느린 복구를 표현하는 로컬 조명이다.
  * AI 마네킹과 플레이어가 조종 중인 동일 클래스의 마네킹을 모두 감지한다.
  */
 UCLASS(Blueprintable)
@@ -23,17 +43,23 @@ class PROJECTPROJECT01_API AMannequinReactiveLight final : public AActor
 {
 	GENERATED_BODY()
 	friend class FProjectReviewRuntimeRegressionTest;
+	friend class FProjectReactiveLightPresentationTest;
+	friend class FProjectReactiveLightRenderTest;
 
 public:
 	AMannequinReactiveLight();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION(BlueprintPure, Category="Reactive Light|Debug")
 	int32 GetDetectedMannequinCount() const { return CurrentDetectedMannequinCount; }
 
 	UFUNCTION(BlueprintPure, Category="Reactive Light|Debug")
 	float GetCurrentBlinkIntervalSeconds() const { return CurrentBlinkIntervalSeconds; }
+
+	UFUNCTION(BlueprintPure, Category="Reactive Light|Debug")
+	int32 GetThreatTier() const { return ProjectReactiveLight::Tier(CurrentDetectedMannequinCount); }
 
 	/** 체크포인트 역직렬화 뒤 저장된 상태를 실제 조명 컴포넌트와 감지 타이머에 반영합니다. */
 	void RefreshAfterCheckpointRestore();
@@ -63,8 +89,9 @@ private:
 	void RefreshDetectedMannequinsFromWorld();
 	int32 PruneAndCountDetectedMannequins();
 	void UpdateBlinkingFromDetectedCount();
-	void ToggleBlinkState();
 	void ApplyLightState(bool bNewLightOn);
+	void ApplyBrightness(float Brightness);
+	void ResetFaultPresentation();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Reactive Light|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -93,40 +120,57 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.05", UIMin="0.05", Units="s"))
 	float DetectionRefreshIntervalSeconds = 0.2f;
 
-	/** 마네킹 한 기가 들어왔을 때 조명의 켜짐/꺼짐 상태가 전환되는 간격이다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Blink",
+	/** 조명과 마네킹의 수직 간격 제한. 다른 층의 몸체 때문에 전등이 고장 나지 않게 한다. */
+	UPROPERTY(EditAnywhere, Category="Reactive Light|Detection", meta=(ClampMin="100", Units="cm"))
+	float FloorHeightTolerance = 450.f;
+
+	/** 고장 중에도 남겨 두는 광량. 원래 광량을 넘는 섬광은 만들지 않는다. */
+	UPROPERTY(EditAnywhere, Category="Reactive Light|Light", meta=(ClampMin="0.1", ClampMax="1"))
+	float MinimumBrightnessFraction = .18f;
+
+	UPROPERTY(EditAnywhere, Category="Reactive Light|Sound")
+	bool bElectricalSound = true;
+
+	UPROPERTY(EditAnywhere, Category="Reactive Light|Sound", meta=(ClampMin="0", ClampMax="1"))
+	float ElectricalSoundVolume = .45f;
+
+	/** 이전 배치 에셋 호환용. 새 연출은 고정 점멸 간격을 사용하지 않는다. */
+	UPROPERTY(BlueprintReadOnly, Category="Reactive Light|Legacy",
 		meta=(AllowPrivateAccess="true", ClampMin="0.01", UIMin="0.01", Units="s"))
 	float BaseBlinkIntervalSeconds = 0.6f;
 
-	/** 두 번째 마네킹부터 한 기가 추가될 때마다 감소하는 점멸 간격이다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Blink",
+	UPROPERTY(BlueprintReadOnly, Category="Reactive Light|Legacy",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="s"))
 	float BlinkIntervalReductionPerAdditionalMannequin = 0.08f;
 
-	/** 마네킹이 많아도 이 값보다 빠르게 상태를 전환하지 않는다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Blink",
+	UPROPERTY(BlueprintReadOnly, Category="Reactive Light|Legacy",
 		meta=(AllowPrivateAccess="true", ClampMin="0.01", UIMin="0.01", Units="s"))
 	float MinimumBlinkIntervalSeconds = 0.12f;
 
 	/** 조명이 켜진 상태의 실제 Spot Light 광량이다. 꺼질 때는 0으로 설정된다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Light",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float LightOnIntensity = 5000.0f;
+	float LightOnIntensity = 6500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Emissive", meta=(AllowPrivateAccess="true"))
 	FName EmissiveParameterName = TEXT("EmissiveStrength");
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Emissive",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float EmissiveOnValue = 5.0f;
+	float EmissiveOnValue = 7.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Emissive",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
 	float EmissiveOffValue = 0.0f;
 
 	TSet<TWeakObjectPtr<AMannequinAICharacter>> DetectedMannequins;
-	FTimerHandle BlinkTimerHandle;
 	FTimerHandle DetectionRefreshTimerHandle;
+	UPROPERTY(Transient)
+	TObjectPtr<UReactiveLightElectricalSynth> ElectricalSynth;
+	ProjectReactiveLight::FFaultPattern FaultPattern;
+	float TargetThreat=0, LastBrightness=-1;
+	float NearestMannequinDistance=0;
+	bool bPresentationAllowed=false;
 	UPROPERTY(SaveGame)
 	int32 CurrentDetectedMannequinCount = 0;
 
