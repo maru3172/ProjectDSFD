@@ -90,7 +90,9 @@ def sign(label, text, position, size=52):
 def fixture(label, position):
     actor = spawn(unreal.MannequinReactiveLight, label, position)
     actor.set_editor_property("detection_radius", 1500.0)
-    actor.set_editor_property("light_on_intensity", 10000.0)
+    actor.set_editor_property("light_on_intensity", 83786.43)
+    actor.set_editor_property("minimum_brightness_fraction", 0.0)
+    actor.set_editor_property("emissive_off_value", 0.0)
     housing = actor.get_editor_property("fixture_mesh")
     housing.set_static_mesh(cube)
     housing.set_material(0, trim_mat)
@@ -103,7 +105,7 @@ def fixture(label, position):
     light = actor.get_editor_property("reactive_spot_light")
     light.set_relative_rotation(unreal.Rotator(pitch=-90.0), False, False)
     light.set_relative_location(unreal.Vector(0, 0, -10), False, False)
-    light.set_editor_property("attenuation_radius", 1550.0)
+    light.set_editor_property("attenuation_radius", 2015.5635)
     light.set_editor_property("inner_cone_angle", 42.0)
     light.set_editor_property("outer_cone_angle", 70.0)
     light.set_editor_property("light_color", unreal.Color(215, 224, 235, 255))
@@ -130,10 +132,10 @@ for room, (cy, count) in enumerate(zip(centres, counts)):
         block(prefix + "_Entrance_%d" % dy, (-1100, cy + dy, 210), (0.4, 5.5, 4.7))
     for lx, ly in [(-500, -500), (-500, 500), (450, 0)]:
         fixture(prefix + "_ReactiveLamp_%d_%d" % (lx, ly), (lx, cy + ly, 424))
-    # Stable low fill keeps room boundaries readable during faults without masking the main fixtures.
+    # Reserved fill fixture stays off: the requested outage must not have an artificial residual glow.
     fill = spawn(unreal.PointLight, prefix + "_EmergencyFill", (-900, cy, 220))
     fill.light_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
-    fill.light_component.set_editor_property("intensity", 24.0)
+    fill.light_component.set_editor_property("intensity", 0.0)
     fill.light_component.set_editor_property("attenuation_radius", 1300.0)
     fill.light_component.set_editor_property("cast_shadows", False)
     for n in range(count):

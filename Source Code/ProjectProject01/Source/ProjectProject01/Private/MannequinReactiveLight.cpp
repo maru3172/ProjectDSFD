@@ -13,6 +13,11 @@
 #include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
 #include "TimerManager.h"
+#include "Components/CapsuleComponent.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/GameViewportClient.h"
+#include "SceneView.h"
+#include "ConvexVolume.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -21,8 +26,17 @@
 namespace
 {
     // One body snapshot per local world, not one world scan per fixture. Weak world keys keep PIE sessions isolated.
-    struct FBodySample { FVector Position; float Speed; };
-    struct FWorldBodies { double At=-1; TArray<FBodySample> Bodies; };
+    struct FBodySample { FVector Position; float FeetZ, Speed; };
+    struct FSharedLightGroup { ProjectReactiveLight::FSharedFaultSurges Surges;double UsedAt=-1;uint64 Id=0; };
+    struct FWorldBodies
+    {
+        double At=-1; TArray<FBodySample> Bodies;
+        TMap<FIntVector,FSharedLightGroup> Groups;
+        double PrunedAt=-1, ViewAt=-1;
+        FConvexVolume ViewFrustum;
+        bool HasView=false;
+        uint64 NextGroupId=0;
+    };
     TMap<TWeakObjectPtr<UWorld>, FWorldBodies> WorldBodies;
     const TArray<FBodySample>& SampleBodies(UWorld* World)
     {
@@ -34,7 +48,7 @@ namespace
             Sample.At=Now; Sample.Bodies.Reset();
             for (TActorIterator<AMannequinAICharacter> It(World); It; ++It)
                 if (IsValid(*It) && !It->IsActorBeingDestroyed())
-                    Sample.Bodies.Add({It->GetActorLocation(),static_cast<float>(It->GetVelocity().Size2D())});
+                    Sample.Bodies.Add({It->GetActorLocation(),static_cast<float>(It->GetActorLocation().Z-It->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()),static_cast<float>(It->GetVelocity().Size2D())});
         }
         return Sample.Bodies;
     }
@@ -91,7 +105,8 @@ AMannequinReactiveLight::AMannequinReactiveLight()
     BulbMesh->SetupAttachment(SceneRoot); BulbMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     ReactiveSpotLight=CreateDefaultSubobject<USpotLightComponent>(TEXT("Reactive Spot Light"));
     ReactiveSpotLight->SetupAttachment(SceneRoot); ReactiveSpotLight->SetMobility(EComponentMobility::Movable);
-    ReactiveSpotLight->SetIntensity(LightOnIntensity); ReactiveSpotLight->SetAttenuationRadius(1500);
+    // Nominal 4.14m ceiling: floor brightness matches the test corridor's 85cd / 3.30m light.
+    ReactiveSpotLight->SetIntensity(LightOnIntensity); ReactiveSpotLight->SetAttenuationRadius(2015.5635f);
     ReactiveSpotLight->SetInnerConeAngle(28); ReactiveSpotLight->SetOuterConeAngle(44);
     DetectionSphere=CreateDefaultSubobject<USphereComponent>(TEXT("Mannequin Detection Sphere"));
     DetectionSphere->SetupAttachment(SceneRoot); DetectionSphere->InitSphereRadius(DetectionRadius);
@@ -102,6 +117,7 @@ AMannequinReactiveLight::AMannequinReactiveLight()
 void AMannequinReactiveLight::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
+    bDetectionOriginValid=false;NextFloorProbeAt=0;
     if (DetectionSphere) { DetectionSphere->SetSphereRadius(FMath::Max(0.f,DetectionRadius),false);
         DetectionSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision); DetectionSphere->SetGenerateOverlapEvents(false); }
     if (ReactiveSpotLight) ReactiveSpotLight->SetMobility(EComponentMobility::Movable);
@@ -126,9 +142,10 @@ void AMannequinReactiveLight::EndPlay(const EEndPlayReason::Type Reason)
 }
 void AMannequinReactiveLight::ResetFaultPresentation()
 {
-    // A new local seed at level/checkpoint entry prevents every fixture from blinking together.
+    // Individual seeds keep nearby overlapping faults from playing the same envelope in lockstep.
     FaultPattern.Reset(static_cast<int32>(HashCombine(GetTypeHash(GetPathName()),FMath::Rand())));
     TargetThreat=0; LastBrightness=-1; CurrentDetectedMannequinCount=0; CurrentBlinkIntervalSeconds=0;
+    bPresentationRelevant=bDetectionOriginValid=false;LastRelevantAt=-1;NextFloorProbeAt=0;LastSharedGroupId=0;WakeBlendElapsed=.25f;WakeFromBrightness=1;
     if (ElectricalSynth) ElectricalSynth->Stop();
     ApplyLightState(true); SetActorTickEnabled(false);
 }
@@ -148,6 +165,56 @@ int32 AMannequinReactiveLight::PruneAndCountDetectedMannequins()
     for (auto It=DetectedMannequins.CreateIterator();It;++It) if (!It->IsValid()) It.RemoveCurrent();
     return DetectedMannequins.Num();
 }
+bool AMannequinReactiveLight::IntersectsInfluence(const FConvexVolume& Frustum) const
+{
+    // Cull the light's whole cone, never just the bulb: an offscreen lamp can illuminate visible flooring.
+    const FSphere Influence=ReactiveSpotLight ? ReactiveSpotLight->GetBoundingSphere() : FSphere(GetActorLocation(),DetectionRadius);
+    return Frustum.IntersectSphere(Influence.Center,Influence.W+500.f);
+}
+bool AMannequinReactiveLight::IsPresentationRelevant(APlayerController* Viewer)
+{
+    const auto* Settings=UProjectProject01GameUserSettings::Get();
+    const bool Audible=bElectricalSound&&ElectricalSoundVolume>0
+        &&(!Settings||(Settings->GetMasterVolume()>0&&Settings->GetSFXVolume()>0));
+    FVector Eye;FRotator Rotation;Viewer->GetPlayerViewPoint(Eye,Rotation);
+    // Nearby electrical audio must not vanish simply because the lamp is behind the listener.
+    bool Relevant=Audible&&FVector::DistSquared(Eye,GetActorLocation())<FMath::Square(1880.f);
+    auto& Shared=WorldBodies.FindOrAdd(GetWorld());
+    const double Now=GetWorld()->GetTimeSeconds();
+    if(Shared.ViewAt<0||Now<Shared.ViewAt||Now-Shared.ViewAt>=.05)
+    {
+        Shared.ViewAt=Now;Shared.HasView=false;
+        auto* Local=Viewer->GetLocalPlayer();
+        FSceneViewProjectionData Projection;
+        if(Local&&Local->ViewportClient&&Local->ViewportClient->Viewport
+            &&Local->GetProjectionData(Local->ViewportClient->Viewport,Projection))
+        {
+            GetViewFrustumBounds(Shared.ViewFrustum,Projection.ComputeViewProjectionMatrix(),false);
+            Shared.HasView=true;
+        }
+    }
+    // Headless tests/temporarily unavailable view data fail open, rather than breaking lighting.
+    Relevant|=!Shared.HasView||IntersectsInfluence(Shared.ViewFrustum);
+    if(Now<LastRelevantAt)LastRelevantAt=-1;
+    if(Relevant)LastRelevantAt=Now;
+    return Relevant||(LastRelevantAt>=0&&Now-LastRelevantAt<.75);
+}
+FVector AMannequinReactiveLight::GetDetectionOrigin()
+{
+    const FVector Source=ReactiveSpotLight ? ReactiveSpotLight->GetComponentLocation() : GetActorLocation();
+    if(!Source.Equals(FloorProbeSource,10.f)){bDetectionOriginValid=false;NextFloorProbeAt=0;}
+    if(!bDetectionOriginValid&&GetWorld()->GetTimeSeconds()>=NextFloorProbeAt)
+    {
+        FloorProbeSource=Source;DetectionOrigin=GetActorLocation();NextFloorProbeAt=GetWorld()->GetTimeSeconds()+1;
+        FCollisionObjectQueryParams Objects;Objects.AddObjectTypesToQuery(ECC_WorldStatic);Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+        FHitResult Hit;
+        const float Reach=FMath::Max(DetectionRadius,ReactiveSpotLight?ReactiveSpotLight->AttenuationRadius:0.f)*2+FloorHeightTolerance;
+        if(GetWorld()->LineTraceSingleByObjectType(Hit,Source,Source-FVector(0,0,Reach),Objects,
+            FCollisionQueryParams(SCENE_QUERY_STAT(ReactiveLightFloor),true,this)))
+        {DetectionOrigin=FVector(Source.X,Source.Y,Hit.ImpactPoint.Z);bDetectionOriginValid=true;}
+    }
+    return DetectionOrigin;
+}
 void AMannequinReactiveLight::RefreshDetectedMannequinsFromWorld()
 {
     UWorld* World=GetWorld();
@@ -162,33 +229,55 @@ void AMannequinReactiveLight::RefreshDetectedMannequinsFromWorld()
     }
     else if (const auto* Survivor=Viewer ? Cast<APlayerCharacter>(Viewer->GetPawn()) : nullptr)
         bPresentationAllowed &= Survivor->CanPlayTensionBreathing();
+    if(!bPresentationAllowed){CurrentDetectedMannequinCount=0;TargetThreat=0;bPresentationRelevant=false;UpdateBlinkingFromDetectedCount();return;}
+    const bool WasRelevant=bPresentationRelevant;
+    bPresentationRelevant=IsPresentationRelevant(Viewer);
+    if(!bPresentationRelevant)
+    {
+        // Keep the last state; no brightness reset or restart when the camera turns back.
+        if(ElectricalSynth)ElectricalSynth->Stop();
+        SetActorTickEnabled(false);return;
+    }
+    if(!WasRelevant)
+    {
+        const auto* Settings=UProjectProject01GameUserSettings::Get();
+        const float Flash=Settings?FMath::Clamp(Settings->GetLocalFlashScale(),0.f,1.f):1.f;
+        const float Held=LastBrightness<0?1.f:LastBrightness;
+        // Convert the actually held brightness back through this client's current flash setting.
+        WakeFromBrightness=Flash>UE_SMALL_NUMBER?FMath::Clamp((Held-1.f+Flash)/Flash,0.f,1.f):1.f;
+        WakeBlendElapsed=0;
+    }
     CurrentDetectedMannequinCount=0; TargetThreat=0; NearestMannequinDistance=DetectionRadius;
     if (bPresentationAllowed && DetectionRadius>UE_SMALL_NUMBER)
     {
-        FVector Eye; FRotator Direction; Viewer->GetPlayerViewPoint(Eye,Direction);
-        // Count around the player/viewed survivor, never the entire map. Ignore view direction and watched/frozen state.
-        float FixtureDistance=MAX_flt, Moving=0;
+        const FVector Origin=GetDetectionOrigin();
+        float Moving=0;
         for (const auto& Body:SampleBodies(World))
         {
-            if (FMath::Abs(Body.Position.Z-Eye.Z)>FloorHeightTolerance) continue;
-            const float Distance=FVector::Dist(Eye,Body.Position);
+            if (FMath::Abs(Body.FeetZ-Origin.Z)>FloorHeightTolerance) continue;
+            const float Distance=FVector::Dist2D(Origin,Body.Position);
             if (Distance>DetectionRadius) continue;
             ++CurrentDetectedMannequinCount;
             NearestMannequinDistance=FMath::Min(NearestMannequinDistance,Distance);
-            FixtureDistance=FMath::Min(FixtureDistance,static_cast<float>(FVector::Dist(GetActorLocation(),Body.Position)));
             Moving=FMath::Max(Moving,Body.Speed);
         }
-        const float FixtureReach=DetectionRadius*1.25f;
-        // FloorHeightTolerance separates bodies, not tall ceiling fixtures. A mall lamp may hang 12m above the
-        // same floor; its authored light reach decides whether it can affect this viewer's space.
-        const float VerticalReach=FMath::Max(FloorHeightTolerance,ReactiveSpotLight ? ReactiveSpotLight->AttenuationRadius : DetectionRadius);
-        const bool FixtureWithinReach=FMath::Abs(GetActorLocation().Z-Eye.Z)<=VerticalReach;
-        const float Spatial=FixtureWithinReach ? FMath::Clamp(1.f-FixtureDistance/FixtureReach,0.f,1.f) : 0.f;
-        const float NearViewer=1.f-FMath::Clamp((static_cast<float>(FVector::Dist(GetActorLocation(),Eye))-DetectionRadius)/(DetectionRadius*.5f),0.f,1.f);
-        TargetThreat=ProjectReactiveLight::Threat(CurrentDetectedMannequinCount,NearestMannequinDistance,DetectionRadius)
-            *FMath::Sqrt(Spatial)*NearViewer;
+        TargetThreat=ProjectReactiveLight::Threat(CurrentDetectedMannequinCount,NearestMannequinDistance,DetectionRadius);
         // Motion is only a subtle influence, not a light on/off trigger or an exact movement indicator.
         TargetThreat*=Moving>20 ? 1.f : .93f;
+    }
+    if(bPresentationAllowed&&TargetThreat>0)
+    {
+        auto& Shared=WorldBodies.FindOrAdd(World);const double Now=World->GetTimeSeconds();
+        if(Shared.PrunedAt<0||Now-Shared.PrunedAt>10)
+        {for(auto It=Shared.Groups.CreateIterator();It;++It)if(Now-It.Value().UsedAt>30)It.RemoveCurrent();Shared.PrunedAt=Now;}
+        const FVector Origin=GetDetectionOrigin();const float Cell=FMath::Max(100.f,DetectionRadius*2);
+        const FIntVector Key(FMath::FloorToInt((Origin.X+Cell*.5f)/Cell),FMath::FloorToInt((Origin.Y+Cell*.5f)/Cell),
+            FMath::RoundToInt(Origin.Z/FMath::Max(100.f,FloorHeightTolerance)));
+        auto& Group=Shared.Groups.FindOrAdd(Key);Group.UsedAt=Now;
+        if(!Group.Id){Group.Surges.Reset(FMath::Rand());Group.Id=++Shared.NextGroupId;}
+        if(LastSharedGroupId!=Group.Id){FaultPattern.LastSurgeSerial=0;LastSharedGroupId=Group.Id;}
+        Group.Surges.Step(Now,CurrentDetectedMannequinCount);
+        FaultPattern.QueueSharedSurge(Group.Surges.Serial,static_cast<float>(Now-Group.Surges.StartedAt),CurrentDetectedMannequinCount,TargetThreat);
     }
     UpdateBlinkingFromDetectedCount();
 }
@@ -208,9 +297,11 @@ void AMannequinReactiveLight::UpdateBlinkingFromDetectedCount()
 void AMannequinReactiveLight::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (GetNetMode()==NM_DedicatedServer) return;
-    FaultPattern.Step(DeltaSeconds,CurrentDetectedMannequinCount,TargetThreat,FMath::Clamp(MinimumBrightnessFraction,.1f,1.f));
-    ApplyBrightness(FaultPattern.Brightness);
+    if (GetNetMode()==NM_DedicatedServer||!bPresentationAllowed||!bPresentationRelevant) return;
+    FaultPattern.Step(DeltaSeconds,CurrentDetectedMannequinCount,TargetThreat,FMath::Clamp(MinimumBrightnessFraction,0.f,1.f));
+    WakeBlendElapsed=FMath::Min(.25f,WakeBlendElapsed+FMath::Clamp(DeltaSeconds,0.f,.1f));
+    const float A=WakeBlendElapsed/.25f;
+    ApplyBrightness(FMath::Lerp(WakeFromBrightness,FaultPattern.Brightness,A*A*(3-2*A)));
     // Kept for old Blueprint debug displays: this is time to the next random event, not a periodic blink interval.
     CurrentBlinkIntervalSeconds=FMath::Max(0.f,FaultPattern.Rest);
     auto* Settings=UProjectProject01GameUserSettings::Get();
@@ -249,7 +340,9 @@ void AMannequinReactiveLight::ApplyBrightness(float Brightness)
     const auto* Settings=UProjectProject01GameUserSettings::Get();
     const float Flash=Settings ? FMath::Clamp(Settings->GetLocalFlashScale(),0.f,1.f) : 1.f;
     const float Presented=FMath::Lerp(1.f,FMath::Clamp(Brightness,0.f,1.f),Flash);
-    if (FMath::IsNearlyEqual(Presented,LastBrightness,.0005f)) return;
+    // Never let the near-equal cache skip the final transition to a physically invisible light.
+    if ((Presented>UE_SMALL_NUMBER)==(LastBrightness>UE_SMALL_NUMBER)
+        && FMath::IsNearlyEqual(Presented,LastBrightness,.0005f)) return;
     LastBrightness=Presented;
     if (ReactiveSpotLight)
     {
@@ -283,9 +376,9 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
     TSet<int32> Kinds; int32 LastSerial=0,LastKind=INDEX_NONE; float Previous=1; bool Varied=false;
     for (int32 I=0;I<18000;++I)
     {
-        A.Step(1.f/30.f,9,1.f,.18f); B.Step(1.f/30.f,9,1.f,.18f);
+        A.Step(1.f/30.f,9,1.f,0); B.Step(1.f/30.f,9,1.f,0);
         if (A.Brightness!=B.Brightness) { AddError(TEXT("A fixed seed must be deterministic across renders")); return false; }
-        if (!FMath::IsFinite(A.Brightness)||A.Brightness<.18f||A.Brightness>1) { AddError(TEXT("Faults must preserve the light floor and never brighten beyond normal")); return false; }
+        if (!FMath::IsFinite(A.Brightness)||A.Brightness<0||A.Brightness>1) { AddError(TEXT("Faults must stay between complete darkness and normal light")); return false; }
         Varied |= FMath::Abs(A.Brightness-Previous)>.0001f; Previous=A.Brightness;
         if (A.Serial!=LastSerial)
         {
@@ -294,7 +387,8 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
         }
     }
     TestTrue(TEXT("Multiple fault families occur, not one repeated blink"),Kinds.Num()==5&&Varied);
-    TestTrue(TEXT("Urgent faults still have rests rather than constant strobing"),A.Serial>45&&A.Serial<170);
+    AddInfo(FString::Printf(TEXT("High-threat failure clusters in 600 seconds: %d"),A.Serial));
+    TestTrue(TEXT("More frequent faults still have rests rather than constant strobing"),A.Serial>140&&A.Serial<260);
     float Durations[5]={};
     for (int32 Kind=0;Kind<5;++Kind)
     {
@@ -302,14 +396,21 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
         for (int32 Attempt=0;Attempt<100&&P.LastKind!=Kind;++Attempt) P.BeginEvent(3);
         if (!TestEqual(TEXT("Sample the requested fault family"),P.LastKind,Kind)) return false;
         Durations[Kind]=P.Keys.Last().Time; P.Strength=.15f;
-        TestTrue(TEXT("Every fault family starts its failure promptly"),P.Keys[1].Time<=.15f);
-        float Min=1;
+        TestTrue(TEXT("Every fault family starts its failure within 0.1 second"),P.Keys[1].Time<=.1f);
+        bool HasResidualHold=false;
+        for(int32 K=1;K<P.Keys.Num();++K)
+            HasResidualHold|=P.Keys[K].Value>0&&P.Keys[K].Value<.06f
+                &&P.Keys[K].Value==P.Keys[K-1].Value&&P.Keys[K].Time-P.Keys[K-1].Time>.1f;
+        TestEqual(TEXT("Only voltage collapse and incomplete restoration hold a faint afterglow"),HasResidualHold,Kind==0||Kind==4);
+        float Min=1;int32 OffFrames=0,GlowFrames=0;
         for (int32 Frame=0;Frame<FMath::CeilToInt(Durations[Kind]*30);++Frame)
-        {P.Step(1.f/30.f,9,.15f,.18f);Min=FMath::Min(Min,P.Brightness);}
-        TestTrue(TEXT("Each stronger signature keeps at least a 20 percent dip at attenuated/tall-ceiling strength"),Min<.8f);
+        {P.Step(1.f/30.f,3,.15f,0);Min=FMath::Min(Min,P.Brightness);if(P.Brightness==0)++OffFrames;if(P.Brightness>.003f&&P.Brightness<.06f)++GlowFrames;}
+        TestTrue(TEXT("Every family fully extinguishes even at first-tier influence, for multiple frames"),Min==0&&OffFrames>=2);
+        if(Kind==0||Kind==4)TestTrue(TEXT("Afterglow survives the shiver and remains visible over multiple frames"),GlowFrames>=4);
     }
     TestTrue(TEXT("Single interruption, separated double interruption and voltage collapse remain distinct"),Durations[1]<Durations[2]&&Durations[2]<Durations[0]);
     TestTrue(TEXT("Incomplete restoration holds its dark pocket longer than a voltage sag"),Durations[4]>Durations[0]);
+    AddInfo(FString::Printf(TEXT("Failure durations sag=%.2f single=%.2f double=%.2f restart=%.2f lingering=%.2f"),Durations[0],Durations[1],Durations[2],Durations[3],Durations[4]));
     const float Before=A.Strength; A.Step(1.f/30.f,0,0,.18f);
     TestTrue(TEXT("Leaving the range decays instead of cutting abruptly"),A.Strength>0&&A.Strength<Before);
     for (int32 I=0;I<1200;++I) A.Step(1.f/30.f,0,0,.18f);
@@ -317,6 +418,52 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
     ProjectReactiveLight::FFaultPattern Quiet; Quiet.Reset(14);
     for (int32 I=0;I<3000;++I) Quiet.Step(1.f/30.f,2,0,.18f);
     TestTrue(TEXT("Sub-threshold groups never create an event"),Quiet.Serial==0&&Quiet.Brightness==1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReactiveLightOverlapTest,
+    "ProjectProject01.Lighting.MannequinFaultOverlap",
+    EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectReactiveLightOverlapTest::RunTest(const FString&)
+{
+    ProjectReactiveLight::FSharedFaultSurges Shared,Replay,Quiet;
+    Shared.Reset(1557);Replay.Reset(1557);Quiet.Reset(1557);
+    ProjectReactiveLight::FFaultPattern Lamps[3],Far;
+    for(int32 I=0;I<3;++I)Lamps[I].Reset(782+I*317);
+    Far.Reset(337);
+    int32 SingleFrames=0,PairFrames=0,TripleFrames=0,DifferentFrames=0;
+    for(int32 Frame=0;Frame<3600;++Frame)
+    {
+        const double Now=Frame/30.;
+        if(Frame%6==0)
+        {
+            Shared.Step(Now,3);Replay.Step(Now,3);Quiet.Step(Now,2);
+            if(Shared.Serial!=Replay.Serial||Shared.NextAt!=Replay.NextAt)
+            {AddError(TEXT("Shared disturbances must reproduce from a fixed seed"));return false;}
+            for(auto& Lamp:Lamps)
+            {
+                Lamp.QueueSharedSurge(Shared.Serial,static_cast<float>(Now-Shared.StartedAt),3,1);
+                const float Rest=Lamp.Rest;
+                if(Lamp.QueueSharedSurge(Shared.Serial,0,3,1)||Lamp.Rest!=Rest)
+                {AddError(TEXT("A shared disturbance may only schedule a fixture once"));return false;}
+            }
+            Far.QueueSharedSurge(Shared.Serial,0,3,0);
+        }
+        int32 Active=0;
+        for(auto& Lamp:Lamps){Lamp.Step(1.f/30,3,1,0);Active+=!Lamp.Keys.IsEmpty();}
+        Far.Step(1.f/30,3,0,0);
+        SingleFrames+=Active==1;PairFrames+=Active==2;TripleFrames+=Active==3;
+        DifferentFrames+=Active>=2&&(!FMath::IsNearlyEqual(Lamps[0].Brightness,Lamps[1].Brightness,.01f)
+            ||!FMath::IsNearlyEqual(Lamps[1].Brightness,Lamps[2].Brightness,.01f));
+    }
+    TestTrue(TEXT("One, two and three fixtures all occur, instead of serial or permanently synchronised faults"),
+        SingleFrames>0&&PairFrames>30&&TripleFrames>30&&DifferentFrames>100);
+    TestTrue(TEXT("Distant fixtures and groups under three are not pulled into a shared fault"),Far.Serial==0&&Quiet.Serial==0);
+    ProjectReactiveLight::FFaultPattern Late;Late.Reset(88);
+    const float OldRest=Late.Rest;
+    TestTrue(TEXT("An expired disturbance is not replayed after entering range or restoring a checkpoint"),
+        !Late.QueueSharedSurge(10,2,3,1)&&Late.Rest==OldRest);
+    AddInfo(FString::Printf(TEXT("120s overlap frames single=%d pair=%d triple=%d divergent=%d"),SingleFrames,PairFrames,TripleFrames,DifferentFrames));
     return true;
 }
 #endif

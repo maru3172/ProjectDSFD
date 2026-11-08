@@ -15,6 +15,8 @@ class USceneComponent;
 class USphereComponent;
 class USpotLightComponent;
 class UStaticMeshComponent;
+class APlayerController;
+struct FConvexVolume;
 
 /** Quiet fixture-local electrical hum and arcing, generated without an external audio asset. */
 UCLASS(ClassGroup=(Audio))
@@ -45,6 +47,7 @@ class PROJECTPROJECT01_API AMannequinReactiveLight final : public AActor
 	friend class FProjectReviewRuntimeRegressionTest;
 	friend class FProjectReactiveLightPresentationTest;
 	friend class FProjectReactiveLightRenderTest;
+	friend class FProjectReactiveLightVisibilityTest;
 
 public:
 	AMannequinReactiveLight();
@@ -92,6 +95,9 @@ private:
 	void ApplyLightState(bool bNewLightOn);
 	void ApplyBrightness(float Brightness);
 	void ResetFaultPresentation();
+	bool IsPresentationRelevant(APlayerController* Viewer);
+	bool IntersectsInfluence(const FConvexVolume& Frustum) const;
+	FVector GetDetectionOrigin();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Reactive Light|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -110,7 +116,7 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Reactive Light|Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USphereComponent> DetectionSphere;
 
-	/** 마네킹을 감지하는 구 반경이다. 단위는 cm다. */
+	/** 전등 아래 같은 층에서 마네킹을 감지하는 수평 반경이다. 단위는 cm다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Detection",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", Units="cm"))
 	float DetectionRadius = 1500.0f;
@@ -120,13 +126,13 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.05", UIMin="0.05", Units="s"))
 	float DetectionRefreshIntervalSeconds = 0.2f;
 
-	/** 조명과 마네킹의 수직 간격 제한. 다른 층의 몸체 때문에 전등이 고장 나지 않게 한다. */
+	/** 전등 아래 바닥과 마네킹 발의 높이 허용 간격. 다른 층의 몸체를 제외한다. */
 	UPROPERTY(EditAnywhere, Category="Reactive Light|Detection", meta=(ClampMin="100", Units="cm"))
 	float FloorHeightTolerance = 450.f;
 
-	/** 고장 중에도 남겨 두는 광량. 원래 광량을 넘는 섬광은 만들지 않는다. */
-	UPROPERTY(EditAnywhere, Category="Reactive Light|Light", meta=(ClampMin="0.1", ClampMax="1"))
-	float MinimumBrightnessFraction = .18f;
+	/** 고장 중 남겨 두는 광량. 기본 0은 완전 소등이며 원래 광량을 넘는 섬광은 만들지 않는다. */
+	UPROPERTY(EditAnywhere, Category="Reactive Light|Light", meta=(ClampMin="0", ClampMax="1"))
+	float MinimumBrightnessFraction = 0.f;
 
 	UPROPERTY(EditAnywhere, Category="Reactive Light|Sound")
 	bool bElectricalSound = true;
@@ -150,7 +156,7 @@ private:
 	/** 조명이 켜진 상태의 실제 Spot Light 광량이다. 꺼질 때는 0으로 설정된다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Light",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float LightOnIntensity = 10000.0f;
+	float LightOnIntensity = 83786.43f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Emissive", meta=(AllowPrivateAccess="true"))
 	FName EmissiveParameterName = TEXT("EmissiveStrength");
@@ -171,6 +177,12 @@ private:
 	float TargetThreat=0, LastBrightness=-1;
 	float NearestMannequinDistance=0;
 	bool bPresentationAllowed=false;
+	bool bPresentationRelevant=false, bDetectionOriginValid=false;
+	FVector DetectionOrigin=FVector::ZeroVector, FloorProbeSource=FVector::ZeroVector;
+	double LastRelevantAt=-1;
+	double NextFloorProbeAt=0;
+	uint64 LastSharedGroupId=0;
+	float WakeBlendElapsed=.25f, WakeFromBrightness=1.f;
 	UPROPERTY(SaveGame)
 	int32 CurrentDetectedMannequinCount = 0;
 
