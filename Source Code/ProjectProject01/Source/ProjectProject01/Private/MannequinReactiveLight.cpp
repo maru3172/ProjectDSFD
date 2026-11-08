@@ -121,7 +121,7 @@ void AMannequinReactiveLight::OnConstruction(const FTransform& Transform)
     if (DetectionSphere) { DetectionSphere->SetSphereRadius(FMath::Max(0.f,DetectionRadius),false);
         DetectionSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision); DetectionSphere->SetGenerateOverlapEvents(false); }
     if (ReactiveSpotLight) ReactiveSpotLight->SetMobility(EComponentMobility::Movable);
-    LastBrightness=-1; // Editor edits to the base intensity/material must apply even while logically steady.
+    LastBrightness=-1;LastSectionLevels=FVector(-1); // Apply editor intensity/material edits even while steady.
     ApplyLightState(true);
 }
 void AMannequinReactiveLight::BeginPlay()
@@ -144,7 +144,7 @@ void AMannequinReactiveLight::ResetFaultPresentation()
 {
     // Individual seeds keep nearby overlapping faults from playing the same envelope in lockstep.
     FaultPattern.Reset(static_cast<int32>(HashCombine(GetTypeHash(GetPathName()),FMath::Rand())));
-    TargetThreat=0; LastBrightness=-1; CurrentDetectedMannequinCount=0; CurrentBlinkIntervalSeconds=0;
+    TargetThreat=0; LastBrightness=-1;LastSectionLevels=FVector(-1);WakeFromSections=FVector::OneVector; CurrentDetectedMannequinCount=0; CurrentBlinkIntervalSeconds=0;
     bPresentationRelevant=bDetectionOriginValid=false;LastRelevantAt=-1;NextFloorProbeAt=0;LastSharedGroupId=0;WakeBlendElapsed=.25f;WakeFromBrightness=1;
     if (ElectricalSynth) ElectricalSynth->Stop();
     ApplyLightState(true); SetActorTickEnabled(false);
@@ -245,6 +245,8 @@ void AMannequinReactiveLight::RefreshDetectedMannequinsFromWorld()
         const float Held=LastBrightness<0?1.f:LastBrightness;
         // Convert the actually held brightness back through this client's current flash setting.
         WakeFromBrightness=Flash>UE_SMALL_NUMBER?FMath::Clamp((Held-1.f+Flash)/Flash,0.f,1.f):1.f;
+        for(int32 I=0;I<3;++I)WakeFromSections[I]=Flash>UE_SMALL_NUMBER&&LastSectionLevels[I]>=0
+            ?FMath::Clamp((LastSectionLevels[I]-1+Flash)/Flash,0.,1.):1.;
         WakeBlendElapsed=0;
     }
     CurrentDetectedMannequinCount=0; TargetThreat=0; NearestMannequinDistance=DetectionRadius;
@@ -288,6 +290,7 @@ void AMannequinReactiveLight::UpdateBlinkingFromDetectedCount()
     {
         if (ElectricalSynth) ElectricalSynth->Stop();
         FaultPattern.Keys.Reset(); FaultPattern.Strength=0;
+        FaultPattern.SectionLevels=FaultPattern.SectionTarget=FVector::OneVector;
         ApplyLightState(true); SetActorTickEnabled(false); return;
     }
     // Reading settings at the polling rate also restores steady light when effects are disabled mid-event.
@@ -340,18 +343,26 @@ void AMannequinReactiveLight::ApplyBrightness(float Brightness)
     const auto* Settings=UProjectProject01GameUserSettings::Get();
     const float Flash=Settings ? FMath::Clamp(Settings->GetLocalFlashScale(),0.f,1.f) : 1.f;
     const float Presented=FMath::Lerp(1.f,FMath::Clamp(Brightness,0.f,1.f),Flash);
+    const float Wake=FMath::Clamp(WakeBlendElapsed/.25f,0.f,1.f);
+    const FVector Sections=FMath::Lerp(FVector::OneVector,
+        FMath::Lerp(WakeFromSections,FaultPattern.SectionLevels,Wake*Wake*(3-2*Wake)),Flash);
+    const bool SectionsChanged=!Sections.Equals(LastSectionLevels,.0005);
     // Never let the near-equal cache skip the final transition to a physically invisible light.
     if ((Presented>UE_SMALL_NUMBER)==(LastBrightness>UE_SMALL_NUMBER)
-        && FMath::IsNearlyEqual(Presented,LastBrightness,.0005f)) return;
-    LastBrightness=Presented;
+        && FMath::IsNearlyEqual(Presented,LastBrightness,.0005f)&&!SectionsChanged) return;
+    LastBrightness=Presented;LastSectionLevels=Sections;
     if (ReactiveSpotLight)
     {
-        ReactiveSpotLight->SetIntensity(FMath::Max(0.f,LightOnIntensity)*Presented);
+        const float SectionLight=FMath::Lerp(1.f,static_cast<float>((Sections.X+Sections.Y+Sections.Z)/3),.35f);
+        ReactiveSpotLight->SetIntensity(FMath::Max(0.f,LightOnIntensity)*Presented*SectionLight);
         ReactiveSpotLight->SetVisibility(Presented>UE_SMALL_NUMBER,false);
     }
     if (BulbMesh && !EmissiveParameterName.IsNone())
+    {
+        if(SectionsChanged)BulbMesh->SetVectorParameterValueOnMaterials(TEXT("LampSections"),Sections);
         BulbMesh->SetScalarParameterValueOnMaterials(EmissiveParameterName,
             FMath::Lerp(FMath::Max(0.f,EmissiveOffValue),FMath::Max(0.f,EmissiveOnValue),Presented));
+    }
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -373,11 +384,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectReactiveLightFaultPatternsTest,
 bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
 {
     ProjectReactiveLight::FFaultPattern A,B; A.Reset(8721); B.Reset(8721);
-    TSet<int32> Kinds; int32 LastSerial=0,LastKind=INDEX_NONE; float Previous=1; bool Varied=false;
+    TSet<int32> Kinds; int32 LastSerial=0,LastKind=INDEX_NONE; float Previous=1; bool Varied=false,SectionsDiffer=false;
     for (int32 I=0;I<18000;++I)
     {
         A.Step(1.f/30.f,9,1.f,0); B.Step(1.f/30.f,9,1.f,0);
-        if (A.Brightness!=B.Brightness) { AddError(TEXT("A fixed seed must be deterministic across renders")); return false; }
+        if (A.Brightness!=B.Brightness||A.SectionLevels!=B.SectionLevels) { AddError(TEXT("A fixed seed must reproduce brightness and partial discharges")); return false; }
+        if(A.SectionLevels.ContainsNaN()||A.SectionLevels.GetMin()<0||A.SectionLevels.GetMax()>1)
+        {AddError(TEXT("Partial emission must remain finite and bounded"));return false;}
+        SectionsDiffer|=A.SectionLevels.GetMax()-A.SectionLevels.GetMin()>.15;
         if (!FMath::IsFinite(A.Brightness)||A.Brightness<0||A.Brightness>1) { AddError(TEXT("Faults must stay between complete darkness and normal light")); return false; }
         Varied |= FMath::Abs(A.Brightness-Previous)>.0001f; Previous=A.Brightness;
         if (A.Serial!=LastSerial)
@@ -387,6 +401,7 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
         }
     }
     TestTrue(TEXT("Multiple fault families occur, not one repeated blink"),Kinds.Num()==5&&Varied);
+    TestTrue(TEXT("Faults affect different areas of the diffuser rather than uniformly dimming it"),SectionsDiffer);
     AddInfo(FString::Printf(TEXT("High-threat failure clusters in 600 seconds: %d"),A.Serial));
     TestTrue(TEXT("More frequent faults still have rests rather than constant strobing"),A.Serial>140&&A.Serial<260);
     float Durations[5]={};
@@ -402,11 +417,12 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
             HasResidualHold|=P.Keys[K].Value>0&&P.Keys[K].Value<.06f
                 &&P.Keys[K].Value==P.Keys[K-1].Value&&P.Keys[K].Time-P.Keys[K-1].Time>.1f;
         TestEqual(TEXT("Only voltage collapse and incomplete restoration hold a faint afterglow"),HasResidualHold,Kind==0||Kind==4);
-        float Min=1;int32 OffFrames=0,GlowFrames=0;
+        float Min=1;int32 OffFrames=0,GlowFrames=0,SectionFrames=0;
         for (int32 Frame=0;Frame<FMath::CeilToInt(Durations[Kind]*30);++Frame)
-        {P.Step(1.f/30.f,3,.15f,0);Min=FMath::Min(Min,P.Brightness);if(P.Brightness==0)++OffFrames;if(P.Brightness>.003f&&P.Brightness<.06f)++GlowFrames;}
+        {P.Step(1.f/30.f,3,.15f,0);Min=FMath::Min(Min,P.Brightness);if(P.Brightness==0)++OffFrames;if(P.Brightness>.003f&&P.Brightness<.06f)++GlowFrames;if(P.Brightness>0&&P.SectionLevels.GetMax()-P.SectionLevels.GetMin()>.15)++SectionFrames;}
         TestTrue(TEXT("Every family fully extinguishes even at first-tier influence, for multiple frames"),Min==0&&OffFrames>=2);
         if(Kind==0||Kind==4)TestTrue(TEXT("Afterglow survives the shiver and remains visible over multiple frames"),GlowFrames>=4);
+        TestTrue(TEXT("Every fault family can show a visible partial diffuser discharge"),SectionFrames>0);
     }
     TestTrue(TEXT("Single interruption, separated double interruption and voltage collapse remain distinct"),Durations[1]<Durations[2]&&Durations[2]<Durations[0]);
     TestTrue(TEXT("Incomplete restoration holds its dark pocket longer than a voltage sag"),Durations[4]>Durations[0]);
@@ -418,6 +434,7 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
     ProjectReactiveLight::FFaultPattern Quiet; Quiet.Reset(14);
     for (int32 I=0;I<3000;++I) Quiet.Step(1.f/30.f,2,0,.18f);
     TestTrue(TEXT("Sub-threshold groups never create an event"),Quiet.Serial==0&&Quiet.Brightness==1);
+    TestEqual(TEXT("No threat means no independent shader animation or dark diffuser sections"),Quiet.SectionLevels,FVector::OneVector);
     return true;
 }
 

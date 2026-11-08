@@ -36,6 +36,9 @@ namespace ProjectReactiveLight
     struct FFaultPattern
     {
         FRandomStream Random;
+        FRandomStream SectionRandom;
+        FVector SectionLevels=FVector::OneVector, SectionTarget=FVector::OneVector;
+        float SectionRest=0;
         TArray<FKey, TInlineAllocator<16>> Keys;
         float Rest = 0, Elapsed = 0, Strength = 0, Depth = 0, Brightness = 1, Electrical = 0;
         int32 LastKind = INDEX_NONE, Serial = 0, LastSurgeSerial=0;
@@ -44,6 +47,7 @@ namespace ProjectReactiveLight
         void Reset(int32 Seed)
         {
             Random.Initialize(Seed); Keys.Reset(); Rest = Random.FRandRange(.1f, .7f);
+            SectionRandom.Initialize(Seed^0x53A91);SectionLevels=SectionTarget=FVector::OneVector;SectionRest=0;
             Elapsed = Strength = Depth = Electrical = 0; Brightness = 1;
             LastKind = INDEX_NONE; Serial = LastSurgeSerial = 0; bSound = false;
         }
@@ -63,6 +67,7 @@ namespace ProjectReactiveLight
             int32 Kind = Random.RandRange(0, 4);
             if (Kind == LastKind) Kind = (Kind + Random.RandRange(1, 4)) % 5;
             LastKind = Kind; ++Serial; Keys.Reset(); Elapsed = 0;
+            SectionRest=0;
             bSound = Random.FRand() < .67f;
             Depth = Random.FRandRange(.9f, 1.f);
             float Time = 0;
@@ -148,7 +153,23 @@ namespace ProjectReactiveLight
             const float FaultBlend=FMath::Clamp(Strength/.15f,0.f,1.f);
             const float Fault=FMath::Clamp(Envelope-(1.f-Depth)*Envelope*(1.f-Envelope)-Shiver,0.f,1.f);
             Brightness = FMath::Clamp(FMath::Lerp(1.f,Fault,FaultBlend),FMath::Clamp(MinimumBrightness,0.f,1.f),1.f);
-            Electrical = bSound ? FMath::Clamp((1.f-Envelope)*Strength, 0.f, 1.f) : 0.f;
+            const bool SectionsActive=!Keys.IsEmpty()&&Strength>.01f&&Brightness>0&&Envelope<.98f;
+            if(SectionsActive)
+            {
+                SectionRest-=Dt;
+                if(SectionRest<=0)
+                {
+                    SectionRest=SectionRandom.FRandRange(.055f,.19f);
+                    SectionTarget=FVector(SectionRandom.FRandRange(.65f,1.f),SectionRandom.FRandRange(.65f,1.f),SectionRandom.FRandRange(.65f,1.f));
+                    const int32 Failed=SectionRandom.RandRange(0,2);
+                    SectionTarget[Failed]=SectionRandom.FRandRange(.001f,.035f);
+                    if(SectionRandom.FRand()<.3f)SectionTarget[(Failed+SectionRandom.RandRange(1,2))%3]=SectionRandom.FRandRange(.008f,.065f);
+                }
+            }
+            const FVector SectionGoal=SectionsActive?FMath::Lerp(FVector::OneVector,SectionTarget,FaultBlend):FVector::OneVector;
+            SectionLevels=FMath::VInterpTo(SectionLevels,SectionGoal,Dt,SectionsActive?35.f:16.f);
+            if(SectionLevels.Equals(FVector::OneVector,.0001))SectionLevels=FVector::OneVector;
+            Electrical = bSound ? FMath::Clamp(((1.f-Envelope)+(1.f-static_cast<float>(SectionLevels.GetMin()))*.1f)*Strength, 0.f, 1.f) : 0.f;
         }
     };
 }

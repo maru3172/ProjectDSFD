@@ -183,6 +183,7 @@ private:
 	double NextFloorProbeAt=0;
 	uint64 LastSharedGroupId=0;
 	float WakeBlendElapsed=.25f, WakeFromBrightness=1.f;
+	FVector LastSectionLevels=FVector(-1), WakeFromSections=FVector::OneVector;
 	UPROPERTY(SaveGame)
 	int32 CurrentDetectedMannequinCount = 0;
 

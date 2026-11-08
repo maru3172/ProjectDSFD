@@ -121,6 +121,7 @@ bool FProjectReactiveLightPresentationTest::RunTest(const FString&)
     const auto OldVFX=Settings->GetVFXIntensity();
     ON_SCOPE_EXIT { Settings->SetScreenFlashScale(OldFlash); Settings->SetVFXIntensity(OldVFX); };
     Settings->SetVFXIntensity(EProjectProject01VFXIntensity::Standard);
+    Light->FaultPattern.SectionLevels=Light->WakeFromSections=FVector::OneVector;
     Settings->SetScreenFlashScale(1); Light->ApplyBrightness(.3f);
     TestTrue(TEXT("Actual spotlight follows continuous brightness"),FMath::IsNearlyEqual(Light->ReactiveSpotLight->Intensity,Light->LightOnIntensity*.3f));
     Settings->SetScreenFlashScale(0); Light->ApplyBrightness(.3f);
@@ -141,6 +142,16 @@ bool FProjectReactiveLightPresentationTest::RunTest(const FString&)
         Light->ReactiveSpotLight->IsVisible()&&Light->ReactiveSpotLight->Intensity==Light->LightOnIntensity);
     TestTrue(TEXT("A lit pulse restores the bulb emissive strength"),BulbInstance
         &&BulbInstance->GetScalarParameterValue(FMaterialParameterInfo(Light->EmissiveParameterName),Emission)&&Emission==Light->EmissiveOnValue);
+    Light->FaultPattern.SectionLevels=FVector(.02,1,.2);Light->ApplyBrightness(1);
+    FLinearColor Sections;
+    TestTrue(TEXT("The connected bulb material receives independently dimmed sections"),BulbInstance
+        &&BulbInstance->GetVectorParameterValue(FMaterialParameterInfo(TEXT("LampSections")),Sections)&&Sections.R<.1&&Sections.G>.9&&Sections.B<.3);
+    TestTrue(TEXT("Partial emission also makes the surrounding light waver, without adding extra lights"),
+        Light->ReactiveSpotLight->Intensity<Light->LightOnIntensity&&Light->ReactiveSpotLight->Intensity>Light->LightOnIntensity*.5);
+    Settings->SetScreenFlashScale(0);Light->ApplyBrightness(.2);
+    TestTrue(TEXT("Flash-disabled clients keep all diffuser sections steadily illuminated"),BulbInstance
+        &&BulbInstance->GetVectorParameterValue(FMaterialParameterInfo(TEXT("LampSections")),Sections)&&Sections.Equals(FLinearColor::White,.001));
+    Settings->SetScreenFlashScale(1);Light->FaultPattern.SectionLevels=FVector::OneVector;
     Light->FaultPattern.Strength=1; Light->RefreshAfterCheckpointRestore();
     TestEqual(TEXT("Checkpoint restore clears the old fault envelope"),Light->FaultPattern.Strength,0.f);
     TestEqual(TEXT("Checkpoint restore retains threat detection"),Light->GetDetectedMannequinCount(),5);
@@ -273,6 +284,28 @@ bool FProjectReactiveLightRenderTest::RunTest(const FString&)
     // Final-color display dithering can leave sub-1% noise above RGB black even with zero light output.
     // Physical intensity, visibility and emissive are independently checked in the presentation test.
     TestTrue(TEXT("The same real floor becomes black when its only light is extinguished"),Floor[4]<2&&Floor[4]<Floor[3]*.01);
+    Light->BulbMesh->SetStaticMesh(Cube);
+    Light->BulbMesh->SetMaterial(0,LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/MyProject/Lighting/M_ReactiveBulb.M_ReactiveBulb")));
+    Light->BulbMesh->SetWorldLocationAndRotation(FVector(0,0,200),FRotator::ZeroRotator);
+    Light->BulbMesh->SetWorldScale3D(FVector(4,1,.05));Light->BulbMesh->SetCastShadow(false);
+    Capture->SetActorLocationAndRotation(FVector(0,0,700),FRotator(-90,-90,0));
+    Light->WakeBlendElapsed=.25f;Light->WakeFromSections=FVector::OneVector;
+    double Bar[2][3]={};
+    for(int32 Frame=0;Frame<2;++Frame)
+    {
+        Light->FaultPattern.SectionLevels=Frame?FVector(0,1,.02):FVector::OneVector;Light->ApplyBrightness(1);
+        for(int32 I=0;I<8;++I){Comp->CaptureScene();FlushRenderingCommands();if(GShaderCompilingManager)GShaderCompilingManager->FinishAllCompilation();}
+        TArray<FColor> Pixels;FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(false);
+        if(!Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags))return false;
+        for(int32 Part=0;Part<3;++Part)for(int32 Y=175;Y<185;++Y)for(int32 X=155+Part*160;X<165+Part*160;++X)
+        {const auto& P=Pixels[Y*640+X];Bar[Frame][Part]+=(P.R+P.G+P.B)/300.;}
+        for(auto& P:Pixels)P.A=255;
+        TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(640,360,Pixels,PNG);
+        FFileHelper::SaveArrayToFile(PNG,*(Dir/(Frame?TEXT("Diffuser_Discharge.png"):TEXT("Diffuser_Steady.png"))));
+    }
+    AddInfo(FString::Printf(TEXT("Diffuser partial pixels ends=%.1f/%.1f centre=%.1f; steady=%.1f/%.1f/%.1f"),Bar[1][0],Bar[1][2],Bar[1][1],Bar[0][0],Bar[0][1],Bar[0][2]));
+    TestTrue(TEXT("The actual shader shows a dark end, a bright centre and a weakly glowing other end"),
+        FMath::Min(Bar[1][0],Bar[1][2])<Bar[1][1]*.3&&FMath::Max(Bar[1][0],Bar[1][2])<Bar[1][1]*.85&&Bar[1][1]>100);
     return true;
 }
 #endif
