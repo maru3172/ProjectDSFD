@@ -90,7 +90,7 @@ def sign(label, text, position, size=52):
 def fixture(label, position):
     actor = spawn(unreal.MannequinReactiveLight, label, position)
     actor.set_editor_property("detection_radius", 1500.0)
-    actor.set_editor_property("light_on_intensity", 6500.0)
+    actor.set_editor_property("light_on_intensity", 10000.0)
     housing = actor.get_editor_property("fixture_mesh")
     housing.set_static_mesh(cube)
     housing.set_material(0, trim_mat)

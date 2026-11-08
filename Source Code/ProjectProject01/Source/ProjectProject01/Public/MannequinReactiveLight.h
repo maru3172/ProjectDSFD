@@ -30,7 +30,7 @@ protected:
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
 private:
 	int32 Rate=48000;
-	float Phase=0, Gain=0, TargetGain=0, FilteredNoise=0;
+	float Phase=0, Gain=0, TargetGain=0, FilteredNoise=0, Arc=0;
 	uint32 Noise=0xA341316Cu;
 };
 
@@ -150,7 +150,7 @@ private:
 	/** 조명이 켜진 상태의 실제 Spot Light 광량이다. 꺼질 때는 0으로 설정된다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Light",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
-	float LightOnIntensity = 6500.0f;
+	float LightOnIntensity = 10000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Reactive Light|Emissive", meta=(AllowPrivateAccess="true"))
 	FName EmissiveParameterName = TEXT("EmissiveStrength");

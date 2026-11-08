@@ -25,7 +25,7 @@ namespace ProjectReactiveLight
 
         void Reset(int32 Seed)
         {
-            Random.Initialize(Seed); Keys.Reset(); Rest = Random.FRandRange(2.5f, 7.f);
+            Random.Initialize(Seed); Keys.Reset(); Rest = Random.FRandRange(.5f, 1.8f);
             Elapsed = Strength = Depth = Electrical = 0; Brightness = 1;
             LastKind = INDEX_NONE; Serial = 0; bSound = false;
         }
@@ -39,43 +39,44 @@ namespace ProjectReactiveLight
             float Time = 0;
             auto Key = [&](float Duration, float Value) { Time += Duration; Keys.Add({Time, Value}); };
             Key(0, 1);
-            const float Stretch = Random.FRandRange(.85f, 1.25f);
+            const float Stretch = Random.FRandRange(.7f, 1.15f);
             // A symptom may recover without a full outage. Longer failures replace faster strobing at higher tiers.
-            if (Kind == 0) // A recognisably slow voltage collapse: no short blink inside this family.
+            if (Kind == 0) // Abrupt voltage collapse followed by a struggling, stepped recovery.
             {
-                Key(1.f*Stretch, .78f); Key(2.1f*Stretch, .18f);
-                Key((.7f+.4f*T)*Stretch, .18f); Key(1.6f*Stretch, .75f); Key(1.2f*Stretch, 1);
+                Key(.14f, .78f); Key(.28f, .09f); Key((.35f+.2f*T)*Stretch, .09f);
+                Key(.18f, .6f); Key(.26f, .28f); Key((.65f+.25f*T)*Stretch, .28f);
+                Key(.65f*Stretch, .84f); Key(.3f*Stretch, 1);
             }
             else if (Kind == 1 || Kind == 2) // One blink or an irregular double blink, with time to read the scene.
             {
-                Key(.10f, .08f); Key(.20f*Stretch, .08f); Key(.25f, 1);
+                Key(.08f, .08f); Key(.14f*Stretch, .08f); Key(.18f, 1);
                 if (Kind == 2)
                 {
                     // Fully restore between blinks, with a clearly separated, deeper second interruption.
-                    Key(.75f*Stretch, 1); Key(.11f, .01f); Key(.36f*Stretch, .01f); Key(.32f, .92f);
-                    Key(.7f*Stretch, 1);
+                    Key(.35f*Stretch, 1); Key(.09f, .01f); Key(.22f*Stretch, .01f); Key(.22f, .72f);
+                    Key(.35f*Stretch, 1);
                 }
-                else Key(.45f*Stretch, 1);
+                else Key(.2f*Stretch, 1);
             }
             else if (Kind == 3) // Failed restart; the fixture never exceeds its normal brightness.
             {
-                Key(.28f, .04f); Key((.35f+.15f*T)*Stretch, .04f);
-                Key(.38f, .88f); Key(.2f, .88f); Key(.14f, .06f); Key(.5f*Stretch, .06f);
-                Key(.48f, .82f); Key(.18f, .82f); Key(.16f, .03f);
-                Key((.7f+.2f*T)*Stretch, .03f); Key(1.f*Stretch, .48f);
-                Key(1.2f*Stretch, .91f); Key(.6f*Stretch, 1);
+                Key(.12f, .04f); Key((.25f+.08f*T)*Stretch, .04f);
+                Key(.16f, .88f); Key(.24f*Stretch, .88f); Key(.11f, .06f); Key(.38f*Stretch, .06f);
+                Key(.2f, .82f); Key(.28f*Stretch, .82f); Key(.12f, .03f);
+                Key((.4f+.12f*T)*Stretch, .03f); Key(.3f*Stretch, .48f);
+                Key(.45f*Stretch, .91f); Key(.22f*Stretch, 1);
             }
             else // A long, incomplete restoration: different fixtures leave different dark pockets.
             {
-                Key(.9f*Stretch, .35f); Key((2.8f+.6f*T)*Stretch, .35f);
-                Key(.8f*Stretch, .48f); Key(1.6f*Stretch, .42f);
-                Key((1.f+.35f*T)*Stretch, .42f); Key(2.2f*Stretch, 1);
+                Key(.12f, .25f); Key(.3f*Stretch, .58f); Key(.12f, .22f);
+                Key((2.4f+.25f*T)*Stretch, .22f); Key(.16f, .48f); Key(.26f, .3f);
+                Key((.8f+.2f*T)*Stretch, .3f); Key(.24f, .74f); Key(.32f, .5f); Key(.6f*Stretch, 1);
             }
         }
         void Step(float Delta, int32 Count, float Target, float MinimumBrightness)
         {
             const float Dt = FMath::Clamp(Delta, 0.f, .25f);
-            const float Rate = Target > Strength ? .8f : .28f;
+            const float Rate = Target > Strength ? 2.8f : .28f;
             Strength = FMath::FInterpTo(Strength, FMath::Clamp(Target, 0.f, 1.f), Dt, Rate);
             if (Target == 0 && Strength < .001f) Strength = 0;
             const int32 T = Tier(Count);
@@ -92,13 +93,16 @@ namespace ProjectReactiveLight
                 {
                     if (Elapsed > Keys[I].Time) continue;
                     const float A = FMath::Clamp((Elapsed-Keys[I-1].Time)/(Keys[I].Time-Keys[I-1].Time), 0.f, 1.f);
-                    Envelope = FMath::Lerp(Keys[I-1].Value, Keys[I].Value, A*A*(3-2*A));
+                    const float Curve=Keys[I].Value<Keys[I-1].Value ? 1.f-FMath::Pow(1.f-A,3.f) : A*A*(3-2*A);
+                    Envelope = FMath::Lerp(Keys[I-1].Value, Keys[I].Value, Curve);
                     break;
                 }
                 if (Elapsed >= Keys.Last().Time)
                 {
                     Keys.Reset();
-                    Rest = Random.FRandRange(14.f-2.5f*T, 25.f-4.f*T);
+                    Rest = Random.FRandRange(6.f-1.5f*T, 11.5f-2.5f*T);
+                    // Occasional longer silence keeps this from becoming a metronomic repeating alarm.
+                    if (Random.FRand()<.15f) Rest*=Random.FRandRange(1.4f,1.8f);
                 }
             }
             // A small, non-periodic-frequency after-effect lingers while the threat decays.

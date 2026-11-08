@@ -54,7 +54,7 @@ void UReactiveLightElectricalSynth::SetFault(float Amount)
 }
 bool UReactiveLightElectricalSynth::Init(int32& SampleRate)
 {
-    NumChannels=1; Rate=FMath::Max(8000,SampleRate); Phase=Gain=TargetGain=FilteredNoise=0;
+    NumChannels=1; Rate=FMath::Max(8000,SampleRate); Phase=Gain=TargetGain=FilteredNoise=Arc=0;
     return true;
 }
 int32 UReactiveLightElectricalSynth::OnGenerateAudio(float* OutAudio,int32 NumSamples)
@@ -62,14 +62,18 @@ int32 UReactiveLightElectricalSynth::OnGenerateAudio(float* OutAudio,int32 NumSa
     if (!OutAudio || NumSamples<=0) return 0;
     for (int32 I=0; I<NumSamples; ++I)
     {
-        Gain+=(TargetGain-Gain)*.0015f;
+        const float Attack=FMath::Max(0.f,TargetGain-Gain);
+        Arc=FMath::Max(Arc*.9992f,FMath::Min(1.f,Attack*1.8f));
+        Gain+=(TargetGain-Gain)*.003f;
         Noise=1664525u*Noise+1013904223u;
         const float White=static_cast<float>((Noise>>8)&0xFFFFFF)/8388607.5f-1;
         FilteredNoise+=(White-FilteredNoise)*.18f;
         Phase+=2.f*PI*100.f/Rate; if (Phase>2*PI) Phase-=2*PI;
-        // Restrained mains buzz with irregular arcing; no jump-scare burst.
-        OutAudio[I]=Gain*(.075f*FMath::Sin(Phase)+.025f*FMath::Sin(Phase*3.f)
-            +.11f*FilteredNoise*(.2f+.8f*FMath::Abs(FMath::Sin(Phase*.37f))));
+        // Less comfortable steady hum; electrical interruption edges carry a brief, dry arc/crackle.
+        const float Sample=Gain*(.035f*FMath::Sin(Phase)+.01f*FMath::Sin(Phase*3.f)
+            +.10f*FilteredNoise*(.2f+.8f*FMath::Abs(FMath::Sin(Phase*.37f))))
+            +Arc*.12f*(White-FilteredNoise);
+        OutAudio[I]=.2f*FMath::Tanh(Sample/.2f);
     }
     return NumSamples;
 }
@@ -290,7 +294,7 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
         }
     }
     TestTrue(TEXT("Multiple fault families occur, not one repeated blink"),Kinds.Num()==5&&Varied);
-    TestTrue(TEXT("There are normal rests between faults"),A.Serial>15&&A.Serial<100);
+    TestTrue(TEXT("Urgent faults still have rests rather than constant strobing"),A.Serial>45&&A.Serial<170);
     float Durations[5]={};
     for (int32 Kind=0;Kind<5;++Kind)
     {
@@ -298,12 +302,13 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
         for (int32 Attempt=0;Attempt<100&&P.LastKind!=Kind;++Attempt) P.BeginEvent(3);
         if (!TestEqual(TEXT("Sample the requested fault family"),P.LastKind,Kind)) return false;
         Durations[Kind]=P.Keys.Last().Time; P.Strength=.15f;
+        TestTrue(TEXT("Every fault family starts its failure promptly"),P.Keys[1].Time<=.15f);
         float Min=1;
         for (int32 Frame=0;Frame<FMath::CeilToInt(Durations[Kind]*30);++Frame)
         {P.Step(1.f/30.f,9,.15f,.18f);Min=FMath::Min(Min,P.Brightness);}
         TestTrue(TEXT("Each stronger signature keeps at least a 20 percent dip at attenuated/tall-ceiling strength"),Min<.8f);
     }
-    TestTrue(TEXT("One blink is short; double blink is separated; voltage sag is slow"),Durations[1]<Durations[2]&&Durations[2]<Durations[0]);
+    TestTrue(TEXT("Single interruption, separated double interruption and voltage collapse remain distinct"),Durations[1]<Durations[2]&&Durations[2]<Durations[0]);
     TestTrue(TEXT("Incomplete restoration holds its dark pocket longer than a voltage sag"),Durations[4]>Durations[0]);
     const float Before=A.Strength; A.Step(1.f/30.f,0,0,.18f);
     TestTrue(TEXT("Leaving the range decays instead of cutting abruptly"),A.Strength>0&&A.Strength<Before);

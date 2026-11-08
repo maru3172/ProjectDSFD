@@ -17,7 +17,7 @@ def backup(relative, name):
 
 
 def configure(actor):
-    actor.set_editor_property("light_on_intensity", 6500.0)
+    actor.set_editor_property("light_on_intensity", 10000.0)
     actor.set_editor_property("emissive_on_value", 7.0)
     actor.set_editor_property("electrical_sound_volume", 0.45)
 
@@ -54,7 +54,7 @@ for name, expected in [("LevelTest01", 9), ("MannequinLightingTest", 12)]:
         raise RuntimeError("Unexpected fixture count in " + name + ": " + str(len(found)))
     if not unreal.EditorLoadingAndSavingUtils.save_map(world, path):
         raise RuntimeError("Cannot save " + path)
-    result.append({"map": path, "fixtures": len(found), "intensity": 6500, "emissive": 7, "electrical_volume": 0.45})
+    result.append({"map": path, "fixtures": len(found), "intensity": 10000, "emissive": 7, "electrical_volume": 0.45})
 
 with open(os.path.join(qa, "StrongerProfileApplied.json"), "w", encoding="utf-8") as output:
     json.dump(result, output, ensure_ascii=False, indent=2)
