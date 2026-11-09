@@ -193,7 +193,9 @@ namespace ProjectReactiveLight
                 ColdTint=Rise*Fall*FaultBlend;
             }
             const float Fault=FMath::Clamp(Envelope-(1.f-Depth)*Envelope*(1.f-Envelope)-Shiver,0.f,1.f);
-            Brightness = FMath::Clamp(FMath::Lerp(1.f,Fault,FaultBlend),FMath::Clamp(MinimumBrightness,0.f,1.f),1.f);
+            // Keep the bottom of the fade near black without dimming the brief, readable relights.
+            const float DarkenedFault=Fault*FMath::Lerp(.06f,1.f,FMath::SmoothStep(.15f,.38f,Fault));
+            Brightness = FMath::Clamp(FMath::Lerp(1.f,DarkenedFault,FaultBlend),FMath::Clamp(MinimumBrightness,0.f,1.f),1.f);
             const bool HasRecovery=!Keys.IsEmpty()&&RecoveryStartsAt>=0;
             const bool IsRecovering=HasRecovery&&Elapsed>=RecoveryStartsAt;
             RecoveryProgress=IsRecovering ? FMath::Clamp((Elapsed-RecoveryStartsAt)/(Keys.Last().Time-RecoveryStartsAt),0.f,1.f) : 1.f;

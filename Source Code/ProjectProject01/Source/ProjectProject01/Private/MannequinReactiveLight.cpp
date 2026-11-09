@@ -582,9 +582,22 @@ bool FProjectReactiveLightFaultPatternsTest::RunTest(const FString&)
         TestEqual(TEXT("Only voltage collapse and incomplete restoration hold a faint afterglow"),HasResidualHold,Kind==0||Kind==4);
         float Min=1;int32 OffFrames=0,GlowFrames=0,SectionFrames=0;
         for (int32 Frame=0;Frame<FMath::CeilToInt(Durations[Kind]*30);++Frame)
-        {P.Step(1.f/30.f,3,.15f,0);Min=FMath::Min(Min,P.Brightness);if(P.Brightness==0)++OffFrames;if(P.Brightness>.003f&&P.Brightness<.06f)++GlowFrames;if(P.Brightness>0&&P.SectionLevels.GetMax()-P.SectionLevels.GetMin()>.15)++SectionFrames;}
+        {
+            P.Step(1.f/30.f,3,.15f,0);
+            Min=FMath::Min(Min,P.Brightness);
+            if(P.Brightness==0)++OffFrames;
+            if(P.Brightness>0&&P.SectionLevels.GetMax()-P.SectionLevels.GetMin()>.15)++SectionFrames;
+            for(int32 K=1;K<P.Keys.Num();++K)
+            {
+                const auto& Key=P.Keys[K];
+                const auto& PreviousKey=P.Keys[K-1];
+                if(P.Elapsed>=PreviousKey.Time&&P.Elapsed<=Key.Time&&Key.Value==PreviousKey.Value
+                    &&Key.Value>0.f&&Key.Value<.06f&&P.Brightness>0.f&&P.Brightness<.003f)
+                    ++GlowFrames;
+            }
+        }
         TestTrue(TEXT("Every family fully extinguishes even at first-tier influence, for multiple frames"),Min==0&&OffFrames>=2);
-        if(Kind==0||Kind==4)TestTrue(TEXT("Afterglow survives the shiver and remains visible over multiple frames"),GlowFrames>=4);
+        if(Kind==0||Kind==4)TestTrue(TEXT("Afterglow holds below 0.3 percent of normal output over multiple frames"),GlowFrames>=4);
         TestTrue(TEXT("Every fault family can show a visible partial diffuser discharge"),SectionFrames>0);
     }
     TestTrue(TEXT("Single interruption, separated double interruption and voltage collapse remain distinct"),Durations[1]<Durations[2]&&Durations[2]<Durations[0]);

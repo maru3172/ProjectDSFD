@@ -159,7 +159,7 @@ for room, (cy, count) in enumerate(zip(centres, counts)):
     hall = spawn(unreal.PointLight, prefix + "_CorridorLight", (-1500, cy, 330))
     hall.light_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
     hall.light_component.set_editor_property("intensity", 85.0)
-    hall.light_component.set_editor_property("attenuation_radius", 2000.0)
+    hall.light_component.set_editor_property("attenuation_radius", 650.0)
     hall.light_component.set_editor_property("cast_shadows", False)
     report.append({"bodies": count, "room_center": [0, cy, 160], "reactive_lights": 3})
 
