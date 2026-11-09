@@ -87,7 +87,8 @@ int32 UReactiveLightElectricalSynth::OnGenerateAudio(float* OutAudio,int32 NumSa
         const float Sample=Gain*(.035f*FMath::Sin(Phase)+.01f*FMath::Sin(Phase*3.f)
             +.10f*FilteredNoise*(.2f+.8f*FMath::Abs(FMath::Sin(Phase*.37f))))
             +Arc*.12f*(White-FilteredNoise);
-        OutAudio[I]=.2f*FMath::Tanh(Sample/.2f);
+        // Lower the output after limiting so existing fixtures keep the same sound texture at half gain.
+        OutAudio[I]=.1f*FMath::Tanh(Sample/.2f);
     }
     return NumSamples;
 }
