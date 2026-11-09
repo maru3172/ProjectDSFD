@@ -88,6 +88,19 @@ void UProjectProject01TutorialEditorLibrary::RegisterMenus()
 			FText::FromString(TEXT("튜토리얼 설명 없이 인원 조절·역할 전환이 가능한 연습모드를 실행합니다.")),FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([bMannequin](){ StartPractice(bMannequin,true); }),
 				FCanExecuteAction::CreateStatic(&ProjectTutorialEditor::CanStart)));
+	Section.AddMenuEntry(TEXT("ProjectMultiplayerRescueTest"), FText::FromString(TEXT("멀티 구출 테스트")),
+		FText::FromString(TEXT("별도 맵에서 생존자 둘과 마네킹으로 구출을 시험합니다.")), FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]
+		{
+			const TCHAR* Map = TEXT("/Game/MyProject/Level/MultiplayerRescueTest");
+			if (!FPackageName::DoesPackageExist(Map)) return;
+			auto Request = MakePracticeRequest();
+			Request.EditorPlaySettings->SetPlayNetMode(PIE_Client);
+			Request.EditorPlaySettings->SetPlayNumberOfClients(3);
+			Request.GlobalMapOverride = Map;
+			Request.GameModeOverride = nullptr;
+			GEditor->RequestPlaySession(Request);
+		}), FCanExecuteAction::CreateStatic(&ProjectTutorialEditor::CanStart)));
 }
 
 void UProjectProject01TutorialEditorLibrary::ShutdownPractice() { ProjectTutorialEditor::RestoreOverrides(); }

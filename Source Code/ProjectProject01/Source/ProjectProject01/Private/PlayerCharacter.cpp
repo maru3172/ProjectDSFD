@@ -50,6 +50,7 @@
 #include "PlayerHeartbeatComponent.h"
 #include "FootstepSynthComponent.h"
 #include "PlayerInteractionComponent.h"
+#include "ProjectMultiplayerRescue.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -781,7 +782,14 @@ void APlayerCharacter::InitializeLocalPlayerInput()
 
 	// 싱글플레이도 첫 스폰 화면이 검은색에서 자연스럽게 밝아지도록 한다.
 	// 멀티플레이의 맵 전환 암전/복구는 PlayerController가 별도로 관리한다.
-	if (UsesSinglePlayerRules(GetWorld()) && !bInitialStandaloneSpawnFadePlayed &&
+	const auto* PracticeMode = GetWorld() ? GetWorld()->GetAuthGameMode<AProjectPracticeGameModeBase>() : nullptr;
+	const bool bCustomOpening = PracticeMode && PracticeMode->HasCustomOpeningPresentation();
+	if (bCustomOpening)
+	{
+		bShowAIRangeDebug = false;
+		bShowStaminaDebug = false;
+	}
+	if (!bCustomOpening && UsesSinglePlayerRules(GetWorld()) && !bInitialStandaloneSpawnFadePlayed &&
 		IsValid(PlayerController->PlayerCameraManager))
 	{
 		bInitialStandaloneSpawnFadePlayed = true;
@@ -1459,7 +1467,7 @@ void APlayerCharacter::OnRep_IsSprinting()
 
 bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingMannequin)
 {
-	if (!HasAuthority() || !IsValid(CatchingMannequin) || bGameOver)
+	if (!HasAuthority() || !IsValid(CatchingMannequin) || bGameOver || bAwaitingMultiplayerRescue)
 	{
 		return false;
 	}
@@ -1564,6 +1572,18 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 		return true;
 	}
 
+	if (auto* RescueMode = World->GetAuthGameMode<AProjectMultiplayerRescueGameMode>();
+		RescueMode && RescueMode->TryDetain(*this, *CatchingMannequin)) return true;
+	return FinishMannequinCatch(CatchingMannequin, FallPitchDirection, FallRollDirection);
+}
+
+bool APlayerCharacter::FinishMannequinCatch(AMannequinAICharacter* CatchingMannequin,
+	float FallPitchDirection, float FallRollDirection)
+{
+	if (!HasAuthority() || bGameOver || !GetWorld()) return false;
+	UWorld* World = GetWorld();
+	const auto* MatchController = Cast<AMultiplayTestPlayerController>(GetController());
+	const bool bServerBot = MatchController && MatchController->IsServerControlledBot();
 	bGameOver = true;
 	RecordObserverFeedback(FallPitchDirection,FallRollDirection,1.f,true);
 	MulticastPlayPainAndDeathWorldSFX(true, 1.0f);
@@ -1587,7 +1607,7 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 		}
 	}
 	UE_LOG(LogTemp, Warning, TEXT("Player %s reached game over after being caught by mannequin %s."),
-		*GetName(), *CatchingMannequin->GetName());
+		*GetName(), *GetNameSafe(CatchingMannequin));
 	// Balance diagnostics: what the catching body was doing (grep "[CatchBy]").
 	if (const AMannequinAICharacter* Catcher = Cast<AMannequinAICharacter>(CatchingMannequin))
 	{
@@ -1605,9 +1625,30 @@ bool APlayerCharacter::HandleMannequinCatch(AMannequinAICharacter* CatchingManne
 			*UEnum::GetValueAsString(Catcher->GetMultiplayActivity()), *UEnum::GetValueAsString(Catcher->GetMultiplayCommand()),
 			Catcher->IsFrozenBySurvivorVision(), bViewed, Catcher->GetVelocity().Size2D(), GetVelocity().Size2D(), *Victim, Second, PartnerDistance);
 	}
-	if (const auto* AffixMode = GetWorld() ? GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr)
+	if (const auto* AffixMode = CatchingMannequin ? World->GetAuthGameMode<AMultiplayTestGameMode>() : nullptr)
 		if (UProjectAffixRuntime* Affixes = AffixMode->GetAffixRuntime()) Affixes->OnCatch(CatchingMannequin);
 	return true;
+}
+
+void APlayerCharacter::SetAwaitingMultiplayerRescue(bool bAwaiting, bool bProtectOnRelease)
+{
+	if (!HasAuthority() || bAwaitingMultiplayerRescue == bAwaiting) return;
+	bAwaitingMultiplayerRescue = bAwaiting;
+	if (bProtectOnRelease && !bAwaiting)
+		NextDeathCountDamageAllowedWorldSeconds = GetWorld()->GetTimeSeconds() + 2.5;
+	OnRep_RescueDetention();
+	ForceNetUpdate();
+}
+
+void APlayerCharacter::OnRep_RescueDetention()
+{
+	if (bGameOver) return;
+	if (auto* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		if (bAwaitingMultiplayerRescue) Movement->DisableMovement();
+		else Movement->SetMovementMode(MOVE_Walking);
+	}
 }
 
 bool APlayerCharacter::IsPlaygroundRespawnPending() const
@@ -2242,6 +2283,7 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APlayerCharacter, DirectChaseSectorRadius);
 	DOREPLIFETIME(APlayerCharacter, RemainingDeathCount);
 	DOREPLIFETIME(APlayerCharacter, bGameOver);
+	DOREPLIFETIME(APlayerCharacter, bAwaitingMultiplayerRescue);
 	DOREPLIFETIME_CONDITION(APlayerCharacter, ObserverPresentation, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerCharacter, ObserverFeedback, COND_SkipOwner);
 }

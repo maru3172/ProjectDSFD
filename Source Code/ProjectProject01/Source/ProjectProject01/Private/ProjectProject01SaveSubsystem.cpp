@@ -15,6 +15,7 @@
 #include "ProjectProject01CheckpointStore.h"
 #include "ProjectProject01CheckpointAI.h"
 #include "ProjectProject01TuningData.h"
+#include "ProjectSingleIntro.h"
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
@@ -104,6 +105,11 @@ bool UProjectProject01SaveSubsystem::SaveCheckpointToSlot(
 	const bool bResetDeathCount)
 {
 	UWorld* World = GetWorld();
+	if (World && World->GetAuthGameMode<AProjectSingleIntroGameMode>())
+	{
+		OnSaveOperationCompleted.Broadcast(false, TEXT("인트로 테스트 맵에서는 저장할 수 없습니다."));
+		return false;
+	}
 	if (!IsValidSlotIndex(SlotIndex))
 	{
 		OnSaveOperationCompleted.Broadcast(false, TEXT("잘못된 저장소입니다."));

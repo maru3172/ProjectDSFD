@@ -5,6 +5,7 @@
 #include "MultiplayTestGameMode.h"
 #include "MultiplayTestPlayerController.h"
 #include "PlayerCharacter.h"
+#include "ProjectMultiplayerRescue.h"
 #include "ProjectProject01GameInstance.h"
 #include "Components/BoxComponent.h"
 #include "Camera/PlayerCameraManager.h"
@@ -12,6 +13,7 @@
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/PackageName.h"
 #include "TimerManager.h"
@@ -52,6 +54,7 @@ void AProjectProject01LevelTransitionTrigger::BeginPlay()
 		this, &AProjectProject01LevelTransitionTrigger::HandleEndOverlap);
 	}
 	else TransitionVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	if (IsValid(LocalSurvivorDestination)) return;
 	if (GEngine) TravelFailureHandle = GEngine->OnTravelFailure().AddUObject(
 		this, &AProjectProject01LevelTransitionTrigger::HandleTravelFailure);
 
@@ -125,6 +128,21 @@ void AProjectProject01LevelTransitionTrigger::HandleBeginOverlap(
 	(void)SweepResult;
 
 	APlayerCharacter* Survivor = Cast<APlayerCharacter>(OtherActor);
+	if (IsValid(LocalSurvivorDestination))
+	{
+		auto* GameMode = GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>();
+		if (!HasAuthority() || !IsValid(Survivor) || Survivor->IsGameOver() || !GameMode
+			|| !GameMode->IsAuthoritativeMatchInProgress() || !GameMode->IsRegisteredActiveSurvivor(Survivor)) return;
+		auto* RescueMode = Cast<AProjectMultiplayerRescueGameMode>(GameMode);
+		if (RescueMode && !RescueMode->CanUseFirstFloorReturn(Survivor)) return;
+		const FRotator Rotation = LocalSurvivorDestination->GetActorRotation();
+		if (!Survivor->TeleportTo(LocalSurvivorDestination->GetActorLocation(), Rotation)) return;
+		Survivor->GetCharacterMovement()->StopMovementImmediately();
+		if (auto* Controller = Cast<APlayerController>(Survivor->GetController()))
+			Controller->ClientSetRotation(Rotation, true);
+		if (RescueMode) RescueMode->CompleteFirstFloorReturn(Survivor);
+		return;
+	}
 	if (bTransitionStarted || !IsEligibleLivingPlayer(Survivor) || !IsDestinationAvailable())
 	{
 		return;
@@ -185,7 +203,7 @@ void AProjectProject01LevelTransitionTrigger::HandleEndOverlap(
 	(void)OtherComponent;
 	(void)OtherBodyIndex;
 
-	if (bTransitionStarted || !AcceptedSurvivors.IsEmpty())
+	if (IsValid(LocalSurvivorDestination) || bTransitionStarted || !AcceptedSurvivors.IsEmpty())
 	{
 		return;
 	}

@@ -20,6 +20,7 @@ void AProjectPracticeGameModeBase::BeginPlay()
 		return;
 	}
 	BindEscapeTriggers();
+	if (!bSpawnAutomaticHelper) return;
 
 	SpawnedHelperRearGuard = Cast<AHelperRearGuardCharacter>(
 		UGameplayStatics::GetActorOfClass(World, AHelperRearGuardCharacter::StaticClass())

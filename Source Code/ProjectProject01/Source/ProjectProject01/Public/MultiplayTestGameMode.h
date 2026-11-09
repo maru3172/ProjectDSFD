@@ -370,6 +370,7 @@ private:
 	FMultiplayTestMatchResult BuildFinalResult(
 		const class AMultiplayTestPlayerController* Controller,
 		const FMultiplayTestServerPlayerRecord& Record) const;
+	friend class AProjectMultiplayerRescueGameMode;
 	FMultiplayTestServerPlayerRecord* FindSurvivorRecord(class APlayerCharacter* Survivor);
 	const FMultiplayTestServerPlayerRecord* FindSurvivorRecord(const class APlayerCharacter* Survivor) const;
 	double GetElapsedMatchSeconds() const;

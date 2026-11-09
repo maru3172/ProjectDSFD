@@ -10,6 +10,7 @@
 #include "InteractionPromptWidget.h"
 #include "ProjectProject01Elevator.h"
 #include "FireShutterActor.h"
+#include "ProjectMultiplayerRescue.h"
 
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/UserWidget.h"
@@ -57,7 +58,7 @@ void UPlayerInteractionComponent::BeginPlay()
 			OwnerPawn->GetController());
 
 	if (!IsValid(PlayerController) ||
-		!InteractionWidgetClass)
+		!InteractionWidgetClass || bUseExternalPrompt)
 	{
 		return;
 	}
@@ -71,6 +72,17 @@ void UPlayerInteractionComponent::BeginPlay()
 	{
 		InteractionWidget->AddToViewport();
 		InteractionWidget->HideInteractionPrompt();
+	}
+}
+
+void UPlayerInteractionComponent::UseExternalPrompt()
+{
+	bUseExternalPrompt = true;
+	bDrawDebugTrace = false;
+	if (InteractionWidget)
+	{
+		InteractionWidget->RemoveFromParent();
+		InteractionWidget = nullptr;
 	}
 }
 
@@ -183,8 +195,26 @@ void UPlayerInteractionComponent::TryInteract()
         else ServerInteractShutter(Shutter,ViewLocation,ViewRotation.Vector());
         return;
     }
+	if (auto* Station = Cast<AProjectMultiplayerRescueStation>(HitActor))
+	{
+		if (OwnerPawn->HasAuthority()) Station->TryInteractFromView(OwnerPawn, ViewLocation, ViewRotation.Vector());
+		else ServerInteractRescueStation(Station, ViewLocation, ViewRotation.Vector());
+		return;
+	}
 	IInteractionInterface::Execute_Interact(HitActor, OwnerPawn);
     // Generic/single-player interaction remains unchanged below the native network paths.
+}
+
+void UPlayerInteractionComponent::ServerInteractRescueStation_Implementation(AProjectMultiplayerRescueStation* Station,
+	FVector_NetQuantize Origin, FVector_NetQuantizeNormal Direction)
+{
+	auto* Pawn = Cast<APawn>(GetOwner());
+	UWorld* World = GetWorld();
+	if (!IsValid(Pawn) || !Pawn->HasAuthority() || !World || !IsValid(Station) || Station->GetWorld() != World) return;
+	const double Now = World->GetTimeSeconds();
+	if (Now - LastRescueRequestSeconds < .15) return;
+	LastRescueRequestSeconds = Now;
+	Station->TryInteractFromView(Pawn, Origin, Direction);
 }
 void UPlayerInteractionComponent::ServerInteractShutter_Implementation(AFireShutterActor* Shutter,FVector_NetQuantize Origin,FVector_NetQuantizeNormal Direction)
 {

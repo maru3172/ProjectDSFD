@@ -705,7 +705,7 @@ bool AMultiplayTestGameMode::CanMannequinDetectSurvivor(
 
 bool AMultiplayTestGameMode::IsActiveSurvivorTarget(const APlayerCharacter* Survivor) const
 {
-	if (!IsValid(Survivor) || Survivor->IsGameOver())
+	if (!IsValid(Survivor) || Survivor->IsGameOver() || Survivor->IsAwaitingMultiplayerRescue())
 	{
 		return false;
 	}
@@ -3183,7 +3183,7 @@ void AMultiplayTestGameMode::NotifyMannequinCaptureFeedback(const bool bEliminat
 
 bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 {
-	if (!HasAuthority() || !IsValid(Survivor))
+	if (!HasAuthority() || !IsValid(Survivor) || Survivor->IsAwaitingMultiplayerRescue())
 	{
 		return false;
 	}
@@ -3341,7 +3341,7 @@ bool AMultiplayTestGameMode::MarkSurvivorWaitingForLevelTransition(APlayerCharac
 
 bool AMultiplayTestGameMode::IsRegisteredActiveSurvivor(const APlayerCharacter* Survivor) const
 {
-	if (!HasAuthority() || !IsValid(Survivor)) return false;
+	if (!HasAuthority() || !IsValid(Survivor) || Survivor->IsAwaitingMultiplayerRescue()) return false;
 	const auto* Controller=Cast<AMultiplayTestPlayerController>(Survivor->GetController());
 	if (!IsValid(Controller) || Controller->GetPawn()!=Survivor) return false;
 	const auto* Record=MatchPlayerRecords.Find(Controller);
@@ -4501,6 +4501,7 @@ bool AMultiplayTestGameMode::CanSurvivorSeeMannequin(
 	}
 
 	const APawn* SurvivorPawn = SurvivorController->GetPawn();
+	if (const auto* Player = Cast<APlayerCharacter>(SurvivorPawn); Player && Player->IsAwaitingMultiplayerRescue()) return false;
 	const UCapsuleComponent* MannequinCapsule = Mannequin->GetCapsuleComponent();
 	if (!IsValid(SurvivorPawn) || !IsValid(MannequinCapsule))
 	{

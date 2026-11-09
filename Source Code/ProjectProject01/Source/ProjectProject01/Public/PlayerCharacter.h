@@ -33,6 +33,7 @@ class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
 	GENERATED_BODY()
 	friend class AProjectTutorialTargetCharacter;
 	friend class AProjectMatchBotCharacter;
+	friend class AProjectMultiplayerRescueGameMode;
 	friend class FProjectFreePracticeRuntimeTest;
 
 public:
@@ -70,6 +71,7 @@ public:
 	/** 데스카운트가 0인 상태에서 다시 포획돼 게임 오버가 되었는지 반환합니다. */
 	UFUNCTION(BlueprintPure, Category = "Player|Death")
 	bool IsGameOver() const { return bGameOver; }
+	bool IsAwaitingMultiplayerRescue() const { return bAwaitingMultiplayerRescue; }
 	/** Only the active local survivor hears their own ambient breathing, never title/results/spectating. */
 	bool CanPlayTensionBreathing() const;
 	bool IsSprintingForBreathing() const { return bIsSprinting && GetVelocity().SizeSquared2D() > 400.0f; }
@@ -435,6 +437,10 @@ private:
 	UFUNCTION()
 	void OnRep_GameOver();
 
+	UFUNCTION() void OnRep_RescueDetention();
+	void SetAwaitingMultiplayerRescue(bool bAwaiting, bool bProtectOnRelease = false);
+	bool FinishMannequinCatch(class AMannequinAICharacter* CatchingMannequin, float FallPitchDirection, float FallRollDirection);
+
 	/** 세 번의 포획까지 차감되는 생존자별 카운트입니다. 서버가 변경하고 모든 클라이언트에 복제합니다. */
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category = "Player|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	int32 RemainingDeathCount = 3;
@@ -445,6 +451,7 @@ private:
 	/** 카운트 0 이후 다음 포획에서 서버가 확정하는 게임 오버 상태입니다. */
 	UPROPERTY(ReplicatedUsing = OnRep_GameOver, VisibleInstanceOnly, Category = "Player|Death", meta = (AllowPrivateAccess = "true"))
 	bool bGameOver = false;
+	UPROPERTY(ReplicatedUsing=OnRep_RescueDetention) bool bAwaitingMultiplayerRescue = false;
 	
 	FVector LastAIMovementDirection = FVector::ZeroVector;
 	// Where the feet last were on the ground (server): the practice return point after a fall.

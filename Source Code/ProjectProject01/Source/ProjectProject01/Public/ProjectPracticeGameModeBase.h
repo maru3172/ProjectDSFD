@@ -16,8 +16,12 @@ class PROJECTPROJECT01_API AProjectPracticeGameModeBase : public AGameModeBase
 {
 	GENERATED_BODY()
 
+public:
+	virtual bool HasCustomOpeningPresentation() const { return false; }
+
 protected:
 	virtual void BeginPlay() override;
+	bool bSpawnAutomaticHelper = true;
 
 private:
 	void BindEscapeTriggers();

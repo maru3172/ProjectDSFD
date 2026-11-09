@@ -24,6 +24,9 @@ public:
 	// 카메라 방향으로 Line Trace 를 실행하고 맞은 대상을 상호작용 실행
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void TryInteract();
+
+	AActor* GetCurrentInteractable() const { return CurrentInteractable; }
+	void UseExternalPrompt();
 	
 protected:
 	virtual void BeginPlay() override;
@@ -37,6 +40,9 @@ private:
 	double LastElevatorRequestSeconds = -1.0;
     UFUNCTION(Server,Reliable) void ServerInteractShutter(class AFireShutterActor* Shutter,FVector_NetQuantize Origin,FVector_NetQuantizeNormal Direction);
     double LastShutterRequestSeconds=-1;
+	UFUNCTION(Server, Reliable) void ServerInteractRescueStation(class AProjectMultiplayerRescueStation* Station,
+		FVector_NetQuantize Origin, FVector_NetQuantizeNormal Direction);
+	double LastRescueRequestSeconds = -1.;
 
 	// 카메라 방향으로 라인 트레이스를 실행하고 현재 상호작용 가능한 액터를 반환한다.
 	AActor* FindInteractableActor(bool bDrawDebug) const;
@@ -51,6 +57,7 @@ private:
 	// 생성된 상호작용 안내 위젯
 	UPROPERTY(Transient)
 	TObjectPtr<UInteractionPromptWidget> InteractionWidget;
+	bool bUseExternalPrompt = false;
 
 	// 생성할 상호작용 위젯 클래스
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction|UI")
