@@ -72,9 +72,10 @@ private:
 	};
 	void Enter(EPhase Next);
 	void LockControls(bool bLock);
-	void TurnToward(const FVector& Point, float MinimumSeconds);
+	void TurnToward(const FVector& Point, float MinimumSeconds, float StartAt = 0.f);
 	void UpdateHatShot(APawn& Player);
-	void PoseHatReach(ACharacter& Player, float Reach);
+	FVector PoseHatReach(ACharacter& Player, const FVector& GripTarget, float Reach);
+	void UpdateHatHandling(APawn& Player, float Reach, float Lift, float Stow = 0.f);
 	void FinishHatShot();
 	void WalkIntoStore(APawn& Player);
 	void SetPhonePose(ACharacter& Player, UAnimSequence* Animation);
@@ -82,6 +83,7 @@ private:
 	float GetOpeningFade() const;
 	void FollowPartner(const APawn& Player, float DeltaSeconds);
 	float GetLastOutageTime() const;
+	void PlayShutterDrop();
 	void PlayAlarm();
 	void PlayPartnerScream();
 	void PlayImpact(const FVector& Position, float Pitch, float Volume) const;
@@ -105,6 +107,7 @@ private:
 	float WalkSpeedBeforeIntro = 0.f;
 	FVector ShutterOpen = FVector::ZeroVector;
 	FVector HatStart = FVector::ZeroVector;
+	FQuat HatStartRotation = FQuat::Identity;
 	FVector HatApproach = FVector::ForwardVector;
 	bool bHatMeshWasVisible = true;
 	int32 NextFinaleLight = 0;
@@ -134,6 +137,7 @@ private:
 	UPROPERTY(Transient) TArray<TObjectPtr<ULightComponent>> StoreLights;
 	UPROPERTY(Transient) TObjectPtr<ATriggerBox> Passage;
 	UPROPERTY(Transient) TObjectPtr<USoundWaveProcedural> PartnerScream;
+	UPROPERTY(Transient) TObjectPtr<USoundWaveProcedural> ShutterDropSound;
 	UPROPERTY(Transient) TObjectPtr<USoundWaveProcedural> Alarm;
 	UPROPERTY(Transient) TObjectPtr<USoundBase> PhoneClick;
 	UPROPERTY(Transient) TObjectPtr<UPlayerInteractionComponent> Interaction;

@@ -114,9 +114,13 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		bool bCapturedWideShot = false;
 		bool bCapturedLastAfterglow = false;
 		bool bCheckedFirePhone = false;
-		bool bCheckedFireMask = false;
 		bool bCheckedInjuryMask = false;
 		bool bCheckedHatShot = false;
+		bool bCheckedOpeningBlack = false;
+		bool bCheckedOpeningReveal = false;
+		bool bCheckedHeldHat = false;
+		bool bCheckedHatStow = false;
+		bool bCheckedAlarmOrder = false;
 		bool bSawTitleReveal = false;
 		bool bSawPartiallyRevealedTitle = false;
 		float PhoneWalkSpeed = 0.f;
@@ -203,8 +207,21 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		switch (State->Step)
 		{
 		case 0:
+			if (Mode->Phase == EPhase::Phone && Mode->Elapsed < .25f && !State->bCheckedOpeningBlack)
+			{
+				State->bCheckedOpeningBlack = true;
+				TestEqual(TEXT("The opening camera starts fully covered"), Mode->GetOpeningFade(), 1.f);
+			}
+			if (Mode->Phase == EPhase::Phone && Mode->Elapsed >= 1.1f && !State->bCheckedOpeningReveal)
+			{
+				State->bCheckedOpeningReveal = true;
+				const float Cover = Mode->GetOpeningFade();
+				TestTrue(TEXT("The opening camera gradually becomes visible"), Cover > .2f && Cover < .8f);
+			}
 			if (Mode->Phase == EPhase::Phone && Mode->Elapsed >= 2.25f)
 			{
+				TestTrue(TEXT("The opening fade completes after starting black"),
+					State->bCheckedOpeningBlack && State->bCheckedOpeningReveal && Mode->GetOpeningFade() == 0.f);
 				TestTrue(TEXT("Phone overlay locks the player's movement and view"), PC.IsMoveInputIgnored() && PC.IsLookInputIgnored());
 				TestTrue(TEXT("The opening tracks the player from low on their front-left"), Mode->OpeningCamera
 					&& PC.GetViewTarget() == Mode->OpeningCamera
@@ -268,14 +285,37 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 					&& Mode->Hat->GetActorLocation().Equals(Mode->HatStart, .5f));
 				if (Mode->HatCamera) CaptureFinale(*Mode->HatCamera, TEXT("Hat_Reach.png"));
 			}
-			if (FParse::Param(FCommandLine::Get(), TEXT("ReviewIntroFinale"))
-				&& Mode->Phase == EPhase::Fire && Mode->Elapsed >= 2.2f && !State->bCheckedFireMask)
+			if (Mode->Phase == EPhase::Fire && Mode->Elapsed >= 1.10f && !State->bCheckedHeldHat)
 			{
-				State->bCheckedFireMask = true;
-				TestTrue(TEXT("The fire warning has black bars across the top and bottom of the screen"),
-					RendersCinematicBars(Mode->BuildCinematicMask(), FIntPoint(480, 270)));
+				State->bCheckedHeldHat = true;
+				const auto& View = PC.PlayerCameraManager->GetCameraCacheView();
+				const FVector ToHat = Mode->Hat->GetActorLocation() - View.Location;
+				TestTrue(TEXT("The shutter lands while the hat is still in hand in first person"),
+					PC.GetViewTarget() == &Pawn && !Mode->Hat->IsHidden() && Mode->HatReachMesh
+					&& !Mode->Hat->GetActorLocation().Equals(Mode->HatStart, 10.f)
+					&& ToHat.Size() < 110.f && FVector::DotProduct(ToHat.GetSafeNormal(), View.Rotation.Vector()) > .6f
+					&& Mode->ShutterDropSound && !Mode->Alarm && Mode->TurnDuration == 0.f
+					&& Mode->GetSubtitle().ToString() == TEXT("무슨 일이지?"));
+				CaptureIntroShot(World, View.Location, View.Rotation, TEXT("Hat_Held_FirstPerson.png"));
 			}
-			if (Mode->Phase == EPhase::Fire && Mode->Elapsed >= 6.7f && !State->bCheckedFirePhone)
+			if (Mode->Phase == EPhase::Fire && Mode->Elapsed >= 2.40f && !State->bCheckedHatStow)
+			{
+				State->bCheckedHatStow = true;
+				TestTrue(TEXT("The hat is put away before the player turns or the alarm sounds"),
+					Mode->Hat->IsHidden() && !Mode->HatReachMesh && Mode->TurnDuration == 0.f && !Mode->Alarm);
+			}
+			if (Mode->Phase == EPhase::Fire && Mode->Alarm && !State->bCheckedAlarmOrder)
+			{
+				State->bCheckedAlarmOrder = true;
+				TestTrue(TEXT("The alarm starts after the turn toward the closed shutter"),
+					State->bCheckedHeldHat && State->bCheckedHatStow && Mode->TurnDuration > 0.f
+					&& PC.GetControlRotation().Equals((Mode->TurnStart + Mode->TurnDelta).GetNormalized(), 1.f)
+					&& Mode->GetSubtitle().ToString().StartsWith(TEXT("화재가 발생했습니다.")));
+				if (FParse::Param(FCommandLine::Get(), TEXT("ReviewIntroFinale")))
+					TestTrue(TEXT("The fire warning has black bars across the top and bottom of the screen"),
+						RendersCinematicBars(Mode->BuildCinematicMask(), FIntPoint(480, 270)));
+			}
+			if (Mode->Phase == EPhase::Fire && Mode->Elapsed >= 10.7f && !State->bCheckedFirePhone)
 			{
 				State->bCheckedFirePhone = true;
 				TestTrue(TEXT("The player lifts a physical phone with its screen off during the cutscene"),
