@@ -284,6 +284,44 @@ bool FProjectReactiveLightRenderTest::RunTest(const FString&)
     // Final-color display dithering can leave sub-1% noise above RGB black even with zero light output.
     // Physical intensity, visibility and emissive are independently checked in the presentation test.
     TestTrue(TEXT("The same real floor becomes black when its only light is extinguished"),Floor[4]<2&&Floor[4]<Floor[3]*.01);
+    Capture->SetActorRotation(FRotator(-90,-90,0));
+    Light->LightOnIntensity=83786.43f;
+    Light->FaultPattern.Strength=1.f;
+    double RecoveryFloor[3][2]={};
+    for(int32 Frame=0;Frame<3;++Frame)
+    {
+        Light->FaultPattern.RecoverySide=Frame==0 ? -1.f : 1.f;
+        Light->FaultPattern.RecoveryProgress=Frame==2 ? 1.f : .2f;
+        Light->ApplyBrightness(.48f);
+        for(int32 I=0;I<8;++I)
+        {
+            Comp->CaptureScene();
+            FlushRenderingCommands();
+            if(GShaderCompilingManager)GShaderCompilingManager->FinishAllCompilation();
+        }
+        TArray<FColor> Pixels;
+        FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetLinearToGamma(false);
+        if(!Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags))return false;
+        for(int32 Side=0;Side<2;++Side)
+            for(int32 Y=172;Y<188;++Y)for(int32 X=152+Side*320;X<168+Side*320;++X)
+            {
+                const auto& P=Pixels[Y*640+X];
+                RecoveryFloor[Frame][Side]+=(P.R+P.G+P.B)/(3.*16*16);
+            }
+        for(auto& P:Pixels)P.A=255;
+        TArray64<uint8> PNG;FImageUtils::PNGCompressImageArray(640,360,Pixels,PNG);
+        const TCHAR* Names[]={TEXT("Recovery_Left.png"),TEXT("Recovery_Right.png"),TEXT("Recovery_Spread.png")};
+        FFileHelper::SaveArrayToFile(PNG,*(Dir/Names[Frame]));
+    }
+    AddInfo(FString::Printf(TEXT("Recovery floor left/right: %.1f/%.1f, %.1f/%.1f, restored %.1f/%.1f"),
+        RecoveryFloor[0][0],RecoveryFloor[0][1],RecoveryFloor[1][0],RecoveryFloor[1][1],RecoveryFloor[2][0],RecoveryFloor[2][1]));
+    TestTrue(TEXT("Selecting the first diffuser end changes which side of the real floor lights up"),
+        RecoveryFloor[0][0]>RecoveryFloor[0][1]*1.5&&RecoveryFloor[1][1]>RecoveryFloor[1][0]*1.5);
+    TestTrue(TEXT("The original beam fills both sides once recovery completes"),
+        !Light->ReactiveSpotLight->LightFunctionMaterial&&RecoveryFloor[2][0]>50&&RecoveryFloor[2][1]>50
+        &&FMath::Abs(RecoveryFloor[2][0]-RecoveryFloor[2][1])<RecoveryFloor[2][0]*.15);
+    Light->LightOnIntensity=0;
+    Light->LastBrightness=-1;
     Light->BulbMesh->SetStaticMesh(Cube);
     Light->BulbMesh->SetMaterial(0,LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/MyProject/Lighting/M_ReactiveBulb.M_ReactiveBulb")));
     Light->BulbMesh->SetWorldLocationAndRotation(FVector(0,0,200),FRotator::ZeroRotator);

@@ -39,6 +39,8 @@ namespace ProjectReactiveLight
         FRandomStream SectionRandom;
         FVector SectionLevels=FVector::OneVector, SectionTarget=FVector::OneVector;
         float SectionRest=0;
+        float RecoveryQuietAt=-1, RecoveryStartsAt=-1, RecoveryProgress=1;
+        float RecoverySide=1;
         TArray<FKey, TInlineAllocator<16>> Keys;
         float Rest = 0, Elapsed = 0, Strength = 0, Depth = 0, Brightness = 1, Electrical = 0;
         int32 LastKind = INDEX_NONE, Serial = 0, LastSurgeSerial=0;
@@ -48,6 +50,8 @@ namespace ProjectReactiveLight
         {
             Random.Initialize(Seed); Keys.Reset(); Rest = Random.FRandRange(.1f, .7f);
             SectionRandom.Initialize(Seed^0x53A91);SectionLevels=SectionTarget=FVector::OneVector;SectionRest=0;
+            RecoveryQuietAt=RecoveryStartsAt=-1;
+            RecoveryProgress=1;
             Elapsed = Strength = Depth = Electrical = 0; Brightness = 1;
             LastKind = INDEX_NONE; Serial = LastSurgeSerial = 0; bSound = false;
         }
@@ -68,6 +72,8 @@ namespace ProjectReactiveLight
             if (Kind == LastKind) Kind = (Kind + Random.RandRange(1, 4)) % 5;
             LastKind = Kind; ++Serial; Keys.Reset(); Elapsed = 0;
             SectionRest=0;
+            RecoveryQuietAt=RecoveryStartsAt=-1;
+            RecoveryProgress=1;
             bSound = Random.FRand() < .67f;
             Depth = Random.FRandRange(.9f, 1.f);
             float Time = 0;
@@ -108,7 +114,24 @@ namespace ProjectReactiveLight
             {
                 Key(.075f, 0); Key(.16f*Stretch, 0); Key(.18f*Stretch, .7f); Key(.07f, Residual);
                 Key((1.8f+.18f*T)*Stretch, Residual); Key(.1f, .64f); Key(.11f, Residual*.6f);
-                Key((.45f+.12f*T)*Stretch, Residual*.6f); Key(.14f, .86f); Key(.12f, Residual); Key(.3f*Stretch, 1);
+                Key((.45f+.12f*T)*Stretch, Residual*.6f); Key(.14f, .86f);
+                if (SectionRandom.FRand()<.65f)
+                {
+                    RecoverySide=SectionRandom.RandRange(0,1)==0 ? -1.f : 1.f;
+                    Key(.12f, 0);
+                    RecoveryQuietAt=Time;
+                    Key(.26f, 0);
+                    RecoveryStartsAt=Time;
+                    Key(.10f, .45f);
+                    Key(.10f, .45f);
+                    Key(.055f, .38f);
+                    Key(.22f, 1);
+                }
+                else
+                {
+                    Key(.12f, Residual);
+                    Key(.3f*Stretch, 1);
+                }
             }
         }
         void Step(float Delta, int32 Count, float Target, float MinimumBrightness)
@@ -153,6 +176,18 @@ namespace ProjectReactiveLight
             const float FaultBlend=FMath::Clamp(Strength/.15f,0.f,1.f);
             const float Fault=FMath::Clamp(Envelope-(1.f-Depth)*Envelope*(1.f-Envelope)-Shiver,0.f,1.f);
             Brightness = FMath::Clamp(FMath::Lerp(1.f,Fault,FaultBlend),FMath::Clamp(MinimumBrightness,0.f,1.f),1.f);
+            const bool HasRecovery=!Keys.IsEmpty()&&RecoveryStartsAt>=0;
+            const bool IsRecovering=HasRecovery&&Elapsed>=RecoveryStartsAt;
+            RecoveryProgress=IsRecovering ? FMath::Clamp((Elapsed-RecoveryStartsAt)/(Keys.Last().Time-RecoveryStartsAt),0.f,1.f) : 1.f;
+            if (IsRecovering)
+            {
+                const float Middle=FMath::Lerp(.03f,1.f,FMath::SmoothStep(.30f,.82f,RecoveryProgress));
+                const float Far=FMath::Lerp(.015f,1.f,FMath::SmoothStep(.50f,1.f,RecoveryProgress));
+                const FVector RecoverySections=RecoverySide>0 ? FVector(Far,Middle,1) : FVector(1,Middle,Far);
+                SectionLevels=FMath::Lerp(FVector::OneVector,RecoverySections,FaultBlend);
+                Electrical=bSound ? (1.f-RecoveryProgress)*Strength*.32f : 0.f;
+                return;
+            }
             const bool SectionsActive=!Keys.IsEmpty()&&Strength>.01f&&Brightness>0&&Envelope<.98f;
             if(SectionsActive)
             {
@@ -169,7 +204,8 @@ namespace ProjectReactiveLight
             const FVector SectionGoal=SectionsActive?FMath::Lerp(FVector::OneVector,SectionTarget,FaultBlend):FVector::OneVector;
             SectionLevels=FMath::VInterpTo(SectionLevels,SectionGoal,Dt,SectionsActive?35.f:16.f);
             if(SectionLevels.Equals(FVector::OneVector,.0001))SectionLevels=FVector::OneVector;
-            Electrical = bSound ? FMath::Clamp(((1.f-Envelope)+(1.f-static_cast<float>(SectionLevels.GetMin()))*.1f)*Strength, 0.f, 1.f) : 0.f;
+            const bool QuietRecovery=HasRecovery&&Elapsed>=RecoveryQuietAt&&Elapsed<RecoveryStartsAt;
+            Electrical = bSound&&!QuietRecovery ? FMath::Clamp(((1.f-Envelope)+(1.f-static_cast<float>(SectionLevels.GetMin()))*.1f)*Strength, 0.f, 1.f) : 0.f;
         }
     };
 }

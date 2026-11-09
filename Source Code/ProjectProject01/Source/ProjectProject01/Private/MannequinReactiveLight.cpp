@@ -18,6 +18,8 @@
 #include "Engine/GameViewportClient.h"
 #include "SceneView.h"
 #include "ConvexVolume.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "UObject/ConstructorHelpers.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -109,6 +111,9 @@ AMannequinReactiveLight::AMannequinReactiveLight()
     // Nominal 4.14m ceiling: floor brightness matches the test corridor's 85cd / 3.30m light.
     ReactiveSpotLight->SetIntensity(LightOnIntensity); ReactiveSpotLight->SetAttenuationRadius(2015.5635f);
     ReactiveSpotLight->SetInnerConeAngle(28); ReactiveSpotLight->SetOuterConeAngle(44);
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Projection(
+        TEXT("/Game/MyProject/Lighting/M_ReactiveRecoveryProjection.M_ReactiveRecoveryProjection"));
+    RecoveryProjectionMaterial=Projection.Object;
     DetectionSphere=CreateDefaultSubobject<USphereComponent>(TEXT("Mannequin Detection Sphere"));
     DetectionSphere->SetupAttachment(SceneRoot); DetectionSphere->InitSphereRadius(DetectionRadius);
     // The existing component remains available to placed Blueprints. Detection now shares a world sample.
@@ -146,6 +151,7 @@ void AMannequinReactiveLight::ResetFaultPresentation()
     // Individual seeds keep nearby overlapping faults from playing the same envelope in lockstep.
     FaultPattern.Reset(static_cast<int32>(HashCombine(GetTypeHash(GetPathName()),FMath::Rand())));
     TargetThreat=0; LastBrightness=-1;LastSectionLevels=FVector(-1);WakeFromSections=FVector::OneVector; CurrentDetectedMannequinCount=0; CurrentBlinkIntervalSeconds=0;
+    WakeFromRecoveryProjection=FLinearColor(1,0,1,0);
     bPresentationRelevant=bDetectionOriginValid=false;LastRelevantAt=-1;NextFloorProbeAt=0;LastSharedGroupId=0;WakeBlendElapsed=.25f;WakeFromBrightness=1;
     if (ElectricalSynth) ElectricalSynth->Stop();
     ApplyLightState(true); SetActorTickEnabled(false);
@@ -248,6 +254,8 @@ void AMannequinReactiveLight::RefreshDetectedMannequinsFromWorld()
         WakeFromBrightness=Flash>UE_SMALL_NUMBER?FMath::Clamp((Held-1.f+Flash)/Flash,0.f,1.f):1.f;
         for(int32 I=0;I<3;++I)WakeFromSections[I]=Flash>UE_SMALL_NUMBER&&LastSectionLevels[I]>=0
             ?FMath::Clamp((LastSectionLevels[I]-1+Flash)/Flash,0.,1.):1.;
+        WakeFromRecoveryProjection=LastRecoveryProjection;
+        WakeFromRecoveryProjection.A=FMath::Min(WakeFromRecoveryProjection.A,Flash);
         WakeBlendElapsed=0;
     }
     CurrentDetectedMannequinCount=0; TargetThreat=0; NearestMannequinDistance=DetectionRadius;
@@ -292,6 +300,8 @@ void AMannequinReactiveLight::UpdateBlinkingFromDetectedCount()
         if (ElectricalSynth) ElectricalSynth->Stop();
         FaultPattern.Keys.Reset(); FaultPattern.Strength=0;
         FaultPattern.SectionLevels=FaultPattern.SectionTarget=FVector::OneVector;
+        FaultPattern.RecoveryProgress=1.f;
+        WakeFromRecoveryProjection=FLinearColor(1,0,1,0);
         ApplyLightState(true); SetActorTickEnabled(false); return;
     }
     // Reading settings at the polling rate also restores steady light when effects are disabled mid-event.
@@ -339,14 +349,51 @@ void AMannequinReactiveLight::ApplyLightState(bool bNewLightOn)
     // Retained for checkpoint/accessibility callers; the runtime pattern uses continuous brightness.
     bLightOn=bNewLightOn; ApplyBrightness(bNewLightOn ? 1.f : 0.f);
 }
+
+void AMannequinReactiveLight::ApplyRecoveryProjection(float Brightness, float FlashScale, float WakeBlend)
+{
+    if (!ReactiveSpotLight || !RecoveryProjectionMaterial) return;
+    const FLinearColor Unmasked(1,0,1,0);
+    FLinearColor Projection=Unmasked;
+    if (FaultPattern.RecoveryProgress<1.f && FlashScale>0.f)
+    {
+        // Light function UVs are aligned to local light Z and Y, perpendicular to the beam.
+        const FVector DiffuserAxis=BulbMesh->GetForwardVector()*FaultPattern.RecoverySide;
+        FVector2D Direction(FVector::DotProduct(DiffuserAxis,ReactiveSpotLight->GetUpVector()),
+            FVector::DotProduct(DiffuserAxis,ReactiveSpotLight->GetRightVector()));
+        if (!Direction.Normalize()) Direction=FVector2D(FaultPattern.RecoverySide,0);
+        const float Spread=FMath::SmoothStep(.35f,1.f,FaultPattern.RecoveryProgress);
+        Projection=FLinearColor(Direction.X,Direction.Y,Spread,FlashScale*FMath::Clamp(FaultPattern.Strength/.15f,0.f,1.f));
+    }
+    Projection=FMath::Lerp(WakeFromRecoveryProjection,Projection,WakeBlend);
+    if (Brightness<=UE_SMALL_NUMBER || FlashScale<=0.f || Projection.A<=.001f)
+    {
+        if (RecoveryProjectionInstance && ReactiveSpotLight->LightFunctionMaterial==RecoveryProjectionInstance)
+            ReactiveSpotLight->SetLightFunctionMaterial(nullptr);
+        LastRecoveryProjection=Unmasked;
+        return;
+    }
+
+    if (ReactiveSpotLight->LightFunctionMaterial && ReactiveSpotLight->LightFunctionMaterial!=RecoveryProjectionInstance) return;
+    if (!RecoveryProjectionInstance)
+        RecoveryProjectionInstance=UMaterialInstanceDynamic::Create(RecoveryProjectionMaterial,this);
+    if (!Projection.Equals(LastRecoveryProjection,.0005f))
+        RecoveryProjectionInstance->SetVectorParameterValue(TEXT("Recovery"),Projection);
+    if (ReactiveSpotLight->LightFunctionMaterial!=RecoveryProjectionInstance)
+        ReactiveSpotLight->SetLightFunctionMaterial(RecoveryProjectionInstance);
+    LastRecoveryProjection=Projection;
+}
+
 void AMannequinReactiveLight::ApplyBrightness(float Brightness)
 {
     const auto* Settings=UProjectProject01GameUserSettings::Get();
     const float Flash=Settings ? FMath::Clamp(Settings->GetLocalFlashScale(),0.f,1.f) : 1.f;
     const float Presented=FMath::Lerp(1.f,FMath::Clamp(Brightness,0.f,1.f),Flash);
     const float Wake=FMath::Clamp(WakeBlendElapsed/.25f,0.f,1.f);
+    const float WakeAlpha=Wake*Wake*(3-2*Wake);
+    ApplyRecoveryProjection(Presented,Flash,WakeAlpha);
     const FVector Sections=FMath::Lerp(FVector::OneVector,
-        FMath::Lerp(WakeFromSections,FaultPattern.SectionLevels,Wake*Wake*(3-2*Wake)),Flash);
+        FMath::Lerp(WakeFromSections,FaultPattern.SectionLevels,WakeAlpha),Flash);
     const bool SectionsChanged=!Sections.Equals(LastSectionLevels,.0005);
     // Never let the near-equal cache skip the final transition to a physically invisible light.
     if ((Presented>UE_SMALL_NUMBER)==(LastBrightness>UE_SMALL_NUMBER)

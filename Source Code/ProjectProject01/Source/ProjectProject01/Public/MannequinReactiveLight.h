@@ -16,6 +16,8 @@ class USphereComponent;
 class USpotLightComponent;
 class UStaticMeshComponent;
 class APlayerController;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
 struct FConvexVolume;
 
 /** Quiet fixture-local electrical hum and arcing, generated without an external audio asset. */
@@ -94,6 +96,7 @@ private:
 	void UpdateBlinkingFromDetectedCount();
 	void ApplyLightState(bool bNewLightOn);
 	void ApplyBrightness(float Brightness);
+	void ApplyRecoveryProjection(float Brightness, float FlashScale, float WakeBlend);
 	void ResetFaultPresentation();
 	bool IsPresentationRelevant(APlayerController* Viewer);
 	bool IntersectsInfluence(const FConvexVolume& Frustum) const;
@@ -184,6 +187,12 @@ private:
 	uint64 LastSharedGroupId=0;
 	float WakeBlendElapsed=.25f, WakeFromBrightness=1.f;
 	FVector LastSectionLevels=FVector(-1), WakeFromSections=FVector::OneVector;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> RecoveryProjectionMaterial;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> RecoveryProjectionInstance;
+	FLinearColor LastRecoveryProjection{1,0,1,0};
+	FLinearColor WakeFromRecoveryProjection{1,0,1,0};
 	UPROPERTY(SaveGame)
 	int32 CurrentDetectedMannequinCount = 0;
 
