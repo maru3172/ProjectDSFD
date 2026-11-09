@@ -29,7 +29,15 @@ namespace
 {
     // One body snapshot per local world, not one world scan per fixture. Weak world keys keep PIE sessions isolated.
     struct FBodySample { FVector Position; float FeetZ, Speed; };
-    struct FSharedLightGroup { ProjectReactiveLight::FSharedFaultSurges Surges;double UsedAt=-1;uint64 Id=0; };
+    struct FSharedLightGroup
+    {
+        ProjectReactiveLight::FSharedFaultSurges Surges;
+        TSet<TWeakObjectPtr<AMannequinReactiveLight>> Members;
+        FRandomStream CascadeRandom;
+        double UsedAt=-1, NextCascadeAt=0;
+        uint64 Id=0;
+        int32 CascadeSerial=0;
+    };
     struct FWorldBodies
     {
         double At=-1; TArray<FBodySample> Bodies;
@@ -152,6 +160,8 @@ void AMannequinReactiveLight::ResetFaultPresentation()
     FaultPattern.Reset(static_cast<int32>(HashCombine(GetTypeHash(GetPathName()),FMath::Rand())));
     TargetThreat=0; LastBrightness=-1;LastSectionLevels=FVector(-1);WakeFromSections=FVector::OneVector; CurrentDetectedMannequinCount=0; CurrentBlinkIntervalSeconds=0;
     WakeFromRecoveryProjection=FLinearColor(1,0,1,0);
+    PendingCascadeAt=-1;
+    WakeFromColdTint=0;
     bPresentationRelevant=bDetectionOriginValid=false;LastRelevantAt=-1;NextFloorProbeAt=0;LastSharedGroupId=0;WakeBlendElapsed=.25f;WakeFromBrightness=1;
     if (ElectricalSynth) ElectricalSynth->Stop();
     ApplyLightState(true); SetActorTickEnabled(false);
@@ -206,6 +216,54 @@ bool AMannequinReactiveLight::IsPresentationRelevant(APlayerController* Viewer)
     if(Relevant)LastRelevantAt=Now;
     return Relevant||(LastRelevantAt>=0&&Now-LastRelevantAt<.75);
 }
+bool AMannequinReactiveLight::ScheduleNearbyCascade(TSet<TWeakObjectPtr<AMannequinReactiveLight>>& Members,
+    uint64 GroupId, const FVector& ViewLocation, double Now, FRandomStream& Random)
+{
+    struct FCandidate { AMannequinReactiveLight* Light; double ViewDistance; };
+    TArray<FCandidate,TInlineAllocator<8>> Candidates;
+    for (auto It=Members.CreateIterator(); It; ++It)
+    {
+        auto* Light=It->Get();
+        if (!IsValid(Light) || Light->LastSharedGroupId!=GroupId)
+        {
+            It.RemoveCurrent();
+            continue;
+        }
+        if (Light->bPresentationAllowed && Light->bPresentationRelevant && Light->TargetThreat>0
+            && Light->FaultPattern.Keys.IsEmpty() && Light->PendingCascadeAt<0)
+            Candidates.Add({Light,FVector::DistSquared2D(Light->GetActorLocation(),ViewLocation)});
+    }
+    Candidates.Sort([](const FCandidate& A,const FCandidate& B){return A.ViewDistance>B.ViewDistance;});
+    const auto NextNeighbor=[&Candidates](int32 From)
+    {
+        int32 Nearest=INDEX_NONE;
+        double NearestDistance=FMath::Square(1200.);
+        const FVector Position=Candidates[From].Light->GetActorLocation();
+        for (int32 I=From+1; I<Candidates.Num(); ++I)
+        {
+            const double Distance=FVector::DistSquared2D(Position,Candidates[I].Light->GetActorLocation());
+            if (Distance>=NearestDistance) continue;
+            Nearest=I;
+            NearestDistance=Distance;
+        }
+        return Nearest;
+    };
+    for (int32 First=0; First+1<Candidates.Num(); ++First)
+    {
+        const int32 Second=NextNeighbor(First);
+        if (Second==INDEX_NONE) continue;
+        const double FirstAt=Now+Random.FRandRange(.025f,.075f);
+        const double SecondAt=FirstAt+Random.FRandRange(.16f,.34f);
+        Candidates[First].Light->PendingCascadeAt=FirstAt;
+        Candidates[Second].Light->PendingCascadeAt=SecondAt;
+        const int32 Third=NextNeighbor(Second);
+        if (Third!=INDEX_NONE && Random.FRand()<.55f)
+            Candidates[Third].Light->PendingCascadeAt=SecondAt+Random.FRandRange(.16f,.34f);
+        return true;
+    }
+    return false;
+}
+
 FVector AMannequinReactiveLight::GetDetectionOrigin()
 {
     const FVector Source=ReactiveSpotLight ? ReactiveSpotLight->GetComponentLocation() : GetActorLocation();
@@ -256,6 +314,7 @@ void AMannequinReactiveLight::RefreshDetectedMannequinsFromWorld()
             ?FMath::Clamp((LastSectionLevels[I]-1+Flash)/Flash,0.,1.):1.;
         WakeFromRecoveryProjection=LastRecoveryProjection;
         WakeFromRecoveryProjection.A=FMath::Min(WakeFromRecoveryProjection.A,Flash);
+        WakeFromColdTint=FMath::Min(LastColdTint,Flash);
         WakeBlendElapsed=0;
     }
     CurrentDetectedMannequinCount=0; TargetThreat=0; NearestMannequinDistance=DetectionRadius;
@@ -285,11 +344,36 @@ void AMannequinReactiveLight::RefreshDetectedMannequinsFromWorld()
         const FIntVector Key(FMath::FloorToInt((Origin.X+Cell*.5f)/Cell),FMath::FloorToInt((Origin.Y+Cell*.5f)/Cell),
             FMath::RoundToInt(Origin.Z/FMath::Max(100.f,FloorHeightTolerance)));
         auto& Group=Shared.Groups.FindOrAdd(Key);Group.UsedAt=Now;
-        if(!Group.Id){Group.Surges.Reset(FMath::Rand());Group.Id=++Shared.NextGroupId;}
-        if(LastSharedGroupId!=Group.Id){FaultPattern.LastSurgeSerial=0;LastSharedGroupId=Group.Id;}
+        if (!Group.Id)
+        {
+            const int32 Seed=FMath::Rand();
+            Group.Surges.Reset(Seed);
+            Group.CascadeRandom.Initialize(Seed^0x77533);
+            Group.Id=++Shared.NextGroupId;
+        }
+        if (LastSharedGroupId!=Group.Id)
+        {
+            FaultPattern.LastSurgeSerial=0;
+            PendingCascadeAt=-1;
+            LastSharedGroupId=Group.Id;
+            Group.Members.Add(this);
+        }
+        const int32 PreviousSurge=Group.Surges.Serial;
         Group.Surges.Step(Now,CurrentDetectedMannequinCount);
-        FaultPattern.QueueSharedSurge(Group.Surges.Serial,static_cast<float>(Now-Group.Surges.StartedAt),CurrentDetectedMannequinCount,TargetThreat);
+        if (Group.Surges.Serial!=PreviousSurge && Now>=Group.NextCascadeAt && Group.CascadeRandom.FRand()<.22f)
+        {
+            FVector ViewLocation; FRotator ViewRotation;
+            Viewer->GetPlayerViewPoint(ViewLocation,ViewRotation);
+            if (ScheduleNearbyCascade(Group.Members,Group.Id,ViewLocation,Now,Group.CascadeRandom))
+            {
+                Group.CascadeSerial=Group.Surges.Serial;
+                Group.NextCascadeAt=Now+Group.CascadeRandom.FRandRange(5.f,8.f);
+            }
+        }
+        if (PendingCascadeAt<0 && Group.CascadeSerial!=Group.Surges.Serial)
+            FaultPattern.QueueSharedSurge(Group.Surges.Serial,static_cast<float>(Now-Group.Surges.StartedAt),CurrentDetectedMannequinCount,TargetThreat);
     }
+    else PendingCascadeAt=-1;
     UpdateBlinkingFromDetectedCount();
 }
 void AMannequinReactiveLight::UpdateBlinkingFromDetectedCount()
@@ -301,6 +385,8 @@ void AMannequinReactiveLight::UpdateBlinkingFromDetectedCount()
         FaultPattern.Keys.Reset(); FaultPattern.Strength=0;
         FaultPattern.SectionLevels=FaultPattern.SectionTarget=FVector::OneVector;
         FaultPattern.RecoveryProgress=1.f;
+        FaultPattern.ColdTint=WakeFromColdTint=0;
+        PendingCascadeAt=-1;
         WakeFromRecoveryProjection=FLinearColor(1,0,1,0);
         ApplyLightState(true); SetActorTickEnabled(false); return;
     }
@@ -312,12 +398,20 @@ void AMannequinReactiveLight::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     if (GetNetMode()==NM_DedicatedServer||!bPresentationAllowed||!bPresentationRelevant) return;
-    FaultPattern.Step(DeltaSeconds,CurrentDetectedMannequinCount,TargetThreat,FMath::Clamp(MinimumBrightnessFraction,0.f,1.f));
+    const double Now=GetWorld()->GetTimeSeconds();
+    if (PendingCascadeAt>=0 && Now>=PendingCascadeAt)
+    {
+        if (Now-PendingCascadeAt<.18 && TargetThreat>0 && GetThreatTier()>0 && FaultPattern.Keys.IsEmpty())
+            FaultPattern.BeginEvent(GetThreatTier(),true);
+        PendingCascadeAt=-1;
+    }
+    FaultPattern.Step(DeltaSeconds,CurrentDetectedMannequinCount,TargetThreat,
+        FMath::Clamp(MinimumBrightnessFraction,0.f,1.f),PendingCascadeAt<0);
     WakeBlendElapsed=FMath::Min(.25f,WakeBlendElapsed+FMath::Clamp(DeltaSeconds,0.f,.1f));
     const float A=WakeBlendElapsed/.25f;
     ApplyBrightness(FMath::Lerp(WakeFromBrightness,FaultPattern.Brightness,A*A*(3-2*A)));
     // Kept for old Blueprint debug displays: this is time to the next random event, not a periodic blink interval.
-    CurrentBlinkIntervalSeconds=FMath::Max(0.f,FaultPattern.Rest);
+    CurrentBlinkIntervalSeconds=PendingCascadeAt>=0 ? static_cast<float>(PendingCascadeAt-Now) : FMath::Max(0.f,FaultPattern.Rest);
     auto* Settings=UProjectProject01GameUserSettings::Get();
     if (ElectricalSynth) ElectricalSynth->SetVolumeMultiplier(FMath::Max(0.f,ElectricalSoundVolume));
     const float Sound=bPresentationAllowed && bElectricalSound ? FaultPattern.Electrical : 0.f;
@@ -391,6 +485,7 @@ void AMannequinReactiveLight::ApplyBrightness(float Brightness)
     const float Presented=FMath::Lerp(1.f,FMath::Clamp(Brightness,0.f,1.f),Flash);
     const float Wake=FMath::Clamp(WakeBlendElapsed/.25f,0.f,1.f);
     const float WakeAlpha=Wake*Wake*(3-2*Wake);
+    ApplyColdTint(Presented>UE_SMALL_NUMBER && Flash>0.f ? FMath::Lerp(WakeFromColdTint,FaultPattern.ColdTint*Flash,WakeAlpha) : 0.f);
     ApplyRecoveryProjection(Presented,Flash,WakeAlpha);
     const FVector Sections=FMath::Lerp(FVector::OneVector,
         FMath::Lerp(WakeFromSections,FaultPattern.SectionLevels,WakeAlpha),Flash);
@@ -411,6 +506,26 @@ void AMannequinReactiveLight::ApplyBrightness(float Brightness)
         BulbMesh->SetScalarParameterValueOnMaterials(EmissiveParameterName,
             FMath::Lerp(FMath::Max(0.f,EmissiveOffValue),FMath::Max(0.f,EmissiveOnValue),Presented));
     }
+}
+
+void AMannequinReactiveLight::ApplyColdTint(float Tint)
+{
+    if (Tint<.002f) Tint=0;
+    if (Tint==LastColdTint) return;
+    static const FName BulbColorParameter(TEXT("Color"));
+    if (LastColdTint==0)
+    {
+        BaseSpotColor=ReactiveSpotLight ? ReactiveSpotLight->GetLightColor() : FLinearColor::White;
+        auto* Material=BulbMesh ? BulbMesh->GetMaterial(0) : nullptr;
+        if (Material && Material->GetVectorParameterValue(FMaterialParameterInfo(BulbColorParameter),BaseBulbColor))
+            ColdBulbInstance=BulbMesh->CreateDynamicMaterialInstance(0);
+    }
+    const FLinearColor Multiplier=FMath::Lerp(FLinearColor::White,FLinearColor(.79f,.91f,1.f),Tint);
+    if (ReactiveSpotLight) ReactiveSpotLight->SetLightColor(BaseSpotColor*Multiplier);
+    if (ColdBulbInstance && BulbMesh->GetMaterial(0)==ColdBulbInstance.Get())
+        ColdBulbInstance->SetVectorParameterValue(BulbColorParameter,BaseBulbColor*Multiplier);
+    if (Tint==0) ColdBulbInstance=nullptr;
+    LastColdTint=Tint;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

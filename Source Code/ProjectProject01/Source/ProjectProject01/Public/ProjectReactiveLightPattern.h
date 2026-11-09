@@ -37,11 +37,13 @@ namespace ProjectReactiveLight
     {
         FRandomStream Random;
         FRandomStream SectionRandom;
+        FRandomStream AccentRandom;
         FVector SectionLevels=FVector::OneVector, SectionTarget=FVector::OneVector;
         float SectionRest=0;
         float RecoveryQuietAt=-1, RecoveryStartsAt=-1, RecoveryProgress=1;
         float RecoverySide=1;
-        TArray<FKey, TInlineAllocator<16>> Keys;
+        float ColdLeadTime=0, ColdTint=0;
+        TArray<FKey, TInlineAllocator<17>> Keys;
         float Rest = 0, Elapsed = 0, Strength = 0, Depth = 0, Brightness = 1, Electrical = 0;
         int32 LastKind = INDEX_NONE, Serial = 0, LastSurgeSerial=0;
         bool bSound = false;
@@ -50,6 +52,8 @@ namespace ProjectReactiveLight
         {
             Random.Initialize(Seed); Keys.Reset(); Rest = Random.FRandRange(.1f, .7f);
             SectionRandom.Initialize(Seed^0x53A91);SectionLevels=SectionTarget=FVector::OneVector;SectionRest=0;
+            AccentRandom.Initialize(Seed^0x328C1);
+            ColdLeadTime=ColdTint=0;
             RecoveryQuietAt=RecoveryStartsAt=-1;
             RecoveryProgress=1;
             Elapsed = Strength = Depth = Electrical = 0; Brightness = 1;
@@ -66,20 +70,27 @@ namespace ProjectReactiveLight
             Rest=FMath::Min(Rest,Random.FRandRange(.025f,.25f));
             return true;
         }
-        void BeginEvent(int32 T)
+        void BeginEvent(int32 T, bool bCascade=false)
         {
-            int32 Kind = Random.RandRange(0, 4);
+            int32 Kind = bCascade ? (LastKind==1 ? 2 : 1) : Random.RandRange(0, 4);
             if (Kind == LastKind) Kind = (Kind + Random.RandRange(1, 4)) % 5;
             LastKind = Kind; ++Serial; Keys.Reset(); Elapsed = 0;
             SectionRest=0;
             RecoveryQuietAt=RecoveryStartsAt=-1;
             RecoveryProgress=1;
+            ColdLeadTime=ColdTint=0;
             bSound = Random.FRand() < .67f;
             Depth = Random.FRandRange(.9f, 1.f);
             float Time = 0;
             // Jitter each edge once when scheduling, so even the same family never has a fixed rhythm.
             auto Key = [&](float Duration, float Value) { Time += Duration*Random.FRandRange(.82f,1.18f); Keys.Add({Time, Value}); };
             Key(0, 1);
+            if (AccentRandom.FRand()<.22f)
+            {
+                ColdLeadTime=AccentRandom.FRandRange(.065f,.085f);
+                Time=ColdLeadTime;
+                Keys.Add({Time,.92f});
+            }
             const float Stretch = Random.FRandRange(.55f, .9f);
             // Only voltage collapse and incomplete restoration get an unstable afterglow.
             // This belongs to this event's keys; it is not a global minimum for other faults.
@@ -134,14 +145,14 @@ namespace ProjectReactiveLight
                 }
             }
         }
-        void Step(float Delta, int32 Count, float Target, float MinimumBrightness)
+        void Step(float Delta, int32 Count, float Target, float MinimumBrightness, bool bAllowStart=true)
         {
             const float Dt = FMath::Clamp(Delta, 0.f, .25f);
             const float Rate = Target > Strength ? 4.5f : .28f;
             Strength = FMath::FInterpTo(Strength, FMath::Clamp(Target, 0.f, 1.f), Dt, Rate);
             if (Target == 0 && Strength < .001f) Strength = 0;
             const int32 T = Tier(Count);
-            if (Keys.IsEmpty())
+            if (Keys.IsEmpty()&&bAllowStart)
             {
                 Rest -= Dt;
                 if (Rest <= 0 && T && Target > 0) BeginEvent(T);
@@ -174,6 +185,13 @@ namespace ProjectReactiveLight
             // Depth varies the lit recovery segments without lifting an off key above zero.
             // Distant/decaying influence still blends continuously back to normal light.
             const float FaultBlend=FMath::Clamp(Strength/.15f,0.f,1.f);
+            ColdTint=0;
+            if (!Keys.IsEmpty()&&ColdLeadTime>0.f&&Elapsed<ColdLeadTime+.075f)
+            {
+                const float Rise=FMath::SmoothStep(0.f,ColdLeadTime,Elapsed);
+                const float Fall=1.f-FMath::SmoothStep(ColdLeadTime,ColdLeadTime+.075f,Elapsed);
+                ColdTint=Rise*Fall*FaultBlend;
+            }
             const float Fault=FMath::Clamp(Envelope-(1.f-Depth)*Envelope*(1.f-Envelope)-Shiver,0.f,1.f);
             Brightness = FMath::Clamp(FMath::Lerp(1.f,Fault,FaultBlend),FMath::Clamp(MinimumBrightness,0.f,1.f),1.f);
             const bool HasRecovery=!Keys.IsEmpty()&&RecoveryStartsAt>=0;

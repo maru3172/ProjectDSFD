@@ -97,6 +97,9 @@ private:
 	void ApplyLightState(bool bNewLightOn);
 	void ApplyBrightness(float Brightness);
 	void ApplyRecoveryProjection(float Brightness, float FlashScale, float WakeBlend);
+	void ApplyColdTint(float Tint);
+	bool ScheduleNearbyCascade(TSet<TWeakObjectPtr<AMannequinReactiveLight>>& Members, uint64 GroupId,
+		const FVector& ViewLocation, double Now, FRandomStream& Random);
 	void ResetFaultPresentation();
 	bool IsPresentationRelevant(APlayerController* Viewer);
 	bool IntersectsInfluence(const FConvexVolume& Frustum) const;
@@ -193,6 +196,12 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> RecoveryProjectionInstance;
 	FLinearColor LastRecoveryProjection{1,0,1,0};
 	FLinearColor WakeFromRecoveryProjection{1,0,1,0};
+	double PendingCascadeAt=-1;
+	float LastColdTint=0, WakeFromColdTint=0;
+	FLinearColor BaseSpotColor=FLinearColor::White;
+	FLinearColor BaseBulbColor=FLinearColor::White;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> ColdBulbInstance;
 	UPROPERTY(SaveGame)
 	int32 CurrentDetectedMannequinCount = 0;
 

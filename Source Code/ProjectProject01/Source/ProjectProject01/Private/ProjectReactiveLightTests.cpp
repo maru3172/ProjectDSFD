@@ -116,12 +116,37 @@ bool FProjectReactiveLightPresentationTest::RunTest(const FString&)
         PeakActive=FMath::Max(PeakActive,Active);
     }
     TestTrue(TEXT("Actual nearby fixtures can run overlapping faults in the same local world"),PeakActive>=2);
+    TSet<TWeakObjectPtr<AMannequinReactiveLight>> CascadeMembers;
+    for (auto* Lamp : {Light,NearB,NearC})
+    {
+        Lamp->FaultPattern.Keys.Reset();
+        Lamp->PendingCascadeAt=-1;
+        CascadeMembers.Add(Lamp);
+    }
+    Tall->PendingCascadeAt=-1;
+    Tall->FaultPattern.BeginEvent(1);
+    CascadeMembers.Add(Tall);
+    const double CascadeNow=World->GetTimeSeconds();
+    FRandomStream CascadeRandom(97);
+    TestTrue(TEXT("Nearby idle fixtures can be scheduled as a local cascade"),
+        Light->ScheduleNearbyCascade(CascadeMembers,Light->LastSharedGroupId,FVector(-600,0,160),CascadeNow,CascadeRandom));
+    TestTrue(TEXT("A distant fixture leads, its neighbor follows, and an active fault is left alone"),
+        NearB->PendingCascadeAt>CascadeNow&&Light->PendingCascadeAt>NearB->PendingCascadeAt
+        &&(NearC->PendingCascadeAt<0||NearC->PendingCascadeAt>Light->PendingCascadeAt)&&Tall->PendingCascadeAt<0);
+    const int32 BeforeCascade=NearB->FaultPattern.Serial;
+    NearB->Tick(1.f/30);
+    TestEqual(TEXT("A pending cascade waits for its scheduled start"),NearB->FaultPattern.Serial,BeforeCascade);
+    World->Tick(LEVELTICK_All,.12f);
+    NearB->Tick(1.f/30);
+    TestTrue(TEXT("The scheduled fixture begins a short interruption when due"),
+        NearB->FaultPattern.Serial==BeforeCascade+1&&(NearB->FaultPattern.LastKind==1||NearB->FaultPattern.LastKind==2));
     auto* Settings=UProjectProject01GameUserSettings::Get();
     const float OldFlash=Settings->GetScreenFlashScale();
     const auto OldVFX=Settings->GetVFXIntensity();
     ON_SCOPE_EXIT { Settings->SetScreenFlashScale(OldFlash); Settings->SetVFXIntensity(OldVFX); };
     Settings->SetVFXIntensity(EProjectProject01VFXIntensity::Standard);
     Light->FaultPattern.SectionLevels=Light->WakeFromSections=FVector::OneVector;
+    Light->FaultPattern.ColdTint=Light->WakeFromColdTint=0;
     Settings->SetScreenFlashScale(1); Light->ApplyBrightness(.3f);
     TestTrue(TEXT("Actual spotlight follows continuous brightness"),FMath::IsNearlyEqual(Light->ReactiveSpotLight->Intensity,Light->LightOnIntensity*.3f));
     Settings->SetScreenFlashScale(0); Light->ApplyBrightness(.3f);
@@ -148,10 +173,23 @@ bool FProjectReactiveLightPresentationTest::RunTest(const FString&)
         &&BulbInstance->GetVectorParameterValue(FMaterialParameterInfo(TEXT("LampSections")),Sections)&&Sections.R<.1&&Sections.G>.9&&Sections.B<.3);
     TestTrue(TEXT("Partial emission also makes the surrounding light waver, without adding extra lights"),
         Light->ReactiveSpotLight->Intensity<Light->LightOnIntensity&&Light->ReactiveSpotLight->Intensity>Light->LightOnIntensity*.5);
-    Settings->SetScreenFlashScale(0);Light->ApplyBrightness(.2);
+    const FMaterialParameterInfo BulbTintParameter(TEXT("Color"));
+    FLinearColor OriginalBulbTint=FLinearColor::White,ColdBulbTint=FLinearColor::White;
+    const bool HasBulbTint=BulbInstance&&BulbInstance->GetVectorParameterValue(BulbTintParameter,OriginalBulbTint);
+    const FLinearColor OriginalSpotTint=Light->ReactiveSpotLight->GetLightColor();
+    Light->FaultPattern.ColdTint=1.f;
+    Light->ApplyBrightness(.9f);
+    TestTrue(TEXT("The cold prelude tints the projected light and its diffuser"),
+        Light->ReactiveSpotLight->GetLightColor().R<OriginalSpotTint.R&&HasBulbTint
+        &&BulbInstance->GetVectorParameterValue(BulbTintParameter,ColdBulbTint)&&ColdBulbTint.R<OriginalBulbTint.R);
+    Settings->SetScreenFlashScale(0);Light->ApplyBrightness(.2f);
+    TestTrue(TEXT("Reducing flashes to zero restores both authored colors"),
+        Light->ReactiveSpotLight->GetLightColor().Equals(OriginalSpotTint,.001f)&&HasBulbTint
+        &&BulbInstance->GetVectorParameterValue(BulbTintParameter,ColdBulbTint)&&ColdBulbTint.Equals(OriginalBulbTint,.001f));
     TestTrue(TEXT("Flash-disabled clients keep all diffuser sections steadily illuminated"),BulbInstance
-        &&BulbInstance->GetVectorParameterValue(FMaterialParameterInfo(TEXT("LampSections")),Sections)&&Sections.Equals(FLinearColor::White,.001));
+        &&BulbInstance->GetVectorParameterValue(FMaterialParameterInfo(TEXT("LampSections")),Sections)&&Sections.Equals(FLinearColor::White,.001f));
     Settings->SetScreenFlashScale(1);Light->FaultPattern.SectionLevels=FVector::OneVector;
+    Light->FaultPattern.ColdTint=0;
     Light->FaultPattern.Strength=1; Light->RefreshAfterCheckpointRestore();
     TestEqual(TEXT("Checkpoint restore clears the old fault envelope"),Light->FaultPattern.Strength,0.f);
     TestEqual(TEXT("Checkpoint restore retains threat detection"),Light->GetDetectedMannequinCount(),5);
