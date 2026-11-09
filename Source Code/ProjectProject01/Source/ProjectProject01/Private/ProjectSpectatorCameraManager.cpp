@@ -36,6 +36,8 @@ void AProjectSpectatorCameraManager::EndPlay(const EEndPlayReason::Type Reason)
 
 bool AMultiplayTestPlayerController::IsFreeSpectatingTarget(const AActor* Target) const
 {
+	const auto* Survivor = Cast<APlayerCharacter>(GetPawn());
 	return SurvivorSpectatorView.bEnabled && SurvivorSpectatorView.Target.Get()==Target && IsValid(Target) &&
-		SurvivorState!=EMultiplayTestSurvivorState::Active && Target!=GetPawn();
+		(SurvivorState!=EMultiplayTestSurvivorState::Active || (Survivor && Survivor->IsAwaitingMultiplayerRescue()))
+		&& Target!=GetPawn();
 }

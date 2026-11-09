@@ -52,14 +52,13 @@ public:
 	bool TryDetain(APlayerCharacter& Survivor, AMannequinAICharacter& Catcher);
 	bool CanFree(const AProjectMultiplayerRescueStation& Source, const APlayerCharacter& Rescuer) const;
 	void UseStation(AProjectMultiplayerRescueStation& Source, APlayerCharacter& Rescuer);
-	bool CanUseFirstFloorReturn(APlayerCharacter* Survivor) const;
-	void CompleteFirstFloorReturn(APlayerCharacter* Survivor);
 	virtual void Logout(AController* Exiting) override;
 
 protected:
 	virtual void BeginPlay() override;
 
 private:
+	void FinishCapturePresentation();
 	void ResolveDetentionWithoutRescuer();
 	void ExpireAttempt();
 	void ClearAttempt();
@@ -68,9 +67,10 @@ private:
 	void ClearDetention();
 	UPROPERTY(Transient) TObjectPtr<AProjectMultiplayerRescueStation> Station;
 	TSet<TWeakObjectPtr<APlayerCharacter>> PreviouslyDetained;
-	TSet<TWeakObjectPtr<APlayerCharacter>> FirstFloorReturns;
+	TWeakObjectPtr<APlayerCharacter> PendingDetention;
 	TWeakObjectPtr<AMannequinAICharacter> LastCatcher;
 	FVector CaptureOrigin = FVector::ZeroVector;
+	FTimerHandle CaptureHandoffTimer;
 	FTimerHandle RescuerCheckTimer;
 	FTimerHandle AttemptTimer;
 };

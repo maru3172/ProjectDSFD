@@ -1,6 +1,7 @@
 #include "ProjectDFSDStartupIntro.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Border.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -12,6 +13,8 @@
 #include "Engine/Texture2D.h"
 #include "InputCoreTypes.h"
 #include "Misc/Paths.h"
+#include "ProjectDFSDBranding.h"
+#include "Styling/CoreStyle.h"
 
 float FProjectDFSDIntroTimeline::Opacity() const
 {
@@ -92,12 +95,27 @@ bool UProjectDFSDStartupIntro::Initialize()
 	return true;
 }
 
+void UProjectDFSDStartupIntro::StartGameLogoReveal()
+{
+	bRevealFromGameLogo = true;
+	Timeline.Stage = 2;
+	TeamText->SetText(FText::FromString(ProjectDFSDBranding::GameTitle()));
+	auto Font = FCoreStyle::GetDefaultFontStyle("Bold", 46);
+	const float ViewportScale = UWidgetLayoutLibrary::GetViewportScale(this);
+	if (ViewportScale > UE_KINDA_SMALL_NUMBER) Font.Size /= ViewportScale;
+	TeamText->SetFont(Font);
+	TeamText->SetColorAndOpacity(FSlateColor(FLinearColor(.94f, .92f, .87f)));
+	ApplyFrame();
+}
+
 void UProjectDFSDStartupIntro::ApplyFrame()
 {
 	const float Alpha = Timeline.Opacity();
 	LogoBox->SetVisibility(Timeline.Stage == 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	TeamText->SetVisibility(Timeline.Stage == 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	LogoBox->SetRenderOpacity(Alpha); TeamText->SetRenderOpacity(Alpha);
+	TeamText->SetVisibility(Timeline.Stage == 1 || (bRevealFromGameLogo && Timeline.Stage == 2)
+		? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	LogoBox->SetRenderOpacity(Alpha);
+	TeamText->SetRenderOpacity(bRevealFromGameLogo ? 1.f : Alpha);
 	SetRenderOpacity(Timeline.Stage >= 3 ? 0.0f : (Timeline.Stage == 2 ? 1.0f - Alpha : 1.0f));
 }
 

@@ -92,10 +92,6 @@ private:
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Level Transition", meta = (AllowPrivateAccess = "true"))
 	TSoftObjectPtr<UWorld> DestinationLevel;
 
-	/** 지정하면 들어온 생존자만 현재 맵 안의 이 지점으로 이동합니다. */
-	UPROPERTY(EditInstanceOnly, Category = "Level Transition|Multiplayer")
-	TObjectPtr<AActor> LocalSurvivorDestination;
-
 	/** 멀티에서 켜면 살아 있는 생존자 전원이 들어와야 이동합니다. 끄면 한 명만 들어와도 이동합니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Level Transition|Multiplayer", meta = (AllowPrivateAccess = "true"))
 	bool bRequireAllLivingSurvivors = true;

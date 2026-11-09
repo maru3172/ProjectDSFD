@@ -3,6 +3,7 @@
 
 #include "ProjectProject01AuthSubsystem.h"
 #include "MultiplayTestPlayerController.h"
+#include "PlayerCharacter.h"
 #include "EOSVoiceChat.h"
 #include "IEOSSDKManager.h"
 #include "VoiceChat.h"
@@ -605,6 +606,8 @@ void UProjectProject01VoiceChatSubsystem::ApplyTransmitMode()
 bool UProjectProject01VoiceChatSubsystem::CanLocalTransmit() const
 {
 	const auto* Controller=Cast<AMultiplayTestPlayerController>(OwnerController.Get());
+	const auto* Survivor = Controller ? Cast<APlayerCharacter>(Controller->GetPawn()) : nullptr;
+	if (Survivor && Survivor->IsAwaitingMultiplayerRescue()) return false;
 	return bConfiguredForSurvivor && Controller && Controller->GetMatchPhase()==EMultiplayTestMatchPhase::InProgress &&
 		(Controller->GetSurvivorState()==EMultiplayTestSurvivorState::Active || IsGhostWhisperOpen());
 }

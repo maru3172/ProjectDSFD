@@ -602,6 +602,12 @@ void APlayerCharacter::ReleaseLocalDeathBlackout(const APlayerController* Presen
 	if (!HasLocalDeathBlackout(PresentationOwner)) return;
 	DeathFeedbackWidget->RemoveFromParent();
 	DeathFeedbackWidget=nullptr;
+	if (bCameraRescueFall)
+	{
+		if (DamageFeedbackWidget) DamageFeedbackWidget->RemoveFromParent();
+		DamageFeedbackWidget = nullptr;
+		RestoreFeedbackCamera();
+	}
 }
 
 FRotator APlayerCharacter::GetPresentationRotationOffset() const
@@ -1965,6 +1971,16 @@ void APlayerCharacter::ClientPlayDeathSequence_Implementation(
 	PlayLocalDeathSequence(FallPitchDirection, FallRollDirection);
 }
 
+void APlayerCharacter::ClientPlayRescueFall_Implementation(
+	const float FallPitchDirection, const float FallRollDirection)
+{
+	auto* PC = Cast<APlayerController>(GetController());
+	if (!PC || !PC->IsLocalController()) return;
+	PC->SetIgnoreMoveInput(true);
+	PC->SetIgnoreLookInput(true);
+	PlayLocalDeathSequence(FallPitchDirection, FallRollDirection, true);
+}
+
 void APlayerCharacter::PlayPainSFX(const bool bFatal, const float Intensity)
 {
 	if (GetNetMode() == NM_DedicatedServer || !IsValid(PainGroanSFXComponent))
@@ -2047,7 +2063,7 @@ void APlayerCharacter::PlayLocalDamageFeedback(
 }
 
 void APlayerCharacter::PlayLocalDeathSequence(
-	const float FallPitchDirection, const float FallRollDirection)
+	const float FallPitchDirection, const float FallRollDirection, const bool bRescueFall)
 {
 	APlayerController* PlayerController = GetLocalPresentationController();
 	if (!IsValid(PlayerController) || bCameraDeathFeedbackActive)
@@ -2061,8 +2077,9 @@ void APlayerCharacter::PlayLocalDeathSequence(
 	CameraFallRollDirection = FMath::Clamp(FallRollDirection, -1.0f, 1.0f);
 	CameraFeedbackElapsedSeconds = 0.0f;
 	bCameraDeathFeedbackActive = true;
+	bCameraRescueFall = bRescueFall;
 	bBodyFallSFXPlayed = false;
-	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings))
+	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); !bRescueFall && IsValid(Settings))
 	{
 		Settings->FadeGameplaySFX(0.12f, GetDeathSequenceHandoffDelaySeconds());
 	}
@@ -2179,6 +2196,11 @@ void APlayerCharacter::UpdateCameraFeedback(const float DeltaTime)
 	TiltDegrees *= MotionScale;
 	SideShift *= MotionScale;
 	NeckYawDegrees *= MotionScale;
+	if (bCameraRescueFall)
+	{
+		NeckYawDegrees = 0.f;
+		TiltDegrees *= .72f;
+	}
 	Camera->SetRelativeLocation(FeedbackCameraStartLocation + FVector(
 		-CameraFallPitchDirection * SideShift,
 		CameraFallRollDirection * SideShift,
@@ -2198,6 +2220,7 @@ void APlayerCharacter::RestoreFeedbackCamera()
 	}
 	bCameraHitFeedbackActive = false;
 	bCameraDeathFeedbackActive = false;
+	bCameraRescueFall = false;
 	bBodyFallSFXPlayed = false;
 	CameraFeedbackElapsedSeconds = 0.0f;
 }

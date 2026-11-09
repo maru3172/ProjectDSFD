@@ -1,7 +1,13 @@
 #if WITH_DEV_AUTOMATION_TESTS
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Blueprint/WidgetTree.h"
 #include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/LightComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
+#include "Components/TextBlock.h"
 #include "Editor.h"
 #include "Engine/SceneCapture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -15,18 +21,47 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "PlayerInteractionComponent.h"
+#include "ProjectDFSDBranding.h"
+#include "ProjectDFSDStartupIntro.h"
 #include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01TutorialEditorLibrary.h"
 #include "ProjectSingleIntro.h"
 #include "RenderingThread.h"
+#include "Sound/SoundWaveProcedural.h"
+#include "Slate/WidgetRenderer.h"
+#include "Styling/CoreStyle.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/SOverlay.h"
 
 namespace
 {
-	void CaptureFinale(const ACameraActor& Camera, const TCHAR* File)
+	bool RendersCinematicBars(const TSharedRef<SWidget>& Mask, FIntPoint Size)
+	{
+		FWidgetRenderer Renderer(false);
+		const FVector2D DrawSize(Size.X, Size.Y);
+		auto* Target = FWidgetRenderer::CreateTargetFor(DrawSize, TF_Bilinear, false);
+		const auto Frame = SNew(SOverlay)
+			+ SOverlay::Slot()[SNew(SImage).Image(FCoreStyle::Get().GetBrush("WhiteBrush"))]
+			+ SOverlay::Slot()[Mask];
+		Renderer.DrawWidget(Target, Frame, DrawSize, 0.f);
+		FlushRenderingCommands();
+		TArray<FColor> Pixels;
+		if (!Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels) || Pixels.Num() != Size.X * Size.Y)
+			return false;
+		const auto Pixel = [&](int32 X, int32 Y) { return Pixels[Y * Size.X + X]; };
+		for (const int32 X : { 8, Size.X - 9 })
+		{
+			const int32 Edge = Size.Y * .07f;
+			if (Pixel(X, Edge).R > 8 || Pixel(X, Size.Y - Edge - 1).R > 8 || Pixel(X, Size.Y / 2).R < 245)
+				return false;
+		}
+		return true;
+	}
+
+	void CaptureIntroShot(UWorld* World, const FVector& Location, const FRotator& Rotation, const TCHAR* File)
 	{
 		if (!FParse::Param(FCommandLine::Get(), TEXT("ReviewIntroFinale"))) return;
-		UWorld* World = Camera.GetWorld();
-		auto* Capture = World->SpawnActor<ASceneCapture2D>(Camera.GetActorLocation(), Camera.GetActorRotation());
+		auto* Capture = World->SpawnActor<ASceneCapture2D>(Location, Rotation);
 		if (!Capture) return;
 		auto* Component = Capture->GetCaptureComponent2D();
 		auto* Target = NewObject<UTextureRenderTarget2D>(Capture);
@@ -52,6 +87,11 @@ namespace
 		}
 		Capture->Destroy();
 	}
+
+	void CaptureFinale(const ACameraActor& Camera, const TCHAR* File)
+	{
+		CaptureIntroShot(Camera.GetWorld(), Camera.GetActorLocation(), Camera.GetActorRotation(), File);
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectSingleIntroPIETest, "ProjectProject01.Editor.SingleIntroFlow",
@@ -73,10 +113,17 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		bool bCapturedLastLight = false;
 		bool bCapturedWideShot = false;
 		bool bCapturedLastAfterglow = false;
-		FVector WatchedLocation = FVector::ZeroVector;
+		bool bCheckedFirePhone = false;
+		bool bCheckedFireMask = false;
+		bool bCheckedInjuryMask = false;
+		bool bCheckedHatShot = false;
+		bool bSawTitleReveal = false;
+		bool bSawPartiallyRevealedTitle = false;
+		float PhoneWalkSpeed = 0.f;
+		FRotator ApproachView = FRotator::ZeroRotator;
 	};
 	const auto State = MakeShared<FProgress>();
-	const double Deadline = FPlatformTime::Seconds() + 100.;
+	const double Deadline = FPlatformTime::Seconds() + 130.;
 	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, State, Deadline]()
 	{
 		if (FPlatformTime::Seconds() > Deadline)
@@ -89,8 +136,30 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		if (State->Step == 19)
 		{
 			if (!World || !World->GetAuthGameMode<AProjectProject01TitleGameMode>()) return false;
-			TestTrue(TEXT("The ending returns to the title automatically"),
-				IsValid(Cast<AProjectProject01TitlePlayerController>(World->GetFirstPlayerController())));
+			TArray<UUserWidget*> Reveals;
+			UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, Reveals, UProjectDFSDStartupIntro::StaticClass(), true);
+			if (!Reveals.IsEmpty())
+			{
+				auto* Reveal = Reveals[0];
+				const float Opacity = Reveal->GetRenderOpacity();
+				if (!State->bSawTitleReveal)
+				{
+					State->bSawTitleReveal = true;
+					bool bHasGameLogo = false;
+					Reveal->WidgetTree->ForEachWidget([&bHasGameLogo](UWidget* Widget)
+					{
+						const auto* Label = Cast<UTextBlock>(Widget);
+						bHasGameLogo |= Label && Label->GetVisibility() == ESlateVisibility::HitTestInvisible
+							&& Label->GetText().ToString() == ProjectDFSDBranding::GameTitle();
+					});
+					TestTrue(TEXT("The loaded title starts covered by the same game logo"), bHasGameLogo && Opacity > .9f);
+				}
+				State->bSawPartiallyRevealedTitle |= Opacity > .1f && Opacity < .9f;
+				return false;
+			}
+			TestTrue(TEXT("The ending gradually reveals the title and then dismisses its cover"),
+				State->bSawTitleReveal && State->bSawPartiallyRevealedTitle
+				&& IsValid(Cast<AProjectProject01TitlePlayerController>(World->GetFirstPlayerController())));
 			GEditor->RequestEndPlayMap();
 			return true;
 		}
@@ -134,31 +203,41 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		switch (State->Step)
 		{
 		case 0:
-			if (Mode->Phase == EPhase::Phone && Mode->Elapsed >= .75f)
+			if (Mode->Phase == EPhase::Phone && Mode->Elapsed >= 2.25f)
 			{
 				TestTrue(TEXT("Phone overlay locks the player's movement and view"), PC.IsMoveInputIgnored() && PC.IsLookInputIgnored());
-				TestTrue(TEXT("The opening uses a low external tracking camera"), Mode->OpeningCamera
+				TestTrue(TEXT("The opening tracks the player from low on their front-left"), Mode->OpeningCamera
 					&& PC.GetViewTarget() == Mode->OpeningCamera
-					&& FVector::Dist2D(Mode->OpeningCamera->GetActorLocation(), Pawn.GetActorLocation()) < 380.f);
+					&& FVector::Dist2D(Mode->OpeningCamera->GetActorLocation(), Pawn.GetActorLocation()) < 380.f
+					&& Mode->OpeningCamera->GetActorLocation().X > Pawn.GetActorLocation().X
+					&& Mode->OpeningCamera->GetActorLocation().Y > Pawn.GetActorLocation().Y);
+				TestTrue(TEXT("The walking character holds the actual phone prop"), Mode->PhoneProp
+					&& !Mode->PhoneProp->IsHidden() && Mode->PhoneDisplay && !Mode->PhoneDisplay->IsHidden());
+				State->PhoneWalkSpeed = Pawn.GetVelocity().Size2D();
+				TestTrue(TEXT("The character is walking steadily while holding the phone"),
+					FMath::IsNearlyEqual(State->PhoneWalkSpeed, 96.f, 4.f));
 				if (Mode->OpeningCamera) CaptureFinale(*Mode->OpeningCamera, TEXT("Opening_Tracking.png"));
 				++State->Step;
 			}
 			break;
 		case 1:
-			if (Mode->Phase == EPhase::Phone && Mode->Elapsed >= 5.2f && !State->bCapturedWideShot)
+			if (Mode->Phase == EPhase::EnterStore && Mode->Elapsed >= 2.45f && !State->bCapturedWideShot)
 			{
 				State->bCapturedWideShot = true;
-				TestTrue(TEXT("The camera pulls away to frame the facade without looking back"),
+				TestTrue(TEXT("A separate wide shot frames the facade once the phone is put away"),
 					Mode->OpeningCamera && PC.GetViewTarget() == Mode->OpeningCamera
 					&& FVector::Dist2D(Mode->OpeningCamera->GetActorLocation(), Pawn.GetActorLocation()) > 1100.f
-					&& FVector::DotProduct(Mode->OpeningCamera->GetActorForwardVector(), FVector::RightVector) > .85f);
+					&& FVector::DotProduct(Mode->OpeningCamera->GetActorForwardVector(), FVector::RightVector) > .85f
+					&& Mode->PhoneProp && Mode->PhoneProp->IsHidden());
+				TestTrue(TEXT("Putting the phone away preserves the opening walk speed"),
+					FMath::IsNearlyEqual(Pawn.GetVelocity().Size2D(), State->PhoneWalkSpeed, 4.f));
 				if (Mode->OpeningCamera) CaptureFinale(*Mode->OpeningCamera, TEXT("Opening_Wide.png"));
 			}
 			if (Mode->Phase == EPhase::Shopping)
 			{
 				TestTrue(TEXT("Shopping returns to the player's camera and unlocks input"), PC.GetViewTarget() == &Pawn
 					&& !PC.IsMoveInputIgnored() && !PC.IsLookInputIgnored());
-				TestTrue(TEXT("The player walked through the entrance while the phone was up"),
+				TestTrue(TEXT("The player walked through the entrance after putting away the phone"),
 					FVector::DistSquared(Pawn.GetActorLocation(), Mode->OpeningDestination->GetActorLocation()) < FMath::Square(100.f));
 				TestTrue(TEXT("The exterior entrance opens on the first floor, below the shopping aisle"), Pawn.GetActorLocation().Z < -700.f);
 				Place(FVector(-2060,-2630,-804), FVector(-2060,-1430,-354));
@@ -168,19 +247,49 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		case 2:
 			Mode->Interaction->TryInteract();
 			TestTrue(TEXT("Using a shelf updates the optional purchase list"), Mode->PickedItems.Contains(TEXT("IntroHandkerchief")));
-			Place(Mode->HatCounter->GetActorLocation() + FVector(0,0,-14), Mode->Hat->GetActorLocation());
+			Place(Mode->Hat->GetActorLocation() + FVector(0,-171,-22), Mode->Hat->GetActorLocation());
 			++State->Step;
 			break;
 		case 3:
-			TestTrue(TEXT("Arriving at the back counter starts the scripted inspection automatically"), Mode->Phase == EPhase::InspectHat);
+			TestTrue(TEXT("The enlarged shop ends at the hat counter and its partner"),
+				Mode->Phase == EPhase::Shopping && Mode->Hat->GetActorLocation().Y > Mode->Mannequin->GetActorLocation().Y
+				&& FVector::Dist2D(Mode->Hat->GetActorLocation(), Mode->Partner->GetActorLocation()) < 420.f);
+			Mode->Interaction->TryInteract();
+			TestTrue(TEXT("Reaching for the hat starts its cinematic"), Mode->Phase == EPhase::InspectHat);
 			++State->Step;
 			break;
 		case 4:
+			if (Mode->Phase == EPhase::InspectHat && Mode->Elapsed >= 1.45f && !State->bCheckedHatShot)
+			{
+				State->bCheckedHatShot = true;
+				TestTrue(TEXT("The hat reach uses a cinematic camera and an animated arm at the counter"),
+					Mode->HatCamera && PC.GetViewTarget() == Mode->HatCamera && Mode->HatReachMesh
+					&& Mode->HatReachMesh->GetOwner() == &Pawn && !Pawn.IsHidden()
+					&& Mode->Hat->GetActorLocation().Equals(Mode->HatStart, .5f));
+				if (Mode->HatCamera) CaptureFinale(*Mode->HatCamera, TEXT("Hat_Reach.png"));
+			}
+			if (FParse::Param(FCommandLine::Get(), TEXT("ReviewIntroFinale"))
+				&& Mode->Phase == EPhase::Fire && Mode->Elapsed >= 2.2f && !State->bCheckedFireMask)
+			{
+				State->bCheckedFireMask = true;
+				TestTrue(TEXT("The fire warning has black bars across the top and bottom of the screen"),
+					RendersCinematicBars(Mode->BuildCinematicMask(), FIntPoint(480, 270)));
+			}
+			if (Mode->Phase == EPhase::Fire && Mode->Elapsed >= 6.7f && !State->bCheckedFirePhone)
+			{
+				State->bCheckedFirePhone = true;
+				TestTrue(TEXT("The player lifts a physical phone with its screen off during the cutscene"),
+					Mode->PhoneProp && !Mode->PhoneProp->IsHidden() && Mode->PhoneDisplay && Mode->PhoneDisplay->IsHidden()
+					&& PC.GetViewTarget() == Mode->OpeningCamera);
+				if (Mode->OpeningCamera) CaptureFinale(*Mode->OpeningCamera, TEXT("Fire_Phone.png"));
+			}
 			if (Mode->Phase == EPhase::Meet)
 			{
 				TestTrue(TEXT("The shutter descended by the full door height"),
 					Mode->Shutter->GetActorLocation().Equals(Mode->ShutterOpen - FVector(0,0,Mode->ShutterDrop), .5f));
-				Place(FVector(-810,-295,96), Mode->Partner->GetActorLocation() + FVector(0,0,125));
+				TestTrue(TEXT("The fire sequence returns the camera and puts away the phone"),
+					PC.GetViewTarget() == &Pawn && Mode->PhoneProp && Mode->PhoneProp->IsHidden());
+				Place(Mode->Partner->GetActorLocation() + FVector(0,-166,96), Mode->Partner->GetActorLocation() + FVector(0,0,125));
 				++State->Step;
 			}
 			break;
@@ -192,70 +301,53 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		case 6:
 			if (Mode->Phase == EPhase::LeaveTogether)
 			{
-				Place(FVector(-900,80,96), FVector(-900,1500,140));
+				Place(FVector(-900,850,96), FVector(-900,-550,140));
 				++State->Step;
 			}
 			break;
 		case 7:
 			if (Mode->Phase == EPhase::WalkToShutter)
 			{
-				Place(FVector(-900,825,96), FVector(-900,1500,140));
+				Place(FVector(-900,548,96), FVector(-900,-550,140));
 				++State->Step;
 			}
 			break;
 		case 8:
-			if (Mode->Phase == EPhase::NoticeMannequin && Mode->Elapsed >= .35f)
-			{
-				TestTrue(TEXT("The encounter uses its own shot before returning camera control"),
-					Mode->EncounterCamera && PC.GetViewTarget() == Mode->EncounterCamera && PC.IsLookInputIgnored());
-				++State->Step;
-			}
+			TestTrue(TEXT("Passing the mannequin does not lock the view or force the player to look"),
+				Mode->Phase == EPhase::WalkToShutter && PC.GetViewTarget() == &Pawn && !PC.IsLookInputIgnored());
+			State->ApproachView = PC.GetControlRotation();
+			Pawn.SetActorLocation(FVector(-900,310,96), false, nullptr, ETeleportType::TeleportPhysics);
+			TestTrue(TEXT("Crossing the trigger after the mannequin immediately starts the injury scene"),
+				Mode->Phase == EPhase::PartnerInjured && Mode->PartnerScream && PC.IsLookInputIgnored()
+				&& PC.GetControlRotation().Equals(State->ApproachView, 1.f));
+			++State->Step;
 			break;
 		case 9:
-			if (Mode->Phase == EPhase::PassedMannequin)
+			if (FParse::Param(FCommandLine::Get(), TEXT("ReviewIntroFinale"))
+				&& Mode->Phase == EPhase::PartnerInjured && Mode->Elapsed >= .3f && !State->bCheckedInjuryMask)
 			{
-				TestTrue(TEXT("The player can look and move again after the encounter shot"),
-					PC.GetViewTarget() == &Pawn && !PC.IsLookInputIgnored());
-				Place(FVector(-900,1130,96), Mode->Mannequin->GetActorLocation() + FVector(0,0,125));
-				State->WatchedLocation = Mode->Mannequin->GetActorLocation();
-				++State->Step;
+				State->bCheckedInjuryMask = true;
+				TestTrue(TEXT("The scream has black bars across the top and bottom of the screen"),
+					RendersCinematicBars(Mode->BuildCinematicMask(), FIntPoint(640, 480)));
 			}
-			break;
-		case 10:
-			if (Mode->Phase == EPhase::ApproachPartner)
+			if (Mode->Phase == EPhase::PartnerInjured && Mode->Elapsed >= 1.1f)
 			{
-				TestTrue(TEXT("The approach starts at least five seconds after the encounter"), World->GetTimeSeconds() >= Mode->EncounterAt + 5.);
-				State->ResumeAt = World->GetTimeSeconds() + .4f;
-				++State->Step;
+				TestTrue(TEXT("The partner reacts and the player asks if they are okay"),
+					Mode->Partner->GetActorRotation().Pitch < -10.f && Mode->GetSubtitle().ToString() == TEXT("괜찮아요?"));
+				TestTrue(TEXT("The camera turns toward the scream gradually without roll"),
+					FMath::Abs((PC.GetControlRotation() - State->ApproachView).GetNormalized().Yaw) < 95.f
+					&& FMath::Abs(PC.GetControlRotation().Roll) < 1.f);
+				State->Step = 14;
 			}
-			break;
-		case 11:
-			TestTrue(TEXT("Looking at the mannequin prevents its approach"),
-				Mode->Phase == EPhase::ApproachPartner && Mode->Mannequin->GetActorLocation().Equals(State->WatchedLocation, 1.f));
-			AimAt(FVector(-900,1500,140));
-			++State->Step;
-			break;
-		case 12:
-			if (Mode->Phase == EPhase::Captured)
-			{
-				TestTrue(TEXT("The mannequin reaches the partner when the player looks away"), Mode->Partner->GetActorRotation().Pitch < -10.f);
-				TestFalse(TEXT("The partner cannot be rescued while the mannequin is outside the player's gaze"),
-					Mode->CanUse(*Mode->Partner, &Pawn));
-				const FVector Partner = Mode->Partner->GetActorLocation();
-				Place(FVector(Partner.X, Partner.Y+168,96), Partner + FVector(0,0,105));
-				++State->Step;
-			}
-			break;
-		case 13:
-			Mode->Interaction->TryInteract();
-			TestTrue(TEXT("Looking and interacting frees the partner"), Mode->Phase == EPhase::AfterRescue);
-			++State->Step;
 			break;
 		case 14:
 			if (Mode->Phase == EPhase::ReadyToLeave)
 			{
 				TestTrue(TEXT("The corridor crowd stays hidden until the shutter scene"),
 					Mode->FinaleCrowd.Num() > Mode->FinaleLights.Num() && Mode->FinaleCrowd[0]->IsHidden());
+				TestTrue(TEXT("Controls and interior lighting remain available before the blackout"),
+					!PC.IsLookInputIgnored() && !PC.IsMoveInputIgnored() && !Mode->StoreLights.IsEmpty()
+					&& Mode->StoreLights[0]->IsVisible());
 				Place(FVector(-885,-695,96), Mode->ShutterHandle->GetActorLocation());
 				++State->Step;
 			}
@@ -270,6 +362,8 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 			{
 				TestTrue(TEXT("An authored camera frames the fully open shutter and corridor"), PC.GetViewTarget() == Mode->FinaleCamera
 					&& Mode->Shutter->GetActorLocation().Equals(Mode->ShutterOpen, 1.f));
+				TestTrue(TEXT("The authored shutter shot only uses the shared cinematic bars"),
+					!PC.PlayerCameraManager->GetCameraCacheView().bConstrainAspectRatio);
 				for (const auto& Figure : Mode->FinaleCrowd)
 					TestFalse(TEXT("The cluster of mannequins is visible"), Figure->IsHidden());
 				for (const auto& Light : Mode->FinaleLights)
@@ -277,6 +371,12 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 				for (const auto& Diffuser : Mode->FinaleDiffusers)
 					TestTrue(TEXT("Each fixture has a visible diffuser"), Diffuser && !Diffuser->IsHidden());
 				CaptureFinale(*Mode->FinaleCamera, TEXT("Outage_AllLights.png"));
+				if (const auto* FixtureLens = Mode->FinaleDiffusers.Last().Get())
+				{
+					const FVector Lens = FixtureLens->GetActorLocation();
+					const FVector Detail = Lens + FVector(-11, 60, -42);
+					CaptureIntroShot(World, Detail, (Lens - Detail).Rotation(), TEXT("Recessed_Downlight.png"));
+				}
 				++State->Step;
 			}
 			break;
@@ -291,6 +391,15 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 					> FVector::DistSquared2D(Mode->FinaleLights.Last()->GetComponentLocation(), Mode->ShutterOpen));
 				TestTrue(TEXT("The far light's diffuser turns off with its light source"),
 					Mode->FinaleDiffusers[0] && Mode->FinaleDiffusers[0]->IsHidden() && !Mode->FinaleDiffusers.Last()->IsHidden());
+				TestFalse(TEXT("The other department lights turn off only at the blackout"), Mode->StoreLights[0]->IsVisible());
+				for (const auto& Light : Mode->StoreLights)
+				{
+					TArray<AActor*> Attached;
+					Light->GetOwner()->GetAttachedActors(Attached);
+					for (const auto* Part : Attached)
+						if (Part->ActorHasTag(TEXT("IntroDownlightLens")))
+							TestTrue(TEXT("Department lenses also go dark during the blackout"), Part->IsHidden());
+				}
 				CaptureFinale(*Mode->FinaleCamera, TEXT("Outage_FarthestOff.png"));
 				const auto& Times = Mode->FinaleOutageTimes;
 				TestTrue(TEXT("Early outages accelerate and the final lamp holds for over two seconds"),

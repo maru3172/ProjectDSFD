@@ -24,7 +24,6 @@ cylinder = unreal.load_asset("/Engine/BasicShapes/Cylinder")
 floor = unreal.load_asset("/Game/MyProject/Testing/ReactiveLighting/M_TestFloor")
 wall = unreal.load_asset("/Game/MyProject/Testing/ReactiveLighting/M_TestWall")
 trim = unreal.load_asset("/Game/MyProject/Testing/ReactiveLighting/M_TestFixture")
-bulb = unreal.load_asset("/Game/MyProject/Lighting/M_ReactiveBulb")
 idle = unreal.load_asset("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle")
 walk = unreal.load_asset("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Fwd")
 
@@ -105,9 +104,122 @@ def point_light(label, position, radius, tag=None, intensity=125.0):
     component.set_editor_property("intensity_units", unreal.LightUnits.CANDELAS)
     component.set_editor_property("intensity", intensity)
     component.set_editor_property("attenuation_radius", radius)
+    component.set_editor_property("soft_source_radius", 35.0)
+    component.set_editor_property("specular_scale", .32)
     if tag:
         light.set_editor_property("tags", [tag])
     return light
+
+
+def downlight_assets():
+    folder = "/Game/MyProject/Testing/SingleIntro"
+    unreal.EditorAssetLibrary.make_directory(folder)
+    trim_path = folder + "/SM_IntroDownlightTrim"
+    rim = unreal.load_asset(trim_path) if unreal.EditorAssetLibrary.does_asset_exist(trim_path) else None
+    if not rim:
+        # Profile in cm, measured from the ceiling plane and the outer radius.
+        profile = [unreal.Vector2D(r - 12.0, z) for r, z in (
+            (7.8,-.1), (8.8,-2.1), (11.3,-2.1), (12.0,-1.4), (12.0,-.35), (11.6,0), (7.8,0),
+        )]
+        geometry = unreal.DynamicMesh()
+        unreal.GeometryScript_Primitives.append_revolve_polygon(
+            geometry, unreal.GeometryScriptPrimitiveOptions(), unreal.Transform(), profile,
+            unreal.GeometryScriptRevolveOptions(), 12.0, 48)
+        options = unreal.GeometryScriptCreateNewStaticMeshAssetOptions()
+        options.set_editor_property("enable_collision", False)
+        rim, _ = unreal.GeometryScript_NewAssetUtils.create_new_static_mesh_asset_from_mesh(geometry, trim_path, options)
+        if not rim or not unreal.EditorAssetLibrary.save_loaded_asset(rim):
+            raise RuntimeError("Unable to save the recessed downlight trim")
+
+    name = "MI_IntroDownlightLens"
+    lens_path = folder + "/" + name
+    lens = unreal.load_asset(lens_path) if unreal.EditorAssetLibrary.does_asset_exist(lens_path) else None
+    if not lens:
+        lens = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+            name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+        edit = unreal.MaterialEditingLibrary
+        edit.set_material_instance_parent(lens, unreal.load_asset("/Game/MyProject/Lighting/M_ReactiveBulb"))
+        edit.set_material_instance_vector_parameter_value(lens, "Color", unreal.LinearColor(.96,.93,.87,1))
+        edit.set_material_instance_scalar_parameter_value(lens, "EmissiveStrength", 1.25)
+        edit.update_material_instance(lens)
+        if not unreal.EditorAssetLibrary.save_loaded_asset(lens):
+            raise RuntimeError("Unable to save the recessed downlight lens")
+    return rim, lens
+
+
+downlight_rim, downlight_lens = downlight_assets()
+
+
+def downlight(label, ceiling, radius, tag, intensity):
+    x, y, z = ceiling
+    if label in placed and isinstance(placed[label], unreal.PointLight):
+        actors.destroy_actor(placed.pop(label))
+    light = spawn(unreal.SpotLight, label, (x,y,z-3.25))
+    light.set_actor_rotation(unreal.Rotator(pitch=-90), False)
+    light.set_editor_property("tags", [tag])
+    component = light.light_component
+    component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+    component.set_editor_property("intensity_units", unreal.LightUnits.CANDELAS)
+    component.set_editor_property("intensity", intensity)
+    component.set_editor_property("attenuation_radius", radius)
+    component.set_editor_property("inner_cone_angle", 55.0)
+    component.set_editor_property("outer_cone_angle", 81.0)
+    component.set_editor_property("source_radius", 5.0)
+    component.set_editor_property("soft_source_radius", 14.0)
+    component.set_editor_property("specular_scale", .28)
+    component.set_editor_property("indirect_lighting_intensity", 0.0)
+    component.set_editor_property("volumetric_scattering_intensity", 0.0)
+    # Soft reflected light makes the ceiling visible around the aperture.
+    bounce = point_light(label + " ceiling bounce", (x,y,z-72), 465.0, "IntroDownlightBounce", 2.6)
+    bounce.light_component.set_editor_property("cast_shadows", False)
+    bounce.light_component.set_editor_property("specular_scale", 0.0)
+    bounce.light_component.set_editor_property("volumetric_scattering_intensity", 0.0)
+    bounce.attach_to_actor(light, "", unreal.AttachmentRule.KEEP_WORLD,
+                          unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
+    for suffix, mesh, material, offset, scale in (
+        ("trim", downlight_rim, wall, 0, (1,1,1)),
+        ("unlit lens", cylinder, trim, -.26, (.159,.159,.0025)),
+        ("lit lens", cylinder, downlight_lens, -.62, (.151,.151,.0028)),
+    ):
+        part = spawn(unreal.StaticMeshActor, label + " " + suffix, (x,y,z+offset))
+        part.set_actor_scale3d(unreal.Vector(*scale))
+        piece = part.static_mesh_component
+        piece.set_static_mesh(mesh)
+        piece.set_material(0, material)
+        piece.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+        piece.set_editor_property("cast_shadow", False)
+        piece.set_editor_property("affect_dynamic_indirect_lighting", False)
+        if suffix == "lit lens":
+            piece.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+            part.set_editor_property("tags", ["IntroDownlightLens"])
+            part.attach_to_actor(light, "", unreal.AttachmentRule.KEEP_WORLD,
+                                 unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
+    return light
+
+
+def handset_glass():
+    folder = "/Game/MyProject/Testing/SingleIntro"
+    name = "M_IntroHandsetGlass"
+    path = folder + "/" + name
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
+        return unreal.load_asset(path)
+    unreal.EditorAssetLibrary.make_directory(folder)
+    material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+        name, folder, unreal.Material, unreal.MaterialFactoryNew())
+    edit = unreal.MaterialEditingLibrary
+    dark = edit.create_material_expression(material, unreal.MaterialExpressionVectorParameter)
+    dark.set_editor_property("parameter_name", "Glass Tint")
+    dark.set_editor_property("default_value", unreal.LinearColor(.002,.0025,.003,1))
+    edit.connect_material_property(dark, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    roughness = edit.create_material_expression(material, unreal.MaterialExpressionScalarParameter)
+    roughness.set_editor_property("parameter_name", "Roughness")
+    roughness.set_editor_property("default_value", .72)
+    edit.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    edit.layout_material_expressions(material)
+    edit.recompile_material(material)
+    if not unreal.EditorAssetLibrary.save_loaded_asset(material):
+        raise RuntimeError("Unable to save the handset glass material")
+    return material
 
 
 def first_floor(position):
@@ -156,11 +268,11 @@ for row, z in enumerate((-305, 148), 1):
         block(f"Exterior window {row}.{column}", (x, -3027, z), (2.65, .2, 2.4), trim)
         block(f"Exterior window mullion {row}.{column}", (x, -3041, z), (.09, .14, 2.4))
 sign("Department store entrance sign", "DEPARTMENT STORE", first_floor((-980, -3370, 401)), yaw=-90, size=45)
-point_light("Entrance canopy light", first_floor((-980, -3170, 330)), 860.0)
-point_light("Plaza approach light", first_floor((-1060, -4150, 395)), 1300.0)
-point_light("Exterior facade wash west", (-1710, -3720, -245), 1500.0, intensity=580.0)
-point_light("Exterior facade wash east", (-180, -3720, -245), 1500.0, intensity=580.0)
-point_light("Vestibule light", first_floor((-1050, -2890, 335)), 680.0)
+downlight("Entrance canopy light", first_floor((-980,-3170,369)), 915.0, "IntroStoreLight", 105.0)
+point_light("Plaza approach light", first_floor((-1060, -4150, 460)), 1375.0, intensity=100.0)
+point_light("Exterior facade wash west", (-1710, -3720, -130), 1600.0, "IntroStoreLight", 355.0)
+point_light("Exterior facade wash east", (-180, -3720, -130), 1600.0, "IntroStoreLight", 355.0)
+downlight("Vestibule light", (-1050,-2890,-535), 780.0, "IntroStoreLight", 115.0)
 
 block("First floor lobby", (-1285, -2110, -920), (20.5, 19.2, .4), floor)
 block("First floor east wall", (-260, -2110, -715), (.4, 19.2, 3.7))
@@ -170,11 +282,11 @@ block("First floor ceiling", (-890, -2485, -515), (12.6, 11.4, .4))
 block("First floor directory stand", (-690, -2590, -840), (1.9, .45, 1.2), trim)
 sign("First floor lobby sign", "1F   /   STAIRS", (-1090, -2210, -620), yaw=-90, size=48)
 sign("First floor stair sign", "UP TO 2F", (-2050, -2400, -658), yaw=-90, size=37)
-point_light("First floor lobby light", (-1120, -2390, -572), 830.0, intensity=320.0)
-point_light("Lower staircase light", (-2075, -2090, -453), 570.0, intensity=260.0)
-point_light("Second floor landing light", (-1920, -1320, -150), 405.0, intensity=220.0)
-point_light("Upper staircase light", (-1730, -2040, 75), 345.0, intensity=210.0)
-point_light("Third floor stair door light", (-1950, -2645, 275), 330.0, intensity=215.0)
+downlight("First floor lobby light", (-1120,-2390,-535), 900.0, "IntroStoreLight", 215.0)
+point_light("Lower staircase light", (-2075, -2090, -410), 625.0, "IntroStoreLight", 160.0)
+point_light("Second floor landing light", (-1920, -1320, -105), 510.0, "IntroStoreLight", 160.0)
+point_light("Upper staircase light", (-1730, -2040, 112), 415.0, "IntroStoreLight", 135.0)
+point_light("Third floor stair door light", (-1950, -2645, 331), 520.0, "IntroStoreLight", 140.0)
 ramp("Stair flight 1F to 2F", -2060, -2530, -1430, -900, -450)
 block("Second floor stair landing", (-1885, -1292, -470), (6.4, 2.8, .4), floor)
 block("Second floor landing guard", (-1885, -1155, -398), (6.4, .12, 1.04), trim)
@@ -186,16 +298,25 @@ sign("Third floor stair sign", "3F", (-1620, -2782, 264), yaw=90, size=49)
 block("Third floor front wall", (-900, -3035, 185), (13, .4, 3.7))
 block("Third floor west wall before stair door", (-1540, -2915, 185), (.4, 2.4, 3.7))
 block("West wall", (-1540, -383, 185), (.4, 42.15, 3.7))
-block("East wall", (-260, -663, 185), (.4, 47.8, 3.7))
-block("End wall", (-900, 1715, 185), (13, .4, 3.7))
-block("Hat counter", (-1240, -440, 48), (3.3, 1.4, .96), trim)
+block("East wall", (-260, -1000, 185), (.4, 41, 3.7))
+block("Hat department floor extension", (66,1380,-20), (6.55,6.7,.4), floor)
+block("Hat department ceiling extension", (66,1380,390), (6.55,6.7,.4))
+block("Hat department near wall", (65,1050,185), (6.9,.4,3.7))
+block("Hat department outer wall", (390,1380,185), (.4,6.7,3.7))
+block("End wall", (-575,1715,185), (19.5,.4,3.7))
+block("Hat counter", (-950,1510,48), (4.6,1.6,.96), trim)
 block("Accessories stand", (-525, -1630, 44), (2.8, 1.15, .88), trim)
 block("Water stand", (-1280, -2000, 44), (2.8, 1.15, .88), trim)
-block("Hat brim", (-1240, -440, 99), (.5, .5, .04), wall)
-product("IntroHat", "Hat", (-1240, -440, 118), "모자 구매하기", cylinder, (.36, .36, .33))
+hat = product("IntroHat", "Hat", (-950,1458,118), "모자 집기", cylinder, (.36,.36,.33))
+brim = block("Hat brim", (-950,1458,99), (.5,.5,.04), wall)
+brim.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+brim.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+if not hat.get_attached_actors():
+    brim.attach_to_actor(hat, "", unreal.AttachmentRule.KEEP_WORLD,
+                         unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
 product("IntroHandkerchief", "Purchase", (-525, -1630, 101), "손수건 구매하기", cube, (.35, .29, .1))
 product("IntroWater", "Purchase", (-1280, -2000, 111), "생수 구매하기", cylinder, (.15, .15, .45))
-sign("Hat department sign", "HATS", (-1080, -947, 330), yaw=-90)
+sign("Hat department sign", "HATS", (-950,1670,302), yaw=-90)
 for label, text, position, size in (
     ("Accessories sign", "ACCESSORIES", (-525, -1630, 260), 31),
     ("Water sign", "DRINKS", (-1280, -2000, 255), 31),
@@ -203,12 +324,14 @@ for label, text, position, size in (
 ):
     sign(label, text, position, yaw=-90, size=size).set_editor_property("tags", ["IntroFinaleShoppingSign"])
 
-figure("Intro partner", "Partner", (-810, -460, 0), "SKM_Quinn_Simple", -130)
-figure("Intro mannequin", "Mannequin", (-530, 795, 0), "SKM_Manny_Simple", 180)
-block("Mannequin alcove side", (-375, 710, 185), (1.9, .3, 3.7), trim)
-block("Mannequin alcove back", (-290, 810, 185), (.35, 2.1, 3.7), trim)
-trigger("Hat counter arrival trigger", "IntroHatCounter", (-1240, -580, 110), (145, 50, 150))
-trigger("Mannequin encounter trigger", "IntroMannequinPass", (-900, 825, 110), (55, 615, 150), 90)
+figure("Intro partner", "Partner", (-575,1430,0), "SKM_Quinn_Simple", -130)
+figure("Intro mannequin", "Mannequin", (-530,540,0), "SKM_Manny_Simple", 180)
+block("Mannequin alcove side", (-375,455,185), (1.9,.3,3.7), trim)
+block("Mannequin alcove back", (-290,555,185), (.35,2.1,3.7), trim)
+trigger("Mannequin encounter trigger", "IntroMannequinPass", (-900,310,110), (55,615,150), 90)
+for obsolete in ("Hat counter arrival trigger", "Mannequin encounter camera"):
+    if obsolete in placed:
+        actors.destroy_actor(placed[obsolete])
 
 shutter = block("Fire shutter placeholder", (-1080, -920, 470), (6.1, .3, 3), trim)
 shutter.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
@@ -234,13 +357,24 @@ sign("Exit sign", "EXIT", (-530, 1664, 303), yaw=-90)
 camera = spawn(unreal.CameraActor, "Finale corridor camera", (-1060, -701, 164), -90)
 camera.set_editor_property("tags", ["IntroFinaleCamera"])
 for cls, label, tag, xyz, pitch, yaw in (
-    (unreal.CameraActor, "Opening pullback camera", "IntroOpeningCamera", (-1300, -4740, -585), 12, 74),
-    (unreal.TargetPoint, "Opening wide shot", "IntroOpeningCameraEnd", (-1300, -5220, -430), 11, 78),
-    (unreal.CameraActor, "Mannequin encounter camera", "IntroEncounterCamera", (-1245, 628, 155), -3, 15),
+    (unreal.CameraActor, "Opening pullback camera", "IntroOpeningCamera", (-1310,-4620,-575), 12, 77),
+    (unreal.TargetPoint, "Opening wide shot", "IntroOpeningCameraEnd", (-1310,-5200,-430), 11, 79),
 ):
     shot = spawn(cls, label, xyz)
     shot.set_actor_rotation(unreal.Rotator(pitch=pitch, yaw=yaw), False)
     shot.set_editor_property("tags", [tag])
+
+phone = block("Cinematic handset", (0,0,-1700), (.012,.078,.149), handset_glass())
+phone.set_editor_property("tags", ["IntroPhoneProp"])
+phone.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+phone.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+display = block("Cinematic handset lit display", (-.63,0,-1700), (.003,.065,.128), wall)
+display.set_editor_property("tags", ["IntroPhoneDisplay"])
+display.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+display.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+if not phone.get_attached_actors():
+    display.attach_to_actor(phone, "", unreal.AttachmentRule.KEEP_WORLD,
+                            unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
 clusters = (
     (-1240, ((-110, 4), (72, -43), (149, 34))),
     (-1565, ((-191, -32), (-47, 35), (101, -12), (175, 42))),
@@ -249,26 +383,22 @@ clusters = (
     (-2570, ((-221, 40), (-125, -55), (-34, 25), (55, -35), (150, 32), (237, -20))),
 )
 for section, (y, offsets) in enumerate(clusters, 1):
-    light = point_light(f"Finale corridor light {section}", (-1070, y, 282), 545.0, "IntroFinaleLight", 300.0)
-    light.light_component.set_editor_property("indirect_lighting_intensity", 0.0)
-    light.light_component.set_editor_property("volumetric_scattering_intensity", 0.0)
-    block(f"Finale ceiling housing {section}", (-1070, y, 352), (2.6, .23, .07), trim)
-    panel = block(f"Finale diffuser {section}", (-1070, y, 344), (2.43, .19, .035), bulb)
-    panel.set_editor_property("tags", ["IntroFinaleDiffuser"])
-    panel.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
-    panel.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
-    panel.static_mesh_component.set_editor_property("affect_dynamic_indirect_lighting", False)
-    if not light.get_attached_actors():
-        panel.attach_to_actor(light, "", unreal.AttachmentRule.KEEP_WORLD,
-                              unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
+    for obsolete in (f"Finale ceiling housing {section}", f"Finale diffuser {section}"):
+        if obsolete in placed:
+            actors.destroy_actor(placed[obsolete])
+    downlight(f"Finale corridor light {section}", (-1010,y,370), 680.0, "IntroFinaleLight", 175.0)
     for index, (dx, dy) in enumerate(offsets, 1):
         mannequin = figure(f"Finale mannequin {section}.{index}", "FinaleFigure",
                            (-1070 + dx, y + dy, 0), "SKM_Manny_Simple", 82 + (index * 7) % 19)
         mannequin.set_editor_property("walk_animation", None)
 
 for index, y in enumerate([-450, 50, 570, 1120, 1515]):
-    point_light(f"Ceiling light {index + 1}", (-900, y, 330), 700.0, intensity=485.0)
-    block(f"Light housing {index + 1}", (-900, y, 355), (2.9, .27, .09), trim)
+    x = -1000 if index % 2 == 0 else -745
+    obsolete = f"Light housing {index + 1}"
+    if obsolete in placed:
+        actors.destroy_actor(placed[obsolete])
+    downlight(f"Ceiling light {index + 1}", (x,y,370), 825.0, "IntroStoreLight", 215.0)
+downlight("Hat department fill", (-155,1400,370), 760.0, "IntroStoreLight", 145.0)
 
 spawn(unreal.PlayerStart, "Intro player start", first_floor((-1060, -4630, 100)), 90)
 opening_destination = spawn(unreal.TargetPoint, "Opening walk ends inside the entrance",

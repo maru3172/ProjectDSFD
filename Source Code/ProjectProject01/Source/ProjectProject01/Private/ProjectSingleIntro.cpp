@@ -3,9 +3,11 @@
 #include "Animation/AnimSequence.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/LightComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/GameViewportClient.h"
@@ -15,16 +17,19 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
-#include "PlayerHeartbeatComponent.h"
 #include "PlayerInteractionComponent.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01SpatialAudio.h"
 #include "ProjectUIClickSound.h"
 #include "Sound/SoundWaveProcedural.h"
+#include "Sound/SoundAttenuation.h"
 #include "Styling/CoreStyle.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/Layout/SConstraintCanvas.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
@@ -37,21 +42,23 @@ namespace
 	const FName MannequinAction(TEXT("Mannequin"));
 	const FName ShutterAction(TEXT("Shutter"));
 	const FName FinaleFigureAction(TEXT("FinaleFigure"));
-	constexpr float PhoneDuration = 8.5f;
-	constexpr float OpeningPullbackAt = 1.85f;
-	constexpr float OpeningWideAt = 3.90f;
-	constexpr float OpeningHandoffAt = 6.65f;
-	constexpr float OpeningCameraBlendSeconds = .24f;
-	constexpr float OpeningPhoneUpAt = 1.55f;
-	constexpr float OpeningPhoneOffAt = 6.7f;
-	constexpr float FailedPhoneRaiseAt = 4.25f;
-	constexpr float FailedPhoneFirstPress = 4.95f;
-	constexpr float FailedPhoneSecondPress = 5.63f;
-	constexpr float FailedPhoneLowerAt = 6.9f;
-	constexpr float FireEndsAt = 7.35f;
-	constexpr float EncounterDelaySeconds = 5.f;
-	constexpr float EncounterHoldSeconds = .90f;
-	constexpr float EncounterBlendSeconds = .45f;
+	constexpr float OpeningWalkSpeed = 96.f;
+	constexpr float OpeningPhoneUpAt = 1.65f;
+	constexpr float FirstMessageAt = 3.15f;
+	constexpr float ReplyAt = 6.65f;
+	constexpr float LastMessageAt = 10.05f;
+	constexpr float OpeningPhoneOffAt = 12.80f;
+	constexpr float PhoneDuration = 14.1f;
+	constexpr float EntranceHandoffAt = 4.45f;
+	constexpr float EntranceDuration = 5.55f;
+	constexpr float FailedPhoneRaiseAt = 5.35f;
+	constexpr float FailedPhoneFirstPress = 6.50f;
+	constexpr float FailedPhoneSecondPress = 7.95f;
+	constexpr float FailedPhoneLowerAt = 10.10f;
+	constexpr float FireEndsAt = 11.30f;
+	constexpr float HatReachAt = .78f;
+	constexpr float HatCameraReturnAt = 2.55f;
+	constexpr float HatInspectDuration = 3.65f;
 	constexpr float FinaleOpenSeconds = 2.f;
 	constexpr float FirstOutageAt = 3.65f;
 	constexpr float LastLightHold = 2.2f;
@@ -59,8 +66,31 @@ namespace
 	constexpr float AfterglowIntensity = .035f;
 	constexpr float TitleFadeInAt = .45f;
 	constexpr float TitleFadeInEndsAt = 2.2f;
-	constexpr float TitleFadeOutAt = 3.65f;
-	constexpr float TitleFadeOutEndsAt = 5.45f;
+	constexpr float TitleHandoffAt = 3.65f;
+
+	AActor* FindLitLens(const ULightComponent& Light)
+	{
+		TArray<AActor*> Attached;
+		Light.GetOwner()->GetAttachedActors(Attached);
+		AActor** Lens = Attached.FindByPredicate([](const AActor* Actor)
+		{
+			return Actor->ActorHasTag(TEXT("IntroDownlightLens")) || Actor->ActorHasTag(TEXT("IntroFinaleDiffuser"));
+		});
+		return Lens ? *Lens : nullptr;
+	}
+
+	void ExtinguishFixture(const ULightComponent& Light)
+	{
+		TArray<AActor*> Attached;
+		Light.GetOwner()->GetAttachedActors(Attached);
+		for (auto* Part : Attached)
+		{
+			if (Part->ActorHasTag(TEXT("IntroDownlightLens")) || Part->ActorHasTag(TEXT("IntroFinaleDiffuser")))
+				Part->SetActorHiddenInGame(true);
+			if (Part->ActorHasTag(TEXT("IntroDownlightBounce")))
+				if (auto* Bounce = Part->FindComponentByClass<ULightComponent>()) Bounce->SetVisibility(false);
+		}
+	}
 }
 
 AProjectSingleIntroTarget::AProjectSingleIntroTarget()
@@ -126,6 +156,12 @@ AProjectSingleIntroGameMode::AProjectSingleIntroGameMode()
 	PrimaryActorTick.bCanEverTick = true;
 	static ConstructorHelpers::FClassFinder<APawn> PlayerClass(TEXT("/Game/MyProject/BP_PlayerCharacter"));
 	if (PlayerClass.Succeeded()) DefaultPawnClass = PlayerClass.Class;
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> PhoneWalk(
+		TEXT("/Game/Characters/Mannequins/Anims/Pistol/Walk/MF_Pistol_Walk_Fwd"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> PhoneIdle(
+		TEXT("/Game/Characters/Mannequins/Anims/Pistol/MF_Pistol_Idle_ADS"));
+	PhoneWalkPose = PhoneWalk.Object;
+	PhoneIdlePose = PhoneIdle.Object;
 }
 
 void AProjectSingleIntroGameMode::BeginPlay()
@@ -145,24 +181,27 @@ void AProjectSingleIntroGameMode::BeginPlay()
 		if (It->ActorHasTag(TEXT("IntroOpeningDestination"))) OpeningDestination = *It;
 		if (It->ActorHasTag(TEXT("IntroOpeningCamera"))) OpeningCamera = Cast<ACameraActor>(*It);
 		if (It->ActorHasTag(TEXT("IntroOpeningCameraEnd"))) OpeningCameraEnd = *It;
-		if (It->ActorHasTag(TEXT("IntroEncounterCamera"))) EncounterCamera = Cast<ACameraActor>(*It);
+		if (It->ActorHasTag(TEXT("IntroPhoneProp"))) PhoneProp = *It;
+		if (It->ActorHasTag(TEXT("IntroPhoneDisplay"))) PhoneDisplay = *It;
 		if (It->ActorHasTag(TEXT("IntroFinaleCamera"))) FinaleCamera = Cast<ACameraActor>(*It);
 		if (It->ActorHasTag(TEXT("IntroFinaleShoppingSign"))) FinaleShoppingSigns.Add(*It);
 		if (It->ActorHasTag(TEXT("IntroFinaleLight")))
 			if (auto* Light = It->FindComponentByClass<ULightComponent>()) FinaleLights.Add(Light);
-		if (It->ActorHasTag(TEXT("IntroHatCounter"))) HatCounter = Cast<ATriggerBox>(*It);
+		if (It->ActorHasTag(TEXT("IntroStoreLight")))
+			if (auto* Light = It->FindComponentByClass<ULightComponent>()) StoreLights.Add(Light);
 		if (It->ActorHasTag(TEXT("IntroMannequinPass"))) Passage = Cast<ATriggerBox>(*It);
 	}
-	if (!ensureMsgf(Hat && Partner && Mannequin && Shutter && OpeningDestination && ShutterHandle && HatCounter && Passage
+	if (!ensureMsgf(Hat && Partner && Mannequin && Shutter && OpeningDestination && ShutterHandle && Passage
 		&& FinaleCamera && FinaleLights.Num() >= 2 && FinaleCrowd.Num() >= 2,
-		TEXT("Single intro needs its shop, two encounter triggers and a populated finale corridor")))
+		TEXT("Single intro needs its shop, an encounter trigger and a populated finale corridor")))
 	{
 		SetActorTickEnabled(false);
 		return;
 	}
+	if (OpeningCamera) OpeningCamera->GetCameraComponent()->bConstrainAspectRatio = false;
+	FinaleCamera->GetCameraComponent()->bConstrainAspectRatio = false;
 	HatStart = Hat->GetActorLocation();
 	ShutterOpen = Shutter->GetActorLocation();
-	PassageStart = Passage->GetActorLocation();
 	FinaleLights.Sort([this](const ULightComponent& A, const ULightComponent& B)
 	{
 		return FVector::DistSquared2D(A.GetComponentLocation(), ShutterOpen)
@@ -171,13 +210,7 @@ void AProjectSingleIntroGameMode::BeginPlay()
 	for (const auto& Light : FinaleLights)
 	{
 		FinaleLightIntensities.Add(Light->Intensity);
-		TArray<AActor*> Attached;
-		Light->GetOwner()->GetAttachedActors(Attached);
-		AActor** Diffuser = Attached.FindByPredicate([](const AActor* Actor)
-		{
-			return Actor->ActorHasTag(TEXT("IntroFinaleDiffuser"));
-		});
-		FinaleDiffusers.Add(Diffuser ? *Diffuser : nullptr);
+		FinaleDiffusers.Add(FindLitLens(*Light));
 	}
 	FinaleOutageTimes.Add(FirstOutageAt);
 	const int32 LastIndex = FinaleLights.Num() - 1;
@@ -188,14 +221,9 @@ void AProjectSingleIntroGameMode::BeginPlay()
 	}
 	FinaleOutageTimes.Add(FinaleOutageTimes.Last() + LastLightHold);
 	for (const auto& Figure : FinaleCrowd) Figure->SetActorHiddenInGame(true);
-	HatCounter->OnActorBeginOverlap.AddUniqueDynamic(this, &AProjectSingleIntroGameMode::OnReachHatCounter);
+	if (PhoneProp) PhoneProp->SetActorHiddenInGame(true);
+	if (PhoneDisplay) PhoneDisplay->SetActorHiddenInGame(true);
 	Passage->OnActorBeginOverlap.AddUniqueDynamic(this, &AProjectSingleIntroGameMode::OnPassMannequin);
-	PartnerVoice = NewObject<UPainGroanSynthComponent>(Partner);
-	PartnerVoice->SetupAttachment(Partner->GetRootComponent());
-	PartnerVoice->SetVolumeMultiplier(.8f);
-	if (auto* Settings = UProjectProject01GameUserSettings::Get())
-		PartnerVoice->SoundClass = Settings->GetSFXSoundClass();
-	PartnerVoice->RegisterComponent();
 	PhoneClick = NewObject<UProjectUIClickSound>(this);
 	if (auto* Settings = UProjectProject01GameUserSettings::Get())
 		PhoneClick->SoundClassObject = Settings->GetSFXSoundClass();
@@ -204,6 +232,7 @@ void AProjectSingleIntroGameMode::BeginPlay()
 
 void AProjectSingleIntroGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
+	FinishHatShot();
 	LockControls(false);
 	if (auto* Viewport = AttachedViewport.Get(); Viewport && Overlay)
 		Viewport->RemoveViewportWidgetContent(Overlay.ToSharedRef());
@@ -217,14 +246,14 @@ bool AProjectSingleIntroGameMode::CanUse(const AProjectSingleIntroTarget& Target
 	if (Phase == EPhase::Shopping)
 		return &Target == Hat || (Target.Action == PurchaseAction && !PickedItems.Contains(Target.ItemId));
 	if (&Target == Partner)
-		return Phase == EPhase::Meet || (Phase == EPhase::Captured && IsMannequinObserved());
+		return Phase == EPhase::Meet;
 	return &Target == ShutterHandle && Phase == EPhase::ReadyToLeave;
 }
 
 FText AProjectSingleIntroGameMode::GetUseText(const AProjectSingleIntroTarget& Target) const
 {
 	if (&Target == Partner)
-		return FText::FromString(Phase == EPhase::Captured ? TEXT("파트너 구출하기") : TEXT("말 걸기"));
+		return FText::FromString(TEXT("말 걸기"));
 	return Target.ItemName;
 }
 
@@ -239,7 +268,6 @@ void AProjectSingleIntroGameMode::Use(AProjectSingleIntroTarget& Target, APawn* 
 	}
 	else if (&Target == Hat) Enter(EPhase::InspectHat);
 	else if (Phase == EPhase::Meet) Enter(EPhase::Talk);
-	else if (Phase == EPhase::Captured) Enter(EPhase::AfterRescue);
 	else if (&Target == ShutterHandle) Enter(EPhase::Finale);
 }
 
@@ -256,10 +284,11 @@ void AProjectSingleIntroGameMode::Enter(EPhase Next)
 {
 	Phase = Next;
 	Elapsed = 0.f;
+	TurnDuration = 0.f;
 	if (Controller.IsValid()) TurnStart = Controller->GetControlRotation();
-	const bool bCutscene = Phase == EPhase::Phone || Phase == EPhase::InspectHat || Phase == EPhase::Fire
-		|| Phase == EPhase::Talk || Phase == EPhase::Agree || Phase == EPhase::NoticeMannequin
-		|| Phase == EPhase::AfterRescue
+	const bool bCutscene = Phase == EPhase::Phone || Phase == EPhase::EnterStore
+		|| Phase == EPhase::InspectHat || Phase == EPhase::Fire
+		|| Phase == EPhase::Talk || Phase == EPhase::Agree || Phase == EPhase::PartnerInjured
 		|| Phase == EPhase::Finale || Phase == EPhase::TitleCard;
 	LockControls(bCutscene);
 	if (Phase == EPhase::Phone)
@@ -274,11 +303,9 @@ void AProjectSingleIntroGameMode::Enter(EPhase Next)
 		if (auto* Player = Cast<ACharacter>(Pawn))
 		{
 			WalkSpeedBeforeIntro = Player->GetCharacterMovement()->MaxWalkSpeed;
-			Player->GetCharacterMovement()->MaxWalkSpeed = 248.f;
+			Player->GetCharacterMovement()->MaxWalkSpeed = OpeningWalkSpeed;
 		}
 	}
-	if (Phase == EPhase::NoticeMannequin && EncounterCamera)
-		Controller->SetViewTargetWithBlend(EncounterCamera, .2f, VTBlend_Cubic, 0.f, true);
 	if (Phase == EPhase::Shopping)
 	{
 		if (auto* Player = Cast<ACharacter>(Controller->GetPawn()))
@@ -287,43 +314,134 @@ void AProjectSingleIntroGameMode::Enter(EPhase Next)
 			Player->GetCharacterMovement()->StopMovementImmediately();
 		}
 	}
+	if (Phase == EPhase::InspectHat)
+	{
+		APawn* Player = Controller->GetPawn();
+		HatApproach = (HatStart - Player->GetActorLocation()).GetSafeNormal2D();
+		if (HatApproach.IsNearlyZero()) HatApproach = Player->GetActorForwardVector();
+		HatCamera = GetWorld()->SpawnActor<ACameraActor>();
+		if (HatCamera)
+		{
+			HatCamera->GetCameraComponent()->bConstrainAspectRatio = false;
+			HatCamera->GetCameraComponent()->SetFieldOfView(70.f);
+			UpdateHatShot(*Player);
+			Controller->SetViewTargetWithBlend(HatCamera, .92f, VTBlend_Cubic, 0.f, true);
+		}
+	}
 	if (Phase == EPhase::Fire)
 	{
+		FinishHatShot();
 		Hat->SetActorHiddenInGame(true);
 		Hat->SetActorEnableCollision(false);
-	}
-	if (Phase == EPhase::Captured && PartnerVoice) PartnerVoice->TriggerPain(true, .78f);
-	if (Phase == EPhase::AfterRescue)
-	{
-		Mannequin->SetWalking(false);
-		Partner->SetWalking(false);
+		TArray<AActor*> Parts;
+		Hat->GetAttachedActors(Parts);
+		for (auto* Part : Parts) Part->SetActorHiddenInGame(true);
 	}
 	if (Phase == EPhase::Finale)
 	{
 		Partner->SetWalking(false);
 		for (const auto& Figure : FinaleCrowd) Figure->SetActorHiddenInGame(false);
 		for (const auto& Sign : FinaleShoppingSigns) Sign->SetActorHiddenInGame(true);
-		Controller->SetViewTargetWithBlend(FinaleCamera, .7f, VTBlend_Cubic);
+		Controller->SetViewTargetWithBlend(FinaleCamera, 1.05f, VTBlend_Cubic);
 	}
 }
 
-void AProjectSingleIntroGameMode::TurnToward(const FVector& Point, float Blend)
+void AProjectSingleIntroGameMode::TurnToward(const FVector& Point, float MinimumSeconds)
 {
-	FVector ViewOrigin;
-	FRotator ViewRotation;
-	Controller->GetPlayerViewPoint(ViewOrigin, ViewRotation);
-	const FRotator Aim = (Point - ViewOrigin).Rotation();
-	Controller->SetControlRotation(FQuat::Slerp(TurnStart.Quaternion(), Aim.Quaternion(),
-		FMath::SmoothStep(0.f, 1.f, Blend)).Rotator());
+	if (TurnDuration <= 0.f)
+	{
+		// Keep a single shortest arc for the whole shot, including when the target is directly behind.
+		const FRotator Aim = (Point - Controller->GetPawn()->GetPawnViewLocation()).Rotation();
+		TurnDelta = (Aim - TurnStart).GetNormalized();
+		TurnDuration = FMath::Max(MinimumSeconds, FMath::Max(FMath::Abs(TurnDelta.Yaw), FMath::Abs(TurnDelta.Pitch)) / 54.f);
+	}
+	const float Alpha = FMath::SmoothStep(0.f, TurnDuration, Elapsed);
+	Controller->SetControlRotation((TurnStart + TurnDelta * Alpha).GetNormalized());
+}
+
+void AProjectSingleIntroGameMode::UpdateHatShot(APawn& Player)
+{
+	if (!HatCamera) return;
+	const float Dolly = FMath::SmoothStep(.2f, 2.1f, Elapsed);
+	const FVector Side = FVector::CrossProduct(FVector::UpVector, HatApproach);
+	const FVector Focus = FMath::Lerp(Player.GetActorLocation() + FVector(0,0,48), HatStart + FVector(0,0,14), .53f);
+	const FVector Desired = Focus - HatApproach * FMath::Lerp(47.f, 33.f, Dolly)
+		+ Side * FMath::Lerp(212.f, 172.f, Dolly) + FVector(0,0,54);
+	FHitResult Hit;
+	FCollisionQueryParams Query(SCENE_QUERY_STAT(IntroHatCamera), false, &Player);
+	Query.AddIgnoredActor(Hat);
+	const FVector Location = GetWorld()->LineTraceSingleByChannel(Hit, Focus, Desired, ECC_Visibility, Query)
+		? Hit.Location + Hit.Normal * 10.f : Desired;
+	HatCamera->SetActorLocationAndRotation(Location, (Focus - Location).Rotation());
+}
+
+void AProjectSingleIntroGameMode::PoseHatReach(ACharacter& Player, float Reach)
+{
+	auto* Source = Player.GetMesh();
+	static const FName UpperName(TEXT("upperarm_r")), LowerName(TEXT("lowerarm_r")), HandName(TEXT("hand_r"));
+	if (!Source || !Source->GetSkinnedAsset() || Source->GetBoneIndex(UpperName) == INDEX_NONE
+		|| Source->GetBoneIndex(LowerName) == INDEX_NONE || Source->GetBoneIndex(HandName) == INDEX_NONE) return;
+	if (!HatReachMesh)
+	{
+		HatReachMesh = NewObject<UPoseableMeshComponent>(&Player);
+		HatReachMesh->SetSkinnedAssetAndUpdate(Source->GetSkinnedAsset());
+		HatReachMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		for (int32 Index = 0; Index < Source->GetNumMaterials(); ++Index)
+			HatReachMesh->SetMaterial(Index, Source->GetMaterial(Index));
+		HatReachMesh->SetWorldTransform(Source->GetComponentTransform());
+		HatReachMesh->RegisterComponentWithWorld(GetWorld());
+		bHatMeshWasVisible = Source->IsVisible();
+		Source->SetVisibility(false);
+	}
+	HatReachMesh->SetWorldTransform(Source->GetComponentTransform());
+	HatReachMesh->CopyPoseFromSkeletalComponent(Source);
+	auto Upper = HatReachMesh->GetBoneTransformByName(UpperName, EBoneSpaces::WorldSpace);
+	auto Lower = HatReachMesh->GetBoneTransformByName(LowerName, EBoneSpaces::WorldSpace);
+	const FVector Hand = HatReachMesh->GetBoneLocationByName(HandName, EBoneSpaces::WorldSpace);
+	const FVector Shoulder = Upper.GetLocation();
+	const FVector OldElbow = Lower.GetLocation();
+	const double UpperLength = FVector::Distance(Shoulder, OldElbow);
+	const double LowerLength = FVector::Distance(OldElbow, Hand);
+	const FVector ToTarget = FMath::Lerp(Hand, HatStart + FVector(0,0,13) - HatApproach * 5.f, Reach) - Shoulder;
+	const FVector Direction = ToTarget.GetSafeNormal();
+	if (UpperLength < 1. || LowerLength < 1. || Direction.IsNearlyZero()) return;
+	const double Length = FMath::Clamp(ToTarget.Length(), FMath::Abs(UpperLength - LowerLength) + .1, UpperLength + LowerLength - .1);
+	const double Along = (FMath::Square(UpperLength) - FMath::Square(LowerLength) + FMath::Square(Length)) / (2. * Length);
+	FVector Bend = FVector::VectorPlaneProject(OldElbow - Shoulder, Direction).GetSafeNormal();
+	if (Bend.IsNearlyZero()) Bend = FVector::VectorPlaneProject(-FVector::UpVector, Direction).GetSafeNormal();
+	const FVector Elbow = Shoulder + Direction * Along + Bend * FMath::Sqrt(FMath::Max(0., FMath::Square(UpperLength) - FMath::Square(Along)));
+	Upper.SetRotation(FQuat::FindBetweenVectors(OldElbow - Shoulder, Elbow - Shoulder) * Upper.GetRotation());
+	Lower.SetRotation(FQuat::FindBetweenVectors(Hand - OldElbow, Shoulder + Direction * Length - Elbow) * Lower.GetRotation());
+	Lower.SetLocation(Elbow);
+	HatReachMesh->SetBoneTransformByName(UpperName, Upper, EBoneSpaces::WorldSpace);
+	HatReachMesh->SetBoneTransformByName(LowerName, Lower, EBoneSpaces::WorldSpace);
+	HatReachMesh->RefreshBoneTransforms();
+}
+
+void AProjectSingleIntroGameMode::FinishHatShot()
+{
+	if (HatReachMesh)
+	{
+		if (const auto* Player = Cast<ACharacter>(HatReachMesh->GetOwner()))
+			if (auto* Source = Player->GetMesh()) Source->SetVisibility(bHatMeshWasVisible);
+		HatReachMesh->DestroyComponent();
+		HatReachMesh = nullptr;
+	}
+	if (HatCamera)
+	{
+		HatCamera->Destroy();
+		HatCamera = nullptr;
+	}
 }
 
 void AProjectSingleIntroGameMode::OnPassMannequin(AActor*, AActor* Other)
 {
 	if (Phase == EPhase::WalkToShutter && Controller.IsValid() && Other == Controller->GetPawn())
 	{
-		EncounterAt = GetWorld()->GetTimeSeconds();
 		Partner->SetWalking(false);
-		Enter(EPhase::NoticeMannequin);
+		PlayPartnerScream();
+		PlayImpact(Partner->GetActorLocation(), .76f, .65f);
+		Enter(EPhase::PartnerInjured);
 	}
 }
 
@@ -331,37 +449,54 @@ void AProjectSingleIntroGameMode::WalkIntoStore(APawn& Player)
 {
 	const FVector ToDoor = OpeningDestination->GetActorLocation() - Player.GetActorLocation();
 	const float Distance = ToDoor.Size2D();
+	if (auto* Character = Cast<ACharacter>(&Player))
+		Character->GetCharacterMovement()->MaxWalkSpeed = OpeningWalkSpeed;
 	if (Distance > 24.f)
-		Player.AddMovementInput(ToDoor.GetSafeNormal2D(), FMath::Clamp(Distance / 94.f, .28f, 1.f), true);
-	const float Lower = FMath::SmoothStep(OpeningPhoneUpAt, OpeningPhoneUpAt + .63f, Elapsed);
-	const float Raise = FMath::SmoothStep(OpeningPhoneOffAt + .12f, PhoneDuration - .12f, Elapsed);
-	Controller->SetControlRotation(FRotator(FMath::Lerp(FMath::Lerp(12.f, -16.f, Lower), 0.f, Raise), OpeningYaw, 0.f));
+		Player.AddMovementInput(ToDoor.GetSafeNormal2D(), FMath::Clamp(Distance / 42.f, .28f, 1.f), true);
+	Controller->SetControlRotation(FRotator(0.f, OpeningYaw, 0.f));
 }
 
-void AProjectSingleIntroGameMode::OnReachHatCounter(AActor*, AActor* Other)
+void AProjectSingleIntroGameMode::SetPhonePose(ACharacter& Player, UAnimSequence* Animation)
 {
-	if (Phase == EPhase::Shopping && Controller.IsValid() && Other == Controller->GetPawn())
-		Enter(EPhase::InspectHat);
+	if (!PhoneProp || !PhoneDisplay || bUsingPhonePose == (Animation != nullptr)) return;
+	auto* Mesh = Player.GetMesh();
+	if (!Mesh) return;
+	bUsingPhonePose = Animation != nullptr;
+	PhoneProp->SetActorHiddenInGame(!bUsingPhonePose);
+	PhoneDisplay->SetActorHiddenInGame(!bUsingPhonePose || Phase == EPhase::Fire);
+	if (Animation)
+	{
+		PreviousAnimationMode = Mesh->GetAnimationMode();
+		Mesh->PlayAnimation(Animation, true);
+		if (Animation == PhoneWalkPose) Mesh->SetPlayRate(.8f);
+	}
+	else Mesh->SetAnimationMode(static_cast<EAnimationMode::Type>(PreviousAnimationMode));
 }
 
+FVector AProjectSingleIntroGameMode::UpdateHeldPhone(ACharacter& Player)
+{
+	const auto* Mesh = Player.GetMesh();
+	const FVector Forward = Player.GetActorForwardVector();
+	const FVector Hands = (Mesh->GetSocketLocation(TEXT("hand_r")) + Mesh->GetSocketLocation(TEXT("hand_l"))) * .5f;
+	const FVector Position = Hands + Forward * 5.f + FVector(0, 0, 3);
+	PhoneProp->SetActorLocationAndRotation(Position, FRotator(-12.f, Forward.Rotation().Yaw, 0.f));
+	return Position;
+}
+
+float AProjectSingleIntroGameMode::GetOpeningFade() const
+{
+	if (Phase == EPhase::Phone)
+		return FMath::Max(1.f - FMath::SmoothStep(0.f, .75f, Elapsed),
+			FMath::SmoothStep(PhoneDuration - .80f, PhoneDuration, Elapsed));
+	const float BetweenShots = FMath::SmoothStep(EntranceHandoffAt - .90f, EntranceHandoffAt, Elapsed)
+		* (1.f - FMath::SmoothStep(EntranceHandoffAt, EntranceDuration - .1f, Elapsed));
+	return FMath::Max(1.f - FMath::SmoothStep(0.f, 1.2f, Elapsed), BetweenShots);
+}
 void AProjectSingleIntroGameMode::FollowPartner(const APawn& Player, float DeltaSeconds)
 {
 	const FVector Position = Player.GetActorLocation();
 	const FVector FromPlayer = (Partner->GetActorLocation() - Position).GetSafeNormal2D();
 	Partner->MoveToward(Position + FromPlayer * 155.f, 500.f, DeltaSeconds);
-}
-
-bool AProjectSingleIntroGameMode::IsMannequinObserved() const
-{
-	if (!Controller.IsValid() || !Mannequin) return false;
-	FVector Eye;
-	FRotator View;
-	Controller->GetPlayerViewPoint(Eye, View);
-	const FVector Target = Mannequin->GetActorLocation() + FVector(0, 0, 125);
-	if (FVector::DotProduct(View.Vector(), (Target - Eye).GetSafeNormal()) < .78) return false;
-	FCollisionQueryParams Query(SCENE_QUERY_STAT(IntroMannequinSight), false, Controller->GetPawn());
-	Query.AddIgnoredActor(Partner);
-	return !GetWorld()->LineTraceTestByChannel(Eye, Target, ECC_Visibility, Query);
 }
 
 float AProjectSingleIntroGameMode::GetLastOutageTime() const
@@ -389,48 +524,88 @@ void AProjectSingleIntroGameMode::Tick(float DeltaSeconds)
 	{
 	case EPhase::Phone:
 		WalkIntoStore(Player);
-		if (OpeningCamera && OpeningCameraEnd && Previous < OpeningHandoffAt)
+		if (auto* Character = Cast<ACharacter>(&Player))
 		{
-			const FVector Forward = FRotator(0.f, OpeningYaw, 0.f).Vector();
-			const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward);
+			SetPhonePose(*Character, Elapsed >= OpeningPhoneUpAt && Elapsed < OpeningPhoneOffAt ? PhoneWalkPose.Get() : nullptr);
+			if (bUsingPhonePose) UpdateHeldPhone(*Character);
+		}
+		if (OpeningCamera && OpeningCameraEnd)
+		{
+			const FRotator Facing(0.f, OpeningYaw, 0.f);
 			const FVector Position = Player.GetActorLocation();
-			const FVector TrackingPosition = Position - Forward * 270.f + Right * 200.f + FVector(0, 0, -18);
-			const FVector TrackingFocus = Position + Forward * 165.f + FVector(0, 0, 65);
-			const FTransform Tracking((TrackingFocus - TrackingPosition).Rotation(), TrackingPosition);
+			const FVector TrackingPosition = Position + Facing.RotateVector(FVector(240, -205, -19));
+			const FVector TrackingFocus = Position + Facing.RotateVector(FVector(0, -48, 37));
+			OpeningCamera->SetActorLocationAndRotation(TrackingPosition, (TrackingFocus - TrackingPosition).Rotation());
+		}
+		if (Elapsed >= PhoneDuration) Enter(EPhase::EnterStore);
+		break;
+	case EPhase::EnterStore:
+		WalkIntoStore(Player);
+		if (OpeningCamera && OpeningCameraEnd && Previous < EntranceHandoffAt)
+		{
 			FTransform Wide;
 			Wide.Blend(OpeningCameraStart, OpeningCameraEnd->GetActorTransform(),
-				FMath::SmoothStep(OpeningWideAt, OpeningHandoffAt, Elapsed));
-			FTransform Shot;
-			Shot.Blend(Tracking, Wide, FMath::SmoothStep(OpeningPullbackAt, OpeningWideAt, Elapsed));
-			OpeningCamera->SetActorTransform(Shot);
-			if (Elapsed >= OpeningHandoffAt)
-				Controller->SetViewTargetWithBlend(&Player, OpeningCameraBlendSeconds, VTBlend_Cubic);
+				FMath::SmoothStep(0.f, EntranceHandoffAt, Elapsed));
+			OpeningCamera->SetActorTransform(Wide);
+			if (Elapsed >= EntranceHandoffAt) Controller->SetViewTarget(&Player);
 		}
-		if (Elapsed >= PhoneDuration)
-		{
-			Enter(EPhase::Shopping);
-			if (HatCounter->IsOverlappingActor(&Player)) OnReachHatCounter(HatCounter, &Player);
-		}
+		if (Elapsed >= EntranceDuration) Enter(EPhase::Shopping);
 		break;
 	case EPhase::InspectHat:
-		TurnToward(HatStart, Elapsed * 2.f);
-		Hat->SetActorLocation(HatStart + FVector(0, 0, 26 * FMath::Sin(FMath::Min(Elapsed, 2.4f) / 2.4f * PI)));
-		Hat->AddActorLocalRotation(FRotator(0, DeltaSeconds * 36.f, 0));
-		if (Previous < .6f && Elapsed >= .6f) PlayImpact(ShutterOpen, .83f, .35f);
-		if (Previous < 1.05f && Elapsed >= 1.05f) PlayImpact(ShutterOpen, .71f, .62f);
-		if (Previous < 1.48f && Elapsed >= 1.48f) PlayImpact(ShutterOpen, .58f, .95f);
-		if (Elapsed >= 2.4f) Enter(EPhase::Fire);
+		TurnToward(HatStart, 1.15f);
+		UpdateHatShot(Player);
+		if (auto* Character = Cast<ACharacter>(&Player))
+		{
+			if (Elapsed < HatReachAt && FVector::Dist2D(Player.GetActorLocation(), HatStart) > 74.f)
+				Player.AddMovementInput(HatApproach, .45f, true);
+			else if (Elapsed >= HatReachAt && Elapsed < HatCameraReturnAt)
+			{
+				Character->GetCharacterMovement()->StopMovementImmediately();
+				PoseHatReach(*Character, FMath::SmoothStep(HatReachAt, 1.66f, Elapsed)
+					* (1.f - FMath::SmoothStep(1.75f, HatCameraReturnAt, Elapsed)));
+			}
+		}
+		if (HatCamera && Previous < HatCameraReturnAt && Elapsed >= HatCameraReturnAt)
+			Controller->SetViewTargetWithBlend(&Player, .95f, VTBlend_Cubic, 0.f, true);
+		if (Previous < 1.2f && Elapsed >= 1.2f) PlayImpact(ShutterOpen, .83f, .35f);
+		if (Previous < 1.7f && Elapsed >= 1.7f) PlayImpact(ShutterOpen, .71f, .62f);
+		if (Previous < 2.3f && Elapsed >= 2.3f) PlayImpact(ShutterOpen, .58f, .95f);
+		if (Elapsed >= HatInspectDuration) Enter(EPhase::Fire);
 		break;
 	case EPhase::Fire:
 	{
 		const float Lowered = FMath::SmoothStep(.38f, 2.1f, Elapsed);
 		const FVector Door = ShutterOpen - FVector(0, 0, ShutterDrop);
-		TurnToward(Door, Elapsed / .85f);
+		TurnToward(Door, 1.35f);
 		Shutter->SetActorLocation(FMath::Lerp(ShutterOpen, Door, Lowered));
 		if (Previous < 2.1f && Elapsed >= 2.1f)
 		{
 			PlayImpact(Door, .5f, 1.f);
 			PlayAlarm();
+		}
+		if (auto* Character = Cast<ACharacter>(&Player); Character && OpeningCamera && PhoneIdlePose)
+		{
+			if (Elapsed >= FailedPhoneRaiseAt && Elapsed < FailedPhoneLowerAt + .65f)
+			{
+				SetPhonePose(*Character, PhoneIdlePose);
+				if (bUsingPhonePose)
+				{
+					const FVector Handset = UpdateHeldPhone(*Character);
+					const FRotator Facing(0.f, Player.GetActorRotation().Yaw, 0.f);
+					const FVector ShotPosition = Handset + Facing.RotateVector(FVector(-48, 30, 34));
+					OpeningCamera->SetActorLocationAndRotation(ShotPosition, (Handset - ShotPosition).Rotation());
+					const float Tap = FMath::Max(0.f, 1.f - FMath::Abs(Elapsed - FailedPhoneFirstPress) / .18f)
+						+ FMath::Max(0.f, 1.f - FMath::Abs(Elapsed - FailedPhoneSecondPress) / .18f);
+					const float Raise = FMath::SmoothStep(FailedPhoneRaiseAt, FailedPhoneRaiseAt + .65f, Elapsed);
+					const float Lower = FMath::SmoothStep(FailedPhoneLowerAt, FailedPhoneLowerAt + .65f, Elapsed);
+					PhoneProp->AddActorWorldOffset(Facing.RotateVector(FVector(0, Tap * .6f, -24.f * (1.f - Raise + Lower))));
+					if (Previous < FailedPhoneRaiseAt)
+						Controller->SetViewTargetWithBlend(OpeningCamera, .65f, VTBlend_Cubic, 0.f, true);
+					if (Previous < FailedPhoneLowerAt && Elapsed >= FailedPhoneLowerAt)
+						Controller->SetViewTargetWithBlend(&Player, .65f, VTBlend_Cubic, 0.f, true);
+				}
+			}
+			else SetPhonePose(*Character, nullptr);
 		}
 		if ((Previous < FailedPhoneFirstPress && Elapsed >= FailedPhoneFirstPress)
 			|| (Previous < FailedPhoneSecondPress && Elapsed >= FailedPhoneSecondPress))
@@ -439,51 +614,27 @@ void AProjectSingleIntroGameMode::Tick(float DeltaSeconds)
 		break;
 	}
 	case EPhase::Talk:
-		TurnToward(Partner->GetActorLocation() + FVector(0, 0, 148), Elapsed * 2.f);
-		if (Elapsed >= 3.35f) Enter(EPhase::LeaveTogether);
+		TurnToward(Partner->GetActorLocation() + FVector(0, 0, 148), 1.15f);
+		if (Elapsed >= 5.80f) Enter(EPhase::LeaveTogether);
 		break;
 	case EPhase::LeaveTogether:
 		if (FVector::DistSquared2D(Partner->GetActorLocation(), Player.GetActorLocation()) > FMath::Square(460.f))
 			Enter(EPhase::Agree);
 		break;
 	case EPhase::Agree:
-		TurnToward(Partner->GetActorLocation() + FVector(0, 0, 148), Elapsed * 1.4f);
+		TurnToward(Partner->GetActorLocation() + FVector(0, 0, 148), 1.3f);
 		if (Elapsed > .6f) FollowPartner(Player, DeltaSeconds);
-		if (Elapsed >= 2.4f) Enter(EPhase::WalkToShutter);
+		if (Elapsed >= 3.4f) Enter(EPhase::WalkToShutter);
 		break;
 	case EPhase::WalkToShutter:
 		FollowPartner(Player, DeltaSeconds);
 		break;
-	case EPhase::NoticeMannequin:
-		TurnToward(Mannequin->GetActorLocation() + FVector(0,0,142), Elapsed / .38f);
-		if (EncounterCamera && Previous < EncounterHoldSeconds && Elapsed >= EncounterHoldSeconds)
-			Controller->SetViewTargetWithBlend(&Player, EncounterBlendSeconds, VTBlend_Cubic);
-		if (Elapsed >= EncounterHoldSeconds + EncounterBlendSeconds) Enter(EPhase::PassedMannequin);
-		break;
-	case EPhase::PassedMannequin:
-		FollowPartner(Player, DeltaSeconds);
-		if (GetWorld()->GetTimeSeconds() >= EncounterAt + EncounterDelaySeconds
-			&& FVector::DotProduct(Player.GetActorLocation() - PassageStart, Passage->GetActorForwardVector()) > 280.f)
-		{
-			Partner->SetWalking(false);
-			Enter(EPhase::ApproachPartner);
-		}
-		break;
-	case EPhase::ApproachPartner:
-		if (IsMannequinObserved()) Mannequin->SetWalking(false);
-		else Mannequin->MoveToward(Partner->GetActorLocation(), 410.f, DeltaSeconds);
-		if (FVector::DistSquared2D(Mannequin->GetActorLocation(), Partner->GetActorLocation()) < FMath::Square(62.f))
-		{
-			Mannequin->SetWalking(false);
-			Partner->SetActorRotation(FRotator(-24.f, Partner->GetActorRotation().Yaw, 0.f));
-			PlayImpact(Partner->GetActorLocation(), .76f, .75f);
-			Enter(EPhase::Captured);
-		}
-		break;
-	case EPhase::AfterRescue:
-		Partner->SetActorRotation(FRotator(FMath::Lerp(-24.f, 0.f, FMath::Clamp(Elapsed * 2.f, 0.f, 1.f)),
+	case EPhase::PartnerInjured:
+		TurnToward(Partner->GetActorLocation() + FVector(0, 0, 126), 1.55f);
+		Partner->SetActorRotation(FRotator(-24.f * FMath::SmoothStep(0.f, .28f, Elapsed)
+			* (1.f - FMath::SmoothStep(4.4f, 5.45f, Elapsed)),
 			Partner->GetActorRotation().Yaw, 0.f));
-		if (Elapsed >= 4.6f) Enter(EPhase::ReadyToLeave);
+		if (Elapsed >= 8.25f) Enter(EPhase::ReadyToLeave);
 		break;
 	case EPhase::ReadyToLeave:
 		FollowPartner(Player, DeltaSeconds);
@@ -495,10 +646,16 @@ void AProjectSingleIntroGameMode::Tick(float DeltaSeconds)
 		while (NextFinaleLight < FinaleLights.Num() && Elapsed >= FinaleOutageTimes[NextFinaleLight])
 		{
 			const int32 LightIndex = NextFinaleLight++;
+			if (LightIndex == 0)
+				for (const auto& Light : StoreLights)
+				{
+					Light->SetVisibility(false);
+					ExtinguishFixture(*Light);
+				}
 			PlayImpact(FinaleLights[LightIndex]->GetComponentLocation(), 1.55f, .24f);
 			if (auto* Point = Cast<UPointLightComponent>(FinaleLights[LightIndex]))
-				Point->SetAttenuationRadius(FMath::Min(Point->AttenuationRadius, 345.f));
-			if (auto* Diffuser = FinaleDiffusers[LightIndex].Get()) Diffuser->SetActorHiddenInGame(true);
+				Point->SetAttenuationRadius(FMath::Min(Point->AttenuationRadius, 410.f));
+			ExtinguishFixture(*FinaleLights[LightIndex]);
 		}
 		for (int32 Index = 0; Index < NextFinaleLight; ++Index)
 		{
@@ -513,12 +670,13 @@ void AProjectSingleIntroGameMode::Tick(float DeltaSeconds)
 		break;
 	}
 	case EPhase::TitleCard:
-		if (Elapsed >= TitleFadeOutEndsAt + .28f)
+		if (Elapsed >= TitleHandoffAt)
 		{
 			if (auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance()))
 				Game->ConsumeStartupIntro();
 			SetActorTickEnabled(false);
-			UGameplayStatics::OpenLevel(this, TEXT("/Game/MyProject/Level/TitleLevel"));
+			UGameplayStatics::OpenLevel(this, TEXT("/Game/MyProject/Level/TitleLevel"), true,
+				ProjectDFSDBranding::SingleIntroTitleRevealOption);
 		}
 		break;
 	default:
@@ -556,39 +714,73 @@ void AProjectSingleIntroGameMode::PlayAlarm()
 	UGameplayStatics::PlaySoundAtLocation(this, Alarm, ShutterOpen);
 }
 
+void AProjectSingleIntroGameMode::PlayPartnerScream()
+{
+	constexpr int32 Rate = 24000;
+	constexpr float Duration = .76f;
+	TArray<int16> Samples;
+	Samples.SetNumUninitialized(FMath::RoundToInt(Rate * Duration));
+	FRandomStream Air(1527);
+	float VoicePhase = 0.f;
+	for (int32 Index = 0; Index < Samples.Num(); ++Index)
+	{
+		const float Time = static_cast<float>(Index) / Rate;
+		const float Pitch = 340.f + 190.f * FMath::SmoothStep(0.f, .12f, Time)
+			- 215.f * FMath::SmoothStep(.24f, Duration, Time) + 16.f * FMath::Sin(73.f * Time);
+		VoicePhase += 2.f * PI * Pitch / Rate;
+		const float Voice = .39f * FMath::Sin(VoicePhase) + .29f * FMath::Sin(2.f * VoicePhase)
+			+ .18f * FMath::Sin(3.f * VoicePhase) + .07f * FMath::Sin(5.f * VoicePhase);
+		const float Gain = FMath::SmoothStep(0.f, .028f, Time)
+			* (1.f - FMath::SmoothStep(.23f, Duration, Time)) * (.91f + .09f * FMath::Sin(88.f * Time));
+		Samples[Index] = static_cast<int16>(9500.f * Gain * (Voice + Air.FRandRange(-.14f, .14f)));
+	}
+	PartnerScream = NewObject<USoundWaveProcedural>(this);
+	PartnerScream->SetSampleRate(Rate);
+	PartnerScream->NumChannels = 1;
+	PartnerScream->Duration = Duration;
+	if (auto* Settings = UProjectProject01GameUserSettings::Get())
+		PartnerScream->SoundClassObject = Settings->GetSFXSoundClass();
+	PartnerScream->QueueAudio(reinterpret_cast<const uint8*>(Samples.GetData()), Samples.Num() * sizeof(int16));
+	auto* Attenuation = NewObject<USoundAttenuation>(PartnerScream);
+	ProjectProject01SpatialAudio::ApplyWorldSFXSettings(Attenuation->Attenuation);
+	UGameplayStatics::PlaySoundAtLocation(this, PartnerScream, Partner->GetActorLocation(), FRotator::ZeroRotator,
+		.87f, 1.f, 0.f, Attenuation);
+}
+
 FText AProjectSingleIntroGameMode::GetSubtitle() const
 {
 	const TCHAR* Line = TEXT("");
 	switch (Phase)
 	{
 	case EPhase::InspectHat:
-		if (Elapsed > 1.4f) Line = TEXT("무슨 소리지?");
+		if (Elapsed > 1.35f) Line = TEXT("무슨 소리지?");
 		break;
 	case EPhase::Fire:
 		if (Elapsed >= 2.1f && Elapsed < FailedPhoneRaiseAt)
-			Line = TEXT("화재가 발생했습니다. 가까운 비상구로 대피하십시오.");
-		else if (Elapsed >= FailedPhoneSecondPress + .16f)
-			Line = TEXT("전원이 안 들어와… 연락도 못 하겠네.");
+			Line = TEXT("화재가 발생했습니다. 비상구로 대피하십시오.");
+		else if (Elapsed >= FailedPhoneSecondPress + .45f && Elapsed < FailedPhoneLowerAt)
+			Line = TEXT("전원이 안 들어오네.");
+		else if (Elapsed >= FailedPhoneLowerAt)
+			Line = TEXT("연락할 방법이 없겠어.");
 		break;
 	case EPhase::Meet:
-		if (Elapsed < 1.45f) Line = TEXT("저 사람한테 물어볼까.");
+		if (Elapsed < 2.7f) Line = TEXT("저 사람한테 물어볼까.");
 		break;
 	case EPhase::Talk:
-		Line = Elapsed < 1.65f ? TEXT("저기요, 혹시 폰 켜져요?")
+		Line = Elapsed < 2.85f ? TEXT("저기요, 혹시 폰 켜져요?")
 			: TEXT("아뇨. 제 것도 안 켜져요.");
 		break;
 	case EPhase::LeaveTogether:
-		if (Elapsed < 2.2f) Line = TEXT("나갈 길이 있을 텐데…");
+		if (Elapsed < 3.0f) Line = TEXT("나갈 길이 있을 텐데…");
 		break;
 	case EPhase::Agree:
 		if (Elapsed > .35f) Line = TEXT("잠깐만요. 같이 가요.");
 		break;
-	case EPhase::Captured:
-		if (Elapsed < 1.4f) Line = TEXT("아악!");
-		break;
-	case EPhase::AfterRescue:
-		Line = Elapsed < 2.3f ? TEXT("뒤에서 갑자기 잡았어요. 저거… 쳐다보니까 멈췄죠?")
-			: TEXT("일단 들어온 쪽 셔터를 열어 봐요.");
+	case EPhase::PartnerInjured:
+		Line = Elapsed < .85f ? TEXT("꺄악!")
+			: Elapsed < 3.20f ? TEXT("괜찮아요?")
+			: Elapsed < 5.70f ? TEXT("네. 조금 긁혔어요.")
+			: TEXT("들어온 쪽 셔터를 열어 봐요.");
 		break;
 	default:
 		break;
@@ -611,6 +803,39 @@ FText AProjectSingleIntroGameMode::GetInteractionPrompt() const
 		? FText::Format(FText::FromString(TEXT("F   {0}")), GetUseText(*Target)) : FText::GetEmpty();
 }
 
+TSharedRef<SWidget> AProjectSingleIntroGameMode::BuildCinematicMask()
+{
+	const auto* Brush = FCoreStyle::Get().GetBrush("WhiteBrush");
+	const auto CinematicBarFraction = [this]()
+	{
+		float Alpha = 0.f;
+		if (Phase == EPhase::Phone)
+			Alpha = 1.f;
+		else if (Phase == EPhase::EnterStore)
+			Alpha = 1.f - FMath::SmoothStep(EntranceHandoffAt, EntranceDuration, Elapsed);
+		else if (Phase == EPhase::InspectHat)
+			Alpha = FMath::SmoothStep(0.f, .48f, Elapsed);
+		else if (Phase == EPhase::Fire)
+			Alpha = 1.f - FMath::SmoothStep(FireEndsAt - .65f, FireEndsAt, Elapsed);
+		else if (Phase == EPhase::PartnerInjured)
+			Alpha = FMath::SmoothStep(0.f, .16f, Elapsed) * (1.f - FMath::SmoothStep(7.55f, 8.25f, Elapsed));
+		else if (Phase == EPhase::Finale)
+			Alpha = FMath::SmoothStep(0.f, .7f, Elapsed);
+		return .085f * Alpha;
+	};
+	return SNew(SConstraintCanvas).Visibility(EVisibility::HitTestInvisible)
+	+ SConstraintCanvas::Slot().Offset(FMargin(0)).Anchors_Lambda([CinematicBarFraction]
+	{
+		return FAnchors(0.f, 0.f, 1.f, CinematicBarFraction());
+	})
+	[SNew(SImage).Image(Brush).ColorAndOpacity(FLinearColor::Black)]
+	+ SConstraintCanvas::Slot().Offset(FMargin(0)).Anchors_Lambda([CinematicBarFraction]
+	{
+		return FAnchors(0.f, 1.f - CinematicBarFraction(), 1.f, 1.f);
+	})
+	[SNew(SImage).Image(Brush).ColorAndOpacity(FLinearColor::Black)];
+}
+
 void AProjectSingleIntroGameMode::BuildOverlay()
 {
 	auto* Viewport = GetWorld()->GetGameViewport();
@@ -622,112 +847,74 @@ void AProjectSingleIntroGameMode::BuildOverlay()
 			.ColorAndOpacity(FLinearColor(.92f, .92f, .9f)).Text(FText::FromString(Line));
 	};
 	const auto* Brush = FCoreStyle::Get().GetBrush("WhiteBrush");
-	const auto CinematicBar = [this, Brush]()
-	{
-		return SNew(SBox).HeightOverride_Lambda([this]() -> FOptionalSize
-		{
-			float Alpha = 0.f;
-			if (Phase == EPhase::Phone && OpeningCamera && OpeningCameraEnd)
-				Alpha = 1.f - FMath::SmoothStep(OpeningHandoffAt, OpeningHandoffAt + OpeningCameraBlendSeconds, Elapsed);
-			else if (Phase == EPhase::NoticeMannequin && EncounterCamera)
-				Alpha = FMath::SmoothStep(0.f, .2f, Elapsed)
-					* (1.f - FMath::SmoothStep(EncounterHoldSeconds, EncounterHoldSeconds + EncounterBlendSeconds, Elapsed));
-			else if (Phase == EPhase::Finale)
-				Alpha = FMath::SmoothStep(0.f, .7f, Elapsed);
-			return 42.f * Alpha;
-		})
-		[
-			SNew(SBorder).BorderImage(Brush).BorderBackgroundColor(FLinearColor::Black)
-		];
-	};
 	static const FSlateRoundedBoxBrush PhoneFrame(FLinearColor(.045f,.061f,.075f), 24.f,
 		FLinearColor(.13f,.15f,.17f), 2.f);
 	Overlay = SNew(SOverlay).Visibility(EVisibility::SelfHitTestInvisible)
 		+ SOverlay::Slot()
 		[
 			SNew(SBorder).BorderImage(Brush)
-			.Visibility_Lambda([this]{ return Phase == EPhase::Waiting || Phase == EPhase::Phone
+			.Visibility_Lambda([this]{ return Phase == EPhase::Waiting || Phase == EPhase::Phone || Phase == EPhase::EnterStore
 				|| Phase == EPhase::Finale || Phase == EPhase::TitleCard
 				? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
 			.BorderBackgroundColor_Lambda([this]
 			{
-				const float DoorwayShade = OpeningCamera && OpeningCameraEnd
-					? .96f * FMath::SmoothStep(OpeningHandoffAt - .90f, OpeningHandoffAt, Elapsed)
-						* (1.f - FMath::SmoothStep(OpeningHandoffAt + OpeningCameraBlendSeconds, OpeningHandoffAt + .95f, Elapsed))
-					: 0.f;
-				const float Opacity = Phase == EPhase::Phone ? FMath::Max(DoorwayShade, 1.f - FMath::SmoothStep(0.f, .55f, Elapsed))
+				const float Opacity = Phase == EPhase::Phone || Phase == EPhase::EnterStore ? GetOpeningFade()
 					: Phase == EPhase::Finale ? FMath::SmoothStep(0.f, .28f, Elapsed - GetLastOutageTime() - AfterglowSeconds) : 1.f;
 				return FLinearColor(0,0,0,Opacity);
 			})
 		]
-		+ SOverlay::Slot().VAlign(VAlign_Top)[CinematicBar()]
-		+ SOverlay::Slot().VAlign(VAlign_Bottom)[CinematicBar()]
-		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(0,0,64,62)
+		+ SOverlay::Slot()
 		[
-			SNew(SBox).WidthOverride(342).HeightOverride(390).Visibility_Lambda([this]{ return Phase == EPhase::Phone
+			BuildCinematicMask()
+		]
+		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(58,0,0,70)
+		[
+			SNew(SBox).WidthOverride(340).Visibility_Lambda([this]{ return Phase == EPhase::Phone
 				? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
 			.RenderTransform_Lambda([this]() -> TOptional<FSlateRenderTransform>
 			{
 				const float In = FMath::SmoothStep(OpeningPhoneUpAt, OpeningPhoneUpAt + .65f, Elapsed);
-				const float Out = FMath::SmoothStep(OpeningPhoneOffAt + .08f, PhoneDuration - .16f, Elapsed);
+				const float Out = FMath::SmoothStep(OpeningPhoneOffAt, PhoneDuration - .5f, Elapsed);
 				return FSlateRenderTransform(FVector2D(0.f, (1.f - In + Out) * 600.f));
 			})
 			[
-				SNew(SBorder).BorderImage(&PhoneFrame).Padding(FMargin(22, 26))
+				SNew(SBorder).BorderImage(&PhoneFrame).Padding(FMargin(16, 18))
 				[
-					SNew(SOverlay)
-					+ SOverlay::Slot()
-					[
-						SNew(SVerticalBox)
-						.Visibility_Lambda([this]{ return Elapsed < OpeningPhoneOffAt
-							? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
-					+ SVerticalBox::Slot().AutoHeight().Padding(0,0,0,22)[Label(22, TEXT("메시지"))]
-					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0,0,0,12)
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight().Padding(0,0,0,10)[Label(17, TEXT("메시지"))]
+					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0,0,0,7)
 					[
 						SNew(SBorder).BorderImage(Brush).BorderBackgroundColor(FLinearColor(.12f,.14f,.16f))
-						.Padding(FMargin(10,9))
-						[Label(16, TEXT("오늘 백화점 들르지?\n모자 하나 부탁해."))]
+						.Padding(FMargin(9,7)).Visibility_Lambda([this]{ return Elapsed >= FirstMessageAt
+							? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
+						[Label(15, TEXT("백화점 가면 모자 하나 부탁해."))]
 					]
-					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0,0,0,12)
+					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0,0,0,7)
 					[
 						SNew(SBorder).BorderImage(Brush).BorderBackgroundColor(FLinearColor(.13f,.22f,.27f))
-						.Padding(FMargin(10,9)).Visibility_Lambda([this]{ return Elapsed >= 2.5f
-							? EVisibility::HitTestInvisible : EVisibility::Hidden; })
-						[Label(16, TEXT("응. 손수건하고 물도 보고 갈게."))]
+						.Padding(FMargin(9,7)).Visibility_Lambda([this]{ return Elapsed >= ReplyAt
+							? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
+						[Label(15, TEXT("응. 손수건이랑 물도 살게."))]
 					]
 					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left)
 					[
 						SNew(SBorder).BorderImage(Brush).BorderBackgroundColor(FLinearColor(.12f,.14f,.16f))
-						.Padding(FMargin(10,9)).Visibility_Lambda([this]{ return Elapsed >= 4.f
-							? EVisibility::HitTestInvisible : EVisibility::Hidden; })
-						[Label(16, TEXT("모자 매장은 위층 안쪽이야."))]
-					]
-					]
-					+ SOverlay::Slot()
-					[
-						SNew(SBorder).BorderImage(Brush).BorderBackgroundColor(FLinearColor(.004f,.005f,.007f))
-						.Visibility_Lambda([this]{ return Elapsed >= OpeningPhoneOffAt
+						.Padding(FMargin(9,7)).Visibility_Lambda([this]{ return Elapsed >= LastMessageAt
 							? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
+						[Label(15, TEXT("모자 매장은 위층 맨 안쪽이야."))]
+					]
+					+ SVerticalBox::Slot().AutoHeight().Padding(2,6,2,0)
+					[
+						SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 15))
+						.Text_Lambda([this]
+						{
+							const float Next = Elapsed < FirstMessageAt ? FirstMessageAt : Elapsed < ReplyAt ? ReplyAt : LastMessageAt;
+							const float Remaining = Next - Elapsed;
+							if (Remaining <= 0.f || Remaining > 1.25f) return FText::GetEmpty();
+							return FText::FromString(FString::ChrN(1 + FMath::Clamp(FMath::FloorToInt((1.25f - Remaining) * 2.4f), 0, 2), TEXT('.')));
+						})
 					]
 				]
-			]
-		]
-		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(0,0,96,74)
-		[
-			SNew(SBox).WidthOverride(134).HeightOverride(214)
-			.Visibility_Lambda([this]{ return Phase == EPhase::Fire && Elapsed >= FailedPhoneRaiseAt && Elapsed < FireEndsAt
-				? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
-			.RenderTransform_Lambda([this]() -> TOptional<FSlateRenderTransform>
-			{
-				const float Rise = FMath::SmoothStep(FailedPhoneRaiseAt, FailedPhoneRaiseAt + .48f, Elapsed);
-				const float Lower = FMath::SmoothStep(FailedPhoneLowerAt, FireEndsAt, Elapsed);
-				const float Tap = FMath::Max(0.f, 1.f - FMath::Abs(Elapsed - FailedPhoneFirstPress) / .11f)
-					+ FMath::Max(0.f, 1.f - FMath::Abs(Elapsed - FailedPhoneSecondPress) / .11f);
-				return FSlateRenderTransform(FVector2D(5.f * Tap, 300.f * (1.f - Rise + Lower) + 4.f * Tap));
-			})
-			[
-				SNew(SBorder).BorderImage(&PhoneFrame).Padding(8)
-				[SNew(SBorder).BorderImage(Brush).BorderBackgroundColor(FLinearColor(.004f,.005f,.007f))]
 			]
 		]
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(28,26)
@@ -748,7 +935,7 @@ void AProjectSingleIntroGameMode::BuildOverlay()
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 20)).ShadowOffset(FVector2D(1, 2))
 			.Text_UObject(this, &AProjectSingleIntroGameMode::GetSubtitle).Justification(ETextJustify::Center)
-			.AutoWrapText(true).Visibility(EVisibility::HitTestInvisible)
+			.Visibility(EVisibility::HitTestInvisible)
 		]
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
 		[
@@ -759,8 +946,7 @@ void AProjectSingleIntroGameMode::BuildOverlay()
 			.ColorAndOpacity_Lambda([this]
 			{
 				const float In = FMath::SmoothStep(TitleFadeInAt, TitleFadeInEndsAt, Elapsed);
-				const float Out = FMath::SmoothStep(TitleFadeOutAt, TitleFadeOutEndsAt, Elapsed);
-				return FSlateColor(FLinearColor(.94f,.92f,.87f, In * (1.f - Out)));
+				return FSlateColor(FLinearColor(.94f,.92f,.87f, In));
 			})
 		];
 	Viewport->AddViewportWidgetContent(Overlay.ToSharedRef(), 700);

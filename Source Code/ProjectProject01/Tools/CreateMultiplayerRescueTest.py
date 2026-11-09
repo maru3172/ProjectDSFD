@@ -92,11 +92,13 @@ if not station.get_attached_actors():
                          unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
 sign("Rescue sign", "B1  /  RESCUE", (3638,550,-169), 49)
 sign("First floor stairs sign", "1F  /  B1", (2025,550,277), 50)
-return_point = spawn(unreal.TargetPoint, "First floor return point", (1880,550,100), 180)
-return_trigger = spawn(unreal.ProjectProject01LevelTransitionTrigger, "Basement return to 1F", (3290,550,-328))
-return_trigger.get_component_by_class(unreal.BoxComponent).set_box_extent(unreal.Vector(55,550,112))
-return_trigger.set_editor_property("local_survivor_destination", return_point)
-return_trigger.set_editor_property("tags", ["RescueReturn"])
+for obsolete in ("First floor return point", "Basement return to 1F"):
+    if obsolete in placed:
+        actors.destroy_actor(placed[obsolete])
+return_sign = spawn(unreal.TextRenderActor, "Basement stairs to first floor sign", (3210,550,-165))
+return_sign.text_render.set_text("1F")
+return_sign.text_render.set_world_size(49)
+return_sign.text_render.set_horizontal_alignment(unreal.HorizTextAligment.EHTA_CENTER)
 
 for index, y in enumerate((-410,0,410),1):
     start = spawn(unreal.ProjectProject01RoleSpawnPoint, f"Survivor {index}", (-1630,y,100))

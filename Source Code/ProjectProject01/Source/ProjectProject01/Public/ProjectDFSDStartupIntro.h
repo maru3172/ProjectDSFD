@@ -30,6 +30,7 @@ class PROJECTPROJECT01_API UProjectDFSDStartupIntro final : public UUserWidget
 
 public:
 	FSimpleDelegate OnFinished;
+	void StartGameLogoReveal();
 
 protected:
 	virtual bool Initialize() override;
@@ -41,6 +42,7 @@ private:
 	void ApplyFrame();
 	void CompleteIfFinished();
 	FProjectDFSDIntroTimeline Timeline;
+	bool bRevealFromGameLogo = false;
 	UPROPERTY(Transient) TObjectPtr<class UScaleBox> LogoBox;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> TeamText;
 	UPROPERTY(Transient) TObjectPtr<class UTexture2D> LogoTexture;

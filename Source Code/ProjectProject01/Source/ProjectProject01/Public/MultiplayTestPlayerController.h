@@ -230,6 +230,7 @@ public:
 	void ClientQueueDeathCamera(class APlayerCharacter* Victim,const FString& Reason);
 	void DeclareVoluntaryExit();
 	void EnterSurvivorSpectator(class AActor* InitialTarget, bool bFadeTransition = false);
+	void ResumeAfterRescue(const FRotator& Facing);
 	/** Server, custom game infection: stop spectating and play this mannequin body directly (already possessed). */
 	void EnterInfectedBody(class AMannequinAICharacter* Body);
 	UFUNCTION(Client, Reliable) void ClientEnterInfectedBody(class AMannequinAICharacter* Body, const FMultiplaySurvivorSpectatorView& View);
@@ -425,6 +426,8 @@ private:
 
 	UFUNCTION(Client, Reliable)
 	void ClientEnterSurvivorSpectator(const FMultiplaySurvivorSpectatorView& View);
+	UFUNCTION(Client, Reliable)
+	void ClientResumeAfterRescue(const FMultiplaySurvivorSpectatorView& View, const FRotator& Facing);
 
 	UFUNCTION(Client, Reliable)
 	void ClientPrepareForLevelTransition(float FadeSeconds, uint32 RequestId);

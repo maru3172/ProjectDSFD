@@ -6,12 +6,13 @@
 #include "ProjectSingleIntro.generated.h"
 
 class ACameraActor;
+class ACharacter;
 class ATriggerBox;
 class SWidget;
 class UAnimSequence;
 class UGameViewportClient;
 class ULightComponent;
-class UPainGroanSynthComponent;
+class UPoseableMeshComponent;
 class UPlayerInteractionComponent;
 class USkeletalMeshComponent;
 class USoundBase;
@@ -65,37 +66,47 @@ protected:
 private:
 	enum class EPhase : uint8
 	{
-		Waiting, Phone, Shopping, InspectHat, Fire, Meet, Talk, LeaveTogether, Agree,
-		WalkToShutter, NoticeMannequin, PassedMannequin, ApproachPartner, Captured, AfterRescue,
+		Waiting, Phone, EnterStore, Shopping, InspectHat, Fire, Meet, Talk, LeaveTogether, Agree,
+		WalkToShutter, PartnerInjured,
 		ReadyToLeave, Finale, TitleCard
 	};
 	void Enter(EPhase Next);
 	void LockControls(bool bLock);
-	void TurnToward(const FVector& Point, float Blend);
+	void TurnToward(const FVector& Point, float MinimumSeconds);
+	void UpdateHatShot(APawn& Player);
+	void PoseHatReach(ACharacter& Player, float Reach);
+	void FinishHatShot();
 	void WalkIntoStore(APawn& Player);
+	void SetPhonePose(ACharacter& Player, UAnimSequence* Animation);
+	FVector UpdateHeldPhone(ACharacter& Player);
+	float GetOpeningFade() const;
 	void FollowPartner(const APawn& Player, float DeltaSeconds);
-	bool IsMannequinObserved() const;
 	float GetLastOutageTime() const;
 	void PlayAlarm();
+	void PlayPartnerScream();
 	void PlayImpact(const FVector& Position, float Pitch, float Volume) const;
 	void BuildOverlay();
+	TSharedRef<SWidget> BuildCinematicMask();
 	FText GetSubtitle() const;
 	FText GetShoppingList() const;
 	FText GetInteractionPrompt() const;
-	UFUNCTION() void OnReachHatCounter(AActor* Trigger, AActor* Other);
 	UFUNCTION() void OnPassMannequin(AActor* Trigger, AActor* Other);
 
 	EPhase Phase = EPhase::Waiting;
 	float Elapsed = 0.f;
 	bool bControlsLocked = false;
+	bool bUsingPhonePose = false;
+	uint8 PreviousAnimationMode = 0;
 	FRotator TurnStart = FRotator::ZeroRotator;
+	FRotator TurnDelta = FRotator::ZeroRotator;
+	float TurnDuration = 0.f;
 	float OpeningYaw = 0.f;
 	FTransform OpeningCameraStart;
 	float WalkSpeedBeforeIntro = 0.f;
 	FVector ShutterOpen = FVector::ZeroVector;
 	FVector HatStart = FVector::ZeroVector;
-	FVector PassageStart = FVector::ZeroVector;
-	double EncounterAt = 0.;
+	FVector HatApproach = FVector::ForwardVector;
+	bool bHatMeshWasVisible = true;
 	int32 NextFinaleLight = 0;
 	TArray<float> FinaleOutageTimes;
 	TArray<float> FinaleLightIntensities;
@@ -107,17 +118,22 @@ private:
 	UPROPERTY(Transient) TObjectPtr<AActor> Shutter;
 	UPROPERTY(Transient) TObjectPtr<AActor> OpeningDestination;
 	UPROPERTY(Transient) TObjectPtr<ACameraActor> OpeningCamera;
+	UPROPERTY(Transient) TObjectPtr<ACameraActor> HatCamera;
+	UPROPERTY(Transient) TObjectPtr<UPoseableMeshComponent> HatReachMesh;
 	UPROPERTY(Transient) TObjectPtr<AActor> OpeningCameraEnd;
-	UPROPERTY(Transient) TObjectPtr<ACameraActor> EncounterCamera;
+	UPROPERTY(Transient) TObjectPtr<AActor> PhoneProp;
+	UPROPERTY(Transient) TObjectPtr<AActor> PhoneDisplay;
+	UPROPERTY(Transient) TObjectPtr<UAnimSequence> PhoneWalkPose;
+	UPROPERTY(Transient) TObjectPtr<UAnimSequence> PhoneIdlePose;
 	UPROPERTY(Transient) TObjectPtr<ACameraActor> FinaleCamera;
 	UPROPERTY(Transient) TObjectPtr<AProjectSingleIntroTarget> ShutterHandle;
 	UPROPERTY(Transient) TArray<TObjectPtr<AProjectSingleIntroTarget>> FinaleCrowd;
 	UPROPERTY(Transient) TArray<TObjectPtr<ULightComponent>> FinaleLights;
 	UPROPERTY(Transient) TArray<TObjectPtr<AActor>> FinaleDiffusers;
 	UPROPERTY(Transient) TArray<TObjectPtr<AActor>> FinaleShoppingSigns;
-	UPROPERTY(Transient) TObjectPtr<ATriggerBox> HatCounter;
+	UPROPERTY(Transient) TArray<TObjectPtr<ULightComponent>> StoreLights;
 	UPROPERTY(Transient) TObjectPtr<ATriggerBox> Passage;
-	UPROPERTY(Transient) TObjectPtr<UPainGroanSynthComponent> PartnerVoice;
+	UPROPERTY(Transient) TObjectPtr<USoundWaveProcedural> PartnerScream;
 	UPROPERTY(Transient) TObjectPtr<USoundWaveProcedural> Alarm;
 	UPROPERTY(Transient) TObjectPtr<USoundBase> PhoneClick;
 	UPROPERTY(Transient) TObjectPtr<UPlayerInteractionComponent> Interaction;

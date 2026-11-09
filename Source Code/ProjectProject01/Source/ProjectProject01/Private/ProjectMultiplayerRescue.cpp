@@ -147,33 +147,58 @@ void AProjectMultiplayerRescueGameMode::BeginPlay()
 
 bool AProjectMultiplayerRescueGameMode::TryDetain(APlayerCharacter& Survivor, AMannequinAICharacter& Catcher)
 {
-	if (!Station || !Station->Gate || Station->DetainedSurvivor || !IsAuthoritativeMatchInProgress() || !IsRegisteredActiveSurvivor(&Survivor)
+	if (!Station || !Station->Gate || PendingDetention.IsValid() || Station->DetainedSurvivor
+		|| !IsAuthoritativeMatchInProgress() || !IsRegisteredActiveSurvivor(&Survivor)
 		|| PreviouslyDetained.Contains(&Survivor)) return false;
-	const auto* CaptiveController = Cast<AMultiplayTestPlayerController>(Survivor.GetController());
-	if (!CaptiveController || CaptiveController->IsServerControlledBot()
-		|| !HasOtherHumanSurvivorInPlay(CaptiveController)) return false;
-	const FVector Destination = Station->GetActorTransform().TransformPositionNoScale(Station->DetentionOffset);
-	if (!Survivor.TeleportTo(Destination, Station->GetActorRotation())) return false;
+	auto* CaptiveController = Cast<AMultiplayTestPlayerController>(Survivor.GetController());
+	if (!CaptiveController || CaptiveController->IsServerControlledBot() || !HasOtherHumanSurvivorInPlay(CaptiveController)
+		|| !FindLivingSurvivorSpectatorTarget(CaptiveController, 1)) return false;
 	CaptureOrigin = Catcher.GetActorLocation();
 	LastCatcher = &Catcher;
 	PreviouslyDetained.Add(&Survivor);
-	Station->SetGateOpen(false);
-	FirstFloorReturns.Remove(&Survivor);
-	Station->DetainedSurvivor = &Survivor;
-	Station->ForceNetUpdate();
+	PendingDetention = &Survivor;
 	Survivor.SetAwaitingMultiplayerRescue(true);
-	GetWorldTimerManager().SetTimer(RescuerCheckTimer, this,
-		&AProjectMultiplayerRescueGameMode::ResolveDetentionWithoutRescuer, .25f, true);
-	for (TActorIterator<APlayerCharacter> It(GetWorld()); It; ++It)
-	{
-		auto* PC = Cast<AMultiplayTestPlayerController>(It->GetController());
-		if (!PC || PC->IsServerControlledBot()) continue;
-		if (*It == &Survivor) PC->ClientShowAffixNotice(TEXT("붙잡혔습니다. 동료의 구출을 기다리세요."), 4.f);
-		else if (IsRegisteredActiveSurvivor(*It))
-			PC->ClientShowAffixNotice(TEXT("동료가 붙잡혔습니다. 감금 지점에서 구출할 수 있습니다."), 4.f);
-	}
+	float Pitch = 0.f, Roll = 0.f;
+	Survivor.ResolveFallDirection(CaptureOrigin, Pitch, Roll);
+	Survivor.MulticastPlayPainAndDeathWorldSFX(true, .85f);
+	Survivor.ClientPlayRescueFall(Pitch, Roll);
+	GetWorldTimerManager().SetTimer(CaptureHandoffTimer, this,
+		&AProjectMultiplayerRescueGameMode::FinishCapturePresentation, Survivor.GetDeathSequenceHandoffDelaySeconds(), false);
 	NotifyMannequinCaptureFeedback(false);
 	return true;
+}
+
+void AProjectMultiplayerRescueGameMode::FinishCapturePresentation()
+{
+	auto* Survivor = PendingDetention.Get();
+	PendingDetention.Reset();
+	if (!IsValid(Survivor)) return;
+	if (!IsValid(Station) || !IsAuthoritativeMatchInProgress())
+	{
+		Survivor->SetAwaitingMultiplayerRescue(false);
+		return;
+	}
+	auto* CaptiveController = Cast<AMultiplayTestPlayerController>(Survivor->GetController());
+	auto* Teammate = CaptiveController ? FindLivingSurvivorSpectatorTarget(CaptiveController, 1) : nullptr;
+	const FRotator Facing = Station->GetActorRotation();
+	const FVector Destination = Station->GetActorTransform().TransformPositionNoScale(Station->DetentionOffset);
+	if (!Teammate || !HasOtherHumanSurvivorInPlay(CaptiveController) || !Survivor->TeleportTo(Destination, Facing))
+	{
+		Survivor->SetAwaitingMultiplayerRescue(false);
+		float Pitch = 0.f, Roll = 0.f;
+		Survivor->ResolveFallDirection(CaptureOrigin, Pitch, Roll);
+		Survivor->FinishMannequinCatch(LastCatcher.Get(), Pitch, Roll);
+		return;
+	}
+	Station->SetGateOpen(false);
+	Station->DetainedSurvivor = Survivor;
+	Station->ForceNetUpdate();
+	CaptiveController->EnterSurvivorSpectator(Teammate, true);
+	CaptiveController->ClientShowAffixNotice(TEXT("붙잡혔습니다. 동료의 구출을 기다리세요."), 4.f);
+	GetWorldTimerManager().SetTimer(RescuerCheckTimer, this,
+		&AProjectMultiplayerRescueGameMode::ResolveDetentionWithoutRescuer, .25f, true);
+	if (auto* PC = Cast<AMultiplayTestPlayerController>(Teammate->GetController()); PC && !PC->IsServerControlledBot())
+		PC->ClientShowAffixNotice(TEXT("동료가 붙잡혔습니다. 감금 지점에서 구출할 수 있습니다."), 4.f);
 }
 
 bool AProjectMultiplayerRescueGameMode::CanFree(const AProjectMultiplayerRescueStation& Source, const APlayerCharacter& Rescuer) const
@@ -235,24 +260,15 @@ void AProjectMultiplayerRescueGameMode::Free(AProjectMultiplayerRescueStation& S
 	auto* Captive = Source.DetainedSurvivor.Get();
 	ClearDetention();
 	Source.SetGateOpen(true);
-	FirstFloorReturns.Add(Captive);
-	FirstFloorReturns.Add(&Rescuer);
 	Captive->SetAwaitingMultiplayerRescue(false, true);
 	if (auto* Record = FindSurvivorRecord(&Rescuer)) ++Record->RescueCount;
 	if (auto* PC = Cast<AMultiplayTestPlayerController>(Rescuer.GetController()))
 		PC->ClientShowAffixNotice(TEXT("동료를 구출했습니다."), 3.f);
 	if (auto* PC = Cast<AMultiplayTestPlayerController>(Captive->GetController()))
+	{
+		PC->ResumeAfterRescue(Source.GetActorRotation());
 		PC->ClientShowAffixNotice(TEXT("구출되었습니다. 통로를 따라 1층으로 돌아가세요."), 4.f);
-}
-
-bool AProjectMultiplayerRescueGameMode::CanUseFirstFloorReturn(APlayerCharacter* Survivor) const
-{
-	return FirstFloorReturns.Contains(Survivor);
-}
-
-void AProjectMultiplayerRescueGameMode::CompleteFirstFloorReturn(APlayerCharacter* Survivor)
-{
-	FirstFloorReturns.Remove(Survivor);
+	}
 }
 
 void AProjectMultiplayerRescueGameMode::ClearDetention()
@@ -280,6 +296,12 @@ void AProjectMultiplayerRescueGameMode::ResolveDetentionWithoutRescuer()
 
 void AProjectMultiplayerRescueGameMode::Logout(AController* Exiting)
 {
+	if (auto* Pending = PendingDetention.Get(); Pending && Pending->GetController() == Exiting)
+	{
+		GetWorldTimerManager().ClearTimer(CaptureHandoffTimer);
+		Pending->SetAwaitingMultiplayerRescue(false);
+		PendingDetention.Reset();
+	}
 	if (Station && Station->DetainedSurvivor && Station->DetainedSurvivor->GetController() == Exiting)
 	{
 		Station->DetainedSurvivor->SetAwaitingMultiplayerRescue(false);

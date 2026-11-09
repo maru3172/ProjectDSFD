@@ -251,6 +251,7 @@ public:
 	virtual void HandleSeamlessTravelPlayer(AController*& Controller) override;
 
 protected:
+	class APlayerCharacter* FindLivingSurvivorSpectatorTarget(const class AMultiplayTestPlayerController* RequestingController, int32 Direction) const;
 	virtual class AMannequinAICharacter* GetMannequinPlayerFocusPawn() const;
 
 private:
@@ -350,7 +351,6 @@ private:
 	void ApplyForfeit(FMultiplayTestServerPlayerRecord& Record, const FString& Reason);
 	void ProcessReconnectTimeouts();
 	void EnterSurvivorSpectator(class AMultiplayTestPlayerController* Controller);
-	class APlayerCharacter* FindLivingSurvivorSpectatorTarget(const class AMultiplayTestPlayerController* RequestingController, int32 Direction) const;
 	void TryStartAuthoritativeMatch();
 	void SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase NewPhase);
 	void CheckForMatchCompletion();

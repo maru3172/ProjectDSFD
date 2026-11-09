@@ -7,9 +7,11 @@
 #include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectDFSDStartupIntro.h"
+#include "ProjectDFSDBranding.h"
 #include "ProjectDFSDTitleScene.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/LocalPlayer.h"
+#include "Kismet/GameplayStatics.h"
 
 namespace ProjectProject01Frontend
 {
@@ -61,14 +63,19 @@ void AProjectProject01TitlePlayerController::BeginPlay()
 	if (ensureMsgf(IsValid(TitleWidget), TEXT("ProjectProject01 title widget creation failed.")))
 	{
 		TitleWidget->AddToViewport(100);
-		if (auto* Instance = GetGameInstance<UProjectProject01GameInstance>(); Instance && Instance->ConsumeStartupIntro())
+		const auto* GameMode = GetWorld()->GetAuthGameMode();
+		const bool bRevealFromGameLogo = GameMode && UGameplayStatics::HasOption(GameMode->OptionsString,
+			ProjectDFSDBranding::SingleIntroTitleRevealOption);
+		auto* Instance = GetGameInstance<UProjectProject01GameInstance>();
+		if (bRevealFromGameLogo || (Instance && Instance->ConsumeStartupIntro()))
 		{
 			StartupIntro = CreateWidget<UProjectDFSDStartupIntro>(this, UProjectDFSDStartupIntro::StaticClass());
 			if (StartupIntro)
 			{
 				// Block input without greying out the title underneath the final reveal.
 				TitleWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
-				if (TitleScene) TitleScene->SetPresentationActive(false);
+				if (bRevealFromGameLogo) StartupIntro->StartGameLogoReveal();
+				else if (TitleScene) TitleScene->SetPresentationActive(false);
 				StartupIntro->OnFinished.BindUObject(this, &AProjectProject01TitlePlayerController::CompleteStartupIntro);
 				StartupIntro->AddToViewport(90000);
 				StartupIntro->SetKeyboardFocus();

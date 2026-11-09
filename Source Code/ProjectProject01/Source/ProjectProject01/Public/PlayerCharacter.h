@@ -219,6 +219,8 @@ private:
 
 	UFUNCTION(Client, Reliable)
 	void ClientPlayDeathSequence(float FallPitchDirection, float FallRollDirection);
+	UFUNCTION(Client, Reliable)
+	void ClientPlayRescueFall(float FallPitchDirection, float FallRollDirection);
 
 	/** PIE 네트워크 실행에서도 싱글 GameMode가 확정한 탈출 결과를 소유 클라이언트에 표시합니다. */
 	UFUNCTION(Client, Reliable)
@@ -414,7 +416,7 @@ private:
 	void ResolveFallDirection(const FVector& HitSourceLocation, float& OutPitchDirection, float& OutRollDirection) const;
 	void PlayLocalDamageFeedback(float FallPitchDirection, float FallRollDirection, float DamageSeverity,
 		bool bAlsoShowVFX = true);
-	void PlayLocalDeathSequence(float FallPitchDirection, float FallRollDirection);
+	void PlayLocalDeathSequence(float FallPitchDirection, float FallRollDirection, bool bRescueFall = false);
 	void UpdateCameraFeedback(float DeltaTime);
 	void RestoreFeedbackCamera();
 	bool CanUseLocomotionCamera() const;
@@ -499,6 +501,7 @@ private:
 	double NextDeathCountDamageAllowedWorldSeconds = -1.0;
 	bool bCameraHitFeedbackActive = false;
 	bool bCameraDeathFeedbackActive = false;
+	bool bCameraRescueFall = false;
 	bool bBodyFallSFXPlayed = false;
 	FTimerHandle BodyFallWorldSFXTimer;
 	/** Custom game infinite lives: moves a caught survivor back to the floor start once the hit feedback ends. */

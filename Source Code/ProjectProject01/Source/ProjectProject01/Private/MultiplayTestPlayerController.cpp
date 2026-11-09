@@ -990,6 +990,38 @@ void AMultiplayTestPlayerController::PrepareLevelTransitionCarryover(
 	ClientPrepareForLevelTransition(FadeSeconds, ++TransitionFadeSerial);
 }
 
+void AMultiplayTestPlayerController::ResumeAfterRescue(const FRotator& Facing)
+{
+	if (!HasAuthority() || !IsValid(GetPawn())) return;
+	SurvivorSpectatorView = {};
+	SurvivorSpectatorView.RequestId = ++SpectatorRequestSerial;
+	ResetIgnoreMoveInput();
+	ResetIgnoreLookInput();
+	bAutoManageActiveCameraTarget = true;
+	SetControlRotation(Facing);
+	ForceNetUpdate();
+	ClientResumeAfterRescue(SurvivorSpectatorView, Facing);
+	if (!IsLocalController()) SetViewTarget(GetPawn());
+}
+
+void AMultiplayTestPlayerController::ClientResumeAfterRescue_Implementation(
+	const FMultiplaySurvivorSpectatorView& View, const FRotator& Facing)
+{
+	if (!IsLocalController() || !IsValid(GetPawn()) || View.RequestId < SurvivorSpectatorView.RequestId
+		|| bLocalMatchResultRequested || MatchPhase != EMultiplayTestMatchPhase::InProgress) return;
+	GetWorldTimerManager().ClearTimer(SpectatorFadeTimer);
+	bSpectatorFadePending = false;
+	SurvivorSpectatorView = View;
+	ResetIgnoreMoveInput();
+	ResetIgnoreLookInput();
+	RotationInput = FRotator::ZeroRotator;
+	SetControlRotation(Facing);
+	ReleaseLocalDeathBlackouts();
+	OnRep_SurvivorSpectatorView();
+	if (PlayerCameraManager) PlayerCameraManager->StopCameraFade();
+	if (auto* GI = GetGameInstance<UProjectProject01GameInstance>()) GI->FadeEntireScreenFromBlack(.45f);
+}
+
 void AMultiplayTestPlayerController::CompleteLevelTransitionCarryover(
 	AActor* InitialViewTarget,
 	const bool bCanPlay)
