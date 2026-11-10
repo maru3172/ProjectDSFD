@@ -38,7 +38,9 @@ internal static class SurveyEndpoints
         {
             if (!request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return Results.Unauthorized();
             await using var connection = await database.OpenConnectionAsync(ct);
-            if (await ResolveOptionalUserIdAsync(connection, request, ct) is null) return Results.Unauthorized();
+            if (await ResolveOptionalUserIdAsync(connection, request, ct) is not { } userId) return Results.Unauthorized();
+            if (!await LiveOperations.SurveyAllowed(connection, userId, ct))
+                return Results.NotFound(new { code = "NoActiveSurvey", message = "현재 진행 중인 설문이 없습니다." });
             SurveyRow? survey = await LoadActiveSurveyAsync(connection, ct);
             return survey is null
                 ? Results.NotFound(new { code = "NoActiveSurvey", message = "현재 진행 중인 설문이 없습니다." })
@@ -62,6 +64,8 @@ internal static class SurveyEndpoints
             await using var connection = await database.OpenConnectionAsync(ct);
             ulong? userId = await ResolveOptionalUserIdAsync(connection, request, ct);
             if (userId is null) return Results.Unauthorized();
+            if (!await LiveOperations.SurveyAllowed(connection, userId.Value, ct))
+                return Results.Conflict(new { message = "이 설문은 현재 응답을 받지 않습니다." });
             SurveyRow? survey = await LoadSurveyAsync(connection, surveyId, ct);
             if (survey is null || !survey.IsActive)
                 return Results.Conflict(new { message = "이 설문은 현재 응답을 받지 않습니다." });

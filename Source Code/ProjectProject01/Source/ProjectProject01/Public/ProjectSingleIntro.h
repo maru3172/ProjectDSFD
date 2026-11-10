@@ -50,6 +50,7 @@ class PROJECTPROJECT01_API AProjectSingleIntroGameMode : public AProjectPractice
 {
 	GENERATED_BODY()
 	friend class FProjectSingleIntroPIETest;
+	friend class FProjectSingleIntroTravelTest;
 
 public:
 	AProjectSingleIntroGameMode();
@@ -71,6 +72,7 @@ private:
 		ReadyToLeave, Finale, TitleCard
 	};
 	void Enter(EPhase Next);
+	void ReturnToTitle();
 	void LockControls(bool bLock);
 	void TurnToward(const FVector& Point, float MinimumSeconds, float StartAt = 0.f);
 	void UpdateHatShot(APawn& Player);
@@ -95,6 +97,7 @@ private:
 	UFUNCTION() void OnPassMannequin(AActor* Trigger, AActor* Other);
 
 	EPhase Phase = EPhase::Waiting;
+	int32 ReplayScene = 0;
 	float Elapsed = 0.f;
 	bool bControlsLocked = false;
 	bool bUsingPhonePose = false;

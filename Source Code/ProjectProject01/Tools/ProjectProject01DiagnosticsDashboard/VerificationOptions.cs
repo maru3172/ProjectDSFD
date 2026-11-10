@@ -23,7 +23,8 @@ internal sealed partial class DashboardForm
         using var menu = new ContextMenuStrip();
         var selection = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         string[] choices = ["일반 자동 검사", "유닛·기능 검사 선택", "UI 실험 검사", "에셋 검증 (Unreal)",
-            "핵심 흐름 검사 (PIE)", "패키지 에셋 확인", "작업 누락 검토"];
+            "핵심 흐름 검사 (PIE)", "패키지 에셋 확인", "작업 누락 검토", "지연·패킷 손실 검사 (PIE)",
+            "UI 스크린샷 비교", "패키지 클라이언트 3개로 검수", "경기 맵·이동 장치 검사", "UI 문구 등록 검사"];
         for (int i = 0; i < choices.Length; i++)
         {
             int index = i;
@@ -78,6 +79,32 @@ internal sealed partial class DashboardForm
                     if (options.ShowDialog(this) == DialogResult.OK)
                         RunProjectCheck(project, "작업 누락 검토", (folder, token, progress) =>
                             WorkReview.RunAsync(project, options.Input.Lines, folder, token, progress));
+                break;
+            case 7:
+                await VerifySelectedRunAsync(button, AutomationRunPlan.Network(project.PrimaryModule), attachToSelectedRun: false);
+                break;
+            case 8:
+                using (var baseline = new OpenFileDialog { Title = "기준 UI 스크린샷", Filter = "PNG 이미지|*.png" })
+                using (var candidate = new OpenFileDialog { Title = "비교할 UI 스크린샷", Filter = "PNG 이미지|*.png" })
+                    if (baseline.ShowDialog(this) == DialogResult.OK && candidate.ShowDialog(this) == DialogResult.OK)
+                        RunProjectCheck(project, "UI 스크린샷 비교", (folder, token, _) =>
+                            UiScreenshotComparison.RunAsync(baseline.FileName, candidate.FileName, folder, token));
+                break;
+            case 9:
+                using (var picker = new OpenFileDialog { Title = "패키징한 Windows 클라이언트 선택", Filter = $"{project.Name}.exe|{project.Name}.exe" })
+                    if (picker.ShowDialog(this) == DialogResult.OK)
+                    {
+                        string directory = AutomationVerification.CreateAttempt(VerificationWorkspace(project.ProjectFile, "패키지 클라이언트 검수")).Directory;
+                        using var form = new PackagedClientVerificationForm(picker.FileName, directory);
+                        form.ShowDialog(this);
+                    }
+                break;
+            case 10:
+                await VerifySelectedRunAsync(button, AutomationRunPlan.Maps(project.PrimaryModule), attachToSelectedRun: false);
+                break;
+            case 11:
+                RunProjectCheck(project, "UI 문구 등록 검사", (folder, token, _) =>
+                    UiTextRegistrationCheck.RunAsync(project.ProjectRoot, folder, token));
                 break;
         }
     }

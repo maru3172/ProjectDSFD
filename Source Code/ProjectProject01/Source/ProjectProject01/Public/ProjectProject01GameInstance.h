@@ -52,6 +52,7 @@ public:
 	virtual void LoadSettings(bool bForceReload = false) override;
 	virtual void ApplySettings(bool bCheckForCommandLineOverrides) override;
 	virtual void ApplyNonResolutionSettings() override;
+	virtual void SaveSettings() override;
 
 	void ValidateProjectSettings();
 	void ApplyProjectSettings(bool bApplicationActive = true);
@@ -435,6 +436,8 @@ public:
 	void HoldEntireScreenBlack();
 	void FadeEntireScreenFromBlack(float DurationSeconds);
 	void ClearEntireScreenFade();
+	void SubmitBugInquiry(const FString& Description, bool bAttachContext, TFunction<void(bool, const FString&)> Completion);
+	void RecordTutorialAnalytics(const FGuid& RunId, const TCHAR* Role, int32 Step, bool bCompleted);
 	bool IsEntireScreenBlack() const { return !bEntireScreenFadeAnimating && EntireScreenFadeOpacity >= 1.0f; }
 
 private:
@@ -503,6 +506,7 @@ private:
 	FString CrashStartedAtUtc;
 	FString ActiveCrashMarkerPath;
 	FString PendingCrashMatchId;
+	TArray<int32> RecentNetworkFailureCodes;
 	FString PendingCrashPlayerRole;
 	bool bHandlingFailedGameConnection = false;
     friend class FProjectNetworkIsolationTest;

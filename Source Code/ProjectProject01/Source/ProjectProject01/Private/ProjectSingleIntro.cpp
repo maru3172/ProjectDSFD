@@ -5,6 +5,7 @@
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/LightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PoseableMeshComponent.h"
@@ -17,9 +18,11 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/ConfigCacheIni.h"
 #include "PlayerInteractionComponent.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectProject01SpatialAudio.h"
 #include "ProjectUIClickSound.h"
 #include "Sound/SoundWaveProcedural.h"
@@ -176,6 +179,10 @@ AProjectSingleIntroGameMode::AProjectSingleIntroGameMode()
 void AProjectSingleIntroGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+	ReplayScene = FMath::Clamp(FCString::Atoi(*UGameplayStatics::ParseOption(OptionsString, TEXT("IntroScene"))), 0, 3);
+	int32 SeenScenes = 0;
+	GConfig->GetInt(TEXT("ProjectDFSD.IntroScenes"), TEXT("Seen"), SeenScenes, GGameUserSettingsIni);
+	if (ReplayScene > 0 && !(SeenScenes & (1 << (ReplayScene - 1)))) ReplayScene = 0;
 	for (TActorIterator<AProjectSingleIntroTarget> It(GetWorld()); It; ++It)
 	{
 		if (It->Action == HatAction) Hat = *It;
@@ -292,6 +299,25 @@ void AProjectSingleIntroGameMode::LockControls(bool bLock)
 
 void AProjectSingleIntroGameMode::Enter(EPhase Next)
 {
+	if (ReplayScene == 0)
+	{
+		const int32 SeenBit = Next == EPhase::Shopping ? 1 : Next == EPhase::Meet ? 2 : Next == EPhase::TitleCard ? 4 : 0;
+		if (SeenBit)
+		{
+			int32 Seen = 0;
+			GConfig->GetInt(TEXT("ProjectDFSD.IntroScenes"), TEXT("Seen"), Seen, GGameUserSettingsIni);
+			if (!(Seen & SeenBit))
+			{
+				GConfig->SetInt(TEXT("ProjectDFSD.IntroScenes"), TEXT("Seen"), Seen | SeenBit, GGameUserSettingsIni);
+				GConfig->Flush(false, GGameUserSettingsIni);
+			}
+		}
+	}
+	else if ((ReplayScene == 1 && Next == EPhase::Shopping) || (ReplayScene == 2 && Next == EPhase::Meet))
+	{
+		Enter(EPhase::TitleCard);
+		return;
+	}
 	Phase = Next;
 	Elapsed = 0.f;
 	TurnDuration = 0.f;
@@ -531,10 +557,36 @@ void AProjectSingleIntroGameMode::Tick(float DeltaSeconds)
 	{
 		auto* PlayerController = GetWorld()->GetFirstPlayerController();
 		if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->GetPawn()) return;
+		// This map runs its own opening, so the player pawn does not end the travel loading screen. Tell it the view
+		// is ready (no extra reveal: the intro's own black overlay is up while waiting) and start once it has closed,
+		// so the first shot is never played behind the loading screen.
+		if (auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+			if (const auto* Loading = Game->GetSubsystem<UProjectLoadingScreenSubsystem>(); Loading && Loading->IsLoading())
+			{
+				Game->FadeEntireScreenFromBlack(0.f);
+				return;
+			}
 		Controller = PlayerController;
 		Interaction = Controller->GetPawn()->FindComponentByClass<UPlayerInteractionComponent>();
 		if (Interaction) Interaction->UseExternalPrompt();
-		Enter(EPhase::Phone);
+		if (ReplayScene == 2)
+		{
+			APawn* Pawn = Controller->GetPawn();
+			FVector Start = HatStart + FVector(0, -135, 0);
+			if (const auto* Capsule = Pawn->FindComponentByClass<UCapsuleComponent>())
+				Start.Z = Partner->GetActorLocation().Z + Capsule->GetScaledCapsuleHalfHeight() + 2.f;
+			const FRotator Facing(0.f, (HatStart - Start).Rotation().Yaw, 0.f);
+			Pawn->SetActorLocationAndRotation(Start, Facing, false, nullptr, ETeleportType::TeleportPhysics);
+			Controller->SetControlRotation(Facing);
+			Enter(EPhase::InspectHat);
+		}
+		else if (ReplayScene == 3)
+		{
+			Shutter->SetActorLocation(ShutterOpen - FVector(0, 0, ShutterDrop));
+			Controller->SetViewTarget(FinaleCamera);
+			Enter(EPhase::Finale);
+		}
+		else Enter(EPhase::Phone);
 		return;
 	}
 	if (!Controller.IsValid() || !Controller->GetPawn()) return;
@@ -694,18 +746,19 @@ void AProjectSingleIntroGameMode::Tick(float DeltaSeconds)
 		break;
 	}
 	case EPhase::TitleCard:
-		if (Elapsed >= TitleHandoffAt)
-		{
-			if (auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance()))
-				Game->ConsumeStartupIntro();
-			SetActorTickEnabled(false);
-			UGameplayStatics::OpenLevel(this, TEXT("/Game/MyProject/Level/TitleLevel"), true,
-				ProjectDFSDBranding::SingleIntroTitleRevealOption);
-		}
+		if (Elapsed >= TitleHandoffAt) ReturnToTitle();
 		break;
 	default:
 		break;
 	}
+}
+
+void AProjectSingleIntroGameMode::ReturnToTitle()
+{
+	if (auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance())) Game->ConsumeStartupIntro();
+	SetActorTickEnabled(false);
+	UGameplayStatics::OpenLevel(this, TEXT("/Game/MyProject/Level/TitleLevel"), true,
+		ProjectDFSDBranding::SingleIntroTitleRevealOption);
 }
 
 void AProjectSingleIntroGameMode::PlayImpact(const FVector& Position, float Pitch, float Volume) const

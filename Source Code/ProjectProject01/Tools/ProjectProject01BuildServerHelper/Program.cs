@@ -313,6 +313,7 @@ internal sealed partial class MainForm : Form
             InvalidateClientUpdateManifests(Path.Combine(archiveRoot.Text.Trim(), role));
         }
         string args = BuildCookRunArguments(projectFile.Text.Trim(), archiveRoot.Text.Trim(), server);
+        BuildProvenance.SourceState? source = await BuildProvenance.ReadSourceAsync(ProjectRoot());
         SetStatus($"{role} 패키징 중...");
         int code;
         if (server)
@@ -322,6 +323,17 @@ internal sealed partial class MainForm : Form
         else
         {
             code = await PackageClientWithLocalEosCredentialAsync(uat, args);
+        }
+        if (code == 0)
+        {
+            try
+            {
+                var after = await BuildProvenance.ReadSourceAsync(ProjectRoot());
+                await BuildProvenance.RecordAsync(ProjectRoot(), Path.Combine(archiveRoot.Text.Trim(), role),
+                    server ? HelperProject.Current.ServerExecutable : HelperProject.Current.ClientExecutable,
+                    ReadClientVersion(), source, after);
+            }
+            catch (Exception ex) { Append("[빌드 추적] " + ex.Message); }
         }
         if (code == 0 && !server)
         {

@@ -15,6 +15,7 @@ internal sealed class ServerAdministrationForm : Form
     private readonly Action<string> mainLog;
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly TextBox baseUrl = new() { Dock = DockStyle.Fill, Text = "http://127.0.0.1:5080" };
+    private readonly TextBox operatorKey = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, MaxLength = 256 };
     private readonly Label serviceState = new()
     {
         AutoSize = true,
@@ -175,6 +176,8 @@ internal sealed class ServerAdministrationForm : Form
         address.Controls.Add(new Label { Text = "백엔드 주소", AutoSize = true, Padding = new Padding(0, 7, 0, 0) }, 0, 0);
         baseUrl.Name = "AdministrationBaseUrl";
         address.Controls.Add(baseUrl, 1, 0);
+        address.Controls.Add(new Label { Text = "운영자 키", AutoSize = true }, 0, 1);
+        address.Controls.Add(operatorKey, 1, 1);
         var refresh = ActionRow();
         AddButton(refresh, "상태 새로고침", RefreshStatusAsync);
         address.Controls.Add(refresh, 2, 0);
@@ -275,10 +278,30 @@ internal sealed class ServerAdministrationForm : Form
         var crashes = ActionRow();
         AddButton(crashes, "크래시 보고서 보기", LoadCrashReportsAsync);
         AddButton(crashes, "크래시 보관 정책", () => { using var dialog = new CrashArtifactPolicyForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(crashes, "Win64 덤프 분석", () =>
+        {
+            using var dialog = new CrashAnalysisForm(projectRoot);
+            dialog.ShowDialog(this);
+            return Task.CompletedTask;
+        });
         Group(operations, "크래시 보고서", crashes);
         var capacity = ActionRow();
         AddButton(capacity, "최대 방 수", () => { using var dialog = new RoomCapacityForm(CreateAdminRequest, value => CapacityChanged?.Invoke(value)); dialog.ShowDialog(this); return Task.CompletedTask; });
         Group(operations, "운영 한도", capacity);
+        var liveTools = ActionRow();
+        AddButton(liveTools, "장애 알림·플레이 분석·운영 이력", () =>
+        {
+            using var dialog = new LiveOperationsForm(CreateAdminRequest, false);
+            dialog.ShowDialog(this);
+            return Task.CompletedTask;
+        });
+        AddButton(liveTools, "공개 범위·예약 보상", () =>
+        {
+            using var dialog = new LiveOperationsForm(CreateAdminRequest, true);
+            dialog.ShowDialog(this);
+            return Task.CompletedTask;
+        });
+        Group(operations, "라이브 운영", liveTools);
 
         foreach (var page in new[] { service, accounts, contentPage, operations })
         {
@@ -596,6 +619,15 @@ internal sealed class ServerAdministrationForm : Form
 
     private string LoadAdministratorKey()
     {
+        string supplied = operatorKey.Text.Trim();
+        if (supplied.Length != 0)
+        {
+            if (supplied.Length < 32) throw new InvalidOperationException("운영자 키는 32자 이상이어야 합니다.");
+            if (!Uri.TryCreate(baseUrl.Text.Trim(), UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttps && !uri.IsLoopback))
+                throw new InvalidOperationException("원격 운영자 키는 HTTPS 연결에서만 사용할 수 있습니다.");
+            return supplied;
+        }
         string path = Path.Combine(projectRoot, "Tools", "ProjectProject01Backend", "LocalMySql",
             "ProjectProject01Backend.local.json");
         if (!File.Exists(path))

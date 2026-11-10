@@ -8,7 +8,8 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 
 // Server-local journal only; there is deliberately no public upload/import endpoint.
 internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,IServer server,
-    GameServerDemandManager manager,ProjectSecurityOptions security,ILogger<MatchResultRecoveryWorker> logger):BackgroundService
+    GameServerDemandManager manager,ProjectSecurityOptions security,ILogger<MatchResultRecoveryWorker> logger,
+    OperationsHealth health,VersionCompatibilityOptions version):BackgroundService
 {
     private readonly Dictionary<string,DateTime> next=[];
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -29,6 +30,9 @@ internal sealed class MatchResultRecoveryWorker(IWebHostEnvironment environment,
                     if(!Directory.Exists(directory)||HasReparseAncestor(directory))continue;
                     foreach(string file in Directory.EnumerateFiles(directory,"*.json",new EnumerationOptions{AttributesToSkip=FileAttributes.ReparsePoint,RecurseSubdirectories=false}).Take(128))
                     {
+                        var pendingAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(file);
+                        if (pendingAge >= TimeSpan.FromSeconds(60) && pendingAge <= TimeSpan.FromDays(2))
+                            health.Observe("경기 결과 저장", OperationsHealth.Build(version, true), "재전송 지연(초)", 60, (int)pendingAge.TotalSeconds);
                         if(next.TryGetValue(file,out var when)&&DateTime.UtcNow<when)continue;
                         if(next.ContainsKey(file))BackendDiagnostics.Shared.Failure("Result recovery","retry-pass",delay:30);
                         next[file]=DateTime.UtcNow.AddSeconds(30);

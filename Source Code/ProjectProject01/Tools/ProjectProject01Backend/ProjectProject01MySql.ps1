@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Initialize', 'Start', 'Stop', 'Status', 'SyncLocalConfiguration', 'Backup', 'Restore', 'ValidateBackup', 'InstallBackupTask')]
+    [ValidateSet('Initialize', 'Start', 'Stop', 'Status', 'SyncLocalConfiguration', 'Backup', 'Restore', 'ValidateBackup', 'TestRestore', 'InstallBackupTask')]
     [string]$Action,
     [string]$BackupFile,
     [switch]$ConfirmRestore
@@ -167,7 +167,8 @@ function Invoke-MySqlInput {
         [Parameter(Mandatory = $true)]
         [string[]]$Arguments,
         [string]$StandardInput,
-        [string]$Password
+        [string]$Password,
+        [switch]$ReturnOutput
     )
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -188,6 +189,8 @@ function Invoke-MySqlInput {
     if (-not (Start-ProcessWithoutInputMark -Process $process)) {
         throw "Failed to start $Executable"
     }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     if ($startInfo.RedirectStandardInput) {
         # UTF-8 bytes straight to the pipe: Windows PowerShell 5.1 (.NET Framework) has no StandardInputEncoding, and
         # its writer would add a byte-order mark or break Korean text in the SQL.
@@ -197,8 +200,8 @@ function Invoke-MySqlInput {
         # Close the pipe itself: closing the writer on a UTF-8 console would append a byte-order mark after the data.
         $process.StandardInput.BaseStream.Close()
     }
-    $standardOutput = $process.StandardOutput.ReadToEnd()
-    $standardError = $process.StandardError.ReadToEnd()
+    $standardOutput = $stdoutTask.GetAwaiter().GetResult()
+    $standardError = $stderrTask.GetAwaiter().GetResult()
     $process.WaitForExit()
     if ($process.ExitCode -ne 0) {
         throw "$Executable failed with exit code $($process.ExitCode): $standardError"
@@ -206,6 +209,7 @@ function Invoke-MySqlInput {
     if (-not [string]::IsNullOrWhiteSpace($standardOutput)) {
         Write-Verbose $standardOutput
     }
+    if ($ReturnOutput) { return $standardOutput.Trim() }
 }
 
 function New-RandomSecret {
@@ -445,7 +449,7 @@ function Import-ProjectDatabase {
     param([string]$Sql)
     # Replace only this fixed database. Tables added after an older backup must not survive restoration.
     $replace="DROP DATABASE IF EXISTS projectproject01; CREATE DATABASE projectproject01 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE projectproject01;`n"
-    Invoke-MySqlInput -Executable $mysqlPath -Arguments @('--protocol=TCP',"--host=$bindAddress","--port=$port",'--user=projectproject01_admin','--default-character-set=utf8mb4') -Password (Read-AdminPassword) -StandardInput ($replace+$Sql)
+    Invoke-MySqlInput -Executable $mysqlPath -Arguments @('--no-defaults','--protocol=TCP',"--host=$bindAddress","--port=$port",'--user=projectproject01_admin','--binary-mode','--local-infile=0','--default-character-set=utf8mb4') -Password (Read-AdminPassword) -StandardInput ($replace+$Sql)
 }
 
 function Restore-ProjectDatabase {
@@ -461,6 +465,60 @@ function Restore-ProjectDatabase {
         throw "Restore failed; the pre-restore backup was recovered. $originalFailure"
     }
     Write-Host 'Database restored. A pre-restore backup is available in Backups. Restart the backend.'
+}
+
+function Test-ProjectDatabaseRestore {
+    $sql = Test-ProjectBackupFile -File $BackupFile
+    $rehearsalRoot = [IO.Path]::GetFullPath($instanceDirectory)
+    $name = 'Rehearsal-' + [Guid]::NewGuid().ToString('N')
+    $rehearsal = [IO.Path]::GetFullPath((Join-Path $rehearsalRoot $name))
+    if ([IO.Path]::GetDirectoryName($rehearsal) -ne $rehearsalRoot -or (Test-Path -LiteralPath $rehearsal)) {
+        throw 'Invalid or occupied restore rehearsal directory.'
+    }
+    $null = New-Item -ItemType Directory -Path $rehearsal
+    $instance = $null
+    try {
+        $data = Join-Path $rehearsal 'Data'
+        $log = Join-Path $rehearsal 'mysql.log'
+        $common = @('--no-defaults', "--basedir=$mysqlBaseDirectory", "--datadir=$data", "--log-error=$log")
+        Invoke-MySqlInput -Executable $mysqldPath -Arguments ($common + @('--initialize-insecure'))
+
+        $processInfo = [Diagnostics.ProcessStartInfo]::new($mysqldPath)
+        $processInfo.UseShellExecute = $false
+        $processInfo.CreateNoWindow = $true
+        Set-ProcessArguments -StartInfo $processInfo -Arguments ($common + @('--skip-networking',
+            '--enable-named-pipe', "--socket=$name", '--event-scheduler=DISABLED', '--local-infile=OFF'))
+        $instance = [Diagnostics.Process]::Start($processInfo)
+        $client = @('--no-defaults', '--protocol=PIPE', "--socket=$name", '--user=root', '--binary-mode',
+            '--local-infile=0', '--default-character-set=utf8mb4', '--batch', '--skip-column-names')
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 40 -and -not $instance.HasExited; $attempt++) {
+            try {
+                $ready = (Invoke-MySqlInput -Executable $mysqlPath -Arguments ($client + @('--execute=SELECT 1')) -ReturnOutput) -eq '1'
+                if ($ready) { break }
+            } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $ready) { throw 'The isolated MySQL rehearsal instance could not start.' }
+        $prefix = "CREATE DATABASE projectproject01 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE projectproject01;`n"
+        Invoke-MySqlInput -Executable $mysqlPath -Arguments $client -StandardInput ($prefix + $sql)
+        $counts = Invoke-MySqlInput -Executable $mysqlPath -Arguments ($client + @(
+            '--database=projectproject01',
+            '--execute=SELECT COUNT(*) FROM users; SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE();'
+        )) -ReturnOutput
+        $rows = @($counts -split '\r?\n')
+        if ($rows.Count -ne 2 -or [int]$rows[1] -lt 1) { throw 'Restored schema could not be verified.' }
+        Write-Host "Isolated restore verified. Accounts: $($rows[0]), tables: $($rows[1])."
+        Invoke-MySqlInput -Executable $mysqlPath -Arguments ($client + @('--execute=SHUTDOWN'))
+    }
+    finally {
+        if ($instance) {
+            if (-not $instance.WaitForExit(10000)) { $instance.Kill(); $instance.WaitForExit() }
+            $instance.Dispose()
+        }
+        if ([IO.Path]::GetDirectoryName((Get-Item -LiteralPath $rehearsal).FullName) -eq $rehearsalRoot) {
+            Remove-Item -LiteralPath $rehearsal -Recurse -Force
+        }
+    }
 }
 
 function Install-ProjectProject01BackupTask {
@@ -563,6 +621,7 @@ switch ($Action) {
     'SyncLocalConfiguration' { Sync-LocalConfiguration }
     'Backup' { Backup-ProjectProject01Database }
     'Restore' { Restore-ProjectDatabase }
+    'TestRestore' { Test-ProjectDatabaseRestore }
     'ValidateBackup' { $null=Test-ProjectBackupFile -File $BackupFile }
     'InstallBackupTask' { Install-ProjectProject01BackupTask }
     'Status' {

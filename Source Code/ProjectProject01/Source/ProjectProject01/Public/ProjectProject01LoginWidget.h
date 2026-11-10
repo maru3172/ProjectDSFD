@@ -259,7 +259,8 @@ private:
 		None,
 		ContinueRecent,
 		PlaySlot,
-		NewGameSlot
+		NewGameSlot,
+		IntroScene
 	};
 
 	UFUNCTION()
@@ -267,6 +268,12 @@ private:
 
 	UFUNCTION()
 	void HandleContinueSinglePlayerClicked();
+	UFUNCTION() void HandleIntroLibraryClicked();
+	UFUNCTION() void HandlePlayIntroClicked();
+	UFUNCTION() void HandleReplayOpeningClicked();
+	UFUNCTION() void HandleReplayHatClicked();
+	UFUNCTION() void HandleReplayFinaleClicked();
+	TArray<TWeakObjectPtr<UButton>> IntroLibraryButtons;
 
 	UFUNCTION()
 	void HandleSaveSlot1PlayClicked();
@@ -504,6 +511,27 @@ private:
 
 	UFUNCTION()
 	void HandleContinueClicked();
+	UFUNCTION() void HandlePhotoModeClicked();
+	UFUNCTION() void HandlePhotoCaptureClicked();
+	UFUNCTION() void HandlePhotoExitClicked();
+	UFUNCTION() void HandlePhotoFocusChanged(float Value);
+	UFUNCTION() void HandlePhotoExposureChanged(float Value);
+	void EndPhotoMode(bool bFocusMenu);
+	TWeakObjectPtr<class ACameraActor> PhotoCamera;
+	TWeakObjectPtr<AActor> PreviousPhotoView;
+	TWeakObjectPtr<UWidget> PhotoPanel;
+	TWeakObjectPtr<UWidget> PhotoDim;
+	TWeakObjectPtr<UButton> PhotoEntry;
+	TMap<TWeakObjectPtr<UUserWidget>, ESlateVisibility> PhotoHiddenWidgets;
+	bool bPhotoHudWasVisible = false;
+	UFUNCTION() void HandleBugReportClicked();
+	UFUNCTION() void HandleSubmitBugReportClicked();
+	UFUNCTION() void HandleCloseBugReportClicked();
+	TWeakObjectPtr<class UMultiLineEditableTextBox> BugDescription;
+	TWeakObjectPtr<UCheckBox> BugAttachContext;
+	TWeakObjectPtr<UTextBlock> BugReportStatus;
+	TWeakObjectPtr<UButton> BugReportSend;
+	TWeakObjectPtr<UWidget> BugReportPage;
 
 	UFUNCTION()
 	void HandleSaveCheckpointClicked();
@@ -900,6 +928,7 @@ private:
 	UFUNCTION() void HandleApplyClicked();
 	UFUNCTION() void HandleCancelClicked();
 	UFUNCTION() void HandleDefaultsClicked();
+	UFUNCTION() void HandleGraphicsBenchmarkClicked();
 	UFUNCTION() void HandleRevertVideoClicked();
 	UFUNCTION() void HandleServerSettingsTabClicked();
 	UFUNCTION() void HandleAudioSettingsTabClicked();

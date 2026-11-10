@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Path $instanceDirectory | Out-Null
 # Load function definitions only: never execute the production script's initialization or action switch.
 $source=Join-Path $ProjectRoot 'Tools\ProjectProject01Backend\ProjectProject01MySql.ps1'
 $ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$null,[ref]$null)
-$required=@('Set-ProcessArguments','Set-ProcessEnvironmentValue','Invoke-MySqlInput','Test-ProjectProject01Port','Backup-ProjectProject01Database','Test-ProjectBackupFile','Import-ProjectDatabase','Restore-ProjectDatabase')
+$required=@('Set-ProcessArguments','Set-ProcessEnvironmentValue','Start-ProcessWithoutInputMark','Invoke-MySqlInput','Test-ProjectProject01Port','Backup-ProjectProject01Database','Test-ProjectBackupFile','Import-ProjectDatabase','Restore-ProjectDatabase')
 foreach($function in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false)){
     if($required -contains $function.Name){. ([scriptblock]::Create($function.Extent.Text))}
 }

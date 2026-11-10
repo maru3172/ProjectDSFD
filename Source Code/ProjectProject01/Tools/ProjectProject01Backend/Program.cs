@@ -183,9 +183,13 @@ builder.Services.AddRateLimiter(options =>
             _ => new FixedWindowRateLimiterOptions { PermitLimit=600, Window=TimeSpan.FromMinutes(1), QueueLimit=0, AutoReplenishment=true }));
 });
 
+builder.Services.AddSingleton<OperationsHealth>();
+builder.Services.AddHostedService<OperationsHealthWorker>();
+builder.Services.AddHostedService<ScheduledRewardWorker>();
 var app = builder.Build();
 // Attach the fixed-cardinality metrics listener before startup creates any connection pools.
 app.UseBackendDiagnostics();
+OperationsHealth.Use(app);
 var allowedInsecureVpnHost = builder.Configuration["Security:AllowedInsecureVpnHost"]?.Trim();
 app.Use(async (context, next) =>
 {
@@ -210,6 +214,21 @@ app.Use(async (context, next) =>
 app.UseProjectProject01VersionCompatibility();
 app.UseProjectProject01ServiceControl();
 app.UseRateLimiter();
+app.UseOperatorAccess();
+LiveOperations.Map(app);
+PlayAnalytics.Map(app);
+app.MapGet("/api/admin/operations/health", (HttpRequest request, AdministratorOptions admin, OperationsHealth health) =>
+    admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]) ? Results.Ok(new { incidents = health.Recent() }) : Results.Unauthorized())
+    .RequireRateLimiting("admin");
+app.MapGet("/api/admin/operations/audit", async (HttpRequest request, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>
+{
+    if (!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
+    await using var connection = await db.OpenConnectionAsync(ct);
+    return Results.Ok(new { changes = await CommunityEndpoints.Rows(connection, null, """
+        SELECT created_at_utc AS utc, outcome, details FROM security_audit_events
+        WHERE event_type='operator.change' ORDER BY id DESC LIMIT 200
+        """, ct) });
+}).RequireRateLimiting("admin");
 
 var startupDatabase = app.Services.GetRequiredService<AuthDatabase>();
 if (startupDatabase.IsConfigured)

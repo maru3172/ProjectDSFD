@@ -15,6 +15,8 @@ internal sealed class CommunityAdministrationForm : Form
     private readonly ComboBox kind=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=150};
     private readonly CheckBox published=new(){AutoSize=true,Text="런처에 공개",Checked=true};
     private readonly CheckBox featured=new(){AutoSize=true,Text="런처 대표 칸에 표시"};
+    private readonly DateTimePicker eventStart = EventDate();
+    private readonly DateTimePicker eventEnd = EventDate();
     private readonly ComboBox previewImage=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=220,DisplayMember="Label"};
     private readonly PictureBox previewPhoto=new(){Width=96,Height=54,SizeMode=PictureBoxSizeMode.Zoom,Visible=false};
     private CancellationTokenSource? previewLoading;
@@ -23,9 +25,28 @@ internal sealed class CommunityAdministrationForm : Form
     private readonly Func<HttpMethod,string,object?,HttpRequestMessage> create;
     private string? editingId;
     private bool pending;
-    private sealed record Post(string Id,string Kind,string Title,string Body,bool Published,string? PreviewImageId,bool Featured,string Summary);
+    private sealed record Post(string Id,string Kind,string Title,string Body,bool Published,string? PreviewImageId,bool Featured,string Summary,
+        DateTimeOffset? EventStart, DateTimeOffset? EventEnd);
     private sealed record PreviewOption(string? Id,string Label);
     private sealed record Inquiry(string Id,string Title,string Body,string Reply,string Status);
+
+    private static DateTimePicker EventDate() => new()
+    {
+        Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", ShowCheckBox = true,
+        Checked = false, Width = 190
+    };
+
+    private static DateTimeOffset? GetEventDate(DateTimePicker date) =>
+        date.Checked ? new DateTimeOffset(date.Value).ToUniversalTime() : null;
+
+    private static DateTimeOffset? ReadEventDate(JsonElement row, string field) =>
+        row.TryGetProperty(field, out var date) && date.ValueKind == JsonValueKind.String ? date.GetDateTimeOffset() : null;
+
+    private static void SetEventDate(DateTimePicker picker, DateTimeOffset? date)
+    {
+        if (date is { } value) picker.Value = value.LocalDateTime;
+        picker.Checked = date.HasValue;
+    }
 
     public CommunityAdministrationForm(Func<HttpMethod,string,object?,HttpRequestMessage> create)
     {
@@ -33,7 +54,7 @@ internal sealed class CommunityAdministrationForm : Form
         var tabs=new TabControl{Dock=DockStyle.Fill};var news=new TabPage("공지·패치노트");var support=new TabPage("접수 문의·답변");tabs.TabPages.AddRange([news,support]);
         var editor=new Panel{Dock=DockStyle.Fill,Padding=new Padding(8)};var toolbar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
         kind.Items.AddRange(["뉴스 / 공지","패치노트","이벤트"]);kind.SelectedIndex=0;toolbar.Controls.AddRange([kind,published,featured]);
-        Add(toolbar,"새 글",()=>{editingId=null;posts.ClearSelected();title.Clear();body.Clear();summary.Clear();published.Checked=true;featured.Checked=false;return Task.CompletedTask;});
+        Add(toolbar,"새 글",()=>{editingId=null;posts.ClearSelected();title.Clear();body.Clear();summary.Clear();published.Checked=true;featured.Checked=false;eventStart.Checked=eventEnd.Checked=false;return Task.CompletedTask;});
         Add(toolbar,"사진 첨부",async()=>
         {
             using var picker=new OpenFileDialog {Filter="PNG / JPG 사진|*.png;*.jpg;*.jpeg",Title="공지에 첨부할 사진 선택"};
@@ -55,7 +76,7 @@ internal sealed class CommunityAdministrationForm : Form
             preview.Shown+=async(_,_)=>{try{await viewer.ShowPostAsync(body.Text,"http://127.0.0.1");}catch(OperationCanceledException){}catch(Exception ex){if(!preview.IsDisposed)label.Text=ex.Message;}};
             preview.ShowDialog(this);return Task.CompletedTask;
         });
-        Add(toolbar,"저장",async()=>{await Send(editingId is null?HttpMethod.Post:HttpMethod.Put,"/api/admin/community/posts"+(editingId is null?"":"/"+editingId),new {kind=kind.SelectedIndex switch {1=>"Patch",2=>"Event",_=>"News"},title=title.Text,body=body.Text,summary=summary.Text,published=published.Checked,previewImageId=(previewImage.SelectedItem as PreviewOption)?.Id,featured=featured.Checked});await LoadData();});
+        Add(toolbar,"저장",async()=>{await Send(editingId is null?HttpMethod.Post:HttpMethod.Put,"/api/admin/community/posts"+(editingId is null?"":"/"+editingId),new {kind=kind.SelectedIndex switch {1=>"Patch",2=>"Event",_=>"News"},title=title.Text,body=body.Text,summary=summary.Text,published=published.Checked,previewImageId=(previewImage.SelectedItem as PreviewOption)?.Id,featured=featured.Checked,setEventWindow=kind.SelectedIndex==2,startsAtUtc=GetEventDate(eventStart),endsAtUtc=GetEventDate(eventEnd)});await LoadData();});
         Add(toolbar,"선택 글 삭제",async()=>
         {
             if(posts.SelectedItem is not Post selected)throw new InvalidOperationException("삭제할 글을 선택하세요.");
@@ -64,9 +85,13 @@ internal sealed class CommunityAdministrationForm : Form
         });
         var instructions=new Label {Dock=DockStyle.Top,Height=36,Text="제목과 본문을 작성하세요. 사진 첨부·표 삽입은 본문에 표시 기호를 넣습니다.\n사진·표는 게시 후 런처에서 읽기 전용으로 보입니다. HTML·스크립트는 실행하지 않습니다."};
         var previewBar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};previewBar.Controls.AddRange([new Label {Text="대표 배너·목록 사진",AutoSize=true},previewImage,previewPhoto]);
-        editor.Controls.Add(body);editor.Controls.Add(instructions);editor.Controls.Add(summary);editor.Controls.Add(new Label {Text="런처 요약",Dock=DockStyle.Top,Height=22});editor.Controls.Add(previewBar);editor.Controls.Add(title);editor.Controls.Add(toolbar);news.Controls.Add(editor);news.Controls.Add(posts);
+        var eventDates = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Visible = false };
+        eventDates.Controls.AddRange([new Label { Text = "공개 시작", AutoSize = true }, eventStart,
+            new Label { Text = "공개 종료", AutoSize = true }, eventEnd]);
+        kind.SelectedIndexChanged += (_, _) => eventDates.Visible = kind.SelectedIndex == 2;
+        editor.Controls.Add(body);editor.Controls.Add(instructions);editor.Controls.Add(summary);editor.Controls.Add(new Label {Text="런처 요약",Dock=DockStyle.Top,Height=22});editor.Controls.Add(previewBar);editor.Controls.Add(title);editor.Controls.Add(eventDates);editor.Controls.Add(toolbar);news.Controls.Add(editor);news.Controls.Add(posts);
         body.TextChanged+=(_,_)=>RefreshPreviewOptions();previewImage.SelectedIndexChanged+=async(_,_)=>await RefreshPreviewPhoto();RefreshPreviewOptions();
-        posts.SelectedIndexChanged+=(_,_)=>{if(posts.SelectedItem is Post p){editingId=p.Id;title.Text=p.Title;body.Text=p.Body;summary.Text=p.Summary;kind.SelectedIndex=p.Kind switch {"Patch"=>1,"Event"=>2,_=>0};published.Checked=p.Published;featured.Checked=p.Featured;SelectPreview(p.PreviewImageId);}};
+        posts.SelectedIndexChanged+=(_,_)=>{if(posts.SelectedItem is Post p){editingId=p.Id;title.Text=p.Title;body.Text=p.Body;summary.Text=p.Summary;kind.SelectedIndex=p.Kind switch {"Patch"=>1,"Event"=>2,_=>0};published.Checked=p.Published;featured.Checked=p.Featured;SelectPreview(p.PreviewImageId);SetEventDate(eventStart,p.EventStart);SetEventDate(eventEnd,p.EventEnd);}};
         var supportEditor=new Panel{Dock=DockStyle.Fill,Padding=new Padding(8)};
         var replyActions=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true};
         async Task Answer(string state)
@@ -176,7 +201,7 @@ internal sealed class CommunityAdministrationForm : Form
         using var doc=JsonDocument.Parse(await response.Content.ReadAsStringAsync(closing.Token));
         string? selectedInquiry=(inquiries.SelectedItem as Inquiry)?.Id;
         posts.Items.Clear();inquiries.Items.Clear();
-        foreach(var p in doc.RootElement.GetProperty("posts").EnumerateArray())posts.Items.Add(new Post(p.GetProperty("id").GetString()!,p.GetProperty("kind").GetString()!,p.GetProperty("title").GetString()!,p.GetProperty("body").GetString()!,p.GetProperty("published").GetBoolean(),p.TryGetProperty("previewImageId",out var preview)?preview.GetString():null,p.TryGetProperty("featured",out var front)&&front.GetBoolean(),p.TryGetProperty("summary",out var excerpt)?excerpt.GetString()??"":""));
+        foreach(var p in doc.RootElement.GetProperty("posts").EnumerateArray())posts.Items.Add(new Post(p.GetProperty("id").GetString()!,p.GetProperty("kind").GetString()!,p.GetProperty("title").GetString()!,p.GetProperty("body").GetString()!,p.GetProperty("published").GetBoolean(),p.TryGetProperty("previewImageId",out var preview)?preview.GetString():null,p.TryGetProperty("featured",out var front)&&front.GetBoolean(),p.TryGetProperty("summary",out var excerpt)?excerpt.GetString()??"":"",ReadEventDate(p,"startsAtUtc"),ReadEventDate(p,"endsAtUtc")));
         foreach(var q in doc.RootElement.GetProperty("inquiries").EnumerateArray())
         {
             var row=new Inquiry(q.GetProperty("id").GetString()!,q.GetProperty("subject").GetString()!,q.GetProperty("body").GetString()!,q.GetProperty("reply").GetString()??"",q.GetProperty("status").GetString()!);

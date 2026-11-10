@@ -3103,7 +3103,8 @@ void AMultiplayTestGameMode::NotifyExistingMannequinCatch(APlayerCharacter* Surv
 		{
 			++Pair.Value.CaptureCount;
 			if(auto* Controller=Pair.Key.Get())if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
-				Instance->ReportMainQuestEvent(Controller->GetAuthenticatedMatchId(),Pair.Value.UserId,TEXT("Capture"),Pair.Value.CaptureCount);
+				Instance->ReportMainQuestEvent(Controller->GetAuthenticatedMatchId(),Pair.Value.UserId,TEXT("Capture"),Pair.Value.CaptureCount,
+					TEXT("/Game/MyProject/Level/") + UGameplayStatics::GetCurrentLevelName(this, true));
 			if (Pair.Value.FirstCaptureSeconds <= 0.0)
 			{
 				Pair.Value.FirstCaptureSeconds = CaptureSeconds;
@@ -3213,7 +3214,8 @@ bool AMultiplayTestGameMode::MarkSurvivorEscaped(APlayerCharacter* Survivor)
 	Record->EscapeSeconds = GetElapsedMatchSeconds();
 	RecordTimeline(EProjectMatchEvent::Escaped, Record->DisplayName);
 	if(auto* Controller=Cast<AMultiplayTestPlayerController>(Survivor->GetController()))if(auto* Instance=GetGameInstance<UProjectProject01GameInstance>())
-		Instance->ReportMainQuestEvent(Controller->GetAuthenticatedMatchId(),Record->UserId,TEXT("Escape"));
+		Instance->ReportMainQuestEvent(Controller->GetAuthenticatedMatchId(),Record->UserId,TEXT("Escape"),1,
+			TEXT("/Game/MyProject/Level/") + UGameplayStatics::GetCurrentLevelName(this, true));
 	if (UCharacterMovementComponent* Movement = Survivor->GetCharacterMovement(); IsValid(Movement))
 	{
 		Movement->StopMovementImmediately();

@@ -48,6 +48,7 @@
 #include "ProjectProject01VersionContract.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "Rendering/RenderingCommon.h"
+#include "Scalability.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -62,6 +63,16 @@ DEFINE_LOG_CATEGORY_STATIC(LogProjectProject01UserSettings, Log, All);
 
 namespace ProjectProject01UserSettings
 {
+	void ApplySafeGraphics()
+	{
+		if (FParse::Param(FCommandLine::Get(), TEXT("ProjectSafeGraphics")))
+		{
+			Scalability::FQualityLevels SafeQuality;
+			SafeQuality.SetFromSingleQualityLevel(0);
+			Scalability::SetQualityLevels(SafeQuality);
+		}
+	}
+
 	bool IsAllowedBinding(const FKey Key)
 	{
 		return Key.IsValid() && !Key.IsGamepadKey() && Key != EKeys::Escape;
@@ -152,7 +163,15 @@ void UProjectProject01GameUserSettings::ApplyNonResolutionSettings()
 {
 	ValidateProjectSettings();
 	Super::ApplyNonResolutionSettings();
+	ProjectProject01UserSettings::ApplySafeGraphics();
 	ApplyProjectSettings(true);
+}
+
+void UProjectProject01GameUserSettings::SaveSettings()
+{
+	const TGuardValue<bool> PersistScalability(bEnableScalabilitySettings,
+		bEnableScalabilitySettings && !FParse::Param(FCommandLine::Get(), TEXT("ProjectSafeGraphics")));
+	Super::SaveSettings();
 }
 
 void UProjectProject01GameUserSettings::ValidateProjectSettings()
@@ -569,6 +588,18 @@ void UProjectProject01GameInstance::Init()
 	if (UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get(); IsValid(Settings) && !IsRunningDedicatedServer())
 	{
 		Settings->LoadSettings(false);
+		if (FParse::Param(FCommandLine::Get(), TEXT("ProjectRecoverGraphics")))
+		{
+			Settings->SetOverallScalabilityLevel(2);
+			Settings->SetResolutionScaleValueEx(100.0f);
+			Settings->SetScreenResolution(FIntPoint(1280, 720));
+			Settings->SetFullscreenMode(EWindowMode::Windowed);
+			Settings->SetVSyncEnabled(false);
+			Settings->SetFrameRateLimit(120.0f);
+			Settings->ConfirmVideoMode();
+			Settings->ApplySettings(false);
+		}
+		ProjectProject01UserSettings::ApplySafeGraphics();
 		FString LauncherServerAddress;
 		if (FParse::Value(FCommandLine::Get(), TEXT("ProjectProject01Server="), LauncherServerAddress))
 		{
@@ -1398,6 +1429,8 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 	{
 		return;
 	}
+	if (RecentNetworkFailureCodes.Num() == 5) RecentNetworkFailureCodes.RemoveAt(0);
+	RecentNetworkFailureCodes.Add(static_cast<int32>(FailureType));
 	bHandlingFailedGameConnection = true;
 	UE_LOG(LogProjectProject01NetworkSecurity, Warning,
 		TEXT("Game server connection failed (%d): %s. Clearing the multiplayer session and returning to login."),
@@ -1424,6 +1457,87 @@ void UProjectProject01GameInstance::HandleNetworkFailure(
 	{
 		BeginSafeLogoutAfterGameServerFailure();
 	}
+}
+
+void UProjectProject01GameInstance::SubmitBugInquiry(const FString& Description, bool bAttachContext,
+	TFunction<void(bool, const FString&)> Completion)
+{
+	auto Callback = MakeShared<TFunction<void(bool, const FString&)>>(MoveTemp(Completion));
+	if (!IsBackendUrlAllowed() || Description.TrimStartAndEnd().IsEmpty() || Description.Len() > 4000)
+	{
+		(*Callback)(false, TEXT("제보 내용과 서버 연결을 확인하세요."));
+		return;
+	}
+	auto Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("subject"), TEXT("게임 버그 제보"));
+	Body->SetStringField(TEXT("body"), Description);
+	if (bAttachContext)
+	{
+		auto SafeName = [](const FString& Value)
+		{
+			FString Safe;
+			for (const TCHAR C : Value.Left(100))
+				if ((C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9') ||
+					C == '.' || C == '-' || C == '_' || C == '+' || C == ' ') Safe.AppendChar(C);
+			return Safe;
+		};
+		auto Context = MakeShared<FJsonObject>();
+		Context->SetStringField(TEXT("build"), SafeName(ProjectProject01CrashReports::GetBuildVersion()));
+		Context->SetStringField(TEXT("map"), GetWorld() ? SafeName(UGameplayStatics::GetCurrentLevelName(this)) : FString());
+		const auto* Lobby = GetSubsystem<UProjectProject01LobbySubsystem>();
+		const FString MatchId = Lobby && Lobby->HasCurrentRoom() ? Lobby->GetCurrentRoom().MatchId : FString();
+		FGuid Parsed;
+		if (FGuid::Parse(MatchId, Parsed)) Context->SetStringField(TEXT("matchId"), Parsed.ToString(EGuidFormats::DigitsWithHyphens));
+		TArray<TSharedPtr<FJsonValue>> Errors;
+		for (const int32 Code : RecentNetworkFailureCodes) Errors.Add(MakeShared<FJsonValueNumber>(Code));
+		Context->SetArrayField(TEXT("networkErrors"), Errors);
+		Body->SetObjectField(TEXT("context"), Context);
+	}
+	FString Payload;
+	FJsonSerializer::Serialize(Body, TJsonWriterFactory<>::Create(&Payload));
+	auto Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/launcher/inquiries"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetTimeout(5.f);
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json; charset=utf-8"));
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetContentAsString(Payload);
+	Request->OnProcessRequestComplete().BindLambda([Callback](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
+	{
+		TSharedPtr<FJsonObject> Data;
+		FString Receipt;
+		if (bConnected && Response && EHttpResponseCodes::IsOk(Response->GetResponseCode()) &&
+			FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Data) &&
+			Data && Data->TryGetStringField(TEXT("receipt"), Receipt) && Receipt.Len() == 48)
+			(*Callback)(true, TEXT("답변 확인 코드 · ") + Receipt);
+		else (*Callback)(false, TEXT("제보를 보내지 못했습니다. 잠시 후 다시 시도하세요."));
+	});
+	if (!Request->ProcessRequest()) (*Callback)(false, TEXT("제보 요청을 시작하지 못했습니다."));
+}
+
+void UProjectProject01GameInstance::RecordTutorialAnalytics(const FGuid& RunId, const TCHAR* Role, int32 Step, bool bCompleted)
+{
+	const auto* Auth = GetSubsystem<UProjectProject01AuthSubsystem>();
+	if (!RunId.IsValid() || !IsBackendUrlAllowed() || !Auth || !Auth->IsSignedIn() ||
+		(GetWorld() && GetWorld()->WorldType == EWorldType::PIE)) return;
+	const FString Token = Auth->GetAccessTokenForAuthenticatedRequest();
+	if (Token.IsEmpty()) return;
+	auto Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("runId"), RunId.ToString(EGuidFormats::DigitsWithHyphens));
+	Body->SetStringField(TEXT("role"), Role);
+	Body->SetNumberField(TEXT("step"), Step);
+	Body->SetBoolField(TEXT("completed"), bCompleted);
+	FString Payload;
+	FJsonSerializer::Serialize(Body, TJsonWriterFactory<>::Create(&Payload));
+	auto Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(SecurityApiBaseUrl + TEXT("/api/analytics/tutorial"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetTimeout(4.f);
+	Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + Token);
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json; charset=utf-8"));
+	FProjectProject01VersionContract::ApplyToRequest(Request);
+	Request->SetContentAsString(Payload);
+	Request->ProcessRequest();
 }
 
 void UProjectProject01GameInstance::BeginSafeLogoutAfterGameServerFailure()

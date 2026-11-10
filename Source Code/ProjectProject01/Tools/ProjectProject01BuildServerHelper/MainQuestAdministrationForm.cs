@@ -26,6 +26,8 @@ internal sealed class MainQuestAdministrationForm:Form
         var story=new TextBox{Dock=DockStyle.Fill,Multiline=true,AcceptsReturn=true,ScrollBars=ScrollBars.Vertical,MaxLength=16000};editor.Controls.Add(story,0,3);
         var status=new Label{AutoSize=true,MaximumSize=new Size(760,0)};editor.Controls.Add(status,0,4);
         var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,AutoSize=true};var save=new Button{Text="저장",AutoSize=true,Enabled=false};var reload=new Button{Text="다시 불러오기",AutoSize=true};var import=new Button{Text="스토리 CSV 불러오기",AutoSize=true,Enabled=false};var export=new Button{Text="스토리 CSV 내보내기",AutoSize=true,Enabled=false};var talkImport=new Button{Text="대화 CSV 불러오기",AutoSize=true,Enabled=false};var talkExport=new Button{Text="대화 CSV 내보내기",AutoSize=true,Enabled=false};var close=new Button{Text="닫기",AutoSize=true};actions.Controls.AddRange([save,reload,import,export,talkImport,talkExport,close]);editor.Controls.Add(actions,0,5);
+        var graph = new Button { Text = "퀘스트·대화 흐름 편집", AutoSize = true, Enabled = false };
+        actions.Controls.Add(graph);
         void Capture()
         {
             if(plan is null||current<0)return;goals.EndEdit();
@@ -41,9 +43,9 @@ internal sealed class MainQuestAdministrationForm:Form
         }
         async Task Load()
         {
-            save.Enabled=reload.Enabled=list.Enabled=import.Enabled=export.Enabled=talkImport.Enabled=talkExport.Enabled=false;
+            save.Enabled=reload.Enabled=list.Enabled=import.Enabled=export.Enabled=talkImport.Enabled=talkExport.Enabled=graph.Enabled=false;
             try{using var req=create(HttpMethod.Get,"/api/admin/main-quest",null);using var response=await http.SendAsync(req);response.EnsureSuccessStatusCode();using var value=JsonDocument.Parse(await response.Content.ReadAsStringAsync());var loaded=value.RootElement.GetProperty("plan").Deserialize<Plan>(json);if(loaded is null||loaded.Steps.Length==0||MainQuestTalkCsv.Ids.Any(id=>loaded.Steps.All(s=>s.Id!=id)))throw new InvalidOperationException("단계 구성을 확인하세요. 서버가 대화 단계를 지원하는 버전인지 확인하세요.");if(IsDisposed)return;current=-1;plan=loaded;revision=value.RootElement.GetProperty("revision").GetInt64();list.Items.Clear();list.Items.Add("기본 이야기");for(int i=0;i<plan.Steps.Length;i++)list.Items.Add($"{i+1}. {plan.Steps[i].Title}");list.SelectedIndex=0;status.Text="";save.Enabled=true;}
-            catch(Exception ex){if(!IsDisposed)status.Text="조회 실패: "+ex.Message;}finally{if(!IsDisposed){reload.Enabled=list.Enabled=true;import.Enabled=export.Enabled=talkImport.Enabled=talkExport.Enabled=plan is not null;}}
+            catch(Exception ex){if(!IsDisposed)status.Text="조회 실패: "+ex.Message;}finally{if(!IsDisposed){reload.Enabled=list.Enabled=true;import.Enabled=export.Enabled=talkImport.Enabled=talkExport.Enabled=graph.Enabled=plan is not null;}}
         }
         list.SelectedIndexChanged+=(_,_)=>{Capture();if(list.SelectedIndex>=0)Display(list.SelectedIndex);};
         save.Click+=async(_,_)=>{Capture();if(plan is null)return;save.Enabled=false;try{using var req=create(HttpMethod.Put,"/api/admin/main-quest",new{revision,plan});using var response=await http.SendAsync(req);var body=await response.Content.ReadAsStringAsync();if(!response.IsSuccessStatusCode)throw new InvalidOperationException(body);revision++;if(!IsDisposed)status.Text="저장했습니다.";}catch(Exception ex){if(!IsDisposed)status.Text="저장 실패: "+ex.Message;}finally{if(!IsDisposed)save.Enabled=true;}};
@@ -70,6 +72,25 @@ internal sealed class MainQuestAdministrationForm:Form
             if(plan is null)return;using var dialog=new SaveFileDialog{Filter="대화 CSV (*.csv)|*.csv",FileName="MainQuestTalks.csv",Title="메인 퀘스트 대화 내보내기"};if(dialog.ShowDialog(this)!=DialogResult.OK)return;
             try{Capture();var talks=plan.Steps.Where(s=>s.Talk is not null).ToDictionary(s=>s.Id,s=>s.Talk!);using var writer=new StreamWriter(dialog.FileName,false,new System.Text.UTF8Encoding(true));MainQuestTalkCsv.Write(writer,talks);status.Text="대화 CSV를 내보냈습니다.";}
             catch(Exception ex){status.Text="대화 CSV 내보내기 실패: "+ex.Message;}
+        };
+        graph.Click += (_, _) =>
+        {
+            Capture();
+            if (plan is null) return;
+            using var dialog = new QuestFlowForm(plan.Name, plan.BaseStory,
+                plan.Steps.Select(step => new QuestFlowForm.Node(step.Title, step.Story,
+                    step.Goals.Select(goal => $"{goal.Label} × {goal.Target}").ToArray(), step.Talk)).ToArray());
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            plan = plan with
+            {
+                BaseStory = dialog.BaseStory,
+                Steps = plan.Steps.Select((step, index) => step with
+                {
+                    Story = dialog.Nodes[index].Story, Talk = dialog.Nodes[index].Talk
+                }).ToArray()
+            };
+            Display(Math.Max(0, current));
+            status.Text = "흐름 편집 내용을 불러왔습니다. 저장하면 적용됩니다.";
         };
         reload.Click+=async(_,_)=>await Load();close.Click+=(_,_)=>Close();Shown+=async(_,_)=>await Load();FormClosed+=(_,_)=>http.Dispose();
     }

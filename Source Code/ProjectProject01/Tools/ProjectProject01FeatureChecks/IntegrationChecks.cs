@@ -36,6 +36,11 @@ internal static class IntegrationChecks
         await database.InitializeSchemaAsync(Path.Combine(projectRoot,"Tools","ProjectProject01Backend"),CancellationToken.None);
         var builder=WebApplication.CreateBuilder(new WebApplicationOptions{ContentRootPath=output});
         builder.Logging.ClearProviders();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?>
+        {
+            ["Administrator:Operators:observer_fixture:ApiKey"] = new string('o', 48),
+            ["Administrator:Operators:observer_fixture:Role"] = "Observer"
+        });
         builder.Services.AddSingleton(database);
         builder.Services.AddSingleton<CaseDebugCurrency>();
         builder.Services.AddSingleton(new CrashArtifactStore(Path.Combine(output,"CrashArtifactsFixture",Guid.NewGuid().ToString("N")),TimeProvider.System));
@@ -59,6 +64,7 @@ internal static class IntegrationChecks
             ["Security:AllowUnverifiedLeaderboardSubmissions"]="true"}).Build();
         var demandFactory=new DemandSessionChecks.FakeFactory();
         builder.Services.AddSingleton(ProjectSecurityOptions.FromConfiguration(testConfig));
+        builder.Services.AddSingleton(VersionCompatibilityOptions.FromConfiguration(testConfig));
         var demandClock=new DemandSessionChecks.FakeClock();
         var demand=new GameServerDemandManager(database,ProjectSecurityOptions.FromConfiguration(testConfig),demandFactory,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<GameServerDemandManager>.Instance,demandClock);
@@ -66,6 +72,9 @@ internal static class IntegrationChecks
         await using var app=builder.Build();
         app.Use(async(context,next)=>{try{await next();}catch(Exception ex){Console.Error.WriteLine("Isolated HTTP failure "+context.Request.Path+": "+ex);throw;}});
         app.Urls.Add("http://127.0.0.1:0");app.UseRateLimiter();
+        app.UseOperatorAccess();
+        PlayAnalytics.Map(app);
+        LiveOperations.Map(app);
         app.MapProjectProject01Surveys();app.MapProjectProject01CrashArtifacts();
         app.MapProjectProject01Voice();
         // Invalid registration must be rejected by the real shared handler before
@@ -85,11 +94,13 @@ internal static class IntegrationChecks
             using var admin=new HttpClient{BaseAddress=new Uri(app.Urls.Single())};
             admin.DefaultRequestHeaders.Add("X-ProjectProject01-Admin-Key",new string('a',48));
             using var player=new HttpClient{BaseAddress=admin.BaseAddress};
+            await FinalOperationsChecks.RunAsync(database, admin, Check);
             if(frontendOnly)
             {
                 await CaseDrawChecks.RunAsync(database,admin);
                 await CaseRecordChecks.RunAsync(database,admin);
                 await MainQuestChecks.RunAsync(database,admin);
+                await QuestGraphChecks.RunAsync(database,admin); // Quest graph: branches, flags, parallel lines, side quests, removed steps.
                 await GuideProgressChecks.RunAsync(database,admin);
                 // Daily/weekly missions: progress, completion, claiming and the weekly point cap.
                 await CaseMissionRewardChecks.RunAsync(database,admin);

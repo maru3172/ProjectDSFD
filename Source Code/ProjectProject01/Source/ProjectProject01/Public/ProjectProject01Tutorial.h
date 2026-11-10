@@ -265,6 +265,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UProjectProject01TutorialWidget> Widget;
 	TArray<FProjectTutorialStep> Steps;
 	int32 StepIndex=0;
+	FGuid AnalyticsRun;
 	float Progress=0, EndSeconds=0;
 	TWeakObjectPtr<class AMannequinAICharacter> LastSelectedMannequin, CommandedMannequin, ReleasedMannequin;
 	UPROPERTY(Transient) TArray<FProjectTutorialSurvivorBot> PracticeBots;

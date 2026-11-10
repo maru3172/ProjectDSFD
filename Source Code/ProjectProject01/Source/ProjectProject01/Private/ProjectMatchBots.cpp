@@ -15,6 +15,9 @@
 #include "ProjectProject01Elevator.h"
 #include "MultiplayTestPlayerController.h"
 #include "ProjectAffixRuntime.h"
+#include "VisualLogger/VisualLogger.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogProjectBotDecision, Log, All);
 
 namespace
 {
@@ -468,9 +471,23 @@ bool UProjectMatchBots::Move(APawn* Pawn,FProjectMatchBotBrain& B,const FVector&
     {
         B.PathAt=Now+FMath::Max(.4f,B.Policy.Profile.Reaction);
         auto* Nav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);FNavLocation Projected;B.Path.Reset();B.PathIndex=1;
-        if(!Nav||!Nav->ProjectPointToNavigation(Goal,Projected,FVector(180,180,250)))return false;
+        if(!Nav||!Nav->ProjectPointToNavigation(Goal,Projected,FVector(180,180,250)))
+        {
+            UE_VLOG_LOCATION(Pawn, LogProjectBotDecision, Log, Goal, 25.f, FColor::Red, TEXT("Goal could not be projected onto navigation"));
+            return false;
+        }
         auto* Path=UNavigationSystemV1::FindPathToLocationSynchronously(World,Pawn->GetActorLocation(),Projected.Location,Pawn);
-        if(!Path||!Path->IsValid()||Path->IsPartial())return false;B.Path=Path->PathPoints;
+        if(!Path||!Path->IsValid()||Path->IsPartial())
+        {
+            UE_VLOG_LOCATION(Pawn, LogProjectBotDecision, Log, Projected.Location, 25.f, FColor::Red, TEXT("No complete path to projected goal"));
+            return false;
+        }
+        B.Path=Path->PathPoints;
+#if ENABLE_VISUAL_LOG
+        if (FVisualLogger::IsRecording())
+            for (int32 Index=1; Index<B.Path.Num(); ++Index)
+                UE_VLOG_SEGMENT(Pawn, LogProjectBotDecision, Log, B.Path[Index-1], B.Path[Index], FColor::Green, TEXT("Selected navigation path"));
+#endif
     }
     const auto& Quirks=B.Policy.Character;const float Mistake=ProjectBots::MistakeScale(B.Policy.Profile);
     // Corner style: some people cut corners wide, others hug them (50-110 cm switch radius).
@@ -946,6 +963,9 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     uint16 Allowed=static_cast<uint16>(0x3ff&~(1<<static_cast<int>(Action::Pressure)));
     if(Runner)Allowed=static_cast<uint16>((1<<static_cast<int>(Action::Search))|(1<<static_cast<int>(Action::Recover)));
     const auto Tactic=B.Policy.Tick(C,Now,Allowed).Tactic;
+    UE_VLOG(Pawn, LogProjectBotDecision, Log, TEXT("Survivor tactic=%d visible=%d remembered=%d level=%d"),
+        static_cast<int32>(Tactic), C.Visible, C.Remembered, B.Policy.Profile.Level);
+    UE_CVLOG_LOCATION(C.Visible||C.Remembered, Pawn, LogProjectBotDecision, Log, B.Known, 20.f, FColor::Yellow, TEXT("Observed or remembered opponent"));
     const bool Knows=C.Visible||C.Remembered;
     const auto& Quirks=B.Policy.Character;const float Skill=Level.Skill;
     // Fear: a near miss or a sudden close sighting startles; composure decides how much of it shows.
@@ -1611,6 +1631,9 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     B.Policy.Tilt=Mine.Mood.Tilt(Level,B.Policy.Character);B.Policy.Urgency=Drive;B.Policy.Resolve=Resolve;
     B.Policy.Stealth=Blitz||Stalled?0.f:PlanStrength;
     const auto Tactic=B.Policy.Tick(C,Now).Tactic;
+    UE_VLOG(Body, LogProjectBotDecision, Log, TEXT("Mannequin tactic=%d visible=%d remembered=%d frozen=%d level=%d"),
+        static_cast<int32>(Tactic), C.Visible, C.Remembered, C.Frozen, B.Policy.Profile.Level);
+    UE_CVLOG_LOCATION(C.Visible||C.Remembered, Body, LogProjectBotDecision, Log, B.Known, 20.f, FColor::Yellow, TEXT("Observed or remembered opponent"));
     auto* AI=Cast<AAIController>(Body->GetController());if(!AI)return;
     if(C.Frozen){AI->StopMovement();Body->GetCharacterMovement()->StopMovementImmediately();Body->ConsumeMovementInputVector();return;}
     const bool Knows=C.Visible||C.Remembered;

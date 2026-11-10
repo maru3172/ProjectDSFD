@@ -1,4 +1,31 @@
 USE projectproject01;
+CREATE TABLE IF NOT EXISTS operator_rollouts(
+ feature VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+ revision BIGINT NOT NULL DEFAULT 0,settings_json JSON NOT NULL
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS operator_rewards(
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(120) NOT NULL, credits INT UNSIGNED NOT NULL,
+ request_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+ payload_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ starts_utc DATETIME(6) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'Scheduled',
+ actor VARCHAR(48) NOT NULL, updated_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+ KEY ix_operator_rewards_due(status, starts_utc)
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS operator_reward_recipients(
+ reward_id BIGINT UNSIGNED NOT NULL,user_id BIGINT UNSIGNED NOT NULL,
+ PRIMARY KEY(reward_id,user_id),
+ FOREIGN KEY(reward_id) REFERENCES operator_rewards(id) ON DELETE CASCADE,
+ FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS play_analytics_events(
+ kind VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ context_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ user_id BIGINT UNSIGNED NOT NULL,step VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ map VARCHAR(100) NOT NULL,build VARCHAR(100) NOT NULL,event_count INT UNSIGNED NOT NULL DEFAULT 1,
+ event_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+ PRIMARY KEY(kind,context_id,user_id,step), KEY ix_play_analytics_date(event_utc),
+ FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS auth_session_liveness(
  session_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,deadline_utc DATETIME(6) NOT NULL,
  KEY ix_session_deadline(deadline_utc),
@@ -75,6 +102,10 @@ CREATE TABLE IF NOT EXISTS launcher_posts(
  featured BOOLEAN NOT NULL DEFAULT FALSE,
  summary VARCHAR(500) NOT NULL DEFAULT '',
  updated_at_utc DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS launcher_event_windows(
+ post_id BIGINT UNSIGNED PRIMARY KEY, starts_utc DATETIME(6) NULL, ends_utc DATETIME(6) NULL,
+ FOREIGN KEY(post_id) REFERENCES launcher_posts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS support_inquiries(
  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

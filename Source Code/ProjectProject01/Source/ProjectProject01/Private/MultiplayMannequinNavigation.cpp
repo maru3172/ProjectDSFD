@@ -8,6 +8,9 @@
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "VisualLogger/VisualLogger.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogProjectMannequinPath, Log, All);
 
 bool AMultiplayTestGameMode::FindSupportedMannequinLocation(
     const AMannequinAICharacter* Pawn, const FVector& DesiredCenter, FVector& OutCenter) const
@@ -120,6 +123,7 @@ void AMultiplayTestGameMode::MoveMannequinOnCompletePath(AMannequinAICharacter* 
     if (!bNewRequest && !bGoalChanged && Now-State.LastRequestSeconds<.5) return;
     if (bStalled)
     {
+        UE_VLOG_LOCATION(Pawn, LogProjectMannequinPath, Log, Current, 25.f, FColor::Orange, TEXT("Movement stalled; searching for a new path"));
         Controller->StopMovement();
         ++State.Retry;
         State.LastProgressSeconds=Now;
@@ -129,6 +133,7 @@ void AMultiplayTestGameMode::MoveMannequinOnCompletePath(AMannequinAICharacter* 
     State.RequestedGoal=DesiredFeet;
     if (!FindReachableMannequinGoal(Pawn,DesiredFeet,FallbackRadius,Goal,State.Retry))
     {
+        UE_VLOG_LOCATION(Pawn, LogProjectMannequinPath, Log, DesiredFeet, 25.f, FColor::Red, TEXT("No reachable complete path to command goal"));
         Controller->StopMovement();
         ++State.Retry;
         return; // Keep the player's command, retry when the route/leader changes.
@@ -144,5 +149,9 @@ void AMultiplayTestGameMode::MoveMannequinOnCompletePath(AMannequinAICharacter* 
     // No partial route, no direct-line fallback through a wall. A* can detour through doors/corridors.
     if (Controller->GetMoveStatus()!=EPathFollowingStatus::Moving) State.LastProgressSeconds=Now;
     const auto Result=Controller->MoveToLocation(Goal,MultiplayerAcceptanceRadius,false,true,false,true,nullptr,false);
-    if (Result==EPathFollowingRequestResult::Failed) ++State.Retry;
+    if (Result==EPathFollowingRequestResult::Failed)
+    {
+        ++State.Retry;
+        UE_VLOG_LOCATION(Pawn, LogProjectMannequinPath, Log, Goal, 25.f, FColor::Red, TEXT("Path following rejected the request"));
+    }
 }

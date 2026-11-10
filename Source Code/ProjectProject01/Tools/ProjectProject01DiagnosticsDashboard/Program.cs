@@ -1064,7 +1064,8 @@ internal sealed partial class DashboardForm : Form
         async Task<AutomationVerdict> RunBatch(VerificationAttempt batch, string filter, string title)
         {
             progress.Report(title + " 시작 중…");
-            var result = await RunProcessAsync(editor, AutomationVerification.Arguments(project.ProjectFile, batch, filter), deadline.Token,
+            string[] args = [.. AutomationVerification.Arguments(project.ProjectFile, batch, filter), .. plan.EngineArguments ?? []];
+            var result = await RunProcessAsync(editor, args, deadline.Token,
                 timeout: plan.Timeout, outputFile: Path.Combine(batch.Directory, "Automation.log"), onLine: line =>
                 {
                     bool done = line.Contains("Test Completed.", StringComparison.Ordinal);

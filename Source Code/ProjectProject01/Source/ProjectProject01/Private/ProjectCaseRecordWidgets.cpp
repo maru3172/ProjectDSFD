@@ -410,9 +410,21 @@ void UProjectCaseRecordWidget::RefreshPanel()
         Body->AddSlot().AutoHeight()[SeasonBook];
         RebuildArchiveSeason();return;
     }
-    if(Page==TEXT("Events")){Add(TEXT("진행 중인 이벤트가 없습니다."));return;}
     if(!Online){Add(TEXT("이 항목은 로그인 후 이용할 수 있습니다. 로컬 업적·도전과제는 위의 업적·도전과제 탭에서 확인하세요."));return;}
     if(!State){Add(TEXT("계정 기록을 확인 중입니다…"));return;}
+    if(Page==TEXT("Events"))
+    {
+        const auto Events=Rows(State,TEXT("liveEvents"));
+        if(Events.IsEmpty()) Add(TEXT("진행 중인 이벤트가 없습니다."));
+        for(const auto& Event:Events)
+        {
+            const auto Entry=Event->AsObject();
+            Body->AddSlot().AutoHeight().Padding(0,8,0,4)[Label(Str(Entry,TEXT("title")),20)];
+            const FString Summary=Str(Entry,TEXT("summary"));
+            if(!Summary.IsEmpty()) Add(Summary);
+        }
+        return;
+    }
     if(Page==TEXT("Collection")){BuildCollection(State);return;}
     if(Page==TEXT("Draw")){BuildDraw(State);return;}
     if(Page==TEXT("Profile"))

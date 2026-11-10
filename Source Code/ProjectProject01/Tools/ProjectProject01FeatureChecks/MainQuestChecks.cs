@@ -110,7 +110,7 @@ internal static class MainQuestChecks
             var talked=await Read(Talk("kalin_talk",1,0,0));q=await Quest();
             Check(talked.GetProperty("questNotices").GetArrayLength()==1&&Stage(q)==At("first_match")&&StepOf(q,"kalin_talk").GetProperty("talked").GetBoolean()&&StepOf(q,"kalin_talk").GetProperty("choices").EnumerateArray().Select(c=>c.GetInt32()).SequenceEqual([1,0,0]),"캘린과 대화를 끝내면 단계 완료·고른 선택을 저장하고 생존자 경기 단계로");
             long talkRevision=q.GetProperty("revision").GetInt64();await Read(Talk("kalin_talk",0,1,0));q=await Quest();
-            Check(q.GetProperty("revision").GetInt64()==talkRevision&&StepOf(q,"kalin_talk").GetProperty("choices").EnumerateArray().Select(c=>c.GetInt32()).SequenceEqual([0,1,0]),"끝난 대화를 다시 보면 선택만 갱신·진행·알림은 그대로");
+            Check(q.GetProperty("revision").GetInt64()==talkRevision&&StepOf(q,"kalin_talk").GetProperty("choices").EnumerateArray().Select(c=>c.GetInt32()).SequenceEqual([1,0,0]),"끝난 대화를 다시 봐도 처음 선택·진행·알림은 그대로 (선택이 이야기 표시를 남기므로 바꿀 수 없음)");
             Check(StepOf(q,"first_match").GetProperty("story").GetString()=="","아직 끝내지 않은 단계의 이야기는 공개하지 않음");
             Check(StepOf(q,"first_match").GetProperty("unlocked").GetBoolean()&&!StepOf(q,"third_floor").GetProperty("unlocked").GetBoolean()&&StepOf(q,"first_match").GetProperty("goals").GetArrayLength()==3,"앞 단계 완료 시 바로 다음 퀘스트 하나만 해금");
             await using(var c=await db.OpenConnectionAsync(default)){await using var tx=await c.BeginTransactionAsync();await MainQuest.StartedAsync(c,tx,player.Id,"mannequin-first-result","Mannequin",default);await tx.CommitAsync();}

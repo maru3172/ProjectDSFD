@@ -12,9 +12,9 @@ internal static class MainQuest
     internal sealed record Step(string Id,string Title,Goal[] Goals,string Story="",Talk? Talk=null);
     internal sealed record Plan(string Name,string BaseStory,Step[] Steps);
     internal sealed record Configure(long Revision,Plan Plan);
-    internal sealed record ClientAction(string Action,string ExpectedStep,string? Role=null,int[]? Choices=null);
+    internal sealed record ClientAction(string Action,string ExpectedStep,string? Role=null,int[]? Choices=null,string? Quest=null);
     internal sealed record FloorEvent(string MatchId,string UserId,string Map,int ServerPort,DateTimeOffset ObservedAtUtc);
-    internal sealed record ProgressEvent(string MatchId,string UserId,string Kind,int Count,int ServerPort,DateTimeOffset ObservedAtUtc);
+    internal sealed record ProgressEvent(string MatchId,string UserId,string Kind,int Count,int ServerPort,DateTimeOffset ObservedAtUtc,string? Map=null);
     internal static readonly JsonSerializerOptions Json=new(JsonSerializerDefaults.Web);
     static TalkLine Say(string text)=>new(text,null);
     static TalkLine Ask(params TalkOption[] options)=>new(null,options);
@@ -59,7 +59,7 @@ internal static class MainQuest
         CREATE TABLE IF NOT EXISTS main_quest_goals(user_id BIGINT UNSIGNED NOT NULL,stage INT NOT NULL,goal_id VARCHAR(40) NOT NULL,progress INT NOT NULL DEFAULT 0,PRIMARY KEY(user_id,stage,goal_id),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS main_quest_events(user_id BIGINT UNSIGNED NOT NULL,event_key VARCHAR(120) NOT NULL,PRIMARY KEY(user_id,event_key),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS main_quest_notices(user_id BIGINT UNSIGNED NOT NULL,revision BIGINT NOT NULL,kind VARCHAR(16) NOT NULL,quest_name VARCHAR(100) NOT NULL,step_title VARCHAR(180) NOT NULL,PRIMARY KEY(user_id,revision),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
-        """,ct);await MigrateTalkStepsAsync(c,ct);}
+        """,ct);await MigrateTalkStepsAsync(c,ct);await QuestProgress.EnsureAsync(c,ct);}
     // Progress is stored as a step index, so a database saved in an earlier layout is moved to this one by step id, once
     // (main_quest_migrations "talk_steps_v2"). Two earlier layouts exist:
     //  - LegacyIds: the 8 steps before talk steps. A player whose current step now has a talk right before it starts at
@@ -132,47 +132,19 @@ internal static class MainQuest
         return choices is not null&&choices.Length==asks.Length&&choices.Select((c,i)=>c>=0&&c<asks[i].Options!.Length).All(ok=>ok);
     }
     internal static bool Valid(Plan? p)=>p is not null&&!string.IsNullOrWhiteSpace(p.Name)&&p.Name.Length<=100&&p.BaseStory is not null&&p.BaseStory.Length<=16000&&p.Steps is not null&&p.Steps.Length==Default.Steps.Length&&p.Steps.Select(s=>s?.Id).SequenceEqual(Default.Steps.Select(s=>s.Id))&&p.Steps.All(s=>s is not null&&(Default.Steps.First(d=>d.Id==s.Id).Talk is null?s.Talk is null:ValidTalk(s.Talk))&&!string.IsNullOrWhiteSpace(s.Title)&&s.Title.Length<=180&&s.Story is not null&&s.Story.Length<=16000&&s.Goals is {Length:>0 and <=8}&&s.Goals.All(g=>g is not null&&!string.IsNullOrWhiteSpace(g.Id)&&g.Id.Length<=40&&g.Id.All(ch=>char.IsAsciiLetterOrDigit(ch)||ch=='_')&&g.Metric is "SurvivorTutorial" or "MannequinTutorial" or "Match" or "MatchComplete" or "SurvivorMatch" or "ThirdFloor" or "SecondFloor" or "Escape" or "Capture" or "MannequinWin" or "Dialogue"&&g.Label is not null&&g.Label.Length<=180&&g.Target is >0 and <=100)&&s.Goals.Select(g=>g.Id).Distinct().Count()==s.Goals.Length);
-    internal static async Task<object> SnapshotAsync(MySqlConnection c,MySqlTransaction tx,ulong user,CancellationToken ct)
-    {
-        var (_,plan)=await ReadPlan(c,tx,ct);await CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO main_quest_state(user_id) VALUES(@u)",ct,("u",user));
-        var state=(await CommunityEndpoints.Rows(c,tx,"SELECT stage,revision FROM main_quest_state WHERE user_id=@u",ct,("u",user)))[0];int current=Convert.ToInt32(state["stage"]);
-        var goals=await CommunityEndpoints.Rows(c,tx,"SELECT stage,goal_id,progress FROM main_quest_goals WHERE user_id=@u",ct,("u",user));
-        var talked=(await CommunityEndpoints.Rows(c,tx,"SELECT step_id,choices FROM main_quest_talks WHERE user_id=@u",ct,("u",user))).ToDictionary(r=>(string)r["step_id"]!,r=>(string)r["choices"]!);
-        int[] Choices(string id)=>talked.TryGetValue(id,out var saved)?saved.Split(',',StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToArray():[];
-        return new{name=plan.Name,baseStory=plan.BaseStory,revision=Convert.ToInt64(state["revision"]),stage=current,completed=current>=plan.Steps.Length,
-            steps=plan.Steps.Select((s,i)=>new{id=s.Id,unlocked=i<=current,title=i<=current?s.Title:"",active=i==current,completed=i<current,canSkip=i==current&&s.Id is "survivor_tutorial" or "mannequin_tutorial",story=i<current?s.Story:"",
-                // An unlocked conversation is readable on the phone; "talked" and the saved choices let it be read back as it went.
-                npc=i<=current?s.Talk?.Npc:null,talk=i<=current?s.Talk:null,talked=talked.ContainsKey(s.Id),choices=Choices(s.Id),
-                goals=s.Goals.Where(_=>i<=current).Select(g=>new{id=g.Id,label=g.Label,target=g.Target,progress=i<current?g.Target:Math.Min(g.Target,goals.Where(r=>Convert.ToInt32(r["stage"])==i&&(string)r["goal_id"]! ==g.Id).Select(r=>Convert.ToInt32(r["progress"])).FirstOrDefault())})}),
-            notices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u ORDER BY revision DESC LIMIT 24",ct,("u",user))};
-    }
-    internal static async Task AdvanceAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string eventKey,IReadOnlyDictionary<string,int> metrics,CancellationToken ct,bool skip=false,string? expectedStep=null)
-    {
-        await CaseRecords.LockAccountAsync(c,tx,user,ct);await CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO main_quest_state(user_id) VALUES(@u)",ct,("u",user));
-        var state=(await CommunityEndpoints.Rows(c,tx,"SELECT stage,revision FROM main_quest_state WHERE user_id=@u FOR UPDATE",ct,("u",user)))[0];int index=Convert.ToInt32(state["stage"]);long revision=Convert.ToInt64(state["revision"]);
-        var (_,plan)=await ReadPlan(c,tx,ct);if(index>=plan.Steps.Length)return;var step=plan.Steps[index];if(expectedStep is not null&&step.Id!=expectedStep)return;
-        if(await CommunityEndpoints.Exec(c,tx,"INSERT IGNORE INTO main_quest_events(user_id,event_key) VALUES(@u,@key)",ct,("u",user),("key",eventKey))==0)return;
-        bool changed=false,all=true;var completedConditions=new List<string>();
-        foreach(var goal in step.Goals)
-        {
-            var rows=await CommunityEndpoints.Rows(c,tx,"SELECT progress FROM main_quest_goals WHERE user_id=@u AND stage=@s AND goal_id=@g",ct,("u",user),("s",index),("g",goal.Id));int previous=rows.Count==0?0:Convert.ToInt32(rows[0]["progress"]);
-            int value=skip?goal.Target:Math.Min(goal.Target,previous+Math.Clamp(metrics.GetValueOrDefault(goal.Metric),0,100));all&=value>=goal.Target;
-            if(value>previous){changed=true;if(previous<goal.Target&&value>=goal.Target)completedConditions.Add(goal.Label);await CommunityEndpoints.Exec(c,tx,"INSERT INTO main_quest_goals(user_id,stage,goal_id,progress) VALUES(@u,@s,@g,@v) ON DUPLICATE KEY UPDATE progress=@v",ct,("u",user),("s",index),("g",goal.Id),("v",value));}
-        }
-        if(!changed)return;
-        async Task Notice(string kind,string? detail=null){++revision;await CommunityEndpoints.Exec(c,tx,"INSERT INTO main_quest_notices(user_id,revision,kind,quest_name,step_title) VALUES(@u,@r,@k,@n,@t)",ct,("u",user),("r",revision),("k",kind),("n",plan.Name),("t",(detail??step.Title)[..Math.Min((detail??step.Title).Length,180)]));}
-        // A completing condition is represented only by the stage notice, never a simultaneous partial notice.
-        if(all){++index;await Notice("Stage");if(index==plan.Steps.Length)await Notice("Complete");}
-        else if(completedConditions.Count>0)await Notice("Condition",string.Join(" · ",completedConditions));
-        await CommunityEndpoints.Exec(c,tx,"UPDATE main_quest_state SET stage=@s,revision=@r WHERE user_id=@u",ct,("s",index),("r",revision),("u",user));
-    }
+    // Progress now lives on the quest graph (QuestProgress, Docs/QuestGraph.md); these keep the original entry points.
+    /// <summary>The original 탐사 snapshot shape, for game builds before the quest graph screens.</summary>
+    internal static Task<object> SnapshotAsync(MySqlConnection c,MySqlTransaction tx,ulong user,CancellationToken ct)=>QuestProgress.LegacySnapshotAsync(c,tx,user,ct);
+    /// <summary>A game event for every open quest's current step (once per event key).</summary>
+    internal static Task AdvanceAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string eventKey,IReadOnlyDictionary<string,int> metrics,CancellationToken ct)=>
+        QuestProgress.AdvanceAsync(c,tx,user,eventKey,metrics,ct);
     internal static Task StartedAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,string role,CancellationToken ct)=>
         AdvanceAsync(c,tx,user,"Start:"+match,new Dictionary<string,int>{{"Match",1},{"SurvivorMatch",role=="Survivor"?1:0}},ct);
     internal static async Task<object?> StartUpdateAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,string role,CancellationToken ct)
     {
         if(role is not("Survivor" or "Mannequin")||await CustomRoomRules.IsCustomAsync(c,tx,match,ct))return null;
         await CaseRecords.LockAccountAsync(c,tx,user,ct);
-        var rows=await CommunityEndpoints.Rows(c,tx,"SELECT revision FROM main_quest_state WHERE user_id=@u",ct,("u",user));long before=rows.Count==0?0:Convert.ToInt64(rows[0]["revision"]);
+        long before=await QuestProgress.RevisionAsync(c,tx,user,ct);
         await StartedAsync(c,tx,user,match,role,ct);
         return new{userId=user.ToString(),mainQuest=await SnapshotAsync(c,tx,user,ct),questNotices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u AND revision>@r ORDER BY revision",ct,("u",user),("r",before))};
     }
@@ -192,30 +164,37 @@ internal static class MainQuest
     }
     internal static void Map(WebApplication app)
     {
+        QuestProgress.Map(app);
+        // The game's quest actions: a conversation read on the phone, or a tutorial finished or skipped. Quest names the
+        // quest (older builds leave it out and mean the main line).
         app.MapPost("/api/case-records/main-quest",async(ClientAction body,HttpRequest request,AuthDatabase db,CancellationToken ct)=>
         {
             var user=await LobbyEndpoints.AuthenticateAsync(request,db,ct);if(user is null)return Results.Unauthorized();
             bool talk=body.Action=="TalkComplete";
-            if(talk?Default.Steps.All(s=>s.Talk is null||s.Id!=body.ExpectedStep):body.Action is not ("SkipTutorial" or "TutorialComplete")||body.ExpectedStep is not ("survivor_tutorial" or "mannequin_tutorial"))return Results.BadRequest();
-            string metric=talk?"Dialogue":body.ExpectedStep=="survivor_tutorial"?"SurvivorTutorial":"MannequinTutorial";
-            if(body.Action=="TutorialComplete"&&body.Role!=(metric=="SurvivorTutorial"?"Survivor":"Mannequin"))return Results.BadRequest();
+            if(!talk&&body.Action is not("SkipTutorial" or "TutorialComplete")||string.IsNullOrEmpty(body.ExpectedStep)||body.ExpectedStep.Length>40||body.Quest is {Length:>40})return Results.BadRequest();
+            string quest=string.IsNullOrEmpty(body.Quest)?QuestGraph.MainLine:body.Quest;
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
             await CaseRecords.LockAccountAsync(c,tx,user.Id,ct);
-            var previous=await CommunityEndpoints.Rows(c,tx,"SELECT stage,revision FROM main_quest_state WHERE user_id=@u",ct,("u",user.Id));
-            long before=previous.Count==0?0:Convert.ToInt64(previous[0]["revision"]);
+            long before=await QuestProgress.RevisionAsync(c,tx,user.Id,ct);
             if(talk)
             {
-                // A conversation can be finished when it is the current step, or read later once unlocked; a locked one cannot.
-                var (_,plan)=await ReadPlan(c,tx,ct);int index=Array.FindIndex(plan.Steps,s=>s.Id==body.ExpectedStep),stage=previous.Count==0?0:Convert.ToInt32(previous[0]["stage"]);
-                if(index<0||index>stage)return Results.Conflict(new{message="아직 열리지 않은 대화입니다."});
-                if(!ValidChoices(plan.Steps[index].Talk!,body.Choices))return Results.BadRequest(new{message="대화 선택을 확인하세요."});
-                await CommunityEndpoints.Exec(c,tx,"INSERT INTO main_quest_talks(user_id,step_id,choices,talked_at) VALUES(@u,@s,@c,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE choices=@c,talked_at=UTC_TIMESTAMP(6)",ct,("u",user.Id),("s",body.ExpectedStep),("c",string.Join(',',body.Choices!)));
+                var error=await QuestProgress.TalkAsync(c,tx,user.Id,quest,body.ExpectedStep,body.Choices,ct);
+                if(error is not null)return error.StartsWith("아직")?Results.Conflict(new{message=error}):Results.BadRequest(new{message=error});
             }
-            await AdvanceAsync(c,tx,user.Id,(talk?"Talk:":"Tutorial:")+body.ExpectedStep,new Dictionary<string,int>{{metric,1}},ct,body.Action=="SkipTutorial",body.ExpectedStep);
+            else
+            {
+                // Only a tutorial step: its goals say which tutorial, and the reported role must match it.
+                var (_,graph)=await QuestProgress.ReadAsync(c,tx,ct);
+                var step=graph.Quests.FirstOrDefault(q=>q.Id==quest)?.Steps.FirstOrDefault(s=>s.Id==body.ExpectedStep);
+                if(step is null||!QuestGraph.IsTutorialStep(step))return Results.BadRequest();
+                string metric=step.Goals[0].Metric;
+                if(body.Action=="TutorialComplete"&&body.Role!=(metric=="SurvivorTutorial"?"Survivor":"Mannequin"))return Results.BadRequest();
+                await QuestProgress.AdvanceAsync(c,tx,user.Id,$"Tutorial:{quest}:{body.ExpectedStep}",new Dictionary<string,int>{{metric,1}},ct,body.Action=="SkipTutorial",(quest,body.ExpectedStep));
+            }
             var questNotices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u AND revision>@r ORDER BY revision",ct,("u",user.Id),("r",before));
             var snapshot=await CaseRecords.Snapshot(c,tx,user.Id,app.Configuration,ct);await tx.CommitAsync(ct);return Results.Ok(new{snapshot,questNotices});
         }).RequireRateLimiting("social");
-        app.MapPost("/api/server/main-quest/floor",async(FloorEvent body,HttpRequest request,AuthDatabase db,ProjectSecurityOptions security,CancellationToken ct)=>
+        app.MapPost("/api/server/main-quest/floor",async(FloorEvent body,HttpRequest request,AuthDatabase db,ProjectSecurityOptions security,VersionCompatibilityOptions version,CancellationToken ct)=>
         {
             if(!security.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))return Results.Unauthorized();
             if(!Guid.TryParse(body.MatchId,out var match)||!ulong.TryParse(body.UserId,out var user)||body.ServerPort is <1 or >65535)return Results.BadRequest();
@@ -226,9 +205,10 @@ internal static class MainQuest
             await CaseInvestigation.CaptureServerAsync(c,tx,match.ToString(),ct);
             var admission=await CommunityEndpoints.Rows(c,tx,"SELECT p.user_id FROM authoritative_match_players p JOIN authoritative_matches a ON a.match_id=p.match_id JOIN case_match_servers s ON s.match_id=p.match_id WHERE p.match_id=@m AND p.user_id=@u AND p.role='Survivor' AND s.port=@port AND a.created_at_utc<=@at AND (a.ended_at_utc IS NULL OR a.ended_at_utc>=@at)",ct,("m",match.ToString()),("u",user),("port",body.ServerPort),("at",body.ObservedAtUtc.UtcDateTime));
             if(admission.Count!=1)return Results.StatusCode(403);
+            await PlayAnalytics.RecordFloor(c,tx,match.ToString(),user,body.Map,version,ct);
             await AdvanceAsync(c,tx,user,"Floor:"+match+":"+metric,new Dictionary<string,int>{{metric,1}},ct);await tx.CommitAsync(ct);return Results.Ok(new{message="확인되었습니다."});
         }).RequireRateLimiting("game-server");
-        app.MapPost("/api/server/main-quest/event",async(ProgressEvent body,HttpRequest request,AuthDatabase db,ProjectSecurityOptions security,CancellationToken ct)=>
+        app.MapPost("/api/server/main-quest/event",async(ProgressEvent body,HttpRequest request,AuthDatabase db,ProjectSecurityOptions security,VersionCompatibilityOptions version,CancellationToken ct)=>
         {
             if(!security.IsAuthorizedGameServer(request.Headers["X-ProjectProject01-Server-Secret"].ToString()))return Results.Unauthorized();
             if(!Guid.TryParse(body.MatchId,out var match)||!ulong.TryParse(body.UserId,out var user)||body.ServerPort is <1 or >65535||body.Kind is not("Capture" or "Escape")||body.Count is <1 or >100||body.Kind=="Escape"&&body.Count!=1)return Results.BadRequest();
@@ -238,17 +218,68 @@ internal static class MainQuest
             var role=body.Kind=="Capture"?"Mannequin":"Survivor";
             var admission=await CommunityEndpoints.Rows(c,tx,"SELECT p.user_id FROM authoritative_match_players p JOIN authoritative_matches a ON a.match_id=p.match_id JOIN case_match_servers s ON s.match_id=p.match_id WHERE p.match_id=@m AND p.user_id=@u AND p.role=@role AND s.port=@port AND a.created_at_utc<=@at AND (a.ended_at_utc IS NULL OR a.ended_at_utc>=@at)",ct,("m",match.ToString()),("u",user),("role",role),("port",body.ServerPort),("at",body.ObservedAtUtc.UtcDateTime));
             if(admission.Count!=1)return Results.StatusCode(403);
+            await PlayAnalytics.RecordOutcome(c,tx,match.ToString(),user,body.Kind,body.Count,body.Map,version,ct);
             if(body.Kind=="Capture")await CaptureAsync(c,tx,user,match.ToString(),body.Count,ct);else await EscapeAsync(c,tx,user,match.ToString(),ct);
             await tx.CommitAsync(ct);return Results.Ok(new{message="확인되었습니다."});
         }).RequireRateLimiting("game-server");
+        // The original 탐사 screen (one line of steps) keeps working on the graph while the main line has no branches:
+        // its titles, goals, stories and conversation lines are written back to the main line on the graph.
         app.MapGet("/api/admin/main-quest",async(HttpRequest request,AuthDatabase db,AdministratorOptions admin,CancellationToken ct)=>
-        {if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();await using var c=await db.OpenConnectionAsync(ct);var p=await ReadPlan(c,null,ct);return Results.Ok(new{revision=p.Revision,plan=p.Plan});}).RequireRateLimiting("admin");
+        {
+            if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();
+            await using var c=await db.OpenConnectionAsync(ct);var (revision,graph)=await QuestProgress.ReadAsync(c,null,ct);
+            var plan=LegacyPlan(graph);return plan is null?Results.Conflict(new{message="메인 라인에 갈림길이 있어 퀘스트·대화 그래프 편집기에서만 고칠 수 있습니다."}):Results.Ok(new{revision,plan});
+        }).RequireRateLimiting("admin");
         app.MapPut("/api/admin/main-quest",async(Configure body,HttpRequest request,AuthDatabase db,AdministratorOptions admin,CancellationToken ct)=>
         {
             if(!admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]))return Results.Unauthorized();if(!Valid(body.Plan))return Results.BadRequest(new{message="퀘스트 제목·조건·스토리 구성을 확인하세요."});
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
-            var rows=await CommunityEndpoints.Rows(c,tx,"SELECT revision FROM main_quest_config WHERE id=1 FOR UPDATE",ct);if(Convert.ToInt64(rows[0]["revision"])!=body.Revision)return Results.Conflict(new{message="구성이 변경되었습니다. 다시 불러오세요."});
-            await CommunityEndpoints.Exec(c,tx,"UPDATE main_quest_config SET revision=revision+1,plan_json=@j WHERE id=1",ct,("j",JsonSerializer.Serialize(body.Plan,Json)));await tx.CommitAsync(ct);return Results.Ok(new{message="저장했습니다."});
+            var rows=await CommunityEndpoints.Rows(c,tx,"SELECT revision FROM quest_graph_config WHERE id=1 FOR UPDATE",ct);if(Convert.ToInt64(rows[0]["revision"])!=body.Revision)return Results.Conflict(new{message="구성이 변경되었습니다. 다시 불러오세요."});
+            var (_,graph)=await QuestProgress.ReadAsync(c,tx,ct);if(LegacyPlan(graph) is null)return Results.Conflict(new{message="메인 라인에 갈림길이 있어 퀘스트·대화 그래프 편집기에서만 고칠 수 있습니다."});
+            var updated=ApplyLegacyPlan(graph,body.Plan);var errors=QuestGraph.Validate(updated);if(errors.Count>0)return Results.BadRequest(new{message=errors[0]});
+            await CommunityEndpoints.Exec(c,tx,"UPDATE quest_graph_config SET revision=revision+1,graph_json=@j WHERE id=1",ct,("j",JsonSerializer.Serialize(updated,QuestGraph.Json)));await tx.CommitAsync(ct);return Results.Ok(new{message="저장했습니다."});
         }).RequireRateLimiting("admin");
+    }
+    /// <summary>The main line as the original plan, when it is one line of steps in the 탐사 order with one-line talks.</summary>
+    internal static Plan? LegacyPlan(QuestGraph.Graph g)
+    {
+        var q=g.Quests.FirstOrDefault(x=>x.Id==QuestGraph.MainLine);if(q is null)return null;
+        var steps=new List<Step>();var seen=new HashSet<string>();var npcs=g.Npcs.ToDictionary(n=>n.Id,n=>n.Name);
+        for(var id=q.Start;id is not null;)
+        {
+            var s=q.Steps.FirstOrDefault(x=>x.Id==id);if(s is null||!seen.Add(id)||(s.Next??[]).Length>1)return null;
+            Talk? talk=null;
+            if(s.Talk is not null)
+            {
+                var t=g.Talks.FirstOrDefault(x=>x.Id==s.Talk);if(t is null)return null;var nodes=t.Nodes.ToDictionary(n=>n.Id);var lines=new List<TalkLine>();var seenNodes=new HashSet<string>();
+                for(var n=t.Start;n is not null;)
+                {
+                    if(!seenNodes.Add(n)||!nodes.TryGetValue(n,out var node))return null;
+                    if(node.Options is null){lines.Add(Say(node.Text!));n=node.Next;continue;}
+                    if(node.Options.Select(o=>o.Next).Distinct().Count()!=1||node.Options.Any(o=>o.Flags is {Length:>0}||o.Gives is not null))return null;
+                    lines.Add(Ask([..node.Options.Select(o=>Opt(o.Text,o.Replies))]));n=node.Options[0].Next;
+                }
+                talk=new(npcs.GetValueOrDefault(t.Npc,t.Npc),[..lines]);
+            }
+            steps.Add(new(s.Id,s.Title,[..s.Goals.Select(x=>new Goal(x.Id,x.Metric,x.Label,x.Target))],s.Story,talk));id=s.Next is {Length:1}?s.Next[0].Step:null;
+        }
+        return steps.Count==q.Steps.Length?new(q.Name,q.BaseStory,[..steps]):null;
+    }
+    internal static QuestGraph.Graph ApplyLegacyPlan(QuestGraph.Graph g,Plan plan)
+    {
+        var npcs=g.Npcs.ToList();var talks=g.Talks.ToList();
+        var quest=g.Quests.First(x=>x.Id==QuestGraph.MainLine);var steps=quest.Steps.ToList();
+        foreach(var p in plan.Steps)
+        {
+            int i=steps.FindIndex(s=>s.Id==p.Id);if(i<0)continue;var s=steps[i];
+            if(p.Talk is not null&&s.Talk is not null)
+            {
+                var npc=npcs.FirstOrDefault(n=>n.Name==p.Talk.Npc);if(npc is null){npc=new(QuestGraph.NpcId(p.Talk.Npc),p.Talk.Npc);npcs.Add(npc);}
+                int t=talks.FindIndex(x=>x.Id==s.Talk);var rebuilt=QuestGraph.FromLegacy(s.Talk,p.Talk) with{Npc=npc.Id};
+                if(t>=0)talks[t]=rebuilt with{Nodes=[..rebuilt.Nodes.Select(n=>talks[t].Nodes.FirstOrDefault(o=>o.Id==n.Id) is {} old?n with{X=old.X,Y=old.Y}:n)]};
+            }
+            steps[i]=s with{Title=p.Title,Story=p.Story,Goals=[..p.Goals.Select(x=>new QuestGraph.Goal(x.Id,x.Metric,x.Label,x.Target))]};
+        }
+        return g with{Npcs=[..npcs],Talks=[..talks],Quests=[..g.Quests.Select(q=>q.Id==quest.Id?q with{Name=plan.Name,BaseStory=plan.BaseStory,Steps=[..steps]}:q)]};
     }
 }

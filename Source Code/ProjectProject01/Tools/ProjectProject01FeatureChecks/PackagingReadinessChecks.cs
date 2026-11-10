@@ -60,8 +60,13 @@ internal static class PackagingReadinessChecks
             "타이틀 전용 3D 표면·안개·먼지 머티리얼 쿠킹 포함");
         check(config.Contains("+DirectoriesToAlwaysCook=(Path=\"/Game/MyProject/Data\")"),"경로 기반 튜닝 데이터테이블 쿠킹 보장");
         check(!Regex.IsMatch(config,@"DirectoriesToAlwaysStage[^\r\n]*MyProject/Data"),"개발용 튜닝 CSV 별도 배포 없음");
-        var maps=Regex.Matches(config,@"\+MapsToCook=\(FilePath=""([^""]+)""\)");
-        check(maps.Count==9&&maps.All(map=>File.Exists("Content"+map.Groups[1].Value[5..]+".umap")),"기본·목적지·튜토리얼 9개 맵 파일과 쿠킹 설정 일치");
+        var maps=Regex.Matches(config,@"\+MapsToCook=\(FilePath=""([^""]+)""\)").Select(match=>match.Groups[1].Value).ToArray();
+        string[] requiredMaps = ["TitleLevel","LevelTest01","SinglePlayerIntro","LoginLevel","LobbyLevel","LeaderBoardTest",
+            "MultiplayTest","MultiplayTest1","MultiplayTest2","MultiplayerTutorial"];
+        check(requiredMaps.All(map=>maps.Contains("/Game/MyProject/Level/"+map)) &&
+            maps.Distinct(StringComparer.OrdinalIgnoreCase).Count()==maps.Length &&
+            maps.All(map=>map.StartsWith("/Game/",StringComparison.Ordinal)&&File.Exists("Content"+map[5..]+".umap")),
+            "기본·목적지·프롤로그·튜토리얼 맵 파일과 쿠킹 설정 일치");
     }
 
     private static void WriteFixture(string path,ushort machine)

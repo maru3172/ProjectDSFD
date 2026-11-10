@@ -4,6 +4,7 @@
 #include "ProjectProject01Tutorial.h"
 #include "ProjectProject01LevelTransitionTrigger.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectProject01LoginWidget.h"
 #include "ProjectProject01SaveSubsystem.h"
 #include "ProjectProject01FrontendGameMode.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
@@ -12,6 +13,7 @@
 #include "ProjectLoadingScreenSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraActor.h"
 #include "PlayerCharacter.h"
 #include "MannequinAICharacter.h"
 #include "Editor.h"
@@ -343,6 +345,22 @@ bool FProjectSingleTitleReturnTest::RunTest(const FString&)
 				auto* PC = World->GetFirstPlayerController();
 				auto* Player = PC ? Cast<APlayerCharacter>(PC->GetPawn()) : nullptr;
 				if (!Player) continue;
+				if (auto* Menu = CreateWidget<UProjectProject01SessionMenuWidget>(PC))
+				{
+					Menu->ConfigureForSession(false);
+					Menu->AddToViewport(500);
+					TestTrue(TEXT("Photo mode uses the paused single-player world"), UGameplayStatics::SetGamePaused(World, true));
+					AActor* OriginalView = PC->GetViewTarget();
+					if (auto* Enter = Menu->FindFunction(TEXT("HandlePhotoModeClicked"))) Menu->ProcessEvent(Enter, nullptr);
+					TestTrue(TEXT("Photo mode selects a separate camera"), PC->GetViewTarget() != OriginalView &&
+						IsValid(Cast<ACameraActor>(PC->GetViewTarget())));
+					if (auto* Exit = Menu->FindFunction(TEXT("HandlePhotoExitClicked"))) Menu->ProcessEvent(Exit, nullptr);
+					TestTrue(TEXT("Returning from photo mode restores view without resuming play"),
+						PC->GetViewTarget() == OriginalView && UGameplayStatics::IsGamePaused(World));
+					Menu->CloseMenu();
+					TestFalse(TEXT("Leaving the single-player menu resumes play"), UGameplayStatics::IsGamePaused(World));
+				}
+				else AddError(TEXT("Could not create the single-player menu for photo verification"));
 				Save->TestSlotNamespace = FGuid::NewGuid().ToString(EGuidFormats::Digits);
 				*TestSave = Save;
 				*SavedWorld = World;

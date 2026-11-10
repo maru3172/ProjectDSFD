@@ -633,27 +633,31 @@ internal sealed partial class LauncherForm : Form
         }
     }
 
-    private void LaunchGame(string? executablePath = null)
+    private bool LaunchGame(string? executablePath = null, string recoveryArguments = "", bool closeLauncher = true)
     {
         try
         {
             using var targetLock=AcquireInstallLock();RecoverInterruptedInstall();
             SaveSettings();
             string gamePath = ResolveInstalledExecutable(installRoot, executablePath);
+            if (recoveryArguments.Length != 0)
+                EnsureGameIsNotRunning(Path.GetFileName(gamePath));
             string address = serverAddress.Text.Trim();
             GetBackendBaseUrl();
             Process.Start(new ProcessStartInfo(gamePath)
             {
                 WorkingDirectory = Path.GetDirectoryName(gamePath)!,
-                Arguments = LauncherProfile.Current.GameArguments(address),
+                Arguments = LauncherProfile.Current.GameArguments(address) + recoveryArguments,
                 UseShellExecute = true
             });
-            Close();
+            if (closeLauncher) Close();
+            return true;
         }
         catch (Exception exception)
         {
             Append("[실패] " + exception.Message);
             SetStatus("게임을 실행하지 못했습니다.");
+            return false;
         }
     }
 

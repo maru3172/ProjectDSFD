@@ -48,6 +48,7 @@ internal sealed partial class LauncherForm
         layout.Controls.Add(new Label {Text="서버 PC IPv4",AutoSize=true});serverAddress.Width=580;serverAddress.Dock=DockStyle.None;layout.Controls.Add(serverAddress);
         var location=new TextBox {ReadOnly=true,Width=700,Text=installRoot};layout.Controls.Add(new Label {Text="게임 설치 위치",AutoSize=true});layout.Controls.Add(location);
         bool operation=false;
+        bool launchedFromSettings = false;
         async Task Run(Func<Task> action)
         {
             if(operation)return;operation=true;tabs.Enabled=false;
@@ -76,6 +77,22 @@ internal sealed partial class LauncherForm
             var manifest=await FetchManifestAsync(GetBackendBaseUrl());var plans=await BuildUpdatePlansAsync(manifest);
             SetStatus(plans.Count==0?"무결성 검사 완료: 모든 배포 파일이 정상입니다.":$"누락·변경된 파일 {plans.Count}개입니다. 설치 / 복구를 누르면 필요한 부분을 받습니다.");
         }));
+        Add(layout,"안전 모드로 게임 실행",()=>
+        {
+            launchedFromSettings = LaunchGame(recoveryArguments: " -ProjectSafeGraphics -Windowed -ResX=1280 -ResY=720", closeLauncher: false);
+            if (launchedFromSettings) dialog.BeginInvoke(new Action(dialog.Close));
+            return Task.CompletedTask;
+        });
+        Add(layout,"그래픽 설정 복구 후 게임 실행",()=>
+        {
+            if (MessageBox.Show(dialog,"그래픽 설정을 초기화하고 게임을 실행할까요?",
+                "그래픽 설정 복구",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes)
+            {
+                launchedFromSettings = LaunchGame(recoveryArguments: " -ProjectRecoverGraphics", closeLauncher: false);
+                if (launchedFromSettings) dialog.BeginInvoke(new Action(dialog.Close));
+            }
+            return Task.CompletedTask;
+        });
         Add(layout,"캐시 삭제",()=>
         {
             EnsureGameIsNotRunning(LauncherProfile.Current.GameExecutables.FirstOrDefault()??"");
@@ -126,6 +143,7 @@ internal sealed partial class LauncherForm
         inquiryLayout.Controls.Add(answer);
         dialog.FormClosing+=(_,e)=>{if(operation){e.Cancel=true;statusLine.Text="작업을 마친 뒤 닫으세요.";}};
         dialog.ShowDialog(this);layout.Controls.Remove(serverAddress);SaveSettings();
+        if (launchedFromSettings) Close();
     }
     private sealed record LauncherPost(string Title,string Body,string? PreviewImageId=null,string? Id=null);
 }

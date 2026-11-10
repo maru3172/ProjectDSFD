@@ -2,6 +2,7 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01LoginWidget.h"
+#include "Misc/ConfigCacheIni.h"
 #include "ProjectCaseRecords.h"
 #include "ProjectMatchWait.h"
 #include "ProjectLoadingScreenSubsystem.h"
@@ -15,6 +16,7 @@
 #include "ProjectProject01SocialWidget.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Components/BackgroundBlur.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -42,6 +44,10 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
+#include "GameFramework/HUD.h"
+#include "UnrealClient.h"
 #include "Kismet/GameplayStatics.h"
 #include "MannequinAICharacter.h"
 #include "PlayerCharacter.h"
@@ -1317,6 +1323,7 @@ void UProjectProject01TitleWidget::NativeTick(const FGeometry& MyGeometry, const
 namespace ProjectProject01TitleRoutes
 {
 	const FName SinglePlayerLevel(TEXT("/Game/MyProject/Level/LevelTest01"));
+	const FName SingleIntroLevel(TEXT("/Game/MyProject/Level/SinglePlayerIntro"));
 	const FName MultiplayerLoginLevel(TEXT("/Game/MyProject/Level/LoginLevel"));
 	const FName TitleLevel(TEXT("/Game/MyProject/Level/TitleLevel"));
 }
@@ -1330,6 +1337,7 @@ FReply UProjectProject01TitleWidget::NativeOnKeyDown(const FGeometry& InGeometry
 	// The way out of whatever is showing: a question closes as "no", the save slots go back, the home menu asks to quit.
 	if (IsValid(QuitConfirmDialog) && QuitConfirmDialog->IsOpen()) QuitConfirmDialog->Dismiss();
 	else if (IsValid(SaveSlotConfirmationBlur) && SaveSlotConfirmationBlur->GetVisibility() == ESlateVisibility::Visible) HandleSaveSlotConfirmationNoClicked();
+	else if (IsValid(TitlePageSwitcher) && TitlePageSwitcher->GetActiveWidgetIndex() == 2) HandleSinglePlayerClicked();
 	else if (IsValid(TitlePageSwitcher) && TitlePageSwitcher->GetActiveWidgetIndex() == 1) HandleSaveSlotsBackClicked();
 	else HandleQuitClicked();
 	return FReply::Handled();
@@ -1477,6 +1485,21 @@ void UProjectProject01TitleWidget::HandleContinueSinglePlayerClicked()
 }
 
 void UProjectProject01TitleWidget::HandleSaveSlot1PlayClicked() { PlaySaveSlot(1); }
+void UProjectProject01TitleWidget::HandleIntroLibraryClicked()
+{
+	if (bNavigationRequested || !IsValid(TitlePageSwitcher)) return;
+	int32 Seen = 0;
+	GConfig->GetInt(TEXT("ProjectDFSD.IntroScenes"), TEXT("Seen"), Seen, GGameUserSettingsIni);
+	for (int32 Index=0; Index<IntroLibraryButtons.Num(); ++Index)
+		if (UButton* Button = IntroLibraryButtons[Index].Get()) Button->SetIsEnabled((Seen & (1 << Index)) != 0);
+	TitlePageSwitcher->SetActiveWidgetIndex(2);
+	SetKeyboardFocus();
+}
+
+void UProjectProject01TitleWidget::HandlePlayIntroClicked() { QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::IntroScene, 0); }
+void UProjectProject01TitleWidget::HandleReplayOpeningClicked() { QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::IntroScene, 1); }
+void UProjectProject01TitleWidget::HandleReplayHatClicked() { QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::IntroScene, 2); }
+void UProjectProject01TitleWidget::HandleReplayFinaleClicked() { QueueSinglePlayerLaunch(ESinglePlayerLaunchAction::IntroScene, 3); }
 void UProjectProject01TitleWidget::HandleSaveSlot2PlayClicked() { PlaySaveSlot(2); }
 void UProjectProject01TitleWidget::HandleSaveSlot3PlayClicked() { PlaySaveSlot(3); }
 void UProjectProject01TitleWidget::HandleSaveSlot1NewGameClicked() { RequestStartNewGameInSaveSlot(1); }
@@ -1602,6 +1625,15 @@ void UProjectProject01TitleWidget::CompleteSinglePlayerLaunch()
 		{
 			// 싱글 새 게임은 백엔드·로비·데디케이티드 서버에 접속하지 않는다.
 			UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SinglePlayerLevel, true);
+		}
+		break;
+	case ESinglePlayerLaunchAction::IntroScene:
+		bStarted = FPackageName::DoesPackageExist(ProjectProject01TitleRoutes::SingleIntroLevel.ToString());
+		if (bStarted)
+		{
+			if (auto* Game = Cast<UProjectProject01GameInstance>(GameInstance)) Game->ClearEntireScreenFade();
+			UGameplayStatics::OpenLevel(this, ProjectProject01TitleRoutes::SingleIntroLevel, true,
+				FString::Printf(TEXT("IntroScene=%d"), PendingSinglePlayerLaunchSlot));
 		}
 		break;
 	default:
@@ -2020,7 +2052,20 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		SaveSlotNewGameButtons.Add(ProjectProject01LoginUI::AddButton(WidgetTree,Actions,TEXT("새 게임")));
 		SaveSlotDeleteButtons.Add(ProjectProject01LoginUI::AddButton(WidgetTree,Actions,TEXT("삭제")));
 	}
+	auto* IntroEntry = ProjectProject01LoginUI::AddButton(WidgetTree, SaveSlotMenu, TEXT("프롤로그 · 장면 다시보기"));
+	IntroEntry->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleIntroLibraryClicked);
 	SaveSlotsBackButton = ProjectProject01LoginUI::AddButton(WidgetTree, SaveSlotMenu, TEXT("돌아가기"));
+	auto* IntroPage = ProjectProject01LoginUI::AddSaveCasePage(WidgetTree, TitlePageSwitcher);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, IntroPage, TEXT("프롤로그 · 장면 다시보기"), 30.f);
+	ProjectProject01LoginUI::AddButton(WidgetTree, IntroPage, TEXT("프롤로그 플레이"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandlePlayIntroClicked);
+	auto* Opening = ProjectProject01LoginUI::AddButton(WidgetTree, IntroPage, TEXT("백화점에 들어가는 길"));
+	auto* Hat = ProjectProject01LoginUI::AddButton(WidgetTree, IntroPage, TEXT("모자와 화재 경보"));
+	auto* Finale = ProjectProject01LoginUI::AddButton(WidgetTree, IntroPage, TEXT("방화셔터 너머"));
+	IntroLibraryButtons = {Opening, Hat, Finale};
+	Opening->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleReplayOpeningClicked);
+	Hat->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleReplayHatClicked);
+	Finale->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleReplayFinaleClicked);
+	ProjectProject01LoginUI::AddButton(WidgetTree, IntroPage, TEXT("돌아가기"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleSinglePlayerClicked);
 	TitlePageSwitcher->SetActiveWidgetIndex(0);
 
 	SaveSlotConfirmationBlur = WidgetTree->ConstructWidget<UBackgroundBlur>();
@@ -2721,6 +2766,8 @@ bool UProjectProject01SessionMenuWidget::Initialize()
 void UProjectProject01SessionMenuWidget::ConfigureForSession(const bool bInMultiplayer)
 {
 	bMultiplayer = bInMultiplayer;
+	if (UButton* Entry = PhotoEntry.Get())
+		Entry->SetVisibility(bMultiplayer ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (IsValid(ReturnToRoomButton))
 	{
 		ReturnToRoomButton->SetVisibility(bMultiplayer ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -2835,6 +2882,7 @@ void UProjectProject01SessionMenuWidget::NativeConstruct()
 
 void UProjectProject01SessionMenuWidget::NativeDestruct()
 {
+	EndPhotoMode(false);
 	// The menu is removed and added again on each opening: an open question goes with it.
 	if (IsValid(ConfirmDialog)) ConfirmDialog->RemoveFromParent();
 	ConfirmDialog = nullptr;
@@ -2915,6 +2963,38 @@ FReply UProjectProject01SessionMenuWidget::NativeOnKeyDown(
 	const FGeometry& InGeometry,
 	const FKeyEvent& InKeyEvent)
 {
+	if (ACameraActor* Camera = PhotoCamera.Get())
+	{
+		const FKey Key = InKeyEvent.GetKey();
+		if (Key == EKeys::Escape) HandlePhotoExitClicked();
+		else if (Key == EKeys::F12) HandlePhotoCaptureClicked();
+		else
+		{
+			const float Move = InKeyEvent.IsShiftDown() ? 45.f : 10.f;
+			FRotator Rotation = Camera->GetActorRotation();
+			FVector Offset = FVector::ZeroVector;
+			if (Key == EKeys::W) Offset.X = Move;
+			else if (Key == EKeys::S) Offset.X = -Move;
+			else if (Key == EKeys::A) Offset.Y = -Move;
+			else if (Key == EKeys::D) Offset.Y = Move;
+			else if (Key == EKeys::Q) Offset.Z = -Move;
+			else if (Key == EKeys::E) Offset.Z = Move;
+			else if (Key == EKeys::Left) Rotation.Yaw -= 3.f;
+			else if (Key == EKeys::Right) Rotation.Yaw += 3.f;
+			else if (Key == EKeys::Up) Rotation.Pitch = FMath::Min(Rotation.Pitch + 3.f, 85.f);
+			else if (Key == EKeys::Down) Rotation.Pitch = FMath::Max(Rotation.Pitch - 3.f, -85.f);
+			else return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+			const FVector Position = Camera->GetActorLocation() + Rotation.RotateVector(Offset);
+			FHitResult Blocked;
+			if (GetWorld()->LineTraceSingleByChannel(Blocked, Camera->GetActorLocation(), Position, ECC_Visibility,
+				FCollisionQueryParams(SCENE_QUERY_STAT(PhotoCamera), true, GetOwningPlayerPawn())))
+				Offset = FVector::ZeroVector;
+			Camera->SetActorLocationAndRotation(Camera->GetActorLocation() + Rotation.RotateVector(Offset), Rotation);
+			if (APlayerController* PC = GetOwningPlayer(); PC && PC->PlayerCameraManager)
+				PC->PlayerCameraManager->UpdateCamera(0.f);
+		}
+		return FReply::Handled();
+	}
 	if (InKeyEvent.GetKey() == EKeys::Escape && !bBusy)
 	{
 		if (IsValid(SessionPageSwitcher) && SessionPageSwitcher->GetActiveWidgetIndex() != 0)
@@ -2931,6 +3011,149 @@ FReply UProjectProject01SessionMenuWidget::NativeOnKeyDown(
 void UProjectProject01SessionMenuWidget::HandleContinueClicked()
 {
 	CloseMenu();
+}
+
+void UProjectProject01SessionMenuWidget::HandlePhotoModeClicked()
+{
+	APlayerController* PC = GetOwningPlayer();
+	UWorld* World = GetWorld();
+	if (bMultiplayer || bBusy || PhotoCamera.IsValid() || !World || World->GetNetMode() != NM_Standalone ||
+		!PC || !PC->PlayerCameraManager || !UGameplayStatics::IsGamePaused(this)) return;
+	auto* Camera = World->SpawnActor<ACameraActor>(PC->PlayerCameraManager->GetCameraLocation(),
+		PC->PlayerCameraManager->GetCameraRotation());
+	if (!Camera) return;
+
+	PreviousPhotoView = PC->GetViewTarget();
+	PhotoCamera = Camera;
+	auto* Lens = Camera->GetCameraComponent();
+	Lens->bConstrainAspectRatio = false;
+	Lens->SetFieldOfView(PC->PlayerCameraManager->GetFOVAngle());
+	HandlePhotoFocusChanged(.25f);
+	HandlePhotoExposureChanged(.5f);
+	if (AHUD* HUD = PC->GetHUD())
+	{
+		bPhotoHudWasVisible = HUD->bShowHUD;
+		HUD->bShowHUD = false;
+	}
+	TArray<UUserWidget*> ViewportWidgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, ViewportWidgets, UUserWidget::StaticClass(), true);
+	for (UUserWidget* Widget : ViewportWidgets)
+	{
+		if (Widget == this || Widget->GetWorld() != World || !Widget->IsInViewport()) continue;
+		const ESlateVisibility WidgetVisibility = Widget->GetVisibility();
+		if (WidgetVisibility == ESlateVisibility::Collapsed || WidgetVisibility == ESlateVisibility::Hidden) continue;
+		PhotoHiddenWidgets.Add(Widget, WidgetVisibility);
+		Widget->SetVisibility(ESlateVisibility::Hidden);
+	}
+	PC->SetViewTarget(Camera);
+	PC->PlayerCameraManager->UpdateCamera(0.f);
+	if (auto* Dim = PhotoDim.Get()) Dim->SetVisibility(ESlateVisibility::Collapsed);
+	if (auto* Panel = PhotoPanel.Get()) Panel->SetVisibility(ESlateVisibility::Visible);
+	SessionPageSwitcher->SetVisibility(ESlateVisibility::Collapsed);
+	SetKeyboardFocus();
+}
+
+void UProjectProject01SessionMenuWidget::HandlePhotoFocusChanged(float Value)
+{
+	if (auto* Camera = PhotoCamera.Get())
+	{
+		auto& Settings = Camera->GetCameraComponent()->PostProcessSettings;
+		Settings.bOverride_DepthOfFieldFocalDistance = true;
+		Settings.bOverride_DepthOfFieldFstop = true;
+		Settings.DepthOfFieldFocalDistance = FMath::Lerp(50.f, 2000.f, Value);
+		Settings.DepthOfFieldFstop = 2.8f;
+		if (APlayerController* PC = GetOwningPlayer(); PC && PC->PlayerCameraManager)
+			PC->PlayerCameraManager->UpdateCamera(0.f);
+	}
+}
+
+void UProjectProject01SessionMenuWidget::HandlePhotoExposureChanged(float Value)
+{
+	if (auto* Camera = PhotoCamera.Get())
+	{
+		auto& Settings = Camera->GetCameraComponent()->PostProcessSettings;
+		Settings.bOverride_AutoExposureBias = true;
+		Settings.AutoExposureBias = FMath::Lerp(-2.f, 2.f, Value);
+		if (APlayerController* PC = GetOwningPlayer(); PC && PC->PlayerCameraManager)
+			PC->PlayerCameraManager->UpdateCamera(0.f);
+	}
+}
+
+void UProjectProject01SessionMenuWidget::HandlePhotoCaptureClicked()
+{
+	if (PhotoCamera.IsValid()) FScreenshotRequest::RequestScreenshot(false, true);
+}
+
+void UProjectProject01SessionMenuWidget::HandlePhotoExitClicked()
+{
+	EndPhotoMode(true);
+}
+
+void UProjectProject01SessionMenuWidget::EndPhotoMode(bool bFocusMenu)
+{
+	ACameraActor* Camera = PhotoCamera.Get();
+	if (!Camera && PhotoHiddenWidgets.IsEmpty()) return;
+	for (const auto& Hidden : PhotoHiddenWidgets)
+		if (UUserWidget* Widget = Hidden.Key.Get(); Widget && Widget->GetVisibility() == ESlateVisibility::Hidden)
+			Widget->SetVisibility(Hidden.Value);
+	PhotoHiddenWidgets.Reset();
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AActor* Previous = PreviousPhotoView.Get()) PC->SetViewTarget(Previous);
+		else if (APawn* Pawn = PC->GetPawn()) PC->SetViewTarget(Pawn);
+		if (AHUD* HUD = PC->GetHUD()) HUD->bShowHUD = bPhotoHudWasVisible;
+	}
+	PhotoCamera.Reset();
+	PreviousPhotoView.Reset();
+	if (Camera) Camera->Destroy();
+	if (auto* Dim = PhotoDim.Get()) Dim->SetVisibility(ESlateVisibility::Visible);
+	if (auto* Panel = PhotoPanel.Get()) Panel->SetVisibility(ESlateVisibility::Collapsed);
+	if (SessionPageSwitcher) SessionPageSwitcher->SetVisibility(ESlateVisibility::Visible);
+	if (bFocusMenu) SetKeyboardFocus();
+}
+
+void UProjectProject01SessionMenuWidget::HandleBugReportClicked()
+{
+	if (bBusy || !BugReportPage.IsValid()) return;
+	SessionPageSwitcher->SetActiveWidget(BugReportPage.Get());
+	if (auto* Field = BugDescription.Get()) Field->SetKeyboardFocus();
+}
+
+void UProjectProject01SessionMenuWidget::HandleCloseBugReportClicked()
+{
+	SessionPageSwitcher->SetActiveWidgetIndex(0);
+	SetKeyboardFocus();
+}
+
+void UProjectProject01SessionMenuWidget::HandleSubmitBugReportClicked()
+{
+	auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance());
+	auto* Field = BugDescription.Get();
+	auto* Send = BugReportSend.Get();
+	if (!Game || !Field || !Send || !Send->GetIsEnabled()) return;
+	const FString Description = Field->GetText().ToString();
+	if (Description.TrimStartAndEnd().IsEmpty() || Description.Len() > 4000)
+	{
+		if (auto* Status = BugReportStatus.Get())
+			Status->SetText(FText::FromString(TEXT("제보 내용을 1~4000자로 입력하세요.")));
+		return;
+	}
+	Send->SetIsEnabled(false);
+	TWeakObjectPtr<UProjectProject01SessionMenuWidget> WeakThis(this);
+	Game->SubmitBugInquiry(Description, BugAttachContext.IsValid() && BugAttachContext->IsChecked(),
+		[WeakThis](bool bSuccess, const FString& Message)
+		{
+			if (auto* Self = WeakThis.Get())
+			{
+				if (auto* Status = Self->BugReportStatus.Get()) Status->SetText(FText::FromString(Message));
+				if (auto* Button = Self->BugReportSend.Get()) Button->SetIsEnabled(true);
+				if (bSuccess)
+				{
+					if (auto* Input = Self->BugDescription.Get()) Input->SetText(FText::GetEmpty());
+					if (auto* Consent = Self->BugAttachContext.Get()) Consent->SetIsChecked(false);
+				}
+			}
+		});
 }
 
 void UProjectProject01SessionMenuWidget::HandleSaveCheckpointClicked()
@@ -3583,6 +3806,7 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	WidgetTree->RootWidget = Overlay;
 	UBorder* DimBackground = WidgetTree->ConstructWidget<UBorder>();
 	DimBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.72f));
+	PhotoDim = DimBackground;
 	if (UOverlaySlot* BackgroundSlot = Overlay->AddChildToOverlay(DimBackground))
 	{
 		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
@@ -3604,6 +3828,29 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("게임 메뉴"), 30.0f);
 	StatusText = ProjectProject01LoginUI::AddLabel(WidgetTree, Menu, TEXT("ESC를 다시 누르면 게임으로 돌아갑니다."), 14.0f);
 	ContinueButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 계속"));
+	auto* PhotoButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("포토 모드"));
+	PhotoEntry = PhotoButton;
+	PhotoButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandlePhotoModeClicked);
+	auto* PhotoControls = WidgetTree->ConstructWidget<UVerticalBox>();
+	PhotoPanel = PhotoControls;
+	PhotoControls->SetVisibility(ESlateVisibility::Collapsed);
+	auto* PhotoSlot = Overlay->AddChildToOverlay(PhotoControls);
+	PhotoSlot->SetHorizontalAlignment(HAlign_Center);
+	PhotoSlot->SetVerticalAlignment(VAlign_Bottom);
+	PhotoSlot->SetPadding(FMargin(15.f));
+	ProjectProject01LoginUI::AddLabel(WidgetTree, PhotoControls, TEXT("WASD·Q/E 이동  ·  방향키 회전  ·  F12 촬영"), 14.f);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, PhotoControls, TEXT("초점"), 14.f);
+	auto* Focus = WidgetTree->ConstructWidget<USlider>();
+	PhotoControls->AddChildToVerticalBox(Focus);
+	Focus->SetValue(.25f);
+	Focus->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandlePhotoFocusChanged);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, PhotoControls, TEXT("노출"), 14.f);
+	auto* Exposure = WidgetTree->ConstructWidget<USlider>();
+	PhotoControls->AddChildToVerticalBox(Exposure);
+	Exposure->SetValue(.5f);
+	Exposure->OnValueChanged.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandlePhotoExposureChanged);
+	ProjectProject01LoginUI::AddButton(WidgetTree, PhotoControls, TEXT("촬영"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandlePhotoCaptureClicked);
+	ProjectProject01LoginUI::AddButton(WidgetTree, PhotoControls, TEXT("돌아가기"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandlePhotoExitClicked);
 	SaveCheckpointButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("현재 체크포인트 저장"));
 	LoadCheckpointButton = ProjectProject01LoginUI::AddButton(
 		WidgetTree, Menu, TEXT("현재 저장소의 마지막 저장지점 불러오기"));
@@ -3613,6 +3860,7 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	SettingsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("환경설정"));
 	GameRulesButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 규칙"));
 	SurveyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("피드백/설문조사"));
+	ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("버그 제보"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleBugReportClicked);
 	ReturnToTitleButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("타이틀로 돌아가기"));
 	QuitGameButton = ProjectProject01LoginUI::AddButton(WidgetTree, Menu, TEXT("게임 종료"));
 
@@ -3671,6 +3919,23 @@ void UProjectProject01SessionMenuWidget::BuildWidgetTree()
 	}
 	ForfeitConfirmButton = ProjectProject01LoginUI::AddButton(WidgetTree, ForfeitPage, TEXT("나가기"));
 	ForfeitCancelButton = ProjectProject01LoginUI::AddButton(WidgetTree, ForfeitPage, TEXT("취소"));
+	auto* BugPage = ProjectProject01LoginUI::AddSettingsPage(WidgetTree, SessionPageSwitcher);
+	BugReportPage = SessionPageSwitcher->GetWidgetAtIndex(SessionPageSwitcher->GetNumWidgets() - 1);
+	ProjectProject01LoginUI::AddLabel(WidgetTree, BugPage, TEXT("버그 제보"), 30.f);
+	auto* BugSize = WidgetTree->ConstructWidget<USizeBox>();
+	BugSize->SetWidthOverride(510.f);
+	BugSize->SetHeightOverride(180.f);
+	BugPage->AddChildToVerticalBox(BugSize);
+	auto* Description = WidgetTree->ConstructWidget<UMultiLineEditableTextBox>();
+	Description->SetHintText(FText::FromString(TEXT("문제가 생기기 직전에 한 동작을 적어주세요.")));
+	BugSize->AddChild(Description);
+	BugDescription = Description;
+	BugAttachContext = ProjectProject01LoginUI::AddCheckRow(WidgetTree, BugPage, TEXT("빌드·맵·경기 번호·최근 네트워크 오류 첨부"));
+	BugReportStatus = ProjectProject01LoginUI::AddLabel(WidgetTree, BugPage, TEXT(""), 14.f);
+	auto* SubmitBug = ProjectProject01LoginUI::AddButton(WidgetTree, BugPage, TEXT("제보 보내기"));
+	BugReportSend = SubmitBug;
+	SubmitBug->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleSubmitBugReportClicked);
+	ProjectProject01LoginUI::AddButton(WidgetTree, BugPage, TEXT("돌아가기"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01SessionMenuWidget::HandleCloseBugReportClicked);
 	SessionPageSwitcher->SetActiveWidgetIndex(0);
 
 	ExitFadeOverlay = WidgetTree->ConstructWidget<UBorder>();
@@ -4788,6 +5053,24 @@ void UProjectProject01SettingsWidget::HandleLocationPingBindingClicked() { Begin
 void UProjectProject01SettingsWidget::HandleFlashlightBindingClicked() { BeginBindingCapture(EBindingTarget::Flashlight); }
 void UProjectProject01SettingsWidget::HandleApplyClicked() { ApplyPendingSettings(); }
 
+void UProjectProject01SettingsWidget::HandleGraphicsBenchmarkClicked()
+{
+	UWorld* World = GetWorld();
+	if (!World || World->GetNetMode() != NM_Standalone || !IsValid(OverallQualityComboBox)) return;
+	UProjectProject01GameUserSettings* Settings = UProjectProject01GameUserSettings::Get();
+	if (!IsValid(Settings)) return;
+
+	// The engine populates this temporary settings object without applying or saving it.
+	UProjectProject01GameUserSettings* Benchmark = NewObject<UProjectProject01GameUserSettings>(this);
+	Benchmark->RunHardwareBenchmark(5);
+	const int32 Quality = FMath::Clamp(FMath::Min3(Benchmark->GetShadowQuality(),
+		Benchmark->GetVisualEffectQuality(), Benchmark->GetViewDistanceQuality()), 0, 4);
+	HandleOverallQualityChanged(QualityToString(Quality), ESelectInfo::Direct);
+	ProjectProject01LoginUI::SetButtonText(
+		Cast<UButton>(GetWidgetFromName(TEXT("GraphicsBenchmarkButton"))),
+		FString::Printf(TEXT("측정 결과 · %s (적용을 눌러 저장)"), *QualityToString(Quality)));
+}
+
 void UProjectProject01SettingsWidget::HandleCancelClicked()
 {
 	if (bAwaitingVideoConfirmation) ConfirmPendingVideoMode();
@@ -5411,6 +5694,12 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	const TArray<FString> OverallOptions = {
 		TEXT("낮음"), TEXT("중간"), TEXT("높음"), TEXT("매우 높음"), TEXT("사용자 지정") };
 	for (const FString& Option : OverallOptions) OverallQualityComboBox->AddOption(Option);
+	UButton* BenchmarkButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("GraphicsBenchmarkButton"));
+	UTextBlock* BenchmarkText = WidgetTree->ConstructWidget<UTextBlock>();
+	BenchmarkText->SetText(FText::FromString(TEXT("PC 성능 측정 · 그래픽 추천")));
+	BenchmarkButton->AddChild(BenchmarkText);
+	VideoPage->AddChildToVerticalBox(BenchmarkButton);
+	BenchmarkButton->OnClicked.AddUniqueDynamic(this, &UProjectProject01SettingsWidget::HandleGraphicsBenchmarkClicked);
 	auto PopulateQuality = [](UComboBoxString* Combo)
 	{
 		Combo->AddOption(TEXT("낮음")); Combo->AddOption(TEXT("중간")); Combo->AddOption(TEXT("높음")); Combo->AddOption(TEXT("매우 높음"));

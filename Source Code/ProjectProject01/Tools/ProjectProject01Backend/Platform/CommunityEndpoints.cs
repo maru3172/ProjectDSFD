@@ -5,8 +5,10 @@ internal static partial class CommunityEndpoints
 {
     internal sealed record ActionRequest(string Operation, string? Target = null, string? Text = null,
         string? Presence = null, string? Context = null);
-    internal sealed record PostRequest(string Kind, string Title, string Body, bool Published = true, string? PreviewImageId = null, bool Featured = false, string? Summary = null);
-    internal sealed record InquiryRequest(string Subject, string Body, string? ReplyCode = null);
+    internal sealed record PostRequest(string Kind, string Title, string Body, bool Published = true, string? PreviewImageId = null,
+        bool Featured = false, string? Summary = null, bool SetEventWindow = false, DateTimeOffset? StartsAtUtc = null, DateTimeOffset? EndsAtUtc = null);
+    internal sealed record InquiryContext(string? Build, string? Map, string? MatchId, int[]? NetworkErrors);
+    internal sealed record InquiryRequest(string Subject, string Body, string? ReplyCode = null, InquiryContext? Context = null);
     internal sealed record ReplyRequest(string Reply, string Status = "Answered");
 
     internal static bool ValidPresence(string? value) => value is "Online" or "Offline" or "Away" or "DoNotDisturb";
@@ -25,16 +27,32 @@ internal static partial class CommunityEndpoints
         app.MapGet("/api/launcher/posts", async (AuthDatabase db, CancellationToken ct) =>
         {
             await using var c = await db.OpenConnectionAsync(ct);
-            return Results.Ok(new { posts = await Rows(c, null, "SELECT CAST(id AS CHAR) id,kind,title,body,preview_image_id previewImageId,featured,summary,updated_at_utc updatedAtUtc FROM launcher_posts WHERE published=1 ORDER BY updated_at_utc DESC,id DESC LIMIT 200", ct) });
+            return Results.Ok(new { posts = await Rows(c, null, """
+                SELECT CAST(p.id AS CHAR) id,p.kind,p.title,p.body,p.preview_image_id previewImageId,p.featured,p.summary,p.updated_at_utc updatedAtUtc
+                FROM launcher_posts p LEFT JOIN launcher_event_windows w ON w.post_id=p.id
+                WHERE p.published=1 AND (w.starts_utc IS NULL OR w.starts_utc<=UTC_TIMESTAMP(6))
+                  AND (w.ends_utc IS NULL OR w.ends_utc>UTC_TIMESTAMP(6)) ORDER BY p.updated_at_utc DESC,p.id DESC LIMIT 200
+                """, ct) });
         }).RequireRateLimiting("survey-read");
         // The launcher works before game login. A random receipt permits only the author to read replies.
         app.MapPost("/api/launcher/inquiries", async (InquiryRequest input, AuthDatabase db, CancellationToken ct) =>
         {
             if (!ValidText(input.Subject, 120) || !ValidText(input.Body, 4000)) return Error("제목 120자, 문의 내용 4000자 이내로 입력하세요.");
+            string body = input.Body.Trim();
+            if (input.Context is { } context)
+            {
+                static bool SafeName(string? value) => value is null ||
+                    (value.Length <= 100 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or '+' or ' '));
+                if (!SafeName(context.Build) || !SafeName(context.Map) ||
+                    (!string.IsNullOrEmpty(context.MatchId) && !Guid.TryParseExact(context.MatchId, "D", out _)) ||
+                    context.NetworkErrors is { Length: > 5 } || context.NetworkErrors?.Any(code => code is < 0 or > 99) == true)
+                    return Error("첨부된 게임 정보를 확인하세요.");
+                body += $"\n\n[게임 정보 · 제보자가 첨부]\n빌드: {context.Build}\n맵: {context.Map}\n경기: {context.MatchId}\n최근 네트워크 오류 코드: {string.Join(", ", context.NetworkErrors ?? [])}";
+            }
             string receipt = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
             await using var c = await db.OpenConnectionAsync(ct);
             await Exec(c, null, "INSERT INTO support_inquiries(receipt_hash,subject,body) VALUES(SHA2(@receipt,256),@subject,@body)", ct,
-                ("receipt", receipt), ("subject", input.Subject.Trim()), ("body", input.Body.Trim()));
+                ("receipt", receipt), ("subject", input.Subject.Trim()), ("body", body));
             return Results.Ok(new { receipt, message = "문의가 접수되었습니다. 답변 확인 코드를 안전하게 보관하세요." });
         }).RequireRateLimiting("survey");
         app.MapPost("/api/launcher/inquiries/reply", async (InquiryRequest input, AuthDatabase db, CancellationToken ct) =>
@@ -49,7 +67,11 @@ internal static partial class CommunityEndpoints
             if (!admin.IsAuthorized(req.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
             await using var c = await db.OpenConnectionAsync(ct);
             return Results.Ok(new {
-                posts = await Rows(c, null, "SELECT CAST(id AS CHAR) id,kind,title,body,published,preview_image_id previewImageId,featured,summary FROM launcher_posts ORDER BY id DESC LIMIT 200", ct),
+                posts = await Rows(c, null, """
+                    SELECT CAST(p.id AS CHAR) id,p.kind,p.title,p.body,p.published,p.preview_image_id previewImageId,p.featured,p.summary,
+                    DATE_FORMAT(w.starts_utc,'%Y-%m-%dT%H:%i:%sZ') AS startsAtUtc,DATE_FORMAT(w.ends_utc,'%Y-%m-%dT%H:%i:%sZ') AS endsAtUtc
+                    FROM launcher_posts p LEFT JOIN launcher_event_windows w ON w.post_id=p.id ORDER BY p.id DESC LIMIT 200
+                    """, ct),
                 inquiries = await Rows(c, null, "SELECT CAST(id AS CHAR) id,subject,body,reply,status,created_at_utc createdAtUtc FROM support_inquiries ORDER BY id DESC LIMIT 300", ct)
             });
         }).RequireRateLimiting("admin");
@@ -57,9 +79,17 @@ internal static partial class CommunityEndpoints
         {
             if (!admin.IsAuthorized(req.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
             if (input.Kind is not ("News" or "Patch" or "Event") || !ValidText(input.Title,120) || !ValidPostBody(input.Body) || !ValidPostSummary(input.Summary)) return Error("종류·제목·내용을 확인하세요. 사진은 글당 최대 8장입니다.");
+            if (input.SetEventWindow && input.StartsAtUtc >= input.EndsAtUtc) return Error("이벤트 시작 시각과 종료 시각을 확인하세요.");
             await using var c = await db.OpenConnectionAsync(ct);
             if(!await ValidatePreview(c,input,ct))return Error("미리보기 사진은 본문에 첨부한 사진 중 한 장만 선택하세요.");
-            await Exec(c,null,"INSERT INTO launcher_posts(kind,title,body,published,preview_image_id,featured,summary) VALUES(@kind,@title,@body,@published,@preview,@featured,COALESCE(@summary,''))",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("preview",NormalizePreview(input.PreviewImageId)),("featured",input.Featured),("summary",input.Summary?.Trim()));
+            await using var tx = await c.BeginTransactionAsync(ct);
+            await Exec(c,tx,"INSERT INTO launcher_posts(kind,title,body,published,preview_image_id,featured,summary) VALUES(@kind,@title,@body,@published,@preview,@featured,COALESCE(@summary,''))",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("preview",NormalizePreview(input.PreviewImageId)),("featured",input.Featured),("summary",input.Summary?.Trim()));
+            if (input.Kind == "Event" && input.SetEventWindow)
+            {
+                var row = await Rows(c, tx, "SELECT LAST_INSERT_ID() AS id", ct);
+                await SaveEventWindow(c, tx, Convert.ToInt64(row[0]["id"]), input, ct);
+            }
+            await tx.CommitAsync(ct);
             return Results.Ok(new { message = "게시되었습니다." });
         }).RequireRateLimiting("admin");
         app.MapDelete("/api/admin/community/posts/{id:long}", async (long id, HttpRequest req, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>
@@ -73,9 +103,14 @@ internal static partial class CommunityEndpoints
         {
             if (!admin.IsAuthorized(req.Headers["X-ProjectProject01-Admin-Key"])) return Results.Unauthorized();
             if(input.Kind is not ("News" or "Patch" or "Event") || !ValidText(input.Title,120) || !ValidPostBody(input.Body) || !ValidPostSummary(input.Summary))return Error("종류·제목·내용을 확인하세요. 사진은 글당 최대 8장입니다.");
+            if (input.SetEventWindow && input.StartsAtUtc >= input.EndsAtUtc) return Error("이벤트 시작 시각과 종료 시각을 확인하세요.");
             await using var c=await db.OpenConnectionAsync(ct);
             if(!await ValidatePreview(c,input,ct))return Error("미리보기 사진은 본문에 첨부한 사진 중 한 장만 선택하세요.");
-            await Exec(c,null,"UPDATE launcher_posts SET kind=@kind,title=@title,body=@body,published=@published,preview_image_id=@preview,featured=@featured,summary=COALESCE(@summary,summary),updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@id",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("id",id),("preview",NormalizePreview(input.PreviewImageId)),("featured",input.Featured),("summary",input.Summary?.Trim()));
+            await using var tx = await c.BeginTransactionAsync(ct);
+            if (await Exec(c,tx,"UPDATE launcher_posts SET kind=@kind,title=@title,body=@body,published=@published,preview_image_id=@preview,featured=@featured,summary=COALESCE(@summary,summary),updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@id",ct,("kind",input.Kind),("title",input.Title.Trim()),("body",input.Body.Trim()),("published",input.Published),("id",id),("preview",NormalizePreview(input.PreviewImageId)),("featured",input.Featured),("summary",input.Summary?.Trim())) == 0)
+                return Results.NotFound();
+            if (input.Kind != "Event" || input.SetEventWindow) await SaveEventWindow(c, tx, id, input, ct);
+            await tx.CommitAsync(ct);
             return Results.Ok(new {message="변경되었습니다."});
         }).RequireRateLimiting("admin");
         app.MapPut("/api/admin/community/inquiries/{id:long}", async (long id, HttpRequest req, ReplyRequest input, AdministratorOptions admin, AuthDatabase db, CancellationToken ct) =>
@@ -89,6 +124,13 @@ internal static partial class CommunityEndpoints
     }
 
     private static IResult Error(string message) => Results.BadRequest(new { message });
+    private static Task SaveEventWindow(MySqlConnection c, MySqlTransaction tx, long id, PostRequest input, CancellationToken ct) =>
+        input.Kind != "Event" || (input.StartsAtUtc is null && input.EndsAtUtc is null)
+            ? Exec(c, tx, "DELETE FROM launcher_event_windows WHERE post_id=@i", ct, ("i", id))
+            : Exec(c, tx, """
+                INSERT INTO launcher_event_windows(post_id,starts_utc,ends_utc) VALUES(@i,@s,@e)
+                ON DUPLICATE KEY UPDATE starts_utc=@s,ends_utc=@e
+                """, ct, ("i", id), ("s", input.StartsAtUtc?.UtcDateTime), ("e", input.EndsAtUtc?.UtcDateTime));
     private static string? NormalizePreview(string? id)=>Guid.TryParse(id,out var value)?value.ToString("D"):null;
     private static async Task<bool> ValidatePreview(MySqlConnection c,PostRequest input,CancellationToken ct)
     {

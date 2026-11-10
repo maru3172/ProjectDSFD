@@ -58,7 +58,9 @@ internal static partial class CommunityEndpoints
             await using var c=await db.OpenConnectionAsync(ct);
             var rows=await Rows(c,null,"""
                 SELECT i.data,i.content_type FROM launcher_images i WHERE i.id=@id
-                AND EXISTS(SELECT 1 FROM launcher_posts p WHERE p.published=1 AND INSTR(LOWER(p.body),CONCAT('(image:',@id,')'))>0)
+                AND EXISTS(SELECT 1 FROM launcher_posts p LEFT JOIN launcher_event_windows w ON w.post_id=p.id
+                    WHERE p.published=1 AND (w.starts_utc IS NULL OR w.starts_utc<=UTC_TIMESTAMP(6))
+                    AND (w.ends_utc IS NULL OR w.ends_utc>UTC_TIMESTAMP(6)) AND INSTR(LOWER(p.body),CONCAT('(image:',@id,')'))>0)
                 """,ct,("id",id.ToString("D")));
             if(rows.Count==0)return Results.NotFound();
             response.Headers["X-Content-Type-Options"]="nosniff";

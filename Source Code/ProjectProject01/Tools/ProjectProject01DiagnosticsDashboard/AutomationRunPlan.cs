@@ -1,6 +1,7 @@
 namespace ProjectProject01DiagnosticsDashboard;
 
-internal sealed record AutomationRunPlan(string Name, string Filter, TimeSpan Timeout, bool Simulation)
+internal sealed record AutomationRunPlan(string Name, string Filter, TimeSpan Timeout, bool Simulation,
+    IReadOnlyList<string>? EngineArguments = null)
 {
     // Test names come from the project the dashboard sits in (UnrealProject), so the tool works in any project.
     internal static AutomationRunPlan General => new("일반 자동 검사", UnrealProject.Current.GeneralTestGroup, TimeSpan.FromMinutes(30), false);
@@ -9,6 +10,11 @@ internal sealed record AutomationRunPlan(string Name, string Filter, TimeSpan Ti
         TimeSpan.FromMinutes(10), false);
     internal static AutomationRunPlan Gameplay(string module) => new("핵심 흐름 검사 (PIE)",
         $"^{module}.Editor.SinglePlayerTitleReturnLoading$+^{module}.Editor.ThreeClientTravel$", TimeSpan.FromMinutes(10), false);
+    internal static AutomationRunPlan Network(string module) => new("지연·패킷 손실 검사 (PIE)",
+        $"^{module}.Editor.ThreeClientTravel$", TimeSpan.FromMinutes(10), false, ["-PktLag=100", "-PktLoss=2"]);
+    internal static AutomationRunPlan Maps(string module) => new("경기 맵·이동 장치 검사",
+        $"^{module}.Editor.ProductionMapLayout$+{module}.Elevator+{module}.CaseRecords.ShutterAuthorityAndLegacy",
+        TimeSpan.FromMinutes(10), false);
 
     internal static AutomationRunPlan Selected(IEnumerable<string> names, string simulationPrefix)
     {

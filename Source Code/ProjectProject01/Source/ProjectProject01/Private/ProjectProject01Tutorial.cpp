@@ -381,6 +381,12 @@ void AProjectProject01TutorialGameMode::SetMenuInput(bool bCursor)
 void AProjectProject01TutorialGameMode::EnterStep()
 {
 	const auto* S=GetCurrentStep(); if (!S || !Learner) return;
+	if (!bPracticeOnly && !bFreePractice)
+	{
+		if (!AnalyticsRun.IsValid()) AnalyticsRun = FGuid::NewGuid();
+		if (auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+			Game->RecordTutorialAnalytics(AnalyticsRun, bMannequin ? TEXT("Mannequin") : TEXT("Survivor"), StepIndex, false);
+	}
 	Progress=0;
 	CommandedMannequin.Reset(); ReleasedMannequin.Reset(); LastSelectedMannequin=Learner->GetViewedMannequin();
 	LastLocation=Learner->GetPawn() ? Learner->GetPawn()->GetActorLocation() : FVector::ZeroVector;
@@ -1064,6 +1070,9 @@ void AProjectProject01TutorialGameMode::FinishAuthoritativeMatch(const FString& 
 void AProjectProject01TutorialGameMode::FinishTutorial()
 {
 	if (bFinishing) return;
+	if (!bPracticeOnly && !bFreePractice)
+		if (auto* Game = Cast<UProjectProject01GameInstance>(GetGameInstance()))
+			Game->RecordTutorialAnalytics(AnalyticsRun, bMannequin ? TEXT("Mannequin") : TEXT("Survivor"), StepIndex, true);
     if(!bPracticeOnly&&!bFreePractice)if(auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>())R->MainQuestAction(TEXT("TutorialComplete"),bMannequin?TEXT("Mannequin"):TEXT("Survivor"));
 	bFinishing=true; EndSeconds=0; SetAuthoritativeMatchPhase(EMultiplayTestMatchPhase::Ending); StopAllMannequinsForMatchEnd();
 	if (auto* C=Learner->FindComponentByClass<UProjectProject01ObjectiveComponent>()) C->CompleteObjective();
