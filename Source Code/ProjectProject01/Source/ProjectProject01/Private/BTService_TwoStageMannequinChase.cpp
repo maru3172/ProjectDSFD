@@ -419,17 +419,20 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 	return bHit && HitResult.GetActor() == &Player;
 }
 
-ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const APlayerCharacter& Player, const TArray<AActor*>& AllMannequins) const
+ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
 {
-	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
-	const FVector PlayerLocation = Player.GetActorLocation();
-	const double PrimaryRadiusSquared = FMath::Square(static_cast<double>(PlayerPrimaryRadius));
-	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
-	
-	// 플레이어를 직접 관측했거나 아직 유효한 관측 정보를 가진 마네킹만 1 차로 유지한다.
+	// 자신의 유효한 직접 관측 정보를 가진 마네킹은 1 차다.
 	if (CurrentMannequin.HasActivePlayerObservation())
 	{
 		return ETwoStageMannequinTier::Primary;
+	}
+	
+	FMannequinPlayerObservation SharedObservation;
+	
+	// 자체 관측 정보가 없지만 주변 1 차의 정보를 받을 수 있으면 2 차다.
+	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, SharedObservation))
+	{
+		return ETwoStageMannequinTier::Secondary;
 	}
 	
 	return ETwoStageMannequinTier::Roaming;
