@@ -244,8 +244,10 @@ def ramp(label, x, start_y, end_y, start_z, end_z, width=260):
         rail.set_actor_rotation(slope, False)
 
 
-block("Upper floor", (-900, -663, -20), (13, 47.8, .4), floor)
-block("Ceiling", (-900, -663, 390), (13, 47.8, .4))
+# The finale corridor has seven light sections; everything past the shutter sits HALL_SHIFT further on (was five).
+HALL_SHIFT = 670
+block("Upper floor", (-900, -328, -20), (13, 54.5, .4), floor)
+block("Ceiling", (-900, -328, 390), (13, 54.5, .4))
 block("Store rear wall", first_floor((-1410, -3025, 185)), (2.75, .5, 3.7))
 block("Entrance east facade", first_floor((-480, -3025, 185)), (4.45, .5, 3.7))
 block("Entrance facade header", first_floor((-980, -3025, 346)), (5.95, .65, .64), trim)
@@ -297,18 +299,18 @@ block("Third floor landing guard", (-1935, -2800, 52), (8.3, .12, 1.04), trim)
 sign("Third floor stair sign", "3F", (-1620, -2782, 264), yaw=90, size=49)
 block("Third floor front wall", (-900, -3035, 185), (13, .4, 3.7))
 block("Third floor west wall before stair door", (-1540, -2915, 185), (.4, 2.4, 3.7))
-block("West wall", (-1540, -383, 185), (.4, 42.15, 3.7))
-block("East wall", (-260, -1000, 185), (.4, 41, 3.7))
-block("Hat department floor extension", (66,1380,-20), (6.55,6.7,.4), floor)
-block("Hat department ceiling extension", (66,1380,390), (6.55,6.7,.4))
-block("Hat department near wall", (65,1050,185), (6.9,.4,3.7))
-block("Hat department outer wall", (390,1380,185), (.4,6.7,3.7))
-block("End wall", (-575,1715,185), (19.5,.4,3.7))
-block("Hat counter", (-950,1510,48), (4.6,1.6,.96), trim)
+block("West wall", (-1540, -48, 185), (.4, 48.85, 3.7))
+block("East wall", (-260, -665, 185), (.4, 47.7, 3.7))
+block("Hat department floor extension", (66,1380+HALL_SHIFT,-20), (6.55,6.7,.4), floor)
+block("Hat department ceiling extension", (66,1380+HALL_SHIFT,390), (6.55,6.7,.4))
+block("Hat department near wall", (65,1050+HALL_SHIFT,185), (6.9,.4,3.7))
+block("Hat department outer wall", (390,1380+HALL_SHIFT,185), (.4,6.7,3.7))
+block("End wall", (-575,1715+HALL_SHIFT,185), (19.5,.4,3.7))
+block("Hat counter", (-950,1510+HALL_SHIFT,48), (4.6,1.6,.96), trim)
 block("Accessories stand", (-525, -1630, 44), (2.8, 1.15, .88), trim)
 block("Water stand", (-1280, -2000, 44), (2.8, 1.15, .88), trim)
-hat = product("IntroHat", "Hat", (-950,1458,118), "모자 집기", cylinder, (.36,.36,.33))
-brim = block("Hat brim", (-950,1458,99), (.5,.5,.04), wall)
+hat = product("IntroHat", "Hat", (-950,1458+HALL_SHIFT,118), "모자 집기", cylinder, (.36,.36,.33))
+brim = block("Hat brim", (-950,1458+HALL_SHIFT,99), (.5,.5,.04), wall)
 brim.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
 brim.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
 if not hat.get_attached_actors():
@@ -316,7 +318,7 @@ if not hat.get_attached_actors():
                          unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
 product("IntroHandkerchief", "Purchase", (-525, -1630, 101), "손수건 구매하기", cube, (.35, .29, .1))
 product("IntroWater", "Purchase", (-1280, -2000, 111), "생수 구매하기", cylinder, (.15, .15, .45))
-sign("Hat department sign", "HATS", (-950,1670,302), yaw=-90)
+sign("Hat department sign", "HATS", (-950,1670+HALL_SHIFT,302), yaw=-90)
 for label, text, position, size in (
     ("Accessories sign", "ACCESSORIES", (-525, -1630, 260), 31),
     ("Water sign", "DRINKS", (-1280, -2000, 255), 31),
@@ -324,37 +326,37 @@ for label, text, position, size in (
 ):
     sign(label, text, position, yaw=-90, size=size).set_editor_property("tags", ["IntroFinaleShoppingSign"])
 
-figure("Intro partner", "Partner", (-575,1430,0), "SKM_Quinn_Simple", -130)
-figure("Intro mannequin", "Mannequin", (-530,540,0), "SKM_Manny_Simple", 180)
-block("Mannequin alcove side", (-375,455,185), (1.9,.3,3.7), trim)
-block("Mannequin alcove back", (-290,555,185), (.35,2.1,3.7), trim)
-trigger("Mannequin encounter trigger", "IntroMannequinPass", (-900,310,110), (55,615,150), 90)
+figure("Intro partner", "Partner", (-575,1430+HALL_SHIFT,0), "SKM_Quinn_Simple", -130)
+figure("Intro mannequin", "Mannequin", (-530,540+HALL_SHIFT,0), "SKM_Manny_Simple", 180)
+block("Mannequin alcove side", (-375,455+HALL_SHIFT,185), (1.9,.3,3.7), trim)
+block("Mannequin alcove back", (-290,555+HALL_SHIFT,185), (.35,2.1,3.7), trim)
+trigger("Mannequin encounter trigger", "IntroMannequinPass", (-900,310+HALL_SHIFT,110), (55,615,150), 90)
 for obsolete in ("Hat counter arrival trigger", "Mannequin encounter camera"):
     if obsolete in placed:
         actors.destroy_actor(placed[obsolete])
 
-shutter = block("Fire shutter placeholder", (-1080, -920, 470), (6.1, .3, 3), trim)
+shutter = block("Fire shutter placeholder", (-1080, -920+HALL_SHIFT, 470), (6.1, .3, 3), trim)
 shutter.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
 shutter.set_editor_property("tags", ["IntroShutter"])
 if not shutter.get_attached_actors():
     for index, z in enumerate([355, 400, 445, 490, 535, 580]):
-        strip = block(f"Shutter rib {index + 1}", (-1080, -899, z), (6.07, .1, .028), wall)
+        strip = block(f"Shutter rib {index + 1}", (-1080, -899+HALL_SHIFT, z), (6.07, .1, .028), wall)
         strip.static_mesh_component.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
         strip.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
         strip.attach_to_actor(shutter, "", unreal.AttachmentRule.KEEP_WORLD,
                               unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
-block("Shutter side column", (-750, -920, 185), (.5, .5, 3.7), trim)
-block("Shop west frontage", (-1458, -920, 185), (1.45, .32, 3.7), wall)
-block("Shop east frontage", (-495, -920, 185), (4.45, .32, 3.7), wall)
-block("Shop entrance header", (-1080, -920, 340), (6.1, .38, .65), trim)
-handle = product("Intro shutter control", "Shutter", (-785, -880, 137), "방화셔터 열기", cube, (.22, .1, .32))
+block("Shutter side column", (-750, -920+HALL_SHIFT, 185), (.5, .5, 3.7), trim)
+block("Shop west frontage", (-1458, -920+HALL_SHIFT, 185), (1.45, .32, 3.7), wall)
+block("Shop east frontage", (-495, -920+HALL_SHIFT, 185), (4.45, .32, 3.7), wall)
+block("Shop entrance header", (-1080, -920+HALL_SHIFT, 340), (6.1, .38, .65), trim)
+handle = product("Intro shutter control", "Shutter", (-785, -880+HALL_SHIFT, 137), "방화셔터 열기", cube, (.22, .1, .32))
 handle.get_editor_property("interaction_collision").set_box_extent(unreal.Vector(29, 24, 35))
-block("Service exit frame", (-530, 1690, 135), (3.05, .35, 2.7), trim)
+block("Service exit frame", (-530, 1690+HALL_SHIFT, 135), (3.05, .35, 2.7), trim)
 if "IntroExit" in placed:
     actors.destroy_actor(placed["IntroExit"])
-sign("Exit sign", "EXIT", (-530, 1664, 303), yaw=-90)
+sign("Exit sign", "EXIT", (-530, 1664+HALL_SHIFT, 303), yaw=-90)
 
-camera = spawn(unreal.CameraActor, "Finale corridor camera", (-1060, -701, 164), -90)
+camera = spawn(unreal.CameraActor, "Finale corridor camera", (-1060, -701+HALL_SHIFT, 164), -90)
 camera.set_editor_property("tags", ["IntroFinaleCamera"])
 for cls, label, tag, xyz, pitch, yaw in (
     (unreal.CameraActor, "Opening pullback camera", "IntroOpeningCamera", (-1310,-4620,-575), 12, 77),
@@ -381,6 +383,9 @@ clusters = (
     (-1900, ((-207, -22), (-94, 45), (16, -50), (103, 15), (207, 40))),
     (-2235, ((-203, 12), (-106, -55), (-8, 45), (80, -28), (155, 48), (220, -50))),
     (-2570, ((-221, 40), (-125, -55), (-34, 25), (55, -35), (150, 32), (237, -20))),
+    # Sections 6 and 7 are the new stretch right behind the shutter: one figure, then two, before the crowd.
+    (-570, ((128, -18),)),
+    (-905, ((-150, 26), (96, -40))),
 )
 for section, (y, offsets) in enumerate(clusters, 1):
     for obsolete in (f"Finale ceiling housing {section}", f"Finale diffuser {section}"):
@@ -392,13 +397,13 @@ for section, (y, offsets) in enumerate(clusters, 1):
                            (-1070 + dx, y + dy, 0), "SKM_Manny_Simple", 82 + (index * 7) % 19)
         mannequin.set_editor_property("walk_animation", None)
 
-for index, y in enumerate([-450, 50, 570, 1120, 1515]):
+for index, y in enumerate([y + HALL_SHIFT for y in (-450, 50, 570, 1120, 1515)]):
     x = -1000 if index % 2 == 0 else -745
     obsolete = f"Light housing {index + 1}"
     if obsolete in placed:
         actors.destroy_actor(placed[obsolete])
     downlight(f"Ceiling light {index + 1}", (x,y,370), 825.0, "IntroStoreLight", 215.0)
-downlight("Hat department fill", (-155,1400,370), 760.0, "IntroStoreLight", 145.0)
+downlight("Hat department fill", (-155,1400+HALL_SHIFT,370), 760.0, "IntroStoreLight", 145.0)
 
 spawn(unreal.PlayerStart, "Intro player start", first_floor((-1060, -4630, 100)), 90)
 opening_destination = spawn(unreal.TargetPoint, "Opening walk ends inside the entrance",

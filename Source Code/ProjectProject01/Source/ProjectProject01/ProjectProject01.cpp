@@ -9,6 +9,9 @@
 #include "HAL/PlatformProperties.h"
 #include "Misc/Paths.h"
 #include "HAL/IConsoleManager.h"
+#include "Engine/UserInterfaceSettings.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 class FProjectProject01Module final : public FDefaultGameModuleImpl
 {
@@ -29,6 +32,10 @@ public:
 			if (!ProjectDFSDBranding::ImportLegacyUserData(Legacy, FPaths::ProjectSavedDir()))
 				UE_LOG(LogTemp, Warning, TEXT("ProjectDFSD: previous user data import was incomplete; original data is unchanged."));
 		}
+		// Offscreen automation has no OS cursor to build image cursors from, so the engine would log an error
+		// for each one (Content/Slate/Cursors) and fail every PIE test. Real windows keep the game's cursors.
+		if (FParse::Param(FCommandLine::Get(), TEXT("RenderOffscreen")))
+			GetMutableDefault<UUserInterfaceSettings>()->HardwareCursors.Reset();
 		LOCTABLE_FROMFILE_GAME(
 			"ProjectProject01UI", "ProjectProject01.UI", "Localization/ProjectProject01UI.csv");
 	}

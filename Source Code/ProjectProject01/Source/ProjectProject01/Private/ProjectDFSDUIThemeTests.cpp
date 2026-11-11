@@ -167,4 +167,22 @@ bool FProjectDFSDStackedNoticeTest::RunTest(const FString&)
 	One->SetTopOffset(30.f);Two->SetTopOffset(30.f+H1+8.f);
 	One->ReleaseSlateResources(true);Two->ReleaseSlateResources(true);return true;
 }
+
+// The game's own mouse cursors (Config/DefaultEngine.ini HardwareCursors, Content/Slate/Cursors).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectDFSDCursorTest,"ProjectProject01.UITheme.Cursors",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectDFSDCursorTest::RunTest(const FString&)
+{
+	// Read the config itself: offscreen test runs turn the cursors off (ProjectProject01.cpp).
+	auto* Fresh=NewObject<UUserInterfaceSettings>(GetTransientPackage());Fresh->HardwareCursors.Reset();Fresh->LoadConfig();
+	const auto& Cursors=Fresh->HardwareCursors;
+	for(const EMouseCursor::Type Shape:{EMouseCursor::Default,EMouseCursor::Hand,EMouseCursor::TextEditBeam})
+	{
+		const FHardwareCursorReference* Ref=Cursors.Find(Shape);
+		if(!TestNotNull(FString::Printf(TEXT("Cursor %d is set"),int32(Shape)),Ref))continue;
+		for(const TCHAR* Scale:{TEXT(""),TEXT("@1.5x"),TEXT("@2x")})
+			TestTrue(Ref->CursorPath.ToString()+Scale+TEXT(" exists"),FPaths::FileExists(FPaths::ProjectContentDir()/Ref->CursorPath.ToString()+Scale+TEXT(".png")));
+		TestTrue(TEXT("Hot spot is inside the image"),Ref->HotSpot.X>=0&&Ref->HotSpot.X<=1&&Ref->HotSpot.Y>=0&&Ref->HotSpot.Y<=1);
+	}
+	return true;
+}
 #endif

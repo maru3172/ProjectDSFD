@@ -340,9 +340,19 @@ public:
     }
     virtual bool HandleMouseMoveEvent(FSlateApplication&, const FPointerEvent& Event) override
     {
-        if (!bInjecting && Event.GetCursorDelta().SizeSquared() > 9.f) Device(EProjectInputDevice::KeyboardMouse);
+        // Moving the cursor with the stick makes Windows send a mouse move a moment later; that is still the pad.
+        if (bInjecting || (FPlatformTime::Seconds() - PadCursorTime < .25 && FVector2D::DistSquared(Event.GetScreenSpacePosition(), PadCursorAt) < 16.0)) return false;
+        if (Event.GetCursorDelta().SizeSquared() > 9.f) Device(EProjectInputDevice::KeyboardMouse);
         return false;
     }
+    void MoveCursor(FSlateApplication& App, const FVector2D& To)
+    {
+        TGuardValue<bool> Guard(bInjecting, true);
+        App.SetCursorPos(To);
+        PadCursorAt = App.GetCursorPos(); PadCursorTime = FPlatformTime::Seconds();
+    }
+    FVector2D PadCursorAt = FVector2D::ZeroVector;
+    double PadCursorTime = -1.0;
     virtual bool HandleMouseButtonDownEvent(FSlateApplication&, const FPointerEvent&) override
     {
         if (!bInjecting) Device(EProjectInputDevice::KeyboardMouse);
@@ -364,7 +374,7 @@ public:
             if (!L.IsNearlyZero())
             {
                 const FVector2D Step(L.X, -L.Y);
-                App.SetCursorPos(App.GetCursorPos() + Step * CursorPixelsPerSecond * (S ? S->GetPadCursorSpeed() : 1.f) * Delta);
+                MoveCursor(App, App.GetCursorPos() + Step * CursorPixelsPerSecond * (S ? S->GetPadCursorSpeed() : 1.f) * Delta);
             }
             ScrollWait -= Delta;
             if (FMath::Abs(R.Y) > .3f && ScrollWait <= 0.f)
@@ -385,7 +395,7 @@ public:
                 {
                     const FGeometry G = VP->GetWindow()->GetWindowGeometryInScreen();
                     const FVector2D Size = G.GetAbsoluteSize(), Center = G.GetAbsolutePosition() + Size * .5f;
-                    App.SetCursorPos(Center + FVector2D(R.X, -R.Y).GetSafeNormal() * FMath::Min(Size.X, Size.Y) * .2f);
+                    MoveCursor(App, Center + FVector2D(R.X, -R.Y).GetSafeNormal() * FMath::Min(Size.X, Size.Y) * .2f);
                 }
             return;
         }

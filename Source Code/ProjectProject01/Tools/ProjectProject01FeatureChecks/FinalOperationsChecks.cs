@@ -68,7 +68,8 @@ internal static class FinalOperationsChecks
             check(reverse.IsSuccessStatusCode && repeat.StatusCode == HttpStatusCode.Conflict, "지급 회수 한 번");
             await using var balances = await db.OpenConnectionAsync(default);
             var rows = await CommunityEndpoints.Rows(balances, null, "SELECT credits FROM case_accounts WHERE user_id=@u", default, ("u", user));
-            check(rows.Count == 1 && Convert.ToInt64(rows[0]["credits"]) == 0, "예약 지급 및 회수 후 잔액 원복");
+            // Rewards arrive as mail (Docs/MailAndCoupons.md): an unclaimed, recalled reward never touched the account.
+            check(rows.Count == 0 || Convert.ToInt64(rows[0]["credits"]) == 0, "예약 지급 및 회수 후 잔액 원복");
         }
         finally
         {

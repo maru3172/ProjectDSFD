@@ -593,6 +593,10 @@ void AMannequinAICharacter::RegisterLocalInputMapping()
 			const auto* Settings = UProjectProject01GameUserSettings::Get();
 			DeadZone->LowerThreshold = Settings ? Settings->GetPadDeadZone() : 0.2f;
 			PadMove.Modifiers.Add(DeadZone);
+			// Move() reads X as forward and Y as right; the stick gives X right and Y up, so swap them.
+			UInputModifierSwizzleAxis* Swap = NewObject<UInputModifierSwizzleAxis>(PadMoveContext);
+			Swap->Order = EInputAxisSwizzle::YXZ;
+			PadMove.Modifiers.Add(Swap);
 		}
 		InputSubsystem->AddMappingContext(PadMoveContext, 0);
 	}

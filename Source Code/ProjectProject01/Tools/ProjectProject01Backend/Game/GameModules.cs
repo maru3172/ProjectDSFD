@@ -8,7 +8,7 @@ internal static class GameModules
 {
     public static IReadOnlyList<IBackendModule> All { get; } =
     [
-        new BotMatchModule(), new CustomRulesModule(), new AffixModule(), new MatchModeModule(), new BotRatingModule(), new CaseRecordsModule(), new MainQuestModule(), new MiniGamesModule(),
+        new BotMatchModule(), new CustomRulesModule(), new AffixModule(), new MatchModeModule(), new BotRatingModule(), new CaseRecordsModule(), new MailCouponModule(), new MainQuestModule(), new MiniGamesModule(),
     ];
 }
 
@@ -110,4 +110,11 @@ internal static class GameModuleRegistration
 {
     [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Register() => BackendModules.Register(GameModules.All);
+}
+
+/// <summary>우편함과 쿠폰 코드 (Docs/MailAndCoupons.md): after the case tables the rewards go into.</summary>
+internal sealed class MailCouponModule : IBackendModule
+{
+    public async Task EnsureSchemaAsync(MySqlConnection c, CancellationToken ct) { await Mailbox.EnsureAsync(c, ct); await Coupons.EnsureAsync(c, ct); }
+    public void MapRoutes(WebApplication app, Func<bool> canLaunchOrConnect) { Mailbox.Map(app); Coupons.Map(app); }
 }

@@ -1172,6 +1172,10 @@ void APlayerCharacter::RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSub
 		UInputModifierDeadZone* DeadZone = NewObject<UInputModifierDeadZone>(RuntimeSprintInputContext);
 		DeadZone->LowerThreshold = IsValid(Settings) ? Settings->GetPadDeadZone() : 0.2f;
 		PadMove.Modifiers.Add(DeadZone);
+		// Move() reads X as forward and Y as right; the stick gives X right and Y up, so swap them.
+		UInputModifierSwizzleAxis* Swap = NewObject<UInputModifierSwizzleAxis>(RuntimeSprintInputContext);
+		Swap->Order = EInputAxisSwizzle::YXZ;
+		PadMove.Modifiers.Add(Swap);
 	}
 	InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 0);
 }

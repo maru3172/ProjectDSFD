@@ -272,6 +272,7 @@ internal sealed class ServerAdministrationForm : Form
         AddButton(rewards, "시즌 뽑기 상품·확률", () => { using var dialog = new CaseDrawAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "메인 퀘스트·스토리", () => { using var dialog = new MainQuestAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "퀘스트·대화 그래프", () => { using var dialog = new QuestGraphEditorForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(rewards, "우편·쿠폰", () => { using var dialog = new MailCouponAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "사건 기록 조사 수량", () => { using var dialog = new CaseInvestigationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "주간 미션 재화 상한", () => { using var dialog = new MissionBudgetForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         Group(contentPage, "사건 기록·보상", rewards);

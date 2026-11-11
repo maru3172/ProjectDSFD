@@ -160,23 +160,37 @@ internal static class LiveOperations
         var recipients = await CommunityEndpoints.Rows(c, tx,
             "SELECT user_id FROM operator_reward_recipients WHERE reward_id=@r ORDER BY user_id FOR UPDATE", ct, ("r", id));
         bool available = recipients.Count > 0;
-        foreach (var recipient in recipients)
+        string source = $"reward:{id}";
+        if (!reverse)
         {
-            ulong user = Convert.ToUInt64(recipient["user_id"]);
-            var account = await CaseRecords.LockAccountAsync(c, tx, user, ct);
-            long balance = Convert.ToInt64(account["credits"]);
-            if (reverse ? balance < amount : balance > MaximumCredits - amount)
+            // Docs/MailAndCoupons.md: at the scheduled time the credits are mailed (30 days to claim), not added outright.
+            if (available)
             {
-                available = false;
-                break;
+                var title = (await CommunityEndpoints.Rows(c, tx, "SELECT title FROM operator_rewards WHERE id=@i", ct, ("i", id)))[0]["title"] as string ?? "보상";
+                await Mailbox.SendAsync(c, tx, title, "운영팀이 보낸 보상입니다.", new Mailbox.Reward((int)amount), recipients.Select(r => Convert.ToUInt64(r["user_id"])),
+                    Mailbox.DefaultDays, source, "scheduled-reward", null, ct);
             }
         }
-        if (!available && reverse) return false;
-        if (available)
-            await CommunityEndpoints.Exec(c, tx, """
-                UPDATE case_accounts a JOIN operator_reward_recipients p ON p.user_id=a.user_id
-                SET a.credits=CAST(a.credits AS SIGNED)+@delta WHERE p.reward_id=@r
-                """, ct, ("delta", reverse ? -amount : amount), ("r", id));
+        else
+        {
+            // Recall: unclaimed mail disappears; credits already claimed come back only if every one of those players still has them.
+            var batchRows = await CommunityEndpoints.Rows(c, tx, "SELECT id FROM mail_batches WHERE source=@s FOR UPDATE", ct, ("s", source));
+            long mail = batchRows.Count == 1 ? Convert.ToInt64(batchRows[0]["id"]) : 0;
+            var claimed = mail == 0 ? [] : await CommunityEndpoints.Rows(c, tx,
+                "SELECT user_id FROM mail_messages WHERE batch_id=@b AND claimed_utc IS NOT NULL ORDER BY user_id FOR UPDATE", ct, ("b", mail));
+            foreach (var row in claimed)
+            {
+                var account = await CaseRecords.LockAccountAsync(c, tx, Convert.ToUInt64(row["user_id"]), ct);
+                if (Convert.ToInt64(account["credits"]) < amount) return false;
+            }
+            foreach (var row in claimed)
+                await CommunityEndpoints.Exec(c, tx, "UPDATE case_accounts SET credits=credits-@a WHERE user_id=@u", ct, ("a", amount), ("u", row["user_id"]));
+            if (mail != 0)
+            {
+                await CommunityEndpoints.Exec(c, tx, "DELETE FROM mail_messages WHERE batch_id=@b AND claimed_utc IS NULL", ct, ("b", mail));
+                await CommunityEndpoints.Exec(c, tx, "UPDATE mail_batches SET recalled=TRUE WHERE id=@b", ct, ("b", mail));
+            }
+        }
         await CommunityEndpoints.Exec(c, tx,
             "UPDATE operator_rewards SET status=@s,updated_utc=UTC_TIMESTAMP(6) WHERE id=@r", ct,
             ("s", available ? (reverse ? "Reversed" : "Paid") : "Failed"), ("r", id));

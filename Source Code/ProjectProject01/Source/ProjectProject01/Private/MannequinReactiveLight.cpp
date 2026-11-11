@@ -1,5 +1,6 @@
 // Fixture-local presentation only: no perception, movement, collision or match-rule changes.
 #include "MannequinReactiveLight.h"
+#include "ProjectLightVariation.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01SpatialAudio.h"
 #include "MultiplayTestPlayerController.h"
@@ -142,6 +143,8 @@ void AMannequinReactiveLight::BeginPlay()
 {
     Super::BeginPlay();
     if (!GetWorld() || GetNetMode()==NM_DedicatedServer) { SetActorTickEnabled(false); return; }
+    // Not every fixture is equally bright (ProjectLightVariation.h); the same light is the same for every player.
+    if (ProjectLightVariation::AppliesToMap(UWorld::RemovePIEPrefix(GetWorld()->GetMapName()))) LightOnIntensity *= ProjectLightVariation::Factor(GetName());
     ResetFaultPresentation();
     RefreshDetectedMannequinsFromWorld();
     GetWorldTimerManager().SetTimer(DetectionRefreshTimerHandle,this,

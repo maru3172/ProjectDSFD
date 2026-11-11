@@ -113,6 +113,7 @@ internal static class IntegrationChecks
                 await MatchModeChecks.RunAsync(database,admin,app.Configuration); // Item roguelike mode selection and queues.
                 await RoomVisibilityChecks.RunAsync(database,admin,app.Configuration); // Host switches public/private after creation.
                 await ChatFilterChecks.RunAsync(database,admin); // Banned words: masked chat, refused names and profile text.
+                await MailCouponChecks.RunAsync(database,admin); // Mailbox and coupon codes.
                 Console.WriteLine("PASS: frontend-only checks (no bot simulation or AI checks)");
                 return;
             }

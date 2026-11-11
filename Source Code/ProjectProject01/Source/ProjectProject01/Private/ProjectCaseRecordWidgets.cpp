@@ -8,6 +8,7 @@
 #include "ProjectMatchReplay.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectPhoneMessenger.h"
+#include "ProjectMailboxWidget.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "ProjectProject01AuthSubsystem.h"
 #include "ProjectProject01Localization.h"
@@ -739,6 +740,14 @@ TSharedRef<SWidget> UProjectCaseRecordDock::RebuildWidget()
         +SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top)[SNew(SBox).WidthOverride(10).HeightOverride(10)
           .Visibility_Lambda([this]{auto* R=Records(this);return R&&R->HasUnreadTalk()?EVisibility::HitTestInvisible:EVisibility::Collapsed;})[SNew(SBorder).BorderImage(&UnreadDot)]]];
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(48).HeightOverride(64)[Phone]];
+    // 우편함 (Docs/MailAndCoupons.md): rewards and coupons; a red dot while something is waiting to be claimed.
+    auto Mail=SNew(SButton).ButtonStyle(&DockStyle).ContentPadding(6).ToolTipText(FText::FromString(TEXT("우편함 · 쿠폰")))
+      .OnClicked_Lambda([this]{UProjectMailboxWidget::Open(GetOwningPlayer());return FReply::Handled();})
+      [SNew(SOverlay)
+        +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[ProjectDFSDUI::Icon(ProjectDFSDUI::EIcon::Mail,26)]
+        +SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top)[SNew(SBox).WidthOverride(10).HeightOverride(10)
+          .Visibility_Lambda([this]{auto* R=Records(this);return R&&Num(R->Snapshot,TEXT("mailUnclaimed"))>0?EVisibility::HitTestInvisible:EVisibility::Collapsed;})[SNew(SBorder).BorderImage(&UnreadDot)]]];
+    Members->AddSlot().AutoWidth().VAlign(VAlign_Top).Padding(0,0,8,0)[SNew(SBox).WidthOverride(48).HeightOverride(64)[Mail]];
     Members->AddSlot().AutoWidth().VAlign(VAlign_Top)[SNew(SBox).WidthOverride(118).HeightOverride(64).VAlign(VAlign_Center)[SNew(SVerticalBox)
       +SVerticalBox::Slot().AutoHeight()[Label(TEXT("보유 포인트"),14)]
       +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),18)).ColorAndOpacity(ProjectDFSDUI::Text()).Text_Lambda([this]{auto* R=Records(this);return FText::AsNumber(int64(Num(R?R->Snapshot:nullptr,TEXT("credits"))));})]]];

@@ -525,6 +525,7 @@ public:
         case ProjectDFSDUI::EIcon::Phone:Lines({{7,2},{17,2},{17,22},{7,22},{7,2}});Lines({{10,4.5},{14,4.5}});Circle({12,19},.8f);break;
         case ProjectDFSDUI::EIcon::Whisper:Lines({{3,4},{21,4},{21,17},{12,17},{6,21},{6,17},{3,17},{3,4}});Lines({{7,9},{17,9}});Lines({{7,13},{14,13}});break;
         case ProjectDFSDUI::EIcon::Report:Lines({{12,2},{23,21},{1,21},{12,2}});Lines({{12,8},{12,14}});Circle({12,18},.6f);break;
+        case ProjectDFSDUI::EIcon::Mail:Lines({{3,6},{21,6},{21,18},{3,18},{3,6}});Lines({{3,6},{12,13},{21,6}});break; // An envelope (Docs/MailAndCoupons.md).
         case ProjectDFSDUI::EIcon::Bell:Lines({{4,18},{7,14},{7,9},{8,6},{12,4},{16,6},{17,9},{17,14},{20,18},{4,18}});Lines({{10,21},{14,21}});break;
         case ProjectDFSDUI::EIcon::Party:
         case ProjectDFSDUI::EIcon::Friends:Circle({8,7},3.5);Circle({17,8},3);Lines({{1,21},{2,17},{5,14},{11,14},{14,17},{15,21}});Lines({{15,14},{20,14},{23,18},{23,21}});break;

@@ -1,5 +1,6 @@
 #if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 #include "MannequinReactiveLight.h"
+#include "ProjectLightVariation.h"
 #include "MannequinAICharacter.h"
 #include "ProjectProject01GameInstance.h"
 #include "Components/SpotLightComponent.h"
@@ -382,6 +383,29 @@ bool FProjectReactiveLightRenderTest::RunTest(const FString&)
     AddInfo(FString::Printf(TEXT("Diffuser partial pixels ends=%.1f/%.1f centre=%.1f; steady=%.1f/%.1f/%.1f"),Bar[1][0],Bar[1][2],Bar[1][1],Bar[0][0],Bar[0][1],Bar[0][2]));
     TestTrue(TEXT("The actual shader shows a dark end, a bright centre and a weakly glowing other end"),
         FMath::Min(Bar[1][0],Bar[1][2])<Bar[1][1]*.3&&FMath::Max(Bar[1][0],Bar[1][2])<Bar[1][1]*.85&&Bar[1][1]>100);
+    return true;
+}
+#endif
+
+#if WITH_DEV_AUTOMATION_TESTS
+// Each placed light gets its own brightness (72-100 %), the same for every player; menus keep theirs.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectLightVariationTest, "ProjectProject01.ReactiveLight.BrightnessVariation", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProjectLightVariationTest::RunTest(const FString&)
+{
+    float Low = 1.f, High = 0.f; TSet<int32> Steps;
+    for (int32 I = 0; I < 40; ++I)
+    {
+        const FString Name = I == 0 ? FString(TEXT("MannequinReactiveLight")) : FString::Printf(TEXT("MannequinReactiveLight%d"), I + 1);
+        const float F = ProjectLightVariation::Factor(Name);
+        TestEqual(Name + TEXT(" gives the same value every time"), ProjectLightVariation::Factor(Name), F);
+        Low = FMath::Min(Low, F); High = FMath::Max(High, F); Steps.Add(FMath::RoundToInt(F * 20.f));
+    }
+    TestTrue(TEXT("Never brighter than placed, never below 72 %"), Low >= ProjectLightVariation::Lowest && High <= 1.f);
+    TestTrue(TEXT("Neighbouring lights really differ"), Steps.Num() >= 4 && High - Low > .15f);
+    TestFalse(TEXT("Title stays as it is"), ProjectLightVariation::AppliesToMap(TEXT("TitleLevel")));
+    TestFalse(TEXT("Lobby stays as it is"), ProjectLightVariation::AppliesToMap(TEXT("LobbyLevel")));
+    TestTrue(TEXT("The match map varies"), ProjectLightVariation::AppliesToMap(TEXT("LevelTest01")));
+    TestTrue(TEXT("The single intro varies"), ProjectLightVariation::AppliesToMap(TEXT("SinglePlayerIntro")));
     return true;
 }
 #endif

@@ -2053,9 +2053,13 @@ void UProjectProject01TitleWidget::BuildWidgetTree()
 		SaveSlotNewGameButtons.Add(ProjectProject01LoginUI::AddButton(WidgetTree,Actions,TEXT("새 게임")));
 		SaveSlotDeleteButtons.Add(ProjectProject01LoginUI::AddButton(WidgetTree,Actions,TEXT("삭제")));
 	}
-	auto* IntroEntry = ProjectProject01LoginUI::AddButton(WidgetTree, SaveSlotMenu, TEXT("프롤로그 · 장면 다시보기"));
+	// The prologue replays and 돌아가기 share one row, so the three case files keep the height their save details need
+	// (at 800x600 a separate row squeezed the details into the file buttons).
+	auto* BottomRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+	if (UVerticalBoxSlot* RowSlot = SaveSlotMenu->AddChildToVerticalBox(BottomRow)) RowSlot->SetPadding(FMargin(6.0f));
+	auto* IntroEntry = ProjectProject01LoginUI::AddTabButton(WidgetTree, BottomRow, TEXT("프롤로그 · 장면 다시보기"));
 	IntroEntry->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandleIntroLibraryClicked);
-	SaveSlotsBackButton = ProjectProject01LoginUI::AddButton(WidgetTree, SaveSlotMenu, TEXT("돌아가기"));
+	SaveSlotsBackButton = ProjectProject01LoginUI::AddTabButton(WidgetTree, BottomRow, TEXT("돌아가기"));
 	auto* IntroPage = ProjectProject01LoginUI::AddSaveCasePage(WidgetTree, TitlePageSwitcher);
 	ProjectProject01LoginUI::AddLabel(WidgetTree, IntroPage, TEXT("프롤로그 · 장면 다시보기"), 30.f);
 	ProjectProject01LoginUI::AddButton(WidgetTree, IntroPage, TEXT("프롤로그 플레이"))->OnClicked.AddUniqueDynamic(this, &UProjectProject01TitleWidget::HandlePlayIntroClicked);
@@ -8190,6 +8194,7 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     RefreshBotModePanel();
     BotMatchParticipantsText=ProjectProject01LoginUI::AddLabel(WidgetTree,BotSetup,TEXT(""),20);
     BotMatchParticipantsText->SetVisibility(ESlateVisibility::Collapsed);
+    BotMatchParticipantsText->SetLineHeightPercentage(1.25f); // two "name · ready" lines must not overlap
     BotMatchCreateButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("게임 시작"));BotMatchCreateButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleBotMatchCreateClicked);
     BotMatchCancelButton=ProjectProject01LoginUI::AddButton(WidgetTree,BotSetup,TEXT("시작 취소"));BotMatchCancelButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleStartRoomClicked);
     BotMatchCancelButton->SetVisibility(ESlateVisibility::Collapsed);
