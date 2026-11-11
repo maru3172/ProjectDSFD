@@ -167,6 +167,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		break;
 	}
 	
+	// 정지 중 정보 전달 유지를 위해 위치를 옮긴 상태
 	if (bObservedByPlayerOrHelper)
 	{
 		// 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
