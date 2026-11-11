@@ -86,9 +86,10 @@ private:
 		AMannequinAICharacter& CurrentMannequin
 		);
 	
-	// 플레이어를 중심으로 1차 마네킹을 지정하는 반경
-	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
-	float PlayerPrimaryRadius = 1000.0f;
+	// 더 이상 플레이어 반경이 아니라 직접 관측 정보로 결정되므로 사용되지 않는다.
+	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
+	// UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
+	// float PlayerPrimaryRadius = 1000.0f;
 	
 	// 각각의 1차 마네킹을 중심으로 2차 마네킹을 지정하는 반경
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
