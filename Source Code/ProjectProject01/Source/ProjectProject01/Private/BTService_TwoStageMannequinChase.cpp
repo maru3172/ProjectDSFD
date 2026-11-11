@@ -486,7 +486,7 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 		}
 		
 		// 3. 자체 관측 정보를 가진 진짜 1 차인가
-		// 직접 자기 자신을 관측했거나 아직 유효한 자체 관측 정보를 가진 마네킹만 1 차 정보 전달자가 될 수 있다.
+		// 플레이어를 직접 관측했거나 아직 유효한 자체 관측 정보를 가진 마네킹만 1 차 정보 전달자가 될 수 있다.
 		if (!OtherMannequin->HasActivePlayerObservation())
 		{
 			continue;
@@ -497,7 +497,7 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 		
 		// 4. 같은 층인가
 		// 다른 층에 있는 마네킹의 정보는 전달받지 않는다.
-		if (HeightDifference < MaximumHeightDifference)
+		if (HeightDifference > MaximumHeightDifference)
 		{
 			continue;
 		}
