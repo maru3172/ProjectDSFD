@@ -1,4 +1,5 @@
 #include "ProjectProject01Tutorial.h"
+#include "ProjectGamepad.h"
 #include "ProjectPracticeEnvironment.h"
 #include "ProjectDFSDUITheme.h"
 #include "ProjectProject01AuthSubsystem.h"
@@ -60,13 +61,14 @@ namespace ProjectTutorial
 		Result.ReplaceInline(TEXT("‘조작 연습 시작’"),TEXT("‘확인’"));
 		if (auto* S=UProjectProject01GameUserSettings::Get())
 		{
-			Result.ReplaceInline(TEXT("{Sprint}"),*S->GetSprintKey().GetDisplayName().ToString());
-			Result.ReplaceInline(TEXT("{Help}"),*S->GetHelpPingKey().GetDisplayName().ToString());
-			Result.ReplaceInline(TEXT("{Danger}"),*S->GetDangerPingKey().GetDisplayName().ToString());
-			Result.ReplaceInline(TEXT("{Location}"),*S->GetLocationPingKey().GetDisplayName().ToString());
-			Result.ReplaceInline(TEXT("{PTT}"),*S->GetVoicePushToTalkKey().GetDisplayName().ToString());
-			Result.ReplaceInline(TEXT("{Voice}"),*S->GetVoiceToggleKey().GetDisplayName().ToString());
-			const FString Move=S->GetMoveForwardKey().GetDisplayName().ToString()+TEXT(" / ")+
+			// Key hints follow the device in use: pad buttons while a pad is in use (Docs/Gamepad.md 6).
+			Result.ReplaceInline(TEXT("{Sprint}"),*ProjectGamepad::Hint(EProjectPadAction::Sprint,S->GetSprintKey()));
+			Result.ReplaceInline(TEXT("{Help}"),*ProjectGamepad::Hint(EProjectPadAction::PingHelp,S->GetHelpPingKey()));
+			Result.ReplaceInline(TEXT("{Danger}"),*ProjectGamepad::Hint(EProjectPadAction::PingDanger,S->GetDangerPingKey()));
+			Result.ReplaceInline(TEXT("{Location}"),*ProjectGamepad::Hint(EProjectPadAction::PingLocation,S->GetLocationPingKey()));
+			Result.ReplaceInline(TEXT("{PTT}"),*ProjectGamepad::Hint(EProjectPadAction::PushToTalk,S->GetVoicePushToTalkKey()));
+			Result.ReplaceInline(TEXT("{Voice}"),*ProjectGamepad::Hint(EProjectPadAction::VoiceToggle,S->GetVoiceToggleKey()));
+			const FString Move=ProjectGamepad::UsingPad()?FString(TEXT("왼쪽 스틱")):S->GetMoveForwardKey().GetDisplayName().ToString()+TEXT(" / ")+
 				S->GetMoveLeftKey().GetDisplayName().ToString()+TEXT(" / ")+S->GetMoveBackwardKey().GetDisplayName().ToString()+TEXT(" / ")+S->GetMoveRightKey().GetDisplayName().ToString();
 			Result.ReplaceInline(TEXT("{Move}"),*Move);
 		}

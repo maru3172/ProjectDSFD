@@ -260,6 +260,10 @@ private:
 	void TryRevealInitialStandaloneFade();
 	void RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSubsystem* InputSubsystem);
 	void ToggleSessionMenu();
+public:
+	/** Gamepad disconnected in single player (Docs/Gamepad.md 8): opens the pause menu if it is not open. */
+	void OpenPauseMenuForDisconnect();
+private:
 	void BindSinglePlayerSaveNotifications();
 
 	UFUNCTION()

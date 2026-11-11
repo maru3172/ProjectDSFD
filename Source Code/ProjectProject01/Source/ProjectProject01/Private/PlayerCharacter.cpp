@@ -24,6 +24,7 @@
 #include "Camera/PlayerCameraManager.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "InputModifiers.h"
 #include "InputMappingContext.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
@@ -1164,7 +1165,20 @@ void APlayerCharacter::RegisterRuntimeSprintMapping(UEnhancedInputLocalPlayerSub
 		RuntimeMapping.Triggers = SourceMapping.Triggers;
 	}
 	RuntimeSprintInputContext->MapKey(IA_Sprint, SprintKey);
+	// Gamepad (Docs/Gamepad.md 1): the left stick walks with real analog input (other buttons come in as keys).
+	if (IsValid(IA_Move))
+	{
+		FEnhancedActionKeyMapping& PadMove = RuntimeSprintInputContext->MapKey(IA_Move, EKeys::Gamepad_Left2D);
+		UInputModifierDeadZone* DeadZone = NewObject<UInputModifierDeadZone>(RuntimeSprintInputContext);
+		DeadZone->LowerThreshold = IsValid(Settings) ? Settings->GetPadDeadZone() : 0.2f;
+		PadMove.Modifiers.Add(DeadZone);
+	}
 	InputSubsystem->AddMappingContext(RuntimeSprintInputContext, 0);
+}
+
+void APlayerCharacter::OpenPauseMenuForDisconnect()
+{
+	if (!(IsValid(SessionMenuWidget) && SessionMenuWidget->IsInViewport())) ToggleSessionMenu();
 }
 
 // =========================================================================================================================
@@ -1995,6 +2009,8 @@ void APlayerCharacter::PlayPainSFX(const bool bFatal, const float Intensity)
 	if (IsValid(HeartbeatComponent))
 		HeartbeatComponent->SuspendTensionBreathingForPain(bFatal, UPainGroanSynthComponent::GetReactionDuration(bFatal, Intensity));
 	PainGroanSFXComponent->TriggerPain(bFatal, Intensity);
+	if (IsLocallyControlled())
+		if (auto* Pad = UProjectGamepadSubsystem::Get(this)) Pad->Pulse(bFatal ? 1.0f : FMath::Lerp(0.5f, 0.85f, FMath::Clamp(Intensity, 0.0f, 1.0f)), bFatal ? 0.6f : 0.3f, true);
 }
 
 void APlayerCharacter::PlayBodyFallSFX()

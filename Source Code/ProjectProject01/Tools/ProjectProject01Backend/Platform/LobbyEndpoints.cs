@@ -219,6 +219,10 @@ internal static partial class LobbyEndpoints
             {
                 return Results.BadRequest(new LobbyFailure("방 이름은 1~48자여야 합니다."));
             }
+            if ((await ChatFilter.CurrentAsync(database, ct)).Contains(name))
+            {
+                return Results.BadRequest(new LobbyFailure("방 이름에 " + ChatFilter.Refusal));
+            }
             var password = body.Password?.Trim() ?? string.Empty;
             if (password.Length != 0 && password.Length is < 4 or > 64)
             {
@@ -727,6 +731,8 @@ internal static partial class LobbyEndpoints
                 {
                     return Results.Conflict(new LobbyFailure("게임이 시작된 뒤에는 로비 채팅을 보낼 수 없습니다."));
                 }
+                // Banned words are masked, the rest of the message is sent (Docs/ChatFilter.md).
+                message = (await ChatFilter.CurrentAsync(connection, null, ct)).Mask(message);
                 await ExecuteAsync(connection, null,
                     "INSERT INTO room_chat_messages (room_id, user_id, message) VALUES (@roomId, @userId, @message);",
                     ("@roomId", membership.RoomId), ("@userId", user.Id), ("@message", message), ct);

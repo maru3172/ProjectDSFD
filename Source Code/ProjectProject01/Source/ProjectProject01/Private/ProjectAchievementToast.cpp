@@ -43,10 +43,10 @@ public:
     void ShowQuest(const FString& Name,const FString& Kind,const FString& Detail,const FString& EventId)
     {
         // Daily/Weekly: a mission finished (Name is the mode, e.g. PvP). Unlock: a new quest line opened (Name is its kind).
-        if(Kind!=TEXT("Condition")&&Kind!=TEXT("Stage")&&Kind!=TEXT("Complete")&&Kind!=TEXT("Daily")&&Kind!=TEXT("Weekly")&&Kind!=TEXT("Unlock"))return;
+        if(Kind!=TEXT("Condition")&&Kind!=TEXT("Stage")&&Kind!=TEXT("Complete")&&Kind!=TEXT("Daily")&&Kind!=TEXT("Weekly")&&Kind!=TEXT("Unlock")&&Kind!=TEXT("Open"))return; // Open: a quest opened (Docs/QuestGraph.md).
         FAchievementToastEntry E;E.Code=TEXT("Quest:")+EventId;E.bQuest=true;
         if(ActiveCode==E.Code||Queue.ContainsByPredicate([&](const auto& Q){return Q.Code==E.Code;}))return;
-        E.Title=TEXT("- ")+Name+(Kind==TEXT("Condition")?TEXT(" 퀘스트 조건 완료 -"):Kind==TEXT("Stage")?TEXT(" 퀘스트 단계 완료 -"):Kind==TEXT("Daily")?TEXT(" 일일 미션 완료 -"):Kind==TEXT("Weekly")?TEXT(" 주간 미션 완료 -"):Kind==TEXT("Unlock")?TEXT(" 열람 가능 -"):TEXT(" 퀘스트 전체 완료 -"));E.Condition=Detail;
+        E.Title=TEXT("- ")+Name+(Kind==TEXT("Condition")?TEXT(" 퀘스트 조건 완료 -"):Kind==TEXT("Stage")?TEXT(" 퀘스트 단계 완료 -"):Kind==TEXT("Daily")?TEXT(" 일일 미션 완료 -"):Kind==TEXT("Weekly")?TEXT(" 주간 미션 완료 -"):Kind==TEXT("Unlock")?TEXT(" 열람 가능 -"):Kind==TEXT("Open")?TEXT(" 퀘스트 열림 -"):TEXT(" 퀘스트 전체 완료 -"));E.Condition=Detail;
         if(Queue.Num()<24)Queue.Add(MoveTemp(E));if(ActiveCode.IsEmpty()&&GapRemaining<=0)Next();
     }
     void Next()

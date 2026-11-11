@@ -16,6 +16,8 @@
 #include "GameFramework/PlayerController.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "InputModifiers.h"
+#include "ProjectProject01GameInstance.h"
 #include "Net/UnrealNetwork.h"
 #include "ProjectProject01TuningData.h"
 #include "MultiplayTestGameMode.h"
@@ -580,6 +582,20 @@ void AMannequinAICharacter::RegisterLocalInputMapping()
 	}
 
 	InputSubsystem->AddMappingContext(IMC_MannequinControl, 0);
+	// Gamepad (Docs/Gamepad.md 2): direct control walks with the left stick as analog input.
+	if (IsValid(IA_MannequinMove))
+	{
+		if (!IsValid(PadMoveContext))
+		{
+			PadMoveContext = NewObject<UInputMappingContext>(this);
+			FEnhancedActionKeyMapping& PadMove = PadMoveContext->MapKey(IA_MannequinMove, EKeys::Gamepad_Left2D);
+			UInputModifierDeadZone* DeadZone = NewObject<UInputModifierDeadZone>(PadMoveContext);
+			const auto* Settings = UProjectProject01GameUserSettings::Get();
+			DeadZone->LowerThreshold = Settings ? Settings->GetPadDeadZone() : 0.2f;
+			PadMove.Modifiers.Add(DeadZone);
+		}
+		InputSubsystem->AddMappingContext(PadMoveContext, 0);
+	}
 }
 
 void AMannequinAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

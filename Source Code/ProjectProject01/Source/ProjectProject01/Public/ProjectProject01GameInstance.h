@@ -13,6 +13,7 @@
 #include "ProjectRequestCircuit.h"
 #include "ProjectMatchBotTypes.h"
 #include "ProjectCustomMatchRules.h"
+#include "ProjectGamepad.h"
 #include "ProjectAffixes.h"
 #include "ProjectItemRoguelike.h"
 #include "ProjectProject01GameInstance.generated.h"
@@ -106,6 +107,24 @@ public:
 	FKey GetLocationPingKey() const;
 	/** Custom game flashlight gaze (Docs/CustomGamePlayground.md 15). */
 	FKey GetFlashlightKey() const;
+	// Gamepad (Docs/Gamepad.md 5): rebindable buttons, look and cursor speed, dead zone, button labels, vibration.
+	FKey GetPadBinding(EProjectPadAction Action) const;
+	void SetPadBinding(EProjectPadAction Action, FKey Key);
+	void ResetPadSettings();
+	float GetPadLookSpeedX() const { return FMath::Clamp(PadLookSpeedX, .2f, 3.f); }
+	float GetPadLookSpeedY() const { return FMath::Clamp(PadLookSpeedY, .2f, 3.f); }
+	bool GetPadInvertY() const { return bPadInvertY; }
+	float GetPadCursorSpeed() const { return FMath::Clamp(PadCursorSpeed, .3f, 3.f); }
+	float GetPadDeadZone() const { return FMath::Clamp(PadDeadZone, .05f, .45f); }
+	EProjectPadGlyphs GetPadGlyphs() const { return EProjectPadGlyphs(FMath::Clamp(PadGlyphs, 0, 2)); }
+	bool GetPadVibration() const { return bPadVibration; }
+	float GetPadVibrationStrength() const { return FMath::Clamp(PadVibrationStrength, 0.f, 1.f); }
+	void SetPadLookSpeed(float X, float Y) { PadLookSpeedX = FMath::Clamp(X, .2f, 3.f); PadLookSpeedY = FMath::Clamp(Y, .2f, 3.f); }
+	void SetPadInvertY(bool bInvert) { bPadInvertY = bInvert; }
+	void SetPadCursorSpeed(float Speed) { PadCursorSpeed = FMath::Clamp(Speed, .3f, 3.f); }
+	void SetPadDeadZone(float DeadZone) { PadDeadZone = FMath::Clamp(DeadZone, .05f, .45f); }
+	void SetPadGlyphs(EProjectPadGlyphs Glyphs) { PadGlyphs = int32(Glyphs); }
+	void SetPadVibration(bool bOn, float Strength) { bPadVibration = bOn; PadVibrationStrength = FMath::Clamp(Strength, 0.f, 1.f); }
 	bool HasSeenSurvivorGuide() const { return bHasSeenSurvivorGuide; }
 	bool HasSeenMannequinGuide() const { return bHasSeenMannequinGuide; }
 	void MarkSurvivorGuideSeen();
@@ -248,6 +267,26 @@ private:
 
 	UPROPERTY(Config)
 	FName FlashlightKeyName = TEXT("F");
+
+	/** Pad button per EProjectPadAction (index); missing or non-pad entries use the default. */
+	UPROPERTY(Config)
+	TArray<FName> PadBindingNames;
+	UPROPERTY(Config)
+	float PadLookSpeedX = 1.f;
+	UPROPERTY(Config)
+	float PadLookSpeedY = 1.f;
+	UPROPERTY(Config)
+	bool bPadInvertY = false;
+	UPROPERTY(Config)
+	float PadCursorSpeed = 1.f;
+	UPROPERTY(Config)
+	float PadDeadZone = .2f;
+	UPROPERTY(Config)
+	int32 PadGlyphs = 0;
+	UPROPERTY(Config)
+	bool bPadVibration = true;
+	UPROPERTY(Config)
+	float PadVibrationStrength = .8f;
 
 	/** 역할별 최초 게임 가이드 표시 여부. 환경설정 초기화와 별도로 유지한다. */
 	UPROPERTY(Config)

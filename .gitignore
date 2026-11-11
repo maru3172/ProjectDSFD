@@ -22,6 +22,8 @@
 
 # IDE and editor folders
 **/.codex/**
+# Claude Code settings and hooks stay on each PC (never uploaded).
+**/.claude/
 **/.vs/**
 **/.vscode/**
 **/.idea/**

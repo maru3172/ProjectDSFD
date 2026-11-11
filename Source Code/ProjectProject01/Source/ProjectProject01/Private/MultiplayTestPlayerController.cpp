@@ -1590,6 +1590,19 @@ void AMultiplayTestPlayerController::ApplyViewedMannequinCamera(AMannequinAIChar
 	}
 }
 
+void AMultiplayTestPlayerController::CycleMannequinSlot(int32 Direction)
+{
+	if (!IsLocalController() || Direction == 0) return;
+	TArray<int32> Slots;
+	for (TActorIterator<AMannequinAICharacter> It(GetWorld()); It; ++It)
+		if (IsValid(*It) && It->GetControlSlot() >= 0 && It->GetControlSlot() <= 9) Slots.AddUnique(It->GetControlSlot());
+	if (Slots.IsEmpty()) return;
+	Slots.Sort();
+	const AMannequinAICharacter* Viewed = GetViewedMannequin();
+	const int32 At = Viewed ? Slots.IndexOfByKey(Viewed->GetControlSlot()) : INDEX_NONE;
+	const int32 Next = At == INDEX_NONE ? (Direction > 0 ? 0 : Slots.Num() - 1) : (At + (Direction > 0 ? 1 : -1) + Slots.Num()) % Slots.Num();
+	RequestMannequinSlot(Slots[Next]);
+}
 void AMultiplayTestPlayerController::SelectMannequinSlot0() { RequestMannequinSlot(0); }
 void AMultiplayTestPlayerController::SelectMannequinSlot1() { RequestMannequinSlot(1); }
 void AMultiplayTestPlayerController::SelectMannequinSlot2() { RequestMannequinSlot(2); }
@@ -1783,7 +1796,10 @@ void AMultiplayTestPlayerController::RequestMannequinAttack()
 	// The mannequin player, or an infected survivor playing a mannequin body (custom game; the server checks which).
 	const bool bInfectedBody = SurvivorState == EMultiplayTestSurvivorState::Eliminated && Cast<AMannequinAICharacter>(GetPawn()) != nullptr;
 	if (IsLocalController() && !bShowMouseCursor && (SurvivorState == EMultiplayTestSurvivorState::NotApplicable || bInfectedBody))
+	{
 		ServerRequestMannequinAttack();
+		if (auto* Pad = UProjectGamepadSubsystem::Get(this)) Pad->Pulse(.5f, .12f, false);
+	}
 }
 
 void AMultiplayTestPlayerController::EnterInfectedBody(AMannequinAICharacter* Body)

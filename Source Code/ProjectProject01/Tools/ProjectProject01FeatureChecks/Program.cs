@@ -132,6 +132,7 @@ internal static class FeatureChecks
                 if(!root.StartsWith(reviewRoot,StringComparison.OrdinalIgnoreCase))return 24;
                 try{using var lease=ProjectOperationLock.Acquire(root);return 0;}catch(IOException){return 23;}
             }
+            if(args.Length==2&&args[0]=="--quest-editor-review")return QuestGraphEditorReview.Run(args[1]);
             if (args.Length > 0 && args[0] == "--frontend-integration")
             {
                 IntegrationChecks.RunAsync(args[1],int.Parse(args[2]),frontendOnly:true).GetAwaiter().GetResult();

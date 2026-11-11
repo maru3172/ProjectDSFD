@@ -2,6 +2,7 @@
 // Target: ProjectProject01 Win64 Development, Unreal Engine 5.8.2
 
 #include "ProjectProject01LoginWidget.h"
+#include "ProjectPadSettingsPanel.h"
 #include "Misc/ConfigCacheIni.h"
 #include "ProjectCaseRecords.h"
 #include "ProjectMatchWait.h"
@@ -2705,6 +2706,19 @@ void UProjectProject01GameGuideWidget::RefreshGuideText()
         const FString Movement=KeyName(Settings->GetMoveForwardKey())+TEXT("/")+KeyName(Settings->GetMoveLeftKey())+TEXT("/")+KeyName(Settings->GetMoveBackwardKey())+TEXT("/")+KeyName(Settings->GetMoveRightKey());
         ControlsText->SetText(FText::FromString(ControlsText->GetText().ToString().Replace(TEXT("W/A/S/D"),*Movement)));
     }
+    // With a pad in use the list shows pad buttons (Docs/Gamepad.md 6).
+    if(ProjectGamepad::UsingPad(this))
+    {
+        auto P=[](EProjectPadAction A){return ProjectGamepad::Hint(A,FKey());};
+        ControlsText->SetText(FText::FromString(bMannequinRole
+            ?FString::Printf(TEXT("조작 (게임패드)\n%s / %s : 이전 / 다음 번호 마네킹 시점\n%s : 명령 휠 (오른쪽 스틱으로 고르고 A·%s 실행, B·%s 닫기)\n%s : 직접 조작 중 공격\n왼쪽 스틱 : 직접 조작 이동 | 오른쪽 스틱 : 시점\n%s : 게임 메뉴"),
+                *P(EProjectPadAction::MannequinPrev),*P(EProjectPadAction::MannequinNext),*P(EProjectPadAction::MannequinWheel),*P(EProjectPadAction::MannequinAttack),
+                *P(EProjectPadAction::MannequinWheel),*P(EProjectPadAction::MannequinAttack),*P(EProjectPadAction::Menu))
+            :FString::Printf(TEXT("조작 (게임패드)\n왼쪽 스틱 : 이동 | 오른쪽 스틱 : 시점\n%s : 달리기 | %s : 상호작용\n%s : 도움 핑 | %s : 위험 핑 | %s : 위치 핑\n%s : 누르는 동안 음성 송신 | %s : 음성 송신 고정 전환\n%s / %s : 관전 대상 전환 | %s : 손전등 (사용자 지정 게임)\n%s : 게임 메뉴"),
+                *P(EProjectPadAction::Sprint),*P(EProjectPadAction::Interact),*P(EProjectPadAction::PingHelp),*P(EProjectPadAction::PingDanger),*P(EProjectPadAction::PingLocation),
+                *P(EProjectPadAction::PushToTalk),*P(EProjectPadAction::VoiceToggle),*P(EProjectPadAction::SpectatePrev),*P(EProjectPadAction::SpectateNext),*P(EProjectPadAction::Flashlight),
+                *P(EProjectPadAction::Menu))));
+    }
 }
 
 void UProjectProject01GameGuideWidget::BuildWidgetTree()
@@ -5125,6 +5139,7 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 		SetPendingDefaults();
 		return;
 	}
+	if (IsValid(PadSettingsPanel)) PadSettingsPanel->Load(Settings);
 	PendingMasterVolume = Settings->GetMasterVolume();
 	PendingSFXVolume = Settings->GetSFXVolume();
 	PendingMusicVolume = Settings->GetMusicVolume();
@@ -5173,6 +5188,7 @@ void UProjectProject01SettingsWidget::LoadPendingFromSettings()
 
 void UProjectProject01SettingsWidget::SetPendingDefaults()
 {
+	if (IsValid(PadSettingsPanel)) PadSettingsPanel->Defaults();
 	PendingMasterVolume = PendingSFXVolume = PendingMusicVolume = PendingUIVolume = 1.0f;
 	bPendingMuteAll = false;
 	bPendingMuteWhenUnfocused = true;
@@ -5423,6 +5439,7 @@ void UProjectProject01SettingsWidget::ApplyPendingSettings()
 	Settings->SetDangerPingKey(PendingDangerPingKey);
 	Settings->SetLocationPingKey(PendingLocationPingKey);
 	Settings->SetFlashlightKey(PendingFlashlightKey);
+	if (IsValid(PadSettingsPanel)) PadSettingsPanel->Store(Settings);
 	Settings->SetDirectServerAddress(PendingDirectServerAddress);
 	Settings->SetScreenResolution(PendingResolution);
 	Settings->SetFullscreenMode(PendingWindowMode);
@@ -5750,6 +5767,8 @@ void UProjectProject01SettingsWidget::BuildWidgetTree()
 	DangerPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("위험 알림 핑"));
 	LocationPingKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("위치 표시 핑"));
 	FlashlightKeyButton = ProjectProject01LoginUI::AddKeyRow(WidgetTree, ControlsPage, TEXT("손전등 (사용자 지정 게임)"));
+	PadSettingsPanel = WidgetTree->ConstructWidget<UProjectPadSettingsPanel>();
+	ControlsPage->AddChildToVerticalBox(PadSettingsPanel);
 
 	DefaultsButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("설정 초기화"));
 	ApplyButton = ProjectProject01LoginUI::AddButton(WidgetTree, Root, TEXT("적용"));

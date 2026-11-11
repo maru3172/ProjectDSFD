@@ -1022,6 +1022,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UButton> DangerPingKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> LocationPingKeyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> FlashlightKeyButton;
+	/** 조작 › 게임패드 (Docs/Gamepad.md 5). */
+	UPROPERTY(Transient) TObjectPtr<class UProjectPadSettingsPanel> PadSettingsPanel;
 	UPROPERTY(Transient) TObjectPtr<class UButton> ApplyButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> CancelButton;
 	UPROPERTY(Transient) TObjectPtr<class UButton> DefaultsButton;

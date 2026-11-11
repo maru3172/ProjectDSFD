@@ -60,7 +60,7 @@ void UProjectCaseRecords::ClearSession()
     if(Request){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     Snapshot.Reset();DrawResult.Reset();LastReceipt.Reset();PendingDrawId.Reset();PendingDrawOperation.Reset();PollIn=0;bImportAttempted=false;Status.Reset();OnChanged.Broadcast(); // Never erase the offline achievement save.
     AchievementAccount.Reset();SeenOnlineAchievements.Reset();MissionAccount.Reset();CompletedMissions.Reset();
-    QuestAccount.Reset();SeenQuestRevision=0;PendingTutorialRole.Reset();PendingTutorialGeneration=0;TutorialRetryAt=0;
+    QuestAccount.Reset();SeenQuestRevision=0;PendingTalkQuest.Reset();PendingTutorialRole.Reset();PendingTutorialGeneration=0;TutorialRetryAt=0;
     PendingTalkStep.Reset();PendingTalkChoices.Reset();PendingTalkGeneration=0;TalkRetryAt=0;bTalkInFlight=false;
 }
 bool UProjectCaseRecords::IsAuthenticated()const{const auto* A=Auth(this);return A&&A->IsSignedIn();}
@@ -75,7 +75,7 @@ bool UProjectCaseRecords::Tick(float Delta)
     if(!PendingTalkStep.IsEmpty())
     {
         if(Auth(this)->GetSessionGeneration()!=PendingTalkGeneration)PendingTalkStep.Reset();
-        else if(!IsWriting()&&FPlatformTime::Seconds()>=TalkRetryAt){MainQuestTalk(PendingTalkStep,PendingTalkChoices);return true;}
+        else if(!IsWriting()&&FPlatformTime::Seconds()>=TalkRetryAt){MainQuestTalk(PendingTalkStep,PendingTalkChoices,PendingTalkQuest);return true;}
     }
     TickPartyAdmission(Delta);
     if(!Request&&!bImportAttempted&&CanImport()){bImportAttempted=true;ImportCampaign();return true;}

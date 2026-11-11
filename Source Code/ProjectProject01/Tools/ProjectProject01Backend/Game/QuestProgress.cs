@@ -214,7 +214,7 @@ internal static class QuestProgress
         object Step(Quest q,Step s,bool active,bool done)
         {
             var talk=s.Talk is null?null:g.Talks.FirstOrDefault(t=>t.Id==s.Talk);
-            return new{id=s.Id,title=s.Title,active,completed=done,canSkip=active&&IsTutorialStep(s),story=done?s.Story:"",
+            return new{id=s.Id,title=s.Title,active,completed=done,canSkip=active&&IsTutorialStep(s),tutorialRole=IsTutorialStep(s)?(s.Goals[0].Metric=="SurvivorTutorial"?"Survivor":"Mannequin"):null,story=done?s.Story:"",
                 npc=talk is null?null:npcs.GetValueOrDefault(talk.Npc,talk.Npc),talkId=talk?.Id,talk=talk is null?null:new{npc=npcs.GetValueOrDefault(talk.Npc,talk.Npc),start=talk.Start,nodes=talk.Nodes},
                 talked=talk is not null&&talked.ContainsKey(talk.Id),choices=Picks(talk?.Id),
                 goals=s.Goals.Select(x=>new{id=x.Id,label=x.Label,target=x.Target,progress=done?x.Target:Progress(q.Id,s.Id,x)}).ToArray()};
@@ -224,7 +224,7 @@ internal static class QuestProgress
             var (current,status)=p.States[q.Id];var log=p.Log.GetValueOrDefault(q.Id)??new();
             var steps=log.Select(id=>q.Steps.FirstOrDefault(s=>s.Id==id)).OfType<Step>().Select(s=>Step(q,s,false,true)).ToList();
             if(status=="Active"&&q.Steps.FirstOrDefault(s=>s.Id==current) is {} now)steps.Add(Step(q,now,true,false));
-            return new{id=q.Id,name=q.Name,kind=q.Kind,baseStory=q.BaseStory,completed=status=="Done",steps};
+            return new{id=q.Id,name=q.Name,kind=q.Kind,npc=q.Npc is null?null:npcs.GetValueOrDefault(q.Npc,q.Npc),baseStory=q.BaseStory,completed=status=="Done",steps};
         }).ToArray();
         return new{revision=p.Revision,quests,notices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u ORDER BY revision DESC LIMIT 24",ct,("u",user))};
     }

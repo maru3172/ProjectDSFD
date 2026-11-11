@@ -16,6 +16,7 @@ internal static class QuestGraphChecks
         // ---- The default graph is 탐사, unchanged; and the checks catch the mistakes the editor must show. ----
         Check(Validate(Default).Count==0&&Default.Quests.Length==1&&Default.Quests[0].Steps.Length==MainQuest.Default.Steps.Length&&Default.Talks.Length==2,"기본 그래프는 탐사 10단계·대화 2개 그대로이고 검사 통과");
         Check(MainQuest.LegacyPlan(Default) is {} legacy&&JsonSerializer.Serialize(legacy,MainQuest.Json)==JsonSerializer.Serialize(MainQuest.Default,MainQuest.Json),"탐사 화면용 변환은 원래 구성과 같음");
+        var sample=QuestGraphEditorReview.Sample();Check(Validate(sample).Count==0&&QuestGraphEditorReview.RoundTrips(sample)&&QuestGraphEditorReview.RoundTrips(Default),"운영 도우미 편집기는 그래프(갈림길·연계·서브·대화에서 받는 퀘스트)를 바꾸지 않고 주고받음");
         var kalin=Default.Talks.First(t=>t.Id=="kalin_talk");
         Check(Walk(kalin,[1,0,0])?.Count==3&&Walk(kalin,[1,0])is null&&Walk(kalin,[1,0,0,0])is null&&Walk(kalin,[0,5,0])is null,"대화 경로는 선택 수·번호가 정확할 때만 인정");
 

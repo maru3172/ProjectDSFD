@@ -253,6 +253,8 @@ public:
 	bool HasQueuedManualMannequinCommand() const { return bManualMannequinCommandIssued; }
 	/** The command wheel (right mouse button) is open on this screen. */
 	bool IsMannequinWheelOpen() const { return MannequinWheel.IsValid(); }
+	/** Gamepad LB/RB (Docs/Gamepad.md 2): the previous or next numbered mannequin in the level, wrapping around. */
+	void CycleMannequinSlot(int32 Direction);
 	UFUNCTION(Client,Reliable) void ClientNotifyCaseDiscovery(int32 Count);
 	FString GetMannequinCommandNotice() const;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

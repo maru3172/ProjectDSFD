@@ -2,6 +2,7 @@
 
 
 #include "FireShutterActor.h"
+#include "ProjectGamepad.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Pawn.h"
@@ -159,6 +160,10 @@ void AFireShutterActor::OnRep_Motion()
     // The prompt follows the replicated target on every machine (server and clients alike).
     InteractionText=Motion.Target>=.5f?NSLOCTEXT("Interaction","LowerFireShutter","F 키: 방화 셔터 내리기"):NSLOCTEXT("Interaction","RaiseFireShutter","F 키: 방화 셔터 올리기");
     if(bMotionReady){SetActorTickEnabled(true);Tick(0);}
+    // A shutter coming down or going up shakes the pad of a player close by (Docs/Gamepad.md 7).
+    if(bMotionReady&&GetNetMode()!=NM_DedicatedServer)
+        if(const APlayerController* PC=GetWorld()->GetFirstPlayerController();PC&&PC->GetPawn()&&FVector::Dist(PC->GetPawn()->GetActorLocation(),GetActorLocation())<1500.f)
+            if(auto* Pad=UProjectGamepadSubsystem::Get(this))Pad->Pulse(.45f,.5f,true);
 }
 void AFireShutterActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps)const{Super::GetLifetimeReplicatedProps(OutLifetimeProps);DOREPLIFETIME(AFireShutterActor,Motion);}
 bool AFireShutterActor::CanInteract_Implementation(APawn* Interactor)const

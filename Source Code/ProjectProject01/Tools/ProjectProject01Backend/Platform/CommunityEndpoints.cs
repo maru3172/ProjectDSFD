@@ -272,7 +272,8 @@ internal static partial class CommunityEndpoints
                       AND NOT EXISTS(SELECT 1 FROM room_members m JOIN game_rooms r ON r.id=m.room_id WHERE m.user_id=p.user_id AND r.status='Started' AND m.returned_to_room=0)
                     """,ct,pair)!=2)return Error("귓속말은 두 플레이어 모두 로비 또는 방에 있을 때만 가능합니다.");
                 if(await Scalar(c,tx,"SELECT COUNT(*) FROM social_whispers WHERE sender_id=@me AND created_at_utc>UTC_TIMESTAMP(6)-INTERVAL 10 SECOND",ct,pair)>=5)return Error("잠시 후 다시 보내세요.");
-                await Exec(c,tx,"INSERT INTO social_whispers(sender_id,recipient_id,body) VALUES(@me,@other,@body)",ct,[..pair,("body",input.Text!.Trim())]);
+                // Banned words are masked, the rest of the message is sent (Docs/ChatFilter.md).
+                await Exec(c,tx,"INSERT INTO social_whispers(sender_id,recipient_id,body) VALUES(@me,@other,@body)",ct,[..pair,("body",(await ChatFilter.CurrentAsync(c,tx,ct)).Mask(input.Text!.Trim()))]);
                 await Notify(c,tx,target,"Whisper",user.DisplayName+"님의 귓속말이 도착했습니다.",ct);
                 await Exec(c,tx,"DELETE FROM social_whispers WHERE created_at_utc<UTC_TIMESTAMP(6)-INTERVAL 7 DAY LIMIT 500",ct);
                 break;

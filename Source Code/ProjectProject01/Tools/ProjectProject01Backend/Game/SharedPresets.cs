@@ -62,6 +62,9 @@ internal static class SharedPresets
     /// votes and fixed share code. KeepSummary leaves an existing post's one-line summary as it was (bulk posting has none).</summary>
     internal static async Task<PublishResult> PublishAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string name,string summary,bool keepSummary,CustomRuleSet rules,CancellationToken ct)
     {
+        // A board post's name and summary are public: refused when they contain a banned word (Docs/ChatFilter.md).
+        var filter=await ChatFilter.CurrentAsync(c,tx,ct);
+        if(filter.Contains(name)||filter.Contains(summary))return new(false,"이름·한 줄 소개에 "+ChatFilter.Refusal,"","");
         string code=await RuleCodes.EnsureCodeAsync(c,tx,rules,ct);
         var existing=await CommunityEndpoints.Rows(c,tx,"SELECT user_id,hidden FROM shared_rule_presets WHERE rule_code=@c FOR UPDATE",ct,("c",code));
         bool mine=existing.Count>0&&Convert.ToUInt64(existing[0]["user_id"])==user;

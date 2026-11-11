@@ -71,7 +71,7 @@ public:
     void MainQuestAction(const FString& Action,const FString& Role=FString());
     void ApplyMainQuestUpdate(const TSharedPtr<class FJsonObject>& Update);
     /** Reports a finished phone conversation (choices per choice line); retried until the server answers. */
-    void MainQuestTalk(const FString& StepId,const TArray<int32>& Choices);
+    void MainQuestTalk(const FString& StepId,const TArray<int32>& Choices,const FString& QuestId=FString());
     /** An unlocked main quest conversation has not been read yet (red dot on the phone button). */
     bool HasUnreadTalk()const;
 private:
@@ -120,7 +120,7 @@ private:
     FString PendingTutorialRole;
     uint64 PendingTutorialGeneration=0;
     double TutorialRetryAt=0;
-    FString PendingTalkStep;
+    FString PendingTalkStep,PendingTalkQuest;
     TArray<int32> PendingTalkChoices;
     uint64 PendingTalkGeneration=0;
     double TalkRetryAt=0;

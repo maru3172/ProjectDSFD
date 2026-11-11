@@ -5,13 +5,20 @@
 
 class FJsonObject;
 
-/** One main quest phone conversation (server "talk"): NPC messages and player choices with the NPC's replies. */
+/**
+ * One phone conversation of a quest step (server "talk", Docs/QuestGraph.md): NPC messages and player choices with the
+ * NPC's replies. It is a graph: every message and every option names the line that comes next (INDEX_NONE ends it),
+ * so a choice can lead to a different part of the conversation. Older one-way talks simply link each line to the next.
+ */
 struct PROJECTPROJECT01_API FProjectTalkScript
 {
-    struct FOption{FString Text;TArray<FString> Replies;};
-    struct FLine{FString Text;TArray<FOption> Options;bool IsChoice()const{return Options.Num()>0;}};
-    FString StepId,Npc;
+    struct FOption{FString Text;TArray<FString> Replies;int32 Next=INDEX_NONE;};
+    struct FLine{FString Text;TArray<FOption> Options;int32 Next=INDEX_NONE;bool IsChoice()const{return Options.Num()>0;}};
+    FString QuestId,StepId,Npc;
     TArray<FLine> Lines;
+    int32 Start=0;
+    /** Identifies the conversation across quests (step ids are only unique within a quest). */
+    FString Key()const{return QuestId+TEXT("/")+StepId;}
     bool bTalked=false;
     TArray<int32> SavedChoices;
     bool bActive=false;
@@ -51,6 +58,7 @@ private:
     TArray<FString> Replies;
     TArray<int32> Picked;
     int32 Cursor=0;
+    int32 Steps=0;
     double Wait=0;
     bool bDone=false;
 };

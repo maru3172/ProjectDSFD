@@ -22,6 +22,7 @@
 #include "PlayerInteractionComponent.h"
 #include "ProjectDFSDBranding.h"
 #include "ProjectProject01GameInstance.h"
+#include "ProjectGamepad.h"
 #include "ProjectLoadingScreenSubsystem.h"
 #include "ProjectProject01SpatialAudio.h"
 #include "ProjectUIClickSound.h"
@@ -911,7 +912,7 @@ FText AProjectSingleIntroGameMode::GetInteractionPrompt() const
 	if (!Interaction || !Controller.IsValid() || bControlsLocked) return FText::GetEmpty();
 	const auto* Target = Cast<AProjectSingleIntroTarget>(Interaction->GetCurrentInteractable());
 	return Target && CanUse(*Target, Controller->GetPawn())
-		? FText::Format(FText::FromString(TEXT("F   {0}")), GetUseText(*Target)) : FText::GetEmpty();
+		? FText::Format(FText::FromString(TEXT("{1}   {0}")), GetUseText(*Target), FText::FromString(ProjectGamepad::Hint(EProjectPadAction::Interact, EKeys::F))) : FText::GetEmpty();
 }
 
 TSharedRef<SWidget> AProjectSingleIntroGameMode::BuildCinematicMask()

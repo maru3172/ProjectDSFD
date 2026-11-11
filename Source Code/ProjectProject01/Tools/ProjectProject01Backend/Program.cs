@@ -217,6 +217,7 @@ app.UseRateLimiter();
 app.UseOperatorAccess();
 LiveOperations.Map(app);
 PlayAnalytics.Map(app);
+ChatFilter.Map(app);
 app.MapGet("/api/admin/operations/health", (HttpRequest request, AdministratorOptions admin, OperationsHealth health) =>
     admin.IsAuthorized(request.Headers["X-ProjectProject01-Admin-Key"]) ? Results.Ok(new { incidents = health.Recent() }) : Results.Unauthorized())
     .RequireRateLimiting("admin");
@@ -816,6 +817,7 @@ internal sealed class AuthDatabase
         await EnsureGuideProgressSchemaAsync(connection, cancellationToken);
         await EnsureServiceControlScheduleSchemaAsync(connection, cancellationToken);
         await ServiceAnnouncementDelivery.EnsureAsync(connection,cancellationToken);
+        await ChatFilter.EnsureAsync(connection,cancellationToken);
         await EnsureLeaderboardRoomAndTeamSchemaAsync(connection, cancellationToken);
         await EnsureSurveyReviewSchemaAsync(connection, cancellationToken);
         // Game modules (Game/GameModules.cs) after the platform's own tables.

@@ -177,6 +177,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> IA_MannequinLook;
 
+	/** Gamepad left stick for direct control (Docs/Gamepad.md 2), made at run time. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> PadMoveContext;
+
 	UPROPERTY(ReplicatedUsing = OnRep_SurvivorVisionFrozen, VisibleInstanceOnly,
 		Category = "Multiplayer|Mannequin")
 	bool bFrozenBySurvivorVision = false;

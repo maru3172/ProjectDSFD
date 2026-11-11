@@ -34,27 +34,56 @@ bool FProjectTalkScript::Parse(const TSharedPtr<FJsonObject>& Step,FProjectTalkS
     const auto Talk=JObj(Step,TEXT("talk"));if(!Talk)return false;
     Out=FProjectTalkScript();Out.StepId=JStr(Step,TEXT("id"));Out.Npc=JStr(Talk,TEXT("npc"));Out.bTalked=JFlag(Step,TEXT("talked"));Out.bActive=JFlag(Step,TEXT("active"));
     for(const auto& V:JRows(Step,TEXT("choices"))){double N=0;if(V.IsValid()&&V->TryGetNumber(N))Out.SavedChoices.Add(int32(N));}
+    auto ReadOption=[](const TSharedPtr<FJsonObject>& Option,FOption& Item)
+    {
+        Item.Text=JStr(Option,TEXT("text"));
+        for(const auto& R:JRows(Option,TEXT("replies"))){FString Reply;if(R.IsValid()&&R->TryGetString(Reply)&&!Reply.IsEmpty())Item.Replies.Add(Reply);}
+        return !Item.Text.IsEmpty();
+    };
+    if(Talk->HasTypedField<EJson::Array>(TEXT("nodes")))
+    {
+        // The graph: nodes by id, each message or option naming the next node. Links are turned into line indexes;
+        // a link to a missing node ends the conversation there (the server never sends one).
+        const auto Nodes=JRows(Talk,TEXT("nodes"));TMap<FString,int32> Index;
+        for(const auto& V:Nodes)if(const auto N=V.IsValid()?V->AsObject():nullptr)Index.Add(JStr(N,TEXT("id")),Index.Num());
+        auto Link=[&Index](const FString& Id){const int32* At=Id.IsEmpty()?nullptr:Index.Find(Id);return At?*At:INDEX_NONE;};
+        for(const auto& V:Nodes)
+        {
+            const auto N=V.IsValid()?V->AsObject():nullptr;if(!N)continue;FLine Line;Line.Text=JStr(N,TEXT("text"));Line.Next=Link(JStr(N,TEXT("next")));
+            for(const auto& O:JRows(N,TEXT("options"))){FOption Item;if(const auto Option=O.IsValid()?O->AsObject():nullptr;Option&&ReadOption(Option,Item)){Item.Next=Link(JStr(Option,TEXT("next")));Line.Options.Add(MoveTemp(Item));}}
+            Out.Lines.Add(MoveTemp(Line));
+        }
+        Out.Start=Link(JStr(Talk,TEXT("start")));
+        return !Out.StepId.IsEmpty()&&!Out.Npc.IsEmpty()&&Out.Lines.IsValidIndex(Out.Start);
+    }
     for(const auto& V:JRows(Talk,TEXT("lines")))
     {
         const auto L=V.IsValid()?V->AsObject():nullptr;if(!L)continue;FLine Line;Line.Text=JStr(L,TEXT("text"));
-        for(const auto& O:JRows(L,TEXT("options")))
-        {
-            const auto Option=O.IsValid()?O->AsObject():nullptr;if(!Option)continue;FOption Item;Item.Text=JStr(Option,TEXT("text"));
-            for(const auto& R:JRows(Option,TEXT("replies"))){FString Reply;if(R.IsValid()&&R->TryGetString(Reply)&&!Reply.IsEmpty())Item.Replies.Add(Reply);}
-            if(!Item.Text.IsEmpty())Line.Options.Add(MoveTemp(Item));
-        }
+        for(const auto& O:JRows(L,TEXT("options"))){FOption Item;if(const auto Option=O.IsValid()?O->AsObject():nullptr;Option&&ReadOption(Option,Item))Line.Options.Add(MoveTemp(Item));}
         if(Line.IsChoice()||!Line.Text.IsEmpty())Out.Lines.Add(MoveTemp(Line));
     }
+    // A one-way conversation: every line (and every option) leads to the line after it.
+    for(int32 I=0;I<Out.Lines.Num();++I){const int32 Next=I+1<Out.Lines.Num()?I+1:INDEX_NONE;Out.Lines[I].Next=Next;for(auto& Option:Out.Lines[I].Options)Option.Next=Next;}
     return !Out.StepId.IsEmpty()&&!Out.Npc.IsEmpty()&&Out.Lines.Num()>0;
 }
 TArray<FProjectTalkScript> FProjectTalkScript::FromSnapshot(const TSharedPtr<FJsonObject>& Snapshot)
 {
     TArray<FProjectTalkScript> Result;
+    // Every open quest's conversations (main lines first, as the server orders them); older servers send only 탐사.
+    if(const auto Graph=JObj(Snapshot,TEXT("questGraph")))
+    {
+        for(const auto& Q:JRows(Graph,TEXT("quests")))
+        {
+            const auto Quest=Q.IsValid()?Q->AsObject():nullptr;const FString QuestId=JStr(Quest,TEXT("id"));
+            for(const auto& V:JRows(Quest,TEXT("steps"))){FProjectTalkScript Script;if(V.IsValid()&&Parse(V->AsObject(),Script)){Script.QuestId=QuestId;Result.Add(MoveTemp(Script));}}
+        }
+        return Result;
+    }
     for(const auto& V:JRows(JObj(Snapshot,TEXT("mainQuest")),TEXT("steps"))){FProjectTalkScript Script;if(V.IsValid()&&Parse(V->AsObject(),Script))Result.Add(MoveTemp(Script));}
     return Result;
 }
 
-void FProjectTalkPlayback::Start(const FProjectTalkScript& InScript){Script=InScript;Shown.Reset();Replies.Reset();Picked.Reset();Cursor=0;bDone=false;Wait=0;Schedule();}
+void FProjectTalkPlayback::Start(const FProjectTalkScript& InScript){Script=InScript;Shown.Reset();Replies.Reset();Picked.Reset();Cursor=Script.Start;Steps=0;bDone=false;Wait=0;Schedule();}
 bool FProjectTalkPlayback::NextMessage(FString& Out)const
 {
     if(Replies.Num()>0){Out=Replies[0];return true;}
@@ -79,13 +108,14 @@ bool FProjectTalkPlayback::Tick(double Seconds)
     Wait-=FMath::Max(0.,Seconds);if(Wait>0)return false;
     FString Message;if(!NextMessage(Message)){Schedule();return false;}
     Shown.Add({Message,false});
-    if(Replies.Num()>0)Replies.RemoveAt(0);else ++Cursor;
+    // Follow the graph; the step count stops a conversation that would loop forever (the server refuses those).
+    if(Replies.Num()>0)Replies.RemoveAt(0);else Cursor=++Steps>2000?INDEX_NONE:Script.Lines[Cursor].Next;
     Schedule();return true;
 }
 bool FProjectTalkPlayback::Choose(int32 Option)
 {
     const auto* Options=Choices();if(!Options||!Options->IsValidIndex(Option))return false;
-    const auto Picked_=(*Options)[Option];Shown.Add({Picked_.Text,true});Replies=Picked_.Replies;Picked.Add(Option);++Cursor;Schedule();return true;
+    const auto Picked_=(*Options)[Option];Shown.Add({Picked_.Text,true});Replies=Picked_.Replies;Picked.Add(Option);Cursor=++Steps>2000?INDEX_NONE:Picked_.Next;Schedule();return true;
 }
 void FProjectTalkPlayback::Replay(const FProjectTalkScript& InScript,const TArray<int32>& Saved)
 {
@@ -222,7 +252,7 @@ public:
         if(Playback.IsFinished()&&!bReported)
         {
             bReported=true;bChoicesDirty=true;
-            if(auto* R=Records())R->MainQuestTalk(Script.StepId,Playback.Chosen()); // Saves the choices; finishes the quest step if this is the current one.
+            if(auto* R=Records())R->MainQuestTalk(Script.StepId,Playback.Chosen(),Script.QuestId); // Saves the choices; finishes the quest step if this is the current one.
         }
         if(bChoicesDirty){bChoicesDirty=false;RebuildChoices();}
     }
@@ -299,7 +329,7 @@ private:
         auto List=SNew(SVerticalBox);
         for(const auto& Talk:Talks)
         {
-            const FString Step=Talk.StepId;FProjectTalkPlayback Preview;Preview.Replay(Talk,Talk.SavedChoices);
+            const FString Step=Talk.Key();FProjectTalkPlayback Preview;Preview.Replay(Talk,Talk.SavedChoices);
             const FString Last=!Talk.bTalked?TEXT("새 메시지가 있습니다."):Preview.Bubbles().Num()?Preview.Bubbles().Last().Text:FString();
             List->AddSlot().AutoHeight().Padding(10,3)[SNew(SButton).ButtonStyle(&FCoreStyle::Get(),TEXT("NoBorder")).OnClicked_Lambda([this,Step]{PendingChat=Step;return FReply::Handled();})
                 [SNew(SBorder).BorderImage(&RowBrush).Padding(FMargin(12,10))[SNew(SHorizontalBox)
@@ -322,7 +352,8 @@ private:
     }
     bool OpenChat(const FString& Step)
     {
-        auto* R=Records();for(const auto& Talk:FProjectTalkScript::FromSnapshot(R?R->Snapshot:FixedSnapshot))if(Talk.StepId==Step)
+        // By key (quest/step); a bare step id (older callers) means the first conversation with that step id.
+        auto* R=Records();for(const auto& Talk:FProjectTalkScript::FromSnapshot(R?R->Snapshot:FixedSnapshot))if(Talk.Key()==Step||Talk.StepId==Step)
         {
             Script=Talk;bInChat=true;bReported=Talk.bTalked;
             ScreenBox->SetContent(SNew(SVerticalBox)
@@ -474,6 +505,31 @@ bool FProjectPhoneTalkPlaybackTest::RunTest(const FString&)
     TestTrue(TEXT("A finished talk is rebuilt instantly from the saved choices"),Read.IsFinished()&&Read.Bubbles().Num()==3&&Read.Bubbles()[0].Text==TEXT("B")&&Read.Bubbles()[1].Text==TEXT("b")&&Read.Bubbles()[2].Text==TEXT("C"));
     FProjectTalkPlayback Empty;Empty.Replay(Talks[0],{});
     TestTrue(TEXT("Missing saved choices fall back to the first option instead of stopping"),Empty.IsFinished()&&Empty.Chosen()==TArray<int32>({0,0}));
+    return true;
+}
+
+// Docs/QuestGraph.md: a conversation from the quest graph, where each option names the next node.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectPhoneTalkGraphTest,"ProjectProject01.CaseRecords.PhoneTalkGraph",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FProjectPhoneTalkGraphTest::RunTest(const FString&)
+{
+    const FString Json=TEXT(R"({"mainQuest":{"steps":[]},"questGraph":{"quests":[
+        {"id":"main_explore","kind":"Main","steps":[{"id":"first_match","active":true,"talk":null}]},
+        {"id":"main_mira","kind":"Main","steps":[{"id":"meet","active":true,"talked":false,"choices":[],"talk":{"npc":"미라","start":"n1","nodes":[
+            {"id":"n3","text":"2층 어딘가에 있을 거예요."},
+            {"id":"n1","text":"거기 누구 있어요?","next":"n2"},
+            {"id":"n2","options":[{"text":"도와줄게요.","replies":["고마워요."],"next":"n3"},{"text":"지금은 안 돼요.","replies":["...알겠어요."]}]}]}}]},
+        {"id":"side_lost","kind":"Side","steps":[{"id":"meet","talked":true,"choices":[0],"talk":{"npc":"미라","start":"a","nodes":[
+            {"id":"a","options":[{"text":"찾았어요.","replies":["정말요?"],"next":"b"}]},{"id":"b","text":"고마워요!"}]}}]}]}})");
+    TSharedPtr<FJsonObject> Snapshot;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Snapshot);
+    const auto Talks=FProjectTalkScript::FromSnapshot(Snapshot);
+    if(!TestEqual(TEXT("Conversations of every open quest, from the quest graph"),Talks.Num(),2))return false;
+    TestTrue(TEXT("Each knows its quest; the same step id in two quests stays apart"),Talks[0].Key()==TEXT("main_mira/meet")&&Talks[1].Key()==TEXT("side_lost/meet")&&Talks[0].Lines.IsValidIndex(Talks[0].Start)&&Talks[0].Lines[Talks[0].Start].Text==TEXT("거기 누구 있어요?"));
+    auto Play=[](const FProjectTalkScript& Script,int32 Option){FProjectTalkPlayback P;P.Start(Script);for(int32 I=0;I<20&&!P.IsFinished();++I){if(P.Choices())P.Choose(Option);else{P.Hurry();P.Tick(0);}}return P;};
+    const auto Help=Play(Talks[0],0);const auto Refuse=Play(Talks[0],1);
+    TestTrue(TEXT("Helping leads on to the node it names"),Help.IsFinished()&&Help.Bubbles().Last().Text==TEXT("2층 어딘가에 있을 거예요.")&&Help.Chosen()==TArray<int32>({0}));
+    TestTrue(TEXT("Refusing ends the conversation after the reply (an option with no next node)"),Refuse.IsFinished()&&Refuse.Bubbles().Last().Text==TEXT("...알겠어요.")&&Refuse.Bubbles().Num()==3);
+    FProjectTalkPlayback Read;Read.Replay(Talks[1],Talks[1].SavedChoices);
+    TestTrue(TEXT("A read conversation is rebuilt along the saved path"),Read.IsFinished()&&Read.Bubbles().Num()==3&&Read.Bubbles()[2].Text==TEXT("고마워요!"));
     return true;
 }
 

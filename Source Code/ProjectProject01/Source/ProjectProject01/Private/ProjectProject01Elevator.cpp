@@ -1,4 +1,5 @@
 #include "ProjectProject01Elevator.h"
+#include "ProjectGamepad.h"
 #include "ProjectElevatorSynthComponent.h"
 #include "MultiplayTestGameMode.h"
 #include "MultiplayTestPlayerController.h"
@@ -144,6 +145,10 @@ void AProjectProject01Elevator::OnRep_State()
 			ElevatorAudio->Ding(); LastDingAt = GetWorld()->GetTimeSeconds();
 		}
 		if (P==EProjectElevatorPhase::Disabled) ElevatorAudio->Stop();
+		// The car jolts as it starts moving: the pad of a player close by shakes (Docs/Gamepad.md 7).
+		if ((P==EProjectElevatorPhase::Travelling || P==EProjectElevatorPhase::ArrivalRide || P==EProjectElevatorPhase::Rising || P==EProjectElevatorPhase::Descending) && PhaseElapsed()<0.5f)
+			if (const APlayerController* PC=GetWorld()->GetFirstPlayerController(); PC && PC->GetPawn() && FVector::Dist(PC->GetPawn()->GetActorLocation(),GetActorLocation())<800.f)
+				if (auto* Pad=UProjectGamepadSubsystem::Get(this)) Pad->Pulse(.35f,.4f,true);
 	}
 	UpdateVisuals();
 }

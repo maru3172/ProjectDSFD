@@ -141,6 +141,7 @@ void UProjectProject01GameUserSettings::SetToDefaults()
 	DangerPingKeyName = EKeys::R.GetFName();
 	LocationPingKeyName = EKeys::T.GetFName();
 	FlashlightKeyName = EKeys::F.GetFName();
+	ResetPadSettings();
 	SetFrameRateLimit(120.0f);
 	SetResolutionScaleValueEx(100.0f);
 	SetOverallScalabilityLevel(3);
@@ -378,6 +379,25 @@ FKey UProjectProject01GameUserSettings::GetHelpPingKey() const { return GetValid
 FKey UProjectProject01GameUserSettings::GetDangerPingKey() const { return GetValidatedKey(DangerPingKeyName, EKeys::R); }
 FKey UProjectProject01GameUserSettings::GetLocationPingKey() const { return GetValidatedKey(LocationPingKeyName, EKeys::T); }
 FKey UProjectProject01GameUserSettings::GetFlashlightKey() const { return GetValidatedKey(FlashlightKeyName, EKeys::F); }
+FKey UProjectProject01GameUserSettings::GetPadBinding(EProjectPadAction Action) const
+{
+	const int32 Index = int32(Action);
+	if (PadBindingNames.IsValidIndex(Index) && !PadBindingNames[Index].IsNone())
+		if (const FKey Key(PadBindingNames[Index]); Key.IsValid() && Key.IsGamepadKey() && !Key.IsAnalog()) return Key;
+	return ProjectGamepad::DefaultKey(Action);
+}
+void UProjectProject01GameUserSettings::SetPadBinding(EProjectPadAction Action, FKey Key)
+{
+	if (!Key.IsGamepadKey() || Key.IsAnalog() || int32(Action) >= ProjectGamepad::ActionCount) return;
+	if (PadBindingNames.Num() < ProjectGamepad::ActionCount) PadBindingNames.SetNum(ProjectGamepad::ActionCount);
+	PadBindingNames[int32(Action)] = Key.GetFName();
+}
+void UProjectProject01GameUserSettings::ResetPadSettings()
+{
+	PadBindingNames.Reset();
+	PadLookSpeedX = PadLookSpeedY = PadCursorSpeed = 1.f; bPadInvertY = false; PadDeadZone = .2f; PadGlyphs = 0;
+	bPadVibration = true; PadVibrationStrength = .8f;
+}
 
 void UProjectProject01GameUserSettings::EnsureRuntimeAudioObjects()
 {

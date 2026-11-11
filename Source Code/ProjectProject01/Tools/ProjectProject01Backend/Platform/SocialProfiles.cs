@@ -47,6 +47,9 @@ internal static partial class CommunityEndpoints
             var me=await LobbyEndpoints.AuthenticateAsync(req,db,ct);if(me is null)return Results.Unauthorized();
             if(!ValidProfile(input))return Error("상태메시지는 160자, 소개글은 500자 이내이며 제공된 색상·칭호를 선택하세요.");
             await using var c=await db.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
+            // The status message is shown to every signed-in player and the bio on the profile: refused, not masked.
+            var filter=await ChatFilter.CurrentAsync(c,tx,ct);
+            if(filter.Contains(input.StatusMessage)||filter.Contains(input.Bio))return Error("상태메시지·소개글에 "+ChatFilter.Refusal);
             await Rows(c,tx,"SELECT id FROM users WHERE id=@id FOR UPDATE",ct,("id",me.Id));
             var recent=await Rows(c,tx,"SELECT user_id FROM social_profiles WHERE user_id=@id AND updated_at_utc>UTC_TIMESTAMP(6)-INTERVAL 5 SECOND",ct,("id",me.Id));
             if(recent.Count>0)return Results.Json(new{message="프로필은 5초 후 다시 변경할 수 있습니다."},statusCode:429);

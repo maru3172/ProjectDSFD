@@ -75,6 +75,7 @@ internal static class IntegrationChecks
         app.UseOperatorAccess();
         PlayAnalytics.Map(app);
         LiveOperations.Map(app);
+        ChatFilter.Map(app);
         app.MapProjectProject01Surveys();app.MapProjectProject01CrashArtifacts();
         app.MapProjectProject01Voice();
         // Invalid registration must be rejected by the real shared handler before
@@ -111,6 +112,7 @@ internal static class IntegrationChecks
                 await CaseLoreChecks.RunAsync(database,admin);
                 await MatchModeChecks.RunAsync(database,admin,app.Configuration); // Item roguelike mode selection and queues.
                 await RoomVisibilityChecks.RunAsync(database,admin,app.Configuration); // Host switches public/private after creation.
+                await ChatFilterChecks.RunAsync(database,admin); // Banned words: masked chat, refused names and profile text.
                 Console.WriteLine("PASS: frontend-only checks (no bot simulation or AI checks)");
                 return;
             }

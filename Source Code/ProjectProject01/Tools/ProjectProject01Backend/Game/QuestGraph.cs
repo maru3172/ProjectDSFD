@@ -17,7 +17,8 @@ internal static class QuestGraph
     // The last route usually has no flag. No route at all ends the quest.
     internal sealed record Route(string Step,string? Flag=null,bool Without=false);
     internal sealed record Step(string Id,string Title,Goal[] Goals,string Story="",string? Talk=null,Route[]? Next=null,double X=0,double Y=0);
-    internal sealed record Quest(string Id,string Name,string Kind,Condition[] Opens,string Start,Step[] Steps,string BaseStory="");
+    // Kind: "Main", "Chain" (an NPC's own line, Npc set) or "Side".
+    internal sealed record Quest(string Id,string Name,string Kind,Condition[] Opens,string Start,Step[] Steps,string BaseStory="",string? Npc=null);
     // A node is an NPC message (Text, Next) or a choice (Options). An option is what the player sends, the NPC's replies,
     // the story flags it leaves, a quest it hands out, and where the conversation goes next (none: it ends).
     internal sealed record Option(string Text,string[] Replies,string[]? Flags=null,string? Gives=null,string? Next=null);
@@ -50,7 +51,7 @@ internal static class QuestGraph
         var talks=plan.Steps.Where(s=>s.Talk is not null).Select(s=>FromLegacy(s.Id,s.Talk!)).ToArray();
         var npcs=plan.Steps.Where(s=>s.Talk is not null).Select(s=>new Npc(NpcId(s.Talk!.Npc),s.Talk!.Npc)).DistinctBy(n=>n.Id).ToArray();
         var steps=plan.Steps.Select((s,i)=>new Step(s.Id,s.Title,[..s.Goals.Select(g=>new Goal(g.Id,g.Metric,g.Label,g.Target))],s.Story,
-            s.Talk is null?null:s.Id,i+1<plan.Steps.Length?[new Route(plan.Steps[i+1].Id)]:[],X:40+i*220,Y:80)).ToArray();
+            s.Talk is null?null:s.Id,i+1<plan.Steps.Length?[new Route(plan.Steps[i+1].Id)]:[])).ToArray();
         return new(npcs,[new Quest(MainLine,plan.Name,"Main",[],steps[0].Id,steps,plan.BaseStory)],talks);
     }
     internal static readonly Graph Default=FromPlan(MainQuest.Default);
@@ -79,7 +80,7 @@ internal static class QuestGraph
             if(q is null){E("빈 퀘스트가 있습니다.");continue;}
             string Q=$"퀘스트 '{q.Name}'";
             if(!Id(q.Id))E($"{Q}: id를 확인하세요.");if(!Text(q.Name,100))E($"{Q}: 이름은 100자 이내로 입력하세요.");
-            if(q.Kind is not("Main" or "Side"))E($"{Q}: 종류는 메인 또는 서브입니다.");if(q.BaseStory is null||q.BaseStory.Length>16000)E($"{Q}: 기본 이야기는 16000자 이내입니다.");
+            if(q.Kind is not("Main" or "Chain" or "Side"))E($"{Q}: 종류는 메인·연계·서브 중 하나입니다.");if(q.Kind=="Chain"!=(q.Npc is not null)||q.Npc is not null&&!npcs.Contains(q.Npc))E($"{Q}: 연계 퀘스트는 NPC를 하나 정해야 하고, 다른 종류는 NPC를 두지 않습니다.");if(q.BaseStory is null||q.BaseStory.Length>16000)E($"{Q}: 기본 이야기는 16000자 이내입니다.");
             if(q.Steps is null||q.Steps.Length is 0 or >100){E($"{Q}: 단계는 1~100개여야 합니다.");continue;}
             foreach(var dup in q.Steps.GroupBy(s=>s?.Id).Where(x=>x.Count()>1))E($"{Q}: 단계 id '{dup.Key}'가 겹칩니다.");
             var steps=q.Steps.Where(s=>s is not null).GroupBy(s=>s.Id??"").ToDictionary(x=>x.Key,x=>x.First());

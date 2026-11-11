@@ -254,6 +254,7 @@ internal sealed class ServerAdministrationForm : Form
         var safety = ActionRow();
         AddButton(safety, "계정 이용 제한", () => { using var dialog = new AccountRestrictionForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(safety, "플레이어 신고 확인", () => { using var dialog = new PlayerReportsForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(safety, "금칙어 관리", () => { using var dialog = new ChatFilterAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         Group(accounts, "계정·신고 관리", safety);
         var logout = ActionRow();
         accountId.Name = "ForceLogoutAccountId";
@@ -270,6 +271,7 @@ internal sealed class ServerAdministrationForm : Form
         var rewards = ActionRow();
         AddButton(rewards, "시즌 뽑기 상품·확률", () => { using var dialog = new CaseDrawAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "메인 퀘스트·스토리", () => { using var dialog = new MainQuestAdministrationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
+        AddButton(rewards, "퀘스트·대화 그래프", () => { using var dialog = new QuestGraphEditorForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "사건 기록 조사 수량", () => { using var dialog = new CaseInvestigationForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         AddButton(rewards, "주간 미션 재화 상한", () => { using var dialog = new MissionBudgetForm(CreateAdminRequest); dialog.ShowDialog(this); return Task.CompletedTask; });
         Group(contentPage, "사건 기록·보상", rewards);

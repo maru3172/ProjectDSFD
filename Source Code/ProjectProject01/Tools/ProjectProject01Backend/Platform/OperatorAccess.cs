@@ -65,8 +65,9 @@ internal static class OperatorAccess
             "Observer" => HttpMethods.IsGet(method) && (route is "/api/admin/service" or "/api/admin/operations/health" or
                 "/api/admin/operations/analytics" or "/api/admin/diagnostics"),
             "Support" => route is "/api/admin/community" || Under(route, "/api/admin/community/inquiries") ||
-                Under(route, "/api/admin/community/reports") || Under(route, "/api/admin/crash-reports"),
-            "Content" => Under(route, "/api/admin/main-quest") || Under(route, "/api/admin/surveys") ||
+                Under(route, "/api/admin/community/reports") || Under(route, "/api/admin/crash-reports") ||
+                Under(route, "/api/admin/community/chat-filter"),
+            "Content" => Under(route, "/api/admin/main-quest") || Under(route, "/api/admin/quest-graph") || Under(route, "/api/admin/surveys") ||
                 Under(route, "/api/admin/operations/rollout"),
             "Service" => Under(route, "/api/admin/service") || Under(route, "/api/admin/game-server-demand") ||
                 Under(route, "/api/admin/room-capacity") || route is "/api/admin/operations/health" or "/api/admin/operations/analytics",

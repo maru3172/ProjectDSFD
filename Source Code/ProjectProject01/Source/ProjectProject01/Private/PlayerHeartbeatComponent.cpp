@@ -1180,6 +1180,9 @@ void UPlayerHeartbeatComponent::UpdateBeatOutput(float DeltaTime, APawn& OwnerPa
 			const float BPMAlpha = FMath::GetRangePct(MinimumReferenceBPM, MaximumReferenceBPM, PresentedBPM);
 			const float Strength = FMath::Lerp(0.48f, 0.82f, FMath::Clamp(BPMAlpha, 0.0f, 1.0f));
 			HeartbeatSFXSynth->TriggerHeartbeat(Strength);
+			// The pad thumps with the heard beat (Docs/Gamepad.md 7).
+			if (OwnerPawn.IsLocallyControlled())
+				if (auto* Pad = UProjectGamepadSubsystem::Get(&OwnerPawn)) Pad->Pulse(Strength * 0.6f, 0.09f, true);
 		}
 		if (bEnableHeartbeatLog)
 		{

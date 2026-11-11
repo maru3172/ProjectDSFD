@@ -27,4 +27,7 @@ protected:
 	// 자식 Widget Blueprint 에서 같은 이름의 TextBlock 과 연결된다.
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> ItemNameText;
+
+	/** The Blueprint's key letter, found at run time to show a pad button (Docs/Gamepad.md 6). */
+	TWeakObjectPtr<UTextBlock> KeyText;
 };

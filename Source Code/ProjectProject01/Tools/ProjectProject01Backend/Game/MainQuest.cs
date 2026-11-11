@@ -146,7 +146,7 @@ internal static class MainQuest
         await CaseRecords.LockAccountAsync(c,tx,user,ct);
         long before=await QuestProgress.RevisionAsync(c,tx,user,ct);
         await StartedAsync(c,tx,user,match,role,ct);
-        return new{userId=user.ToString(),mainQuest=await SnapshotAsync(c,tx,user,ct),questNotices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u AND revision>@r ORDER BY revision",ct,("u",user),("r",before))};
+        return new{userId=user.ToString(),mainQuest=await SnapshotAsync(c,tx,user,ct),questGraph=await QuestProgress.SnapshotAsync(c,tx,user,ct),questNotices=await CommunityEndpoints.Rows(c,tx,"SELECT revision,kind,quest_name questName,step_title stepTitle FROM main_quest_notices WHERE user_id=@u AND revision>@r ORDER BY revision",ct,("u",user),("r",before))};
     }
     internal static async Task CaptureAsync(MySqlConnection c,MySqlTransaction tx,ulong user,string match,int captures,CancellationToken ct)
     {

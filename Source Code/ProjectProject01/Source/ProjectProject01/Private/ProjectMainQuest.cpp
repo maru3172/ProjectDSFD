@@ -47,35 +47,49 @@ void UProjectCaseRecords::MainQuestAction(const FString& Action,const FString& R
         if(Role!=TEXT("Survivor")&&Role!=TEXT("Mannequin"))return;
         PendingTutorialRole=Role;PendingTutorialGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();
     }
-    const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const auto Steps=Rows(Quest,TEXT("steps"));const int32 Index=int32(Num(Quest,TEXT("stage")));
-    if(!Tutorial&&Role.IsEmpty()&&!Steps.IsValidIndex(Index))return;
+    // The tutorial step this is about: on the quest graph, the active tutorial step of that role (or, with no role, the
+    // first active tutorial step); before the graph has loaded, or from an older server, the 탐사 step ids.
+    FString QuestId,Id;
+    for(const auto& Q:Rows(Obj(Snapshot,TEXT("questGraph")),TEXT("quests")))
+    {
+        for(const auto& V:Rows(Q->AsObject(),TEXT("steps")))
+        {
+            const auto Step=V->AsObject();const FString StepRole=Str(Step,TEXT("tutorialRole"));
+            if(Flag(Step,TEXT("active"))&&!StepRole.IsEmpty()&&(Role.IsEmpty()||StepRole==Role)){QuestId=Str(Q->AsObject(),TEXT("id"));Id=Str(Step,TEXT("id"));break;}
+        }
+        if(!Id.IsEmpty())break;
+    }
+    if(Id.IsEmpty())
+    {
+        const auto Quest=Obj(Snapshot,TEXT("mainQuest"));const auto Steps=Rows(Quest,TEXT("steps"));const int32 Index=int32(Num(Quest,TEXT("stage")));
+        if(!Tutorial&&Role.IsEmpty()&&!Steps.IsValidIndex(Index))return;
+        // A role names the tutorial outright (finishing it, or skipping it from the first-login prompt before the quest has loaded).
+        Id=Tutorial||!Role.IsEmpty()?(Role==TEXT("Survivor")?TEXT("survivor_tutorial"):TEXT("mannequin_tutorial")):Str(Steps[Index]->AsObject(),TEXT("id"));
+        if(Id!=TEXT("survivor_tutorial")&&Id!=TEXT("mannequin_tutorial"))return;
+    }
     if(!PrepareWrite())return;
-    // A role names the tutorial outright (finishing it, or skipping it from the first-login prompt before the quest has loaded).
-    const FString Id=Tutorial||!Role.IsEmpty()?(Role==TEXT("Survivor")?TEXT("survivor_tutorial"):TEXT("mannequin_tutorial")):Str(Steps[Index]->AsObject(),TEXT("id"));
-    if(Id!=TEXT("survivor_tutorial")&&Id!=TEXT("mannequin_tutorial"))return;
     ObserveMainQuest(); // Establish the pre-write baseline before a completion can be returned.
     auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("action"),Action);J->SetStringField(TEXT("expectedStep"),Id);J->SetStringField(TEXT("role"),Role);
+    if(!QuestId.IsEmpty())J->SetStringField(TEXT("quest"),QuestId);
     TutorialRetryAt=FPlatformTime::Seconds()+5;bTalkInFlight=false;
     FString Body;FJsonSerializer::Serialize(J,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/main-quest"),Body);
 }
-void UProjectCaseRecords::MainQuestTalk(const FString& StepId,const TArray<int32>& Choices)
+void UProjectCaseRecords::MainQuestTalk(const FString& StepId,const TArray<int32>& Choices,const FString& QuestId)
 {
     if(!IsAuthenticated()||StepId.IsEmpty())return;
-    PendingTalkStep=StepId;PendingTalkChoices=Choices;PendingTalkGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();
+    PendingTalkStep=StepId;PendingTalkQuest=QuestId;PendingTalkChoices=Choices;PendingTalkGeneration=GetGameInstance()->GetSubsystem<UProjectProject01AuthSubsystem>()->GetSessionGeneration();
     if(!PrepareWrite()){TalkRetryAt=0;return;} // Another write is running; Tick sends this when it ends.
     ObserveMainQuest(); // Baseline before the stage notice can come back.
     auto J=MakeShared<FJsonObject>();J->SetStringField(TEXT("action"),TEXT("TalkComplete"));J->SetStringField(TEXT("expectedStep"),StepId);
+    if(!QuestId.IsEmpty())J->SetStringField(TEXT("quest"),QuestId); // Older builds leave it out: the main line.
     TArray<TSharedPtr<FJsonValue>> Picked;for(const int32 Choice:Choices)Picked.Add(MakeShared<FJsonValueNumber>(Choice));J->SetArrayField(TEXT("choices"),Picked);
     TalkRetryAt=FPlatformTime::Seconds()+5;bTalkInFlight=true;
     FString Body;FJsonSerializer::Serialize(J,TJsonWriterFactory<>::Create(&Body));Send(TEXT("/api/case-records/main-quest"),Body);
 }
 bool UProjectCaseRecords::HasUnreadTalk()const
 {
-    for(const auto& V:Rows(Obj(Snapshot,TEXT("mainQuest")),TEXT("steps")))
-    {
-        const auto Step=V.IsValid()?V->AsObject():nullptr;
-        if(Obj(Step,TEXT("talk"))&&!Flag(Step,TEXT("talked"))&&Str(Step,TEXT("id"))!=PendingTalkStep)return true; // A talk being reported already counts as read.
-    }
+    // Every open quest's conversations; one being reported already counts as read.
+    for(const auto& Talk:FProjectTalkScript::FromSnapshot(Snapshot))if(!Talk.bTalked&&!(Talk.StepId==PendingTalkStep&&Talk.QuestId==PendingTalkQuest))return true;
     return false;
 }
 void UProjectCaseRecords::ApplyMainQuestUpdate(const TSharedPtr<FJsonObject>& Update)
@@ -85,6 +99,7 @@ void UProjectCaseRecords::ApplyMainQuestUpdate(const TSharedPtr<FJsonObject>& Up
     if(Num(Quest,TEXT("revision"))<Num(Obj(Snapshot,TEXT("mainQuest")),TEXT("revision")))return;
     if(Request&&Request->GetVerb()==TEXT("GET")){Request->OnProcessRequestComplete().Unbind();Request->CancelRequest();Request.Reset();}
     if(!Snapshot)Snapshot=MakeShared<FJsonObject>();Snapshot->SetStringField(TEXT("userId"),User);Snapshot->SetObjectField(TEXT("mainQuest"),Quest);
+    if(const auto Graph=Obj(Update,TEXT("questGraph")))Snapshot->SetObjectField(TEXT("questGraph"),Graph);
     ObserveMainQuest(Update);PollIn=0;OnChanged.Broadcast();
 }
 void UProjectCaseRecords::ObserveMainQuest(const TSharedPtr<FJsonObject>& Response)
@@ -130,11 +145,18 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
 {
     auto* R=GetGameInstance()->GetSubsystem<UProjectCaseRecords>();
     // Quest kinds: 메인 퀘스트 (several story lines such as 탐사, chosen in the list), 연계 퀘스트 (one line per NPC), 서브 퀘스트.
-    TArray<TSharedPtr<FJsonObject>> Chapters;if(const auto Exploration=Obj(State,TEXT("mainQuest")))Chapters.Add(Exploration); // 탐사; later main quest lines are appended here.
+    // On the quest graph (Docs/QuestGraph.md) each tab lists the open quests of its kind: main lines, NPC lines (연계),
+    // side quests. An older server sends only 탐사, shown as the one main line.
+    const auto Graph=Obj(State,TEXT("questGraph"));const bool bGraph=Graph.IsValid();
+    auto OfKind=[&Graph](const TCHAR* Kind){TArray<TSharedPtr<FJsonObject>> Out;for(const auto& V:Rows(Graph,TEXT("quests")))if(const auto Q=V.IsValid()?V->AsObject():nullptr;Q&&Str(Q,TEXT("kind"))==Kind)Out.Add(Q);return Out;};
+    TArray<TSharedPtr<FJsonObject>> Chapters;
+    if(bGraph)Chapters=OfKind(QuestCategory==TEXT("Chain")?TEXT("Chain"):QuestCategory==TEXT("Sub")?TEXT("Side"):TEXT("Main"));
+    else if(QuestCategory==TEXT("Main"))if(const auto Exploration=Obj(State,TEXT("mainQuest")))Chapters.Add(Exploration);
+    const TArray<TSharedPtr<FJsonObject>> MainLines=bGraph?OfKind(TEXT("Main")):Chapters;
     auto Kinds=SNew(SHorizontalBox);
     for(const auto& Kind:TArray<TPair<FString,FString>>{{TEXT("Main"),TEXT("메인 퀘스트")},{TEXT("Chain"),TEXT("연계 퀘스트")},{TEXT("Sub"),TEXT("서브 퀘스트")}})
     {
-        const FString Id=Kind.Key;auto Tab=Button(Kind.Value,[this,Id]{QuestCategory=Id;RenderedFingerprint.Reset();RefreshPanel();});
+        const FString Id=Kind.Key;auto Tab=Button(Kind.Value,[this,Id]{if(QuestCategory!=Id){QuestCategory=Id;SelectedQuestChapter=0;SelectedQuestStage=-1;}RenderedFingerprint.Reset();RefreshPanel();});
         Tab->SetButtonStyle(&QuestButtonStyle(QuestCategory==Id));Tab->SetContentPadding(FMargin(12,3));StaticCastSharedRef<STextBlock>(Tab->GetContent())->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"),15));StaticCastSharedRef<STextBlock>(Tab->GetContent())->SetAutoWrapText(false);
         Kinds->AddSlot().AutoWidth().Padding(0,0,6,0)[Tab];
     }
@@ -144,11 +166,11 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
         Body->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(300)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,18,0)[SNew(SBox).WidthOverride(260)[Left]]
             +SHorizontalBox::Slot().FillWidth(1)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(ProjectDFSDUI::Canvas()).Padding(18)[Right]]]];
     };
-    if(QuestCategory==TEXT("Chain"))
+    if(QuestCategory==TEXT("Chain")&&Chapters.IsEmpty())
     {
         // One line per NPC; each opens once that NPC's main quest talk is finished. Their quests are added later.
         static const TArray<FString> Npcs{TEXT("캘린"),TEXT("아테아")};SelectedChainQuest=FMath::Clamp(SelectedChainQuest,0,Npcs.Num()-1);
-        auto IsOpen=[&Chapters](const FString& Npc){for(const auto& C:Chapters)for(const auto& V:Rows(C,TEXT("steps")))if(Str(V->AsObject(),TEXT("npc"))==Npc&&Flag(V->AsObject(),TEXT("completed")))return true;return false;};
+        auto IsOpen=[&MainLines](const FString& Npc){for(const auto& C:MainLines)for(const auto& V:Rows(C,TEXT("steps")))if(Str(V->AsObject(),TEXT("npc"))==Npc&&Flag(V->AsObject(),TEXT("completed")))return true;return false;};
         auto List=SNew(SVerticalBox);
         for(int32 I=0;I<Npcs.Num();++I)
         {
@@ -161,17 +183,22 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
             +SVerticalBox::Slot().AutoHeight()[Text(Open?TEXT("아직 진행할 수 있는 연계 퀘스트가 없습니다."):FString::Printf(TEXT("메인 퀘스트에서 %s와(과) 대화하면 열립니다."),*Npc),16)]);
         return;
     }
-    if(QuestCategory==TEXT("Sub")){Body->AddSlot().AutoHeight().Padding(4,10)[Text(TEXT("아직 서브 퀘스트가 없습니다."),16)];return;}
+    if(QuestCategory==TEXT("Sub")&&Chapters.IsEmpty()){Body->AddSlot().AutoHeight().Padding(4,10)[Text(TEXT("아직 받은 서브 퀘스트가 없습니다."),16)];return;}
 
     if(Chapters.IsEmpty())return;
     SelectedQuestChapter=FMath::Clamp(SelectedQuestChapter,0,Chapters.Num()-1);const auto Quest=Chapters[SelectedQuestChapter];
     const auto Steps=Rows(Quest,TEXT("steps"));if(Steps.IsEmpty())return;
-    const int32 Current=int32(Num(Quest,TEXT("stage")));const int32 LastUnlocked=FMath::Clamp(Current,0,Steps.Num()-1);if(SelectedQuestStage<0)SelectedQuestStage=LastUnlocked;SelectedQuestStage=FMath::Clamp(SelectedQuestStage,0,LastUnlocked);
+    // A graph quest lists only the steps actually reached (in the order played), the active one last.
+    int32 Current=int32(Num(Quest,TEXT("stage")));
+    if(bGraph){Current=Steps.Num()-1;for(int32 I=0;I<Steps.Num();++I)if(Flag(Steps[I]->AsObject(),TEXT("active")))Current=I;}
+    const int32 LastUnlocked=FMath::Clamp(Current,0,Steps.Num()-1);if(SelectedQuestStage<0)SelectedQuestStage=LastUnlocked;SelectedQuestStage=FMath::Clamp(SelectedQuestStage,0,LastUnlocked);
     auto List=SNew(SVerticalBox);
     // Every main quest line is a heading; the chosen one opens to show its steps.
     for(int32 C=0;C<Chapters.Num();++C)
     {
-        const bool Open=C==SelectedQuestChapter;const FString Name=Str(Chapters[C],TEXT("name")).IsEmpty()?TEXT("탐사"):Str(Chapters[C],TEXT("name"));
+        const bool Open=C==SelectedQuestChapter;FString Name=Str(Chapters[C],TEXT("name")).IsEmpty()?TEXT("탐사"):Str(Chapters[C],TEXT("name"));
+        if(const FString Npc=Str(Chapters[C],TEXT("npc"));!Npc.IsEmpty())Name=Npc+TEXT(" · ")+Name; // 연계: whose line it is.
+        if(Flag(Chapters[C],TEXT("completed")))Name+=TEXT(" (완료)");
         auto Heading=Button(Name,[this,C]{if(SelectedQuestChapter!=C){SelectedQuestChapter=C;SelectedQuestStage=-1;}RenderedFingerprint.Reset();RefreshPanel();});
         Heading->SetButtonStyle(&QuestButtonStyle(Open));Heading->SetContentPadding(FMargin(8,3));StaticCastSharedRef<STextBlock>(Heading->GetContent())->SetAutoWrapText(false);
         List->AddSlot().AutoHeight().Padding(0,0,0,4)[Heading];
@@ -192,19 +219,19 @@ void UProjectCaseRecordWidget::BuildMainQuest(const TSharedPtr<FJsonObject>& Sta
     if(Obj(Selected,TEXT("talk")))
     {
         // Talk steps open the phone on that conversation (also reachable from the phone button at the bottom of the lobby).
-        const FString StepId=Str(Selected,TEXT("id"));const bool Read=Flag(Selected,TEXT("talked"));
+        const FString StepId=(bGraph?Str(Quest,TEXT("id"))+TEXT("/"):FString())+Str(Selected,TEXT("id"));const bool Read=Flag(Selected,TEXT("talked"));
         Details->AddSlot().AutoHeight().Padding(0,10)[Button(Read?TEXT("대화 다시 보기"):TEXT("휴대폰으로 대화하기"),[this,StepId]{UProjectPhoneWidget::Open(GetOwningPlayer(),StepId);})];
     }
     if(Flag(Selected,TEXT("canSkip")))
     {
         auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>();const bool Ready=R->IsAuthenticated()&&Lobby&&!Lobby->HasCurrentRoom()&&!Lobby->IsMatchmaking();
-        const bool Mannequin=Str(Selected,TEXT("id"))==TEXT("mannequin_tutorial");
+        const bool Mannequin=Str(Selected,TEXT("tutorialRole"))==TEXT("Mannequin")||Str(Selected,TEXT("id"))==TEXT("mannequin_tutorial");
         Details->AddSlot().AutoHeight().Padding(0,10)[SNew(SHorizontalBox)+SHorizontalBox::Slot().FillWidth(1).Padding(0,0,8,0)[Button(TEXT("튜토리얼 시작"),[this,Mannequin]
         {
             const FName Map(TEXT("/Game/MyProject/Level/MultiplayerTutorial"));if(!FPackageName::DoesPackageExist(Map.ToString()))return;
             auto* GI=GetGameInstance<UProjectProject01GameInstance>();if(!GI||!GetWorld())return;SetIsEnabled(false);GI->FadeEntireScreenToBlack(.6f);
             FTimerHandle Timer;const TWeakObjectPtr<UProjectProject01GameInstance> Weak(GI);GetWorld()->GetTimerManager().SetTimer(Timer,[Weak,Map,Mannequin]{if(auto* Instance=Weak.Get())UGameplayStatics::OpenLevel(Instance,Map,true,Mannequin?TEXT("TutorialRole=Mannequin"):TEXT("TutorialRole=Survivor"));},.65f,false);
-        },Ready)]+SHorizontalBox::Slot().FillWidth(1)[Button(TEXT("건너뛰기"),[R]{R->MainQuestAction(TEXT("SkipTutorial"));},Ready)]];
+        },Ready)]+SHorizontalBox::Slot().FillWidth(1)[Button(TEXT("건너뛰기"),[R,Mannequin]{R->MainQuestAction(TEXT("SkipTutorial"),Mannequin?TEXT("Mannequin"):TEXT("Survivor"));},Ready)]];
     }
     if(Flag(Quest,TEXT("completed")))Details->AddSlot().AutoHeight().Padding(0,10)[Text((Str(Quest,TEXT("name")).IsEmpty()?FString(TEXT("탐사")):Str(Quest,TEXT("name")))+TEXT(" 퀘스트 완료"),20)];
     FString Story=Str(Quest,TEXT("baseStory"));for(const auto& V:Steps){const FString Part=Str(V->AsObject(),TEXT("story"));if(!Part.IsEmpty())Story+=(Story.IsEmpty()?TEXT(""):TEXT("\n\n"))+Part;}

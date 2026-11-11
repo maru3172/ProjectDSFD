@@ -1,4 +1,5 @@
 #include "ProjectMiniGameWidgets.h"
+#include "ProjectGamepad.h"
 #include "ProjectMiniGameRules.h"
 #include "ProjectMiniGames.h"
 #include "ProjectMiniGameSound.h"
@@ -453,6 +454,7 @@ private:
     FHowTo HowTo()const override
     {
         return {Sim.bEndless?TEXT("퓨즈가 끝없이 나옵니다. 주워서 배전반에 끼울 때마다 배터리가 25% 찹니다. 붙잡힐 때까지 몇 개를 끼울 수 있을까요?"):TEXT("바닥의 노란 퓨즈 3개를 밟아 줍고, 위쪽 배전반 앞에 서 있으면 저절로 끼워집니다."),
+            ProjectGamepad::UsingPad()?FString::Printf(TEXT("십자 키로 이동 · 왼쪽 스틱으로 손전등 비추기 · %s로 손전등 끄고 켜기"),*ProjectGamepad::FixedLabel(EKeys::Gamepad_RightTrigger)):
             FString::Printf(TEXT("%s/%s/%s/%s 또는 방향키로 이동 · 마우스로 손전등 비추기 · F 또는 오른쪽 클릭으로 손전등 끄고 켜기"),
                 *Keys[0].GetDisplayName().ToString(),*Keys[2].GetDisplayName().ToString(),*Keys[1].GetDisplayName().ToString(),*Keys[3].GetDisplayName().ToString()),
             TEXT("빛에 닿은 마네킹은 멈춥니다. 어둠 속 하얀 발자국 = 마네킹이 다가오는 중, 그쪽을 비추세요. 배터리가 닳으면 다시 못 켜니 아껴 쓰세요.")};
@@ -614,6 +616,9 @@ private:
     FHowTo HowTo()const override
     {
         return {TEXT("초록색 출구 칸까지 가세요. 적은 행동일수록 별이 많습니다."),
+            ProjectGamepad::UsingPad()?FString::Printf(TEXT("십자 키: 한 칸 이동 · %s/%s: 제자리 돌기(공짜) · %s: 앞 문에 셔터 · %s 되돌리기 · %s 처음부터"),
+                *ProjectGamepad::FixedLabel(EKeys::Gamepad_LeftShoulder),*ProjectGamepad::FixedLabel(EKeys::Gamepad_RightShoulder),*ProjectGamepad::FixedLabel(EKeys::Gamepad_FaceButton_Left),
+                *ProjectGamepad::FixedLabel(EKeys::Gamepad_Special_Left),*ProjectGamepad::FixedLabel(EKeys::Gamepad_FaceButton_Top)):
             FString::Printf(TEXT("%s/%s/%s/%s·방향키 또는 옆 칸 클릭: 한 칸 이동 · Q/E 또는 먼 칸 클릭: 그쪽 보기(공짜) · 스페이스: 앞 문에 셔터 · Z 되돌리기 · R 처음부터"),
                 *Keys[0].GetDisplayName().ToString(),*Keys[2].GetDisplayName().ToString(),*Keys[1].GetDisplayName().ToString(),*Keys[3].GetDisplayName().ToString()),
             TEXT("내가 걷거나 셔터를 내리면 마네킹이 모두 한 칸 다가옵니다. 내가 바라보는 줄의 첫 마네킹(노란 테두리)만 멈춥니다. 붙잡히면 처음부터입니다. 막히면 잠시 뒤 힌트가 열립니다.")};
@@ -965,6 +970,7 @@ private:
     FHowTo HowTo()const override
     {
         return {TEXT("당신은 마네킹입니다. 등을 돌린 생존자에게 들키지 않고 닿으세요."),
+            ProjectGamepad::UsingPad()?FString::Printf(TEXT("십자 위나 %s를 누르고 있으면 다가가고, 떼면 멈춥니다."),*ProjectGamepad::FixedLabel(EKeys::Gamepad_FaceButton_Left)):
             FString::Printf(TEXT("%s(또는 위 방향키·스페이스·마우스)를 누르고 있으면 다가가고, 떼면 멈춥니다."),*Forward.GetDisplayName().ToString()),
             TEXT("어깨가 움찔하고 숨을 들이쉬면 곧 돌아봅니다. 바로 멈추세요. 빛이 비출 때 움직이면 밀려나고, 세 번이면 끝. 돌아보는 척도 합니다.")};
     }

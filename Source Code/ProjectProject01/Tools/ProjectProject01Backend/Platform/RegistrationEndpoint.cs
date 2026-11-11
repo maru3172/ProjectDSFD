@@ -12,6 +12,7 @@ internal static class RegistrationEndpoint
             string displayName=request.DisplayName?.Trim()??string.Empty;
             string? error=AuthValidation.Validate(request.AccountId,request.Password,request.DisplayName)
                 ??(displayName.Length is <2 or >32?"표시 이름은 2~32자로 입력하세요.":null);
+            if(error is null&&database.IsConfigured&&(await ChatFilter.CurrentAsync(database,ct)).Contains(displayName))error="표시 이름에 "+ChatFilter.Refusal;
             if(error is not null)
             {
                 await SecurityAudit.WriteAsync(database,httpRequest,"AuthRegister","RejectedInput",null,error,ct);
