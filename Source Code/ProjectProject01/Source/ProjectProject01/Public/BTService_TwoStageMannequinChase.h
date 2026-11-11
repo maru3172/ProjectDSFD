@@ -9,6 +9,7 @@
 class AMannequinAICharacter;
 class APlayerCharacter;
 class UBlackboardComponent;
+struct FMannequinPlayerObservation;
 
 UENUM()
 enum class ETwoStageMannequinTier : uint8
@@ -47,16 +48,22 @@ private:
 		const TArray<AActor*>& AllMannequins
 		) const;
 	
-	// 역할 판정 함수
+	// 현재 마네킹이 직접 관측자, 2 차 추적자 또는 배회 상태인지 판단한다.
 	ETwoStageMannequinTier DetermineChaseTier(
 		const AMannequinAICharacter& CurrentMannequin,
-		const APlayerCharacter& Player,
 		const TArray<AActor*>& AllMannequins
 		) const;
 	
-	// 마지막 관측 정보를 이용해 플레이어 예상 위치를 계산한다.
+	// 현재 마네킹 주변에서 사용할 수 있는 가장 최신 1 차 마네킹의 관측 정보를 찾는다.
+	bool TryFindBestPrimaryObservation(
+		const AMannequinAICharacter& CurrentMannequin,
+		const TArray<AActor*>& AllMannequins,
+		FMannequinPlayerObservation& OutObservation
+		) const;
+	
+	// 전달받은 관측 정보를 이용해 플레이어 예상 위치를 계산한다.
 	bool TryCalculateTrackingLocation(
-		AMannequinAICharacter& CurrentMannequin,
+		const FMannequinPlayerObservation& Observation,
 		FVector& OutTrackingLocation
 		) const;
 	
@@ -79,9 +86,10 @@ private:
 		AMannequinAICharacter& CurrentMannequin
 		);
 	
-	// 플레이어를 중심으로 1차 마네킹을 지정하는 반경
-	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
-	float PlayerPrimaryRadius = 1000.0f;
+	// 더 이상 플레이어 반경이 아니라 직접 관측 정보로 결정되므로 사용되지 않는다.
+	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
+	// UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
+	// float PlayerPrimaryRadius = 1000.0f;
 	
 	// 각각의 1차 마네킹을 중심으로 2차 마네킹을 지정하는 반경
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))

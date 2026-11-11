@@ -117,29 +117,21 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
 		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
 	}
-	
-	if (bObservedByPlayerOrHelper)
-	{
-		// 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
-		AIController->StopMovement();
-		// 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
-		CurrentMannequin->SetFrozen(true);
-		return;
-	}
 
-	// 플레이어가 마네킹을 보고 있지 않으므로 애니메이션 정지를 해제한다.
-	CurrentMannequin->SetFrozen(false);
-
-	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, *Player, AllMannequins);
+	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, AllMannequins);
 
 	switch (Tier)
 	{
 	case ETwoStageMannequinTier::Primary:
 		{
+			// 자신의 관측 정보를 사용한다.
+			const FMannequinPlayerObservation& PrimaryObservation = CurrentMannequin->GetPlayerObservation();
+			
 			FVector TrackingLocation;
 			
-			if (TryCalculateTrackingLocation(*CurrentMannequin, TrackingLocation))
+			if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
 			{
+				CurrentMannequin->SetPredictedPlayerLocation(TrackingLocation);
 				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
 			}
 			else
@@ -148,15 +140,45 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			}
 			break;
 		}
+	
 	case ETwoStageMannequinTier::Secondary:
-		ApplyRoamingState(*Blackboard, *CurrentMannequin);
-		break;
+		{
+			// 주변 1 차의 관측 정보를 지역변수로 전달받는다.
+			FMannequinPlayerObservation SharedObservation;
+			FVector TrackingLocation;
+			
+			const bool bFoundPrimaryObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, SharedObservation);
+			
+			if (bFoundPrimaryObservation && TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
+			{
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
+			}
+			else
+			{
+				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+			}
 
+			break;
+		}
+	
 	case ETwoStageMannequinTier::Roaming:
 	default:
 		ApplyRoamingState(*Blackboard, *CurrentMannequin);
 		break;
 	}
+	
+	// 정지 중 정보 전달 유지를 위해 위치를 옮긴 상태
+	if (bObservedByPlayerOrHelper)
+	{
+		// 플레이어 또는 조력자 시야에 들어온 즉시 현재 이동 요청을 중단한다.
+		AIController->StopMovement();
+		// 현재 재생 중인 애니메이션을 현재 프레임에서 그대로 정지한다.
+		CurrentMannequin->SetFrozen(true);
+		return;
+	}
+	
+	// 플레이어가 마네킹을 보고 있지 않으므로 애니메이션 정지를 해제한다.
+	CurrentMannequin->SetFrozen(false);
 }
 
 bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayerCharacter& Player, AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
@@ -419,31 +441,103 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 	return bHit && HitResult.GetActor() == &Player;
 }
 
-ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const APlayerCharacter& Player, const TArray<AActor*>& AllMannequins) const
+ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
 {
-	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
-	const FVector PlayerLocation = Player.GetActorLocation();
-	const double PrimaryRadiusSquared = FMath::Square(static_cast<double>(PlayerPrimaryRadius));
-	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
-	
-	// 플레이어를 직접 관측했거나 아직 유효한 관측 정보를 가진 마네킹만 1 차로 유지한다.
+	// 자신의 유효한 직접 관측 정보를 가진 마네킹은 1 차다.
 	if (CurrentMannequin.HasActivePlayerObservation())
 	{
 		return ETwoStageMannequinTier::Primary;
 	}
 	
+	FMannequinPlayerObservation SharedObservation;
+	
+	// 자체 관측 정보가 없지만 주변 1 차의 정보를 받을 수 있으면 2 차다.
+	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, SharedObservation))
+	{
+		return ETwoStageMannequinTier::Secondary;
+	}
+	
 	return ETwoStageMannequinTier::Roaming;
 }
 
-bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(AMannequinAICharacter& CurrentMannequin, FVector& OutTrackingLocation) const
+bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, FMannequinPlayerObservation& OutObservation) const
+{
+	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
+	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
+	
+	bool bFoundPrimary = false;
+	double NewestObservationTime = -1.0;
+	
+	for (AActor* MannequinActor : AllMannequins)
+	{
+		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
+		
+		// 1. 유효한 마네킹인가
+		if (!IsValid(OtherMannequin))
+		{
+			continue;
+		}
+		
+		// 2. 자기 자신은 아닌가
+		// 자기 자신을 정보 전달자로 선택하지 않는다.
+		if (OtherMannequin == &CurrentMannequin)
+		{
+			continue;
+		}
+		
+		// 3. 자체 관측 정보를 가진 진짜 1 차인가
+		// 플레이어를 직접 관측했거나 아직 유효한 자체 관측 정보를 가진 마네킹만 1 차 정보 전달자가 될 수 있다.
+		if (!OtherMannequin->HasActivePlayerObservation())
+		{
+			continue;
+		}
+		
+		const FVector OtherLocation = OtherMannequin->GetActorLocation();
+		const float HeightDifference = FMath::Abs(CurrentLocation.Z - OtherLocation.Z);
+		
+		// 4. 같은 층인가
+		// 다른 층에 있는 마네킹의 정보는 전달받지 않는다.
+		if (HeightDifference > MaximumHeightDifference)
+		{
+			continue;
+		}
+		
+		const double DistanceToPrimarySquared = FVector::DistSquared2D(CurrentLocation, OtherLocation);
+		
+		// 5. 전파 반경 안인가
+		if (DistanceToPrimarySquared > PropagationRadiusSquared)
+		{
+			continue;
+		}
+		
+		const FMannequinPlayerObservation& OtherObservation = OtherMannequin->GetPlayerObservation();
+		
+		// 6. 관측 정보가 유효한가
+		if (!OtherObservation.bHasObservation || OtherObservation.Confidence <= 0.0f)
+		{
+			continue;
+		}
+		
+		// 7. 기존 후보보다 최근 정보인가
+		// 여러 1 차 마네킹이 있다면 가장 최근에 플레이어를 본 정보를 사용한다.
+		if (!bFoundPrimary || OtherObservation.LastSeenTime > NewestObservationTime)
+		{
+			OutObservation = OtherObservation;
+			NewestObservationTime = OtherObservation.LastSeenTime;
+			bFoundPrimary = true;
+		}
+	}
+	
+	return bFoundPrimary;
+}
+
+bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMannequinPlayerObservation& Observation, FVector& OutTrackingLocation) const
 {
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
 	{
 		return false;
 	}
-	
-	const FMannequinPlayerObservation& Observation = CurrentMannequin.GetPlayerObservation();
 	
 	if (!Observation.bHasObservation || Observation.Confidence <= 0.0f)
 	{
@@ -471,7 +565,6 @@ bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(AMannequinA
 	}
 	
 	OutTrackingLocation = NavigationLocation.Location;
-	CurrentMannequin.SetPredictedPlayerLocation(OutTrackingLocation);
 		
 	return true;
 }
