@@ -435,6 +435,70 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 	return ETwoStageMannequinTier::Roaming;
 }
 
+bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, FMannequinPlayerObservation& OutObservation) const
+{
+	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
+	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
+	
+	bool bFoundPrimary = false;
+	double NewestObservationTime = -1.0;
+	
+	for (AActor* MannequinActor : AllMannequins)
+	{
+		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
+		
+		if (!IsValid(OtherMannequin))
+		{
+			continue;
+		}
+		
+		// 자기 자신을 정보 전달자로 선택하지 않는다.
+		if (OtherMannequin == &CurrentMannequin)
+		{
+			continue;
+		}
+		
+		// 직접 자기 자신을 관측했거나 아직 유효한 자체 관측 정보를 가진 마네킹만 1 차 정보 전달자가 될 수 있다.
+		if (!OtherMannequin->HasActivePlayerObservation())
+		{
+			continue;
+		}
+		
+		const FVector OtherLocation = OtherMannequin->GetActorLocation();
+		const float HeightDifference = FMath::Abs(CurrentLocation.Z - OtherLocation.Z);
+		
+		// 다른 층에 있는 마네킹의 정보는 전달받지 않는다.
+		if (HeightDifference < MaximumHeightDifference)
+		{
+			continue;
+		}
+		
+		const double DistanceToPrimarySquared = FVector::DistSquared2D(CurrentLocation, OtherLocation);
+		
+		if (DistanceToPrimarySquared > PropagationRadiusSquared)
+		{
+			continue;
+		}
+		
+		const FMannequinPlayerObservation& OtherObservation = OtherMannequin->GetPlayerObservation();
+		
+		if (!OtherObservation.bHasObservation || OtherObservation.Confidence <= 0.0f)
+		{
+			continue;
+		}
+		
+		// 여러 1 차 마네킹이 있다면 가장 최근에 플레이어를 본 정보를 사용한다.
+		if (!bFoundPrimary || OtherObservation.LastSeenTime > NewestObservationTime)
+		{
+			OutObservation = OtherObservation;
+			NewestObservationTime = OtherObservation.LastSeenTime;
+			bFoundPrimary = true;
+		}
+	}
+	
+	return bFoundPrimary;
+}
+
 bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(AMannequinAICharacter& CurrentMannequin, FVector& OutTrackingLocation) const
 {
 	UWorld* World = GetWorld();
