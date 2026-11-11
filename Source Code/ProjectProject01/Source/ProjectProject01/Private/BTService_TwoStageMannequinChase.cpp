@@ -447,17 +447,20 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 	{
 		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
 		
+		// 1. 유효한 마네킹인가
 		if (!IsValid(OtherMannequin))
 		{
 			continue;
 		}
 		
+		// 2. 자기 자신은 아닌가
 		// 자기 자신을 정보 전달자로 선택하지 않는다.
 		if (OtherMannequin == &CurrentMannequin)
 		{
 			continue;
 		}
 		
+		// 3. 자체 관측 정보를 가진 진짜 1 차인가
 		// 직접 자기 자신을 관측했거나 아직 유효한 자체 관측 정보를 가진 마네킹만 1 차 정보 전달자가 될 수 있다.
 		if (!OtherMannequin->HasActivePlayerObservation())
 		{
@@ -467,6 +470,7 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 		const FVector OtherLocation = OtherMannequin->GetActorLocation();
 		const float HeightDifference = FMath::Abs(CurrentLocation.Z - OtherLocation.Z);
 		
+		// 4. 같은 층인가
 		// 다른 층에 있는 마네킹의 정보는 전달받지 않는다.
 		if (HeightDifference < MaximumHeightDifference)
 		{
@@ -475,6 +479,7 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 		
 		const double DistanceToPrimarySquared = FVector::DistSquared2D(CurrentLocation, OtherLocation);
 		
+		// 5. 전파 반경 안인가
 		if (DistanceToPrimarySquared > PropagationRadiusSquared)
 		{
 			continue;
@@ -482,11 +487,13 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 		
 		const FMannequinPlayerObservation& OtherObservation = OtherMannequin->GetPlayerObservation();
 		
+		// 6. 관측 정보가 유효한가
 		if (!OtherObservation.bHasObservation || OtherObservation.Confidence <= 0.0f)
 		{
 			continue;
 		}
 		
+		// 7. 기존 후보보다 최근 정보인가
 		// 여러 1 차 마네킹이 있다면 가장 최근에 플레이어를 본 정보를 사용한다.
 		if (!bFoundPrimary || OtherObservation.LastSeenTime > NewestObservationTime)
 		{
