@@ -117,6 +117,55 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
 		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
 	}
+
+	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, AllMannequins);
+
+	switch (Tier)
+	{
+	case ETwoStageMannequinTier::Primary:
+		{
+			// 자신의 관측 정보를 사용한다.
+			const FMannequinPlayerObservation& PrimaryObservation = CurrentMannequin->GetPlayerObservation();
+			
+			FVector TrackingLocation;
+			
+			if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
+			{
+				CurrentMannequin->SetPredictedPlayerLocation(TrackingLocation);
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
+			}
+			else
+			{
+				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+			}
+			break;
+		}
+	
+	case ETwoStageMannequinTier::Secondary:
+		{
+			// 주변 1 차의 관측 정보를 지역변수로 전달받는다.
+			FMannequinPlayerObservation SharedObservation;
+			FVector TrackingLocation;
+			
+			const bool bFoundPrimaryObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, SharedObservation);
+			
+			if (bFoundPrimaryObservation && TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
+			{
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
+			}
+			else
+			{
+				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+			}
+
+			break;
+		}
+	
+	case ETwoStageMannequinTier::Roaming:
+	default:
+		ApplyRoamingState(*Blackboard, *CurrentMannequin);
+		break;
+	}
 	
 	if (bObservedByPlayerOrHelper)
 	{
@@ -126,37 +175,9 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		CurrentMannequin->SetFrozen(true);
 		return;
 	}
-
+	
 	// 플레이어가 마네킹을 보고 있지 않으므로 애니메이션 정지를 해제한다.
 	CurrentMannequin->SetFrozen(false);
-
-	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, *Player, AllMannequins);
-
-	switch (Tier)
-	{
-	case ETwoStageMannequinTier::Primary:
-		{
-			FVector TrackingLocation;
-			
-			if (TryCalculateTrackingLocation(*CurrentMannequin, TrackingLocation))
-			{
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
-			}
-			else
-			{
-				ApplyRoamingState(*Blackboard, *CurrentMannequin);
-			}
-			break;
-		}
-	case ETwoStageMannequinTier::Secondary:
-		ApplyRoamingState(*Blackboard, *CurrentMannequin);
-		break;
-
-	case ETwoStageMannequinTier::Roaming:
-	default:
-		ApplyRoamingState(*Blackboard, *CurrentMannequin);
-		break;
-	}
 }
 
 bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayerCharacter& Player, AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
@@ -509,15 +530,13 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 	return bFoundPrimary;
 }
 
-bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(AMannequinAICharacter& CurrentMannequin, FVector& OutTrackingLocation) const
+bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMannequinPlayerObservation& Observation, FVector& OutTrackingLocation) const
 {
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
 	{
 		return false;
 	}
-	
-	const FMannequinPlayerObservation& Observation = CurrentMannequin.GetPlayerObservation();
 	
 	if (!Observation.bHasObservation || Observation.Confidence <= 0.0f)
 	{
@@ -545,7 +564,6 @@ bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(AMannequinA
 	}
 	
 	OutTrackingLocation = NavigationLocation.Location;
-	CurrentMannequin.SetPredictedPlayerLocation(OutTrackingLocation);
 		
 	return true;
 }
