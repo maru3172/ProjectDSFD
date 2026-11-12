@@ -11,7 +11,12 @@ internal static class CaseDraw
     internal sealed record Configure(long Revision,Pool? Pool);
     internal sealed record Command(string? Operation,string? RequestId,int Count,long Revision);
     internal sealed record Award(string Id,string Name,int Grade,string? ItemId,int Credits,bool Duplicate,bool Guaranteed);
-    internal static readonly Pool Draft=new("record0","RECORD 0",DateTimeOffset.UtcNow,DateTimeOffset.UtcNow.AddMonths(3),false,BasePrizes());
+    /// <summary>Share of all draws per grade, out of 10000 (grade 1 is the rarest): 1.0 %, 4.2 %, 15.3 %, 29.7 %, 49.8 %.
+    /// Declared before Draft: static fields initialise in order and Draft reads this table.</summary>
+    internal static readonly int[] GradeShare=[0,100,420,1530,2970,4980];
+    internal static readonly Pool Draft=new("record0","RECORD 0",DateTimeOffset.UtcNow,DateTimeOffset.UtcNow.AddMonths(3),false,Recommended(BasePrizes()));
+    /// <summary>Splits each grade's share evenly over its prizes, so a single prize is also rarer the higher its grade.</summary>
+    internal static Prize[] Recommended(Prize[] prizes)=>prizes.Select(p=>p with{Weight=Math.Max(1,GradeShare[p.Grade]/prizes.Count(x=>x.Grade==p.Grade))}).ToArray();
     private static Prize[] BasePrizes()=>[
         new("afterhours","폐점 이후",1,0,"banner_afterhours"),new("embers","잔불",2,0,"banner_embers"),
         ..CaseCollection.DrawExtras.Select(p=>new Prize(p.Id,p.Name,p.Grade,0,p.Id)),

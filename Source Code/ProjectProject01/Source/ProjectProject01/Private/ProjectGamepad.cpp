@@ -187,6 +187,24 @@ FProjectPadTranslation ProjectGamepad::Translate(EProjectPadMode M, const FKey& 
     return Out;
 }
 
+float ProjectGamepad::Shape(const float Value, const float DeadZone, const float Exponent)
+{
+    const float A = FMath::Abs(Value);
+    if (A <= DeadZone) return 0.f;
+    const float T = FMath::Clamp((A - DeadZone) / FMath::Max(.01f, 1.f - DeadZone), 0.f, 1.f);
+    return FMath::Sign(Value) * FMath::Pow(T, FMath::Clamp(Exponent, 1.f, 3.f));
+}
+FVector2D ProjectGamepad::SmoothLook(const FVector2D& Current, const FVector2D& Target, const float Smoothing, const float Delta)
+{
+    const float Ease = FMath::Clamp(Smoothing, 0.f, 1.f) * .1f; // Time constant: about 3x this reaches the target (0.3 s at 1).
+    if (Ease <= KINDA_SMALL_NUMBER || Delta <= 0.f) return Target;
+    // Slowing down (smaller target, or the other way) eases three times quicker than speeding up.
+    const bool bSlower = Target.SizeSquared() < Current.SizeSquared() || (Target | Current) < 0.f;
+    const float Alpha = 1.f - FMath::Exp(-Delta / (bSlower ? Ease / 3.f : Ease));
+    const FVector2D Next = FMath::Lerp(Current, Target, Alpha);
+    return Target.IsNearlyZero() && Next.IsNearlyZero(.002f) ? FVector2D::ZeroVector : Next;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The input handler
 // ---------------------------------------------------------------------------------------------------------------------
@@ -194,13 +212,7 @@ namespace
 {
     constexpr float LookPixelsPerSecond = 950.f;   // Full right stick, speed 1.0 (before the player's mouse sensitivity).
     constexpr float CursorPixelsPerSecond = 1300.f; // Full left stick in menus, speed 1.0.
-    float Shape(float Value, float DeadZone)
-    {
-        const float A = FMath::Abs(Value);
-        if (A <= DeadZone) return 0.f;
-        const float T = (A - DeadZone) / FMath::Max(.01f, 1.f - DeadZone);
-        return FMath::Sign(Value) * T * T; // Small tilts move slowly; full tilt is full speed.
-    }
+    using ProjectGamepad::Shape;
     UProjectProject01GameUserSettings* Settings() { return UProjectProject01GameUserSettings::Get(); }
 }
 
@@ -222,6 +234,7 @@ public:
     bool bInjecting = false;
     float ScrollWait = 0.f;
     EProjectPadMode LastMode = EProjectPadMode::Menu;
+    FVector2D LookVelocity = FVector2D::ZeroVector; // Eased right stick look speed (-1..1 per axis times the look speed).
 
     APlayerController* LocalController() const
     {
@@ -365,10 +378,11 @@ public:
         if (!Owner.IsValid()) return;
         const EProjectPadMode M = Mode();
         // A mode change releases whatever a held button was turned into (a menu opening while sprinting, ...).
-        if (M != LastMode) { ReleaseAll(App); LastMode = M; }
+        if (M != LastMode) { ReleaseAll(App); LastMode = M; LookVelocity = FVector2D::ZeroVector; }
         const UProjectProject01GameUserSettings* S = Settings();
         const float DeadZone = S ? S->GetPadDeadZone() : .2f;
-        const FVector2D L(Shape(Left.X, DeadZone), Shape(Left.Y, DeadZone)), R(Shape(Right.X, DeadZone), Shape(Right.Y, DeadZone));
+        const float Curve = S ? S->GetPadLookCurve() : 2.f;
+        const FVector2D L(Shape(Left.X, DeadZone), Shape(Left.Y, DeadZone)), R(Shape(Right.X, DeadZone, Curve), Shape(Right.Y, DeadZone, Curve));
         if (M == EProjectPadMode::Menu)
         {
             if (!L.IsNearlyZero())
@@ -400,10 +414,13 @@ public:
             return;
         }
         // Look: the right stick moves the mouse, so the player's mouse sensitivity and every camera apply as they are.
-        if (!R.IsNearlyZero())
+        // The speed eases towards the stick (PadLookSmoothing), so a full push does not whip the camera round in one frame.
+        const bool bInvert = S && S->GetPadInvertY();
+        const FVector2D Target(R.X * (S ? S->GetPadLookSpeedX() : 1.f), (bInvert ? R.Y : -R.Y) * (S ? S->GetPadLookSpeedY() : 1.f));
+        LookVelocity = ProjectGamepad::SmoothLook(LookVelocity, Target, S ? S->GetPadLookSmoothing() : .5f, Delta);
+        if (!LookVelocity.IsNearlyZero(.002f))
         {
-            const bool bInvert = S && S->GetPadInvertY();
-            const FVector2D Move(R.X * (S ? S->GetPadLookSpeedX() : 1.f), (bInvert ? R.Y : -R.Y) * (S ? S->GetPadLookSpeedY() : 1.f));
+            const FVector2D Move = LookVelocity;
             TGuardValue<bool> Guard(bInjecting, true);
             const FVector2D At = App.GetCursorPos();
             const FPointerEvent Event(FSlateApplicationBase::CursorPointerIndex, At, At, Move * LookPixelsPerSecond * Delta, TSet<FKey>(), App.GetModifierKeys());

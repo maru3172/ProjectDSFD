@@ -116,6 +116,11 @@ public:
 	bool GetPadInvertY() const { return bPadInvertY; }
 	float GetPadCursorSpeed() const { return FMath::Clamp(PadCursorSpeed, .3f, 3.f); }
 	float GetPadDeadZone() const { return FMath::Clamp(PadDeadZone, .05f, .45f); }
+	/** Right stick look: 0 = the camera follows the stick at once, 1 = speed builds up over 0.3 s (Docs/Gamepad.md). */
+	float GetPadLookSmoothing() const { return FMath::Clamp(PadLookSmoothing, 0.f, 1.f); }
+	/** Right stick response curve exponent: 1 = linear, higher = small tilts turn more gently. */
+	float GetPadLookCurve() const { return FMath::Clamp(PadLookCurve, 1.f, 3.f); }
+	void SetPadLookFeel(float Smoothing, float Curve) { PadLookSmoothing = FMath::Clamp(Smoothing, 0.f, 1.f); PadLookCurve = FMath::Clamp(Curve, 1.f, 3.f); }
 	EProjectPadGlyphs GetPadGlyphs() const { return EProjectPadGlyphs(FMath::Clamp(PadGlyphs, 0, 2)); }
 	bool GetPadVibration() const { return bPadVibration; }
 	float GetPadVibrationStrength() const { return FMath::Clamp(PadVibrationStrength, 0.f, 1.f); }
@@ -281,6 +286,10 @@ private:
 	float PadCursorSpeed = 1.f;
 	UPROPERTY(Config)
 	float PadDeadZone = .2f;
+	UPROPERTY(Config)
+	float PadLookSmoothing = .5f;
+	UPROPERTY(Config)
+	float PadLookCurve = 2.f;
 	UPROPERTY(Config)
 	int32 PadGlyphs = 0;
 	UPROPERTY(Config)

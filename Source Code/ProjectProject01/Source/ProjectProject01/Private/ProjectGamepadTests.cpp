@@ -81,6 +81,38 @@ bool FProjectGamepadMappingTest::RunTest(const FString&)
     TestTrue(TEXT("The same button in the survivor and mannequin layouts is fine"), Panel->ConflictWarning().IsEmpty());
     Panel->Store(S);
     TestTrue(TEXT("Stored on 적용"), S->GetPadBinding(EProjectPadAction::MannequinAttack) == EKeys::Gamepad_FaceButton_Bottom);
+    S->ResetPadSettings();
+    return true;
+}
+
+// Docs/Gamepad.md: a full right stick push eases the camera up to speed instead of whipping it round in one frame.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectGamepadLookFeelTest, "ProjectProject01.Gamepad.LookFeel", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProjectGamepadLookFeelTest::RunTest(const FString&)
+{
+    using ProjectGamepad::SmoothLook; using ProjectGamepad::Shape;
+    const FVector2D Full(1, 0); constexpr float Frame = 1.f / 60.f;
+    TestTrue(TEXT("Smoothing 0 follows the stick at once (old behaviour)"), SmoothLook(FVector2D::ZeroVector, Full, 0.f, Frame) == Full);
+    FVector2D V = FVector2D::ZeroVector; int32 Frames = 0;
+    for (; Frames < 120 && V.X < .95f; ++Frames) V = SmoothLook(V, Full, .5f, Frame);
+    const FVector2D First = SmoothLook(FVector2D::ZeroVector, Full, .5f, Frame);
+    TestTrue(TEXT("Default: the first frame is a small part of full speed"), First.X > 0.f && First.X < .4f);
+    TestTrue(TEXT("Default: about full speed within a quarter second, never longer than half"), Frames >= 6 && Frames <= 30);
+    int32 Stop = 0; for (FVector2D W = Full; !W.IsZero() && Stop < 120; ++Stop) W = SmoothLook(W, FVector2D::ZeroVector, .5f, Frame);
+    TestTrue(TEXT("Letting go stops much quicker than speeding up, and reaches exactly zero"), Stop < Frames && Stop < 120);
+    FVector2D Slow = FVector2D::ZeroVector; for (int32 I = 0; I < 6; ++I) Slow = SmoothLook(Slow, Full, 1.f, Frame);
+    FVector2D Mid = FVector2D::ZeroVector; for (int32 I = 0; I < 6; ++I) Mid = SmoothLook(Mid, Full, .5f, Frame);
+    TestTrue(TEXT("More smoothing builds up more slowly"), Slow.X < Mid.X);
+    TestTrue(TEXT("Frame rate does not change how fast it builds up"),
+        FMath::IsNearlyEqual(SmoothLook(FVector2D::ZeroVector, Full, .5f, .1f).X, [&]{ FVector2D X = FVector2D::ZeroVector; for (int32 I = 0; I < 10; ++I) X = SmoothLook(X, Full, .5f, .01f); return X.X; }(), .01f));
+    TestTrue(TEXT("Inside the dead zone nothing moves"), Shape(.15f, .2f, 2.f) == 0.f);
+    TestTrue(TEXT("Full tilt is full speed on every curve"), FMath::IsNearlyEqual(Shape(1.f, .2f, 1.f), 1.f) && FMath::IsNearlyEqual(Shape(-1.f, .2f, 3.f), -1.f));
+    TestTrue(TEXT("A higher curve turns slower on a small tilt"), Shape(.5f, .2f, 3.f) < Shape(.5f, .2f, 2.f) && Shape(.5f, .2f, 2.f) < Shape(.5f, .2f, 1.f));
+    UProjectProject01GameUserSettings* S = UProjectProject01GameUserSettings::Get();
+    if (!TestNotNull(TEXT("Settings"), S)) return false;
+    S->SetPadLookFeel(5.f, 0.f);
+    TestTrue(TEXT("Settings stay in range"), S->GetPadLookSmoothing() == 1.f && S->GetPadLookCurve() == 1.f);
+    S->ResetPadSettings();
+    TestTrue(TEXT("Reset brings the default feel back"), S->GetPadLookSmoothing() == .5f && S->GetPadLookCurve() == 2.f);
     return true;
 }
 #endif

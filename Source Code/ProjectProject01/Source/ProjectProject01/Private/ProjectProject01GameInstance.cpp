@@ -396,6 +396,7 @@ void UProjectProject01GameUserSettings::ResetPadSettings()
 {
 	PadBindingNames.Reset();
 	PadLookSpeedX = PadLookSpeedY = PadCursorSpeed = 1.f; bPadInvertY = false; PadDeadZone = .2f; PadGlyphs = 0;
+	PadLookSmoothing = .5f; PadLookCurve = 2.f;
 	bPadVibration = true; PadVibrationStrength = .8f;
 }
 

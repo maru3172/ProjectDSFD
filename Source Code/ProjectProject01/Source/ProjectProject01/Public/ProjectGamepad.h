@@ -44,6 +44,13 @@ namespace ProjectGamepad
     PROJECTPROJECT01_API bool IsSteamDeck();
     /** The meaning of a pad button in a mode, from the player's bindings (null settings: defaults). */
     PROJECTPROJECT01_API FProjectPadTranslation Translate(EProjectPadMode Mode, const FKey& PadKey, bool bCardsOpen, const UProjectProject01GameUserSettings* Settings);
+    /** Stick tilt after the dead zone, bent by Exponent (1 = linear): small tilts move slowly, full tilt is full speed. */
+    PROJECTPROJECT01_API float Shape(float Value, float DeadZone, float Exponent = 2.f);
+    /**
+     * One step of the right stick look speed towards Target. Smoothing 0 follows at once; 1 builds up over about 0.3 s.
+     * Slowing down or letting go is three times quicker, so the camera never drifts on after the stick is released.
+     */
+    PROJECTPROJECT01_API FVector2D SmoothLook(const FVector2D& Current, const FVector2D& Target, float Smoothing, float Delta);
     /** The pad is the device in use (for on-screen hints). Context may be null: then the game viewport's game is used. */
     PROJECTPROJECT01_API bool UsingPad(const UObject* Context = nullptr);
     /** A fixed pad button as written on screen with the player's label setting (menus, mini-games). */

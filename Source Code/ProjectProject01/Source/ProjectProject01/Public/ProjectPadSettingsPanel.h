@@ -26,7 +26,7 @@ protected:
 private:
     void BeginCapture(int32 Action);
     TArray<FKey> Bindings;
-    float LookX = 1.f, LookY = 1.f, Cursor = 1.f, DeadZone = .2f, Vibration = .8f;
+    float LookX = 1.f, LookY = 1.f, Cursor = 1.f, DeadZone = .2f, Vibration = .8f, LookSmoothing = .5f, LookCurve = 2.f;
     bool bInvertY = false, bVibration = true;
     int32 Glyphs = 0;
     int32 Capturing = INDEX_NONE;

@@ -30,6 +30,7 @@ void UProjectPadSettingsPanel::Load(const UProjectProject01GameUserSettings* S)
     if (S)
     {
         LookX = S->GetPadLookSpeedX(); LookY = S->GetPadLookSpeedY(); Cursor = S->GetPadCursorSpeed(); DeadZone = S->GetPadDeadZone();
+        LookSmoothing = S->GetPadLookSmoothing(); LookCurve = S->GetPadLookCurve();
         bInvertY = S->GetPadInvertY(); Glyphs = int32(S->GetPadGlyphs()); bVibration = S->GetPadVibration(); Vibration = S->GetPadVibrationStrength();
     }
     Capturing = INDEX_NONE;
@@ -39,12 +40,14 @@ void UProjectPadSettingsPanel::Defaults()
     Bindings.SetNum(ProjectGamepad::ActionCount);
     for (int32 I = 0; I < ProjectGamepad::ActionCount; ++I) Bindings[I] = ProjectGamepad::DefaultKey(EProjectPadAction(I));
     LookX = LookY = Cursor = 1.f; DeadZone = .2f; bInvertY = false; Glyphs = 0; bVibration = true; Vibration = .8f; Capturing = INDEX_NONE;
+    LookSmoothing = .5f; LookCurve = 2.f;
 }
 void UProjectPadSettingsPanel::Store(UProjectProject01GameUserSettings* S) const
 {
     if (!S) return;
     for (int32 I = 0; I < Bindings.Num(); ++I) S->SetPadBinding(EProjectPadAction(I), Bindings[I]);
     S->SetPadLookSpeed(LookX, LookY); S->SetPadInvertY(bInvertY); S->SetPadCursorSpeed(Cursor); S->SetPadDeadZone(DeadZone);
+    S->SetPadLookFeel(LookSmoothing, LookCurve);
     S->SetPadGlyphs(EProjectPadGlyphs(Glyphs)); S->SetPadVibration(bVibration, Vibration);
 }
 FString UProjectPadSettingsPanel::ConflictWarning() const
@@ -97,6 +100,10 @@ TSharedRef<SWidget> UProjectPadSettingsPanel::RebuildWidget()
         .Text(FText::FromString(TEXT("Xbox 패드와, 스팀·DS4Windows를 거친 PlayStation·스팀 패드를 지원합니다. 메뉴에서는 왼쪽 스틱이 커서, A 클릭, B 뒤로입니다.")))];
     Slider(TEXT("시점 감도 (가로)"), &LookX, .2f, 3.f, false);
     Slider(TEXT("시점 감도 (세로)"), &LookY, .2f, 3.f, false);
+    Slider(TEXT("시점 부드러움"), &LookSmoothing, 0.f, 1.f, true);
+    Slider(TEXT("시점 반응 곡선"), &LookCurve, 1.f, 3.f, false);
+    Box->AddSlot().AutoHeight().Padding(8, 0, 8, 6)[SNew(STextBlock).Font(PanelFont(12)).ColorAndOpacity(ProjectDFSDUI::Muted()).AutoWrapText(true)
+        .Text(FText::FromString(TEXT("부드러움을 올리면 스틱을 끝까지 밀어도 시점이 천천히 빨라집니다(0%는 바로 반응). 곡선을 올리면 살짝 밀 때 더 천천히 돕니다.")))];
     Check(TEXT("시점 세로 반전"), &bInvertY);
     Slider(TEXT("메뉴 커서 속도"), &Cursor, .3f, 3.f, false);
     Slider(TEXT("스틱 데드존"), &DeadZone, .05f, .45f, true);

@@ -29,6 +29,10 @@ internal static class FeatureChecks
                     CaseDrawAdministrationForm.AddMissingPrizes(grid,defaults.Where(p=>new[]{"afterhours","embers","archive","receipt","points"}.Contains(p.GetProperty("id").GetString())));
                     grid.Rows[0].Cells["weight"].Value=7;Check(CaseDrawAdministrationForm.AddMissingPrizes(grid,defaults)==24&&grid.Rows.Cast<DataGridViewRow>().Count(r=>!r.IsNewRow)==29,"운영 창에서 기존 5종에 24종 추가해 전체 29종 표시");
                     Check(Convert.ToInt32(grid.Rows.Cast<DataGridViewRow>().Single(r=>!r.IsNewRow&&Convert.ToString(r.Cells["id"].Value)=="afterhours").Cells["weight"].Value)==7&&CaseDrawAdministrationForm.AddMissingPrizes(grid,defaults)==0,"기존 확률 설정 보존, 기본 상품 반복 추가 중복 없음");
+                    // 권장 가중치: the window's table is the server's, and it turns the edited weight back into the server's recommended one.
+                    Check(CaseDrawAdministrationForm.GradeShare.SequenceEqual(CaseDraw.GradeShare),"운영 창 권장 가중치 표가 서버와 같음");
+                    Check(CaseDrawAdministrationForm.ApplyRecommendedWeights(grid)>=1&&grid.Rows.Cast<DataGridViewRow>().Where(r=>!r.IsNewRow).All(r=>Convert.ToInt32(r.Cells["weight"].Value)==CaseDraw.Draft.Prizes.Single(p=>p.Id==Convert.ToString(r.Cells["id"].Value)).Weight)
+                        &&CaseDrawAdministrationForm.ApplyRecommendedWeights(grid)==0,"권장 가중치 버튼이 29종 모두 등급별 권장값으로 맞춤");
                     PrepareRender(draw);using var bitmap=new Bitmap(draw.Width,draw.Height);draw.DrawToBitmap(bitmap,new Rectangle(Point.Empty,draw.Size));bitmap.Save(Path.Combine(output,"case-draw-products.png"));
                     foreach(var b in Children(draw).OfType<Button>())Check(draw.ClientRectangle.Contains(draw.RectangleToClient(b.RectangleToScreen(b.ClientRectangle))),"뽑기 운영 버튼이 화면 안에 표시됨 "+b.Text);
                 }

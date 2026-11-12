@@ -6,9 +6,15 @@ internal static class CaseDrawChecks
 {
     internal static void Rules(Action<bool,string> check)
     {
-        check(!CaseDraw.Draft.Published&&CaseDraw.Draft.Prizes.All(p=>p.Weight==0),"미정 확률의 기본 뽑기는 비공개");
+        check(!CaseDraw.Draft.Published&&CaseDraw.Draft.Prizes.All(p=>p.Weight>0),"기본 뽑기는 권장 가중치를 가진 비공개 초안");
+        // Recommended weights: the higher (smaller) the grade, the rarer both the grade and each single prize; the five shares add up to 100 %.
+        int total=CaseDraw.Draft.Prizes.Sum(p=>p.Weight);
+        double Share(int g)=>100.0*CaseDraw.Draft.Prizes.Where(p=>p.Grade==g).Sum(p=>p.Weight)/total;
+        double Single(int g)=>CaseDraw.Draft.Prizes.Where(p=>p.Grade==g).Max(p=>p.Weight);
+        check(Enumerable.Range(1,4).All(g=>Share(g)<Share(g+1)&&Single(g)<CaseDraw.Draft.Prizes.Where(p=>p.Grade==g+1).Min(p=>p.Weight)),"높은 등급일수록 등급 확률·상품 1개 확률 모두 낮음");
+        check(Math.Abs(Share(1)-1.0)<.05&&Math.Abs(Share(2)-4.2)<.05&&total==10000,"1등급 1.0%, 2등급 4.2%, 전체 10000");
         check(CaseDraw.Validate(CaseDraw.Draft,out _),"5등급 초안 저장 가능");
-        check(!CaseDraw.Validate(CaseDraw.Draft with {Published=true},out _),"0 가중치로 공개 차단");
+        check(!CaseDraw.Validate(CaseDraw.Draft with {Published=true,Prizes=CaseDraw.Draft.Prizes.Select((p,i)=>i==0?p with{Weight=0}:p).ToArray()},out _),"0 가중치로 공개 차단");
         var pool=CaseDraw.Draft with {Published=true,Prizes=CaseDraw.Draft.Prizes.Select(p=>p with {Weight=1}).ToArray()};
         check(CaseDraw.Validate(pool,out _),"5등급 유효 구성 공개 가능");
         var owned=new HashSet<string>{"banner_afterhours","banner_embers","frame_archive"};var eligible=CaseDraw.Eligible(pool,owned);
@@ -22,7 +28,8 @@ internal static class CaseDrawChecks
         check(CaseDraw.GuaranteeGrade(pool.Prizes,48,_=>0)==0&&CaseDraw.GuaranteeGrade(pool.Prizes,50,_=>0)==0&&CaseDraw.GuaranteeGrade(pool.Prizes,99,_=>1)==1,"반천장은 사이클당 한 번, 100회는 1등급 확정");
         check(CaseDraw.GuaranteeGrade(pool.Prizes.Where(p=>p.Grade!=2).ToArray(),49,_=>1)==1&&CaseDraw.GuaranteeGrade(eligible.Where(p=>p.Grade>=3).ToArray(),49,_=>0)==0,"상위 상품 소진 시 중복 없이 남은 등급으로 보장");
         check(CaseDraw.Draft.Prizes.Length==29&&CaseCollection.Items.Select(p=>p.Id).Distinct().Count()==CaseCollection.Items.Length,"확장 상품 29종과 수집 ID 중복 검사");
-        var oldDraft=CaseDraw.Draft with{Prizes=CaseDraw.Draft.Prizes.Where(p=>new[]{"afterhours","embers","archive","receipt","points"}.Contains(p.Id)).ToArray()};
+        // A saved legacy draft had five prizes and no weights yet.
+        var oldDraft=CaseDraw.Draft with{Prizes=CaseDraw.Draft.Prizes.Where(p=>new[]{"afterhours","embers","archive","receipt","points"}.Contains(p.Id)).Select(p=>p with{Weight=0}).ToArray()};
         check(CaseDraw.ExpandLegacyDraft(oldDraft).Prizes.Length==29&&CaseDraw.ExpandLegacyDraft(oldDraft with{Published=true}).Prizes.Length==5,"미설정 옛 초안만 29종으로 확장, 공개 시즌 구성 보존");
         var context=new Microsoft.AspNetCore.Http.DefaultHttpContext();context.Connection.RemoteIpAddress=IPAddress.Loopback;context.Request.Host=new("127.0.0.1:5080");CheckLoopback();
         void CheckLoopback(){check(CaseDebugCurrency.DirectLoopback(context.Request),"로컬 직접 접속만 디버그 대상으로 인정");context.Request.Headers["X-Forwarded-For"]="192.168.1.2";check(!CaseDebugCurrency.DirectLoopback(context.Request),"프록시 경유 디버그 포인트 요청 차단");context.Request.Headers.Clear();context.Connection.RemoteIpAddress=IPAddress.Parse("192.168.1.2");check(!CaseDebugCurrency.DirectLoopback(context.Request),"외부 PC의 에디터 헤더 위조만으로 지급 불가");}

@@ -18,6 +18,20 @@ internal sealed class CaseDrawAdministrationForm:Form
         }
         SortPrizes(grid);return added;
     }
+    /// <summary>Share of all draws per grade, out of 10000 (grade 1 is the rarest). Same table as the server's CaseDraw.GradeShare.</summary>
+    internal static readonly int[] GradeShare=[0,100,420,1530,2970,4980];
+    /// <summary>Sets every row's weight from its grade: the grade's share split evenly over that grade's rows (at least 1). Returns the rows changed.</summary>
+    internal static int ApplyRecommendedWeights(DataGridView grid)
+    {
+        static int Grade(DataGridViewRow r)=>int.TryParse(Convert.ToString(r.Cells["grade"].Value),out int g)&&g is >=1 and <=5?g:0;
+        var rows=grid.Rows.Cast<DataGridViewRow>().Where(r=>!r.IsNewRow&&Grade(r)>0).ToArray();int changed=0;
+        foreach(var row in rows)
+        {
+            int weight=Math.Max(1,GradeShare[Grade(row)]/rows.Count(r=>Grade(r)==Grade(row)));
+            if(Convert.ToString(row.Cells["weight"].Value)!=weight.ToString()){row.Cells["weight"].Value=weight;changed++;}
+        }
+        return changed;
+    }
     public CaseDrawAdministrationForm(Func<HttpMethod,string,object?,HttpRequestMessage> create)
     {
         Text="시즌 뽑기 · 상품 / 확률";AutoScaleMode=AutoScaleMode.Dpi;ClientSize=new Size(1050,650);MinimumSize=new Size(820,550);StartPosition=FormStartPosition.CenterParent;
@@ -31,8 +45,10 @@ internal sealed class CaseDrawAdministrationForm:Form
         foreach(var pair in new[]{("id","상품 ID"),("name","상품명"),("grade","등급 (1~5)"),("weight","확률 가중치"),("itemId","꾸미기 ID"),("credits","포인트")})grid.Columns.Add(pair.Item1,pair.Item2);
         root.Controls.Add(grid,0,1);
         var slots=new Label{AutoSize=true,MaximumSize=new Size(990,0),Text="기본 상품 29종 · 재화 1개 = 500포인트 · 50회 1·2등급 각 50% · 100회 1등급 보장"};root.Controls.Add(slots,0,2);
-        var footer=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};var refresh=new Button{Text="조회",AutoSize=true};var save=new Button{Text="적용",AutoSize=true,Enabled=false};var fill=new Button{Text="기본 29종 채우기",AutoSize=true,Enabled=false};var status=new Label{AutoSize=true,MaximumSize=new Size(560,0)};footer.Controls.AddRange([refresh,fill,save,status]);root.Controls.Add(footer,0,3);JsonElement[] defaults=[];
+        var footer=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};var refresh=new Button{Text="조회",AutoSize=true};var save=new Button{Text="적용",AutoSize=true,Enabled=false};var fill=new Button{Text="기본 29종 채우기",AutoSize=true,Enabled=false};var recommend=new Button{Text="권장 가중치",AutoSize=true,Enabled=false};var status=new Label{AutoSize=true,MaximumSize=new Size(560,0)};footer.Controls.AddRange([refresh,fill,recommend,save,status]);root.Controls.Add(footer,0,3);JsonElement[] defaults=[];
         fill.Click+=(_,_)=>{try{grid.EndEdit();int added=AddMissingPrizes(grid,defaults);status.Text=$"{added}종 추가 · 적용 전";}catch(Exception ex){status.Text=ex.Message;}};
+        // 1등급 1.0 % · 2등급 4.2 % · 3등급 15.3 % · 4등급 29.7 % · 5등급 49.8 %, nothing is saved until 적용.
+        recommend.Click+=(_,_)=>{grid.EndEdit();int changed=ApplyRecommendedWeights(grid);status.Text=$"권장 가중치 적용 ({changed}종 변경) · 적용 전";};
         var debugPoints=new CheckBox{Text="에디터 디버그 허용",AutoSize=true,Enabled=false};footer.Controls.Add(debugPoints);bool updatingDebug=false;
         async Task DebugSettings(bool update)
         {
@@ -50,7 +66,7 @@ internal sealed class CaseDrawAdministrationForm:Form
         static string Cell(DataGridViewRow row,string key)=>Convert.ToString(row.Cells[key].Value)?.Trim()??"";
         async Task Load(bool update)
         {
-            refresh.Enabled=save.Enabled=fill.Enabled=false;
+            refresh.Enabled=save.Enabled=fill.Enabled=recommend.Enabled=false;
             try
             {
                 object? body=null;
@@ -70,7 +86,7 @@ internal sealed class CaseDrawAdministrationForm:Form
                 status.Text=update?"적용했습니다.":"조회했습니다.";
             }
             catch(Exception ex){status.Text="요청 실패: "+ex.Message;}
-            finally{if(!IsDisposed){refresh.Enabled=true;save.Enabled=revision>=0;fill.Enabled=revision>=0&&defaults.Length>0;}}
+            finally{if(!IsDisposed){refresh.Enabled=true;save.Enabled=recommend.Enabled=revision>=0;fill.Enabled=revision>=0&&defaults.Length>0;}}
         }
         refresh.Click+=async(_,_)=>await Load(false);save.Click+=async(_,_)=>await Load(true);Shown+=async(_,_)=>await Load(false);Controls.Add(root);FormClosed+=(_,_)=>http.Dispose();
     }
