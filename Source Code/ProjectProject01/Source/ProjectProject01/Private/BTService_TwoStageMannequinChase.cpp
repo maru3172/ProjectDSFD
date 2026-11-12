@@ -151,7 +151,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			FMannequinPlayerObservation SharedObservation;
 			FVector TrackingLocation;
 			
-			const bool bFoundPrimaryObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, SharedObservation);
+			const bool bFoundPrimaryObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, false, SharedObservation);
 			
 			if (bFoundPrimaryObservation && TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
 			{
@@ -460,7 +460,7 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 	FMannequinPlayerObservation SharedObservation;
 	
 	// 자체 관측 정보가 없지만 주변 1 차의 정보를 받을 수 있으면 2 차다.
-	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, SharedObservation))
+	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, false, SharedObservation))
 	{
 		return ETwoStageMannequinTier::Secondary;
 	}
@@ -468,7 +468,7 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 	return ETwoStageMannequinTier::Roaming;
 }
 
-bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, FMannequinPlayerObservation& OutObservation) const
+bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, bool bRequireDirectObservation, FMannequinPlayerObservation& OutObservation) const
 {
 	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
 	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
@@ -526,6 +526,11 @@ bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMan
 			continue;
 		}
 		
+		if (bRequireDirectObservation && !OtherObservation.bDirectlyVisible)
+		{
+			continue;
+		}
+		
 		// 7. 기존 후보보다 최근 정보인가
 		// 여러 1 차 마네킹이 있다면 가장 최근에 플레이어를 본 정보를 사용한다.
 		if (!bFoundPrimary || OtherObservation.LastSeenTime > NewestObservationTime)
@@ -573,8 +578,8 @@ bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMann
 	}
 	
 	OutTrackingLocation = NavigationLocation.Location;
-		
-	return true;
+	
+	return TryProjectTrackingLocation(PredictedLocation, OutTrackingLocation);
 }
 
 void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Blackboard, const FVector& TrackingLocation, ETwoStageMannequinTier Tier)
@@ -645,4 +650,31 @@ void UBTService_TwoStageMannequinChase::ApplyRoamingState(UBlackboardComponent& 
 	{
 		Blackboard.ClearValue(TEXT("RoamingLocation"));
 	}
+}
+
+bool UBTService_TwoStageMannequinChase::TryProjectTrackingLocation(const FVector& CandidateLocation, FVector& OutTrackingLocation) const
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
+	if (!IsValid(NavigationSystem))
+	{
+		return false;
+	}
+	
+	FNavLocation NavigationLocation;
+	
+	const bool bProjectedToNavigation = NavigationSystem->ProjectPointToNavigation(CandidateLocation, NavigationLocation, PredictionNavigationExtent);
+	if (!bProjectedToNavigation)
+	{
+		return false;
+	}
+	
+	OutTrackingLocation = NavigationLocation.Location;
+	
+	return true;
 }

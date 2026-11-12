@@ -68,6 +68,7 @@ private:
 	bool TryFindBestPrimaryObservation(
 		const AMannequinAICharacter& CurrentMannequin,
 		const TArray<AActor*>& AllMannequins,
+		bool bRequiredDirectObservation,
 		FMannequinPlayerObservation& OutObservation
 		) const;
 	
@@ -95,6 +96,12 @@ private:
 		UBlackboardComponent& Blackboard,
 		AMannequinAICharacter& CurrentMannequin
 		);
+	
+	// 전달받은 위치를 NavMesh 위의 이동 가능한 위치로 보정한다.
+	bool TryProjectTrackingLocation(
+		const FVector& CandidateLocation,
+		FVector& OutTrackingLocation
+		) const;
 	
 	// 더 이상 플레이어 반경이 아니라 직접 관측 정보로 결정되므로 사용되지 않는다.
 	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
