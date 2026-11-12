@@ -142,8 +142,17 @@ public:
 	// 마지막 관측 정보를 이용해 계산한 예상 위치를 저장한다.
 	void SetPredictedPlayerLocation(const FVector& PredictedLocation);
 	
-	// 현재 플레이어를 직접 보고 있는지 기록한다.
+	// 마네킹이 현재 플레이어를 직접 보고 있는지 기록한다.
 	void SetPlayerDirectlyVisible(bool bDirectlyVisible);
+	
+	// 플레이어가 현재 이 마네킹을 직접 바라보고 있는지 기록한다.
+	void SetObservedByPlayer(bool bObserved);
+	
+	// 플레이어 시선 때문에 현재 멈춰 있는지 반환한다.
+	bool IsObservedByPlayer() const
+	{
+		return bObservedByPlayer;
+	}
 	
 	// 마지막 관측 이후 경과 시간에 따라 신뢰도를 갱신한다.
 	void UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifetime);
@@ -153,7 +162,7 @@ public:
 	
 	// PlayerObservation 초기화 함수
 	void ClearPlayerObservation();
-	
+
 private:
 	friend class AMultiplayTestGameMode;
 	friend class FProjectCustomRulesHideAndSeekWavesTest;
@@ -311,6 +320,10 @@ private:
 	
 	// 마지막으로 발소리를 재생한 시간
 	double LastFootstepTimeSeconds = -1.0;
+	
+	// 플레이어가 현재 이 마네킹을 직접 바라보고 있는지
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	bool bObservedByPlayer = false;
 	
 	// 이 마네킹이 마지막으로 직접 확인한 플레이어 정보
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")

@@ -732,6 +732,11 @@ void AMannequinAICharacter::SetPlayerDirectlyVisible(bool bDirectlyVisible)
 	PlayerObservation.bDirectlyVisible = bDirectlyVisible;
 }
 
+void AMannequinAICharacter::SetObservedByPlayer(bool bObserved)
+{
+	bObservedByPlayer = bObserved;
+}
+
 void AMannequinAICharacter::UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifetime)
 {
 	if (!PlayerObservation.bHasObservation)

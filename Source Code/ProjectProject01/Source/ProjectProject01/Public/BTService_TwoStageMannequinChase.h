@@ -19,6 +19,15 @@ enum class ETwoStageMannequinTier : uint8
 	Secondary = 2
 };
 
+UENUM()
+enum class EMannequinTrackingEvidence : uint8
+{
+	None = 0,
+	DirectObservation = 1,
+	StoppedMannequinClue = 2,
+	VelocityPrediction = 3
+};
+
 /**
  * 
  */
@@ -38,7 +47,8 @@ private:
 	bool IsObservedByPlayerOrHelper(
 		const APlayerCharacter& Player,
 		AMannequinAICharacter& CurrentMannequin,
-		const TArray<AActor*>& AllMannequins
+		const TArray<AActor*>& AllMannequins,
+		bool& bOutObservedByPlayer
 		) const;
 	
 	// 현재 마네킹이 플레이어를 직접 볼 수 있는지 검사한다.

@@ -83,7 +83,11 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	// 4. Blackboard 디버그 값 기록
 	// 5. 플레이어가 보고 있다면 이동 정지
 	// 6. 아니면 기존 추적/배회 진행
-	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins);
+	bool bObservedByPlayer = false;
+	
+	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins, bObservedByPlayer);
+	CurrentMannequin->SetObservedByPlayer(bObservedByPlayer);
+	
 	const bool bMannequinCanSeePlayer = CanMannequinSeePlayer(*CurrentMannequin, *Player, AllMannequins);
 	
 	const double CurrentTime = GetWorld()->GetTimeSeconds();
@@ -181,8 +185,10 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	CurrentMannequin->SetFrozen(false);
 }
 
-bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayerCharacter& Player, AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
+bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayerCharacter& Player, AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, bool& bOutObservedByPlayer) const
 {
+	bOutObservedByPlayer = false;
+	
 	APlayerController* PlayerController = Cast<APlayerController>(Player.GetController());
 	if (!IsValid(PlayerController))
 	{
@@ -351,6 +357,8 @@ bool UBTService_TwoStageMannequinChase::IsObservedByPlayerOrHelper(const APlayer
 	AHelperRearGuardCharacter* HelperRearGuard = Cast<AHelperRearGuardCharacter>(UGameplayStatics::GetActorOfClass(GetWorld(), AHelperRearGuardCharacter::StaticClass()));
 	const bool bInHelperRearGuardSight = IsValid(HelperRearGuard) && HelperRearGuard->CanObserveActor(&CurrentMannequin);
 
+	bOutObservedByPlayer = bInScreen;
+	
 	return bInScreen || bInHelperRearGuardSight;
 }
 
