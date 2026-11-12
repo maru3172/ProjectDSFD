@@ -61,6 +61,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->ClearValue(TEXT("TrackingLocation"));
 		Blackboard->ClearValue(TEXT("RoamingLocation"));
 		Blackboard->SetValueAsInt(TEXT("ChaseTier"),static_cast<int32>(ETwoStageMannequinTier::Roaming));
+		Blackboard->SetValueAsInt(TEXT("TrackingEvidence"), static_cast<int32>(EMannequinTrackingEvidence::None));
 		
 		Blackboard->SetValueAsBool(TEXT("HasPlayerObservation"), false);
 		Blackboard->SetValueAsFloat(TEXT("ObservationConfidence"), 0.0f);
@@ -133,15 +134,30 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			
 			FVector TrackingLocation;
 			
-			if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
+			if (PrimaryObservation.bDirectlyVisible)
+			{
+				if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
+				{
+					CurrentMannequin->SetPredictedPlayerLocation(TrackingLocation);
+					
+					ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::DirectObservation);
+				}
+				else
+				{
+					ApplyRoamingState(*Blackboard, *CurrentMannequin);
+				}
+			}
+			else if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
 			{
 				CurrentMannequin->SetPredictedPlayerLocation(TrackingLocation);
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
+				
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
 			}
 			else
 			{
 				ApplyRoamingState(*Blackboard, *CurrentMannequin);
 			}
+			
 			break;
 		}
 	
@@ -151,17 +167,42 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			FMannequinPlayerObservation SharedObservation;
 			FVector TrackingLocation;
 			
-			const bool bFoundPrimaryObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, false, SharedObservation);
+			const bool bFoundSharedObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, false, SharedObservation);
 			
-			if (bFoundPrimaryObservation && TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
+			if (!bFoundSharedObservation)
 			{
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier);
+				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+				break;
+			}
+			
+			FMannequinPlayerObservation DirectObservation;
+			
+			// 우선순위 1: 현재 직접 보고 있는 1 차의 최신 위치
+			if (TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, true, DirectObservation) && TryProjectTrackingLocation(DirectObservation.LastSeenLocation, TrackingLocation))
+			{
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::DirectObservation);
+			
+				break;
+			}
+			
+			// 우선순위 2: 플레이어 시선으로 멈춘 마네킹 단서
+			if (TryCalculateIndirectTrackingLocation(*CurrentMannequin, AllMannequins, SharedObservation, TrackingLocation))
+			{
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::StoppedMannequinClue);
+				
+				break;
+			}
+			
+			// 우선순위 3: 마지막 위치와 속도를 이용한 예측
+			if (TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
+			{
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::DirectObservation);
 			}
 			else
 			{
 				ApplyRoamingState(*Blackboard, *CurrentMannequin);
 			}
-
+			
 			break;
 		}
 	
@@ -582,13 +623,14 @@ bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMann
 	return TryProjectTrackingLocation(PredictedLocation, OutTrackingLocation);
 }
 
-void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Blackboard, const FVector& TrackingLocation, ETwoStageMannequinTier Tier)
+void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Blackboard, const FVector& TrackingLocation, ETwoStageMannequinTier Tier, EMannequinTrackingEvidence TrackingEvidence)
 {
 	Blackboard.ClearValue(TEXT("TargetActor"));
 	Blackboard.SetValueAsVector(TEXT("TrackingLocation"), TrackingLocation);
 	Blackboard.ClearValue(TEXT("RoamingLocation"));
 	Blackboard.SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
 	Blackboard.SetValueAsInt(TEXT("ChaseTier"), static_cast<int32>(Tier));
+	Blackboard.SetValueAsInt(TEXT("TrackingEvidence"), static_cast<int32>(TrackingEvidence));
 }
 
 bool UBTService_TwoStageMannequinChase::TryFindRoamingLocation(const AMannequinAICharacter& CurrentMannequin, FVector& OutLocation) const
@@ -628,6 +670,7 @@ void UBTService_TwoStageMannequinChase::ApplyRoamingState(UBlackboardComponent& 
 
 	Blackboard.SetValueAsInt(TEXT("ChaseTier"), static_cast<int32>(ETwoStageMannequinTier::Roaming));
 
+	Blackboard.SetValueAsInt(TEXT("TrackingEvidence"), static_cast<int32>(EMannequinTrackingEvidence::None));
 
 	// 기존 배회 목적지가 있고 아직 배회를 완료하지 않았다면 그 목적지를 계속 사용한다.
 	const bool bHasRoamingLocation = Blackboard.IsVectorValueSet(TEXT("RoamingLocation"));
@@ -675,6 +718,190 @@ bool UBTService_TwoStageMannequinChase::TryProjectTrackingLocation(const FVector
 	}
 	
 	OutTrackingLocation = NavigationLocation.Location;
+	
+	return true;
+}
+
+bool UBTService_TwoStageMannequinChase::CanCandidateSeeStoppedMannequin(const FVector& CandidateLocation, const AMannequinAICharacter& StoppedMannequin, const TArray<AActor*>& AllMannequins) const
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	const FVector TraceStart = CandidateLocation + FVector::UpVector * 80.0f;
+	FVector TraceEnd = StoppedMannequin.GetActorLocation() + FVector::UpVector * 60.0f;
+	
+	const USkeletalMeshComponent* MannequinMesh = StoppedMannequin.GetMesh();
+	
+	if (IsValid(MannequinMesh) && MannequinMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
+	{
+		TraceEnd = MannequinMesh->GetBoneLocation(TEXT("head"));
+	}
+	
+	FCollisionQueryParams QueryParams;
+	
+	// 후보와 정지 마네킹 사이의 벽만 검사한다.
+	for (AActor* MannequinActor : AllMannequins)
+	{
+		if (IsValid(MannequinActor))
+		{
+			QueryParams.AddIgnoredActor(MannequinActor);
+		}
+	}
+	
+	FHitResult HitResult;
+	
+	const bool bBlocked = 
+		World->LineTraceSingleByChannel(
+			HitResult,
+			TraceStart,
+			TraceEnd,
+			ECC_GameTraceChannel1,
+			QueryParams
+			);
+	
+	return !bBlocked;
+}
+
+bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, const FMannequinPlayerObservation& ReferenceObservation, FVector& OutTrackingLocation) const
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	if (!ReferenceObservation.bHasObservation || ReferenceObservation.Confidence <= 0.0f)
+	{
+		return false;
+	}
+	
+	TArray<const AMannequinAICharacter*> StoppedMannequins;
+	
+	for (AActor* MannequinActor : AllMannequins)
+	{
+		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
+		if (!IsValid(OtherMannequin))
+		{
+			continue;
+		}
+		
+		if (!OtherMannequin->IsObservedByPlayer())
+		{
+			continue;
+		}
+		
+		StoppedMannequins.Add(OtherMannequin);
+	}
+	
+	if (StoppedMannequins.IsEmpty())
+	{
+		return false;
+	}
+	
+	const double CurrentTime = World->GetTimeSeconds();
+	const double ElapsedTime = FMath::Max(0.0, CurrentTime - ReferenceObservation.LastSeenTime);
+	
+	const double PredictionTime = FMath::Min(ElapsedTime, static_cast<double>(MaximumPredictionSeconds));
+	const FVector PredictedLocation = ReferenceObservation.LastSeenLocation + ReferenceObservation.LastSeenVelocity * PredictionTime;
+	
+	const float MaximumReachableDistance = FMath::Clamp(EstimatedPlayerMaximumSpeed * static_cast<float>(ElapsedTime), IndirectCandidateSpacing, MaximumIndirectSearchRadius);
+	
+	TArray<FVector> CandidateLocations;
+	
+	CandidateLocations.Add(ReferenceObservation.LastSeenLocation);
+	CandidateLocations.Add(PredictedLocation);
+	
+	const int32 RingCount = FMath::Max(1, FMath::CeilToInt(MaximumReachableDistance / IndirectCandidateSpacing));
+	
+	for (int32 RingIndex = 1; RingIndex <= RingCount; ++RingIndex)
+	{
+		const float RingRadius = FMath::Min(IndirectCandidateSpacing * RingIndex, MaximumReachableDistance);
+		
+		for (int32 DirectionIndex = 0; DirectionIndex < IndirectCandidateDirectionCount; ++DirectionIndex)
+		{
+			const float AngleDegrees = 360.0f * static_cast<float>(DirectionIndex) / static_cast<float>(IndirectCandidateDirectionCount);
+			
+			const FVector Direction = FRotator(0.0f, AngleDegrees, 0.0f).Vector();
+			
+			CandidateLocations.Add(PredictedLocation + Direction * RingRadius);
+		}
+	}
+	
+	bool bFoundCandidate = false;
+	double BestCandidateScore = TNumericLimits<double>::Max();
+	FVector BestCandidateLocation = FVector::ZeroVector;
+	
+	for (const FVector& CandidateLocation : CandidateLocations)
+	{
+		FVector ProjectedLocation;
+		
+		// 1. NavMesh 위에 있음
+		if (!TryProjectTrackingLocation(CandidateLocation, ProjectedLocation))
+		{
+			continue;
+		}
+		
+		// 2. 마지막 위치에서 이동 가능한 범위 안
+		const double DistanceFromLastSeenSquared = FVector::DistSquared2D(ProjectedLocation, ReferenceObservation.LastSeenLocation);
+		
+		if (DistanceFromLastSeenSquared > FMath::Square(static_cast<double>(MaximumReachableDistance)))
+		{
+			continue;
+		}
+		
+		// 3. 모든 정지 마네킹의 단서 반경 안
+		bool bInsideAllClueRanges = true;
+		
+		for (const AMannequinAICharacter* StoppedMannequin : StoppedMannequins)
+		{
+			if (!IsValid(StoppedMannequin))
+			{
+				bInsideAllClueRanges = false;
+				break;
+			}
+			
+			const double DistanceToStoppedSquared = FVector::DistSquared2D(ProjectedLocation, StoppedMannequin->GetActorLocation());
+			
+			if (DistanceToStoppedSquared > FMath::Square(static_cast<double>(StoppedMannequinClueRadius)))
+			{
+				bInsideAllClueRanges = false;
+				break;
+			}
+			
+			// 4. 정지 마네킹과 후보 사이에 벽이 없음
+			if (!CanCandidateSeeStoppedMannequin(ProjectedLocation, *StoppedMannequin, AllMannequins))
+			{
+				bInsideAllClueRanges = false;
+				break;
+			}
+		}
+		
+		if (!bInsideAllClueRanges)
+		{
+			continue;
+		}
+		
+		// 5. 통과 후보 중 속도 예측 위치와 가장 가까운 위치
+		// 교집합 후보 중 기존 이동 예측과 가장 가까운 위치를 선택한다.
+		const double CandidateScore = FVector::DistSquared2D(ProjectedLocation, PredictedLocation);
+		
+		if (!bFoundCandidate || CandidateScore < BestCandidateScore)
+		{
+			BestCandidateLocation = PredictedLocation;
+			BestCandidateScore = CandidateScore;
+			bFoundCandidate = true;
+		}
+	}
+	
+	if (!bFoundCandidate)
+	{
+		return false;
+	}
+	
+	OutTrackingLocation = BestCandidateLocation;
 	
 	return true;
 }

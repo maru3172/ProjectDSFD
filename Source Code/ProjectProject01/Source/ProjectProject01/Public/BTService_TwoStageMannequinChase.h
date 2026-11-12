@@ -88,7 +88,8 @@ private:
 	void ApplyChaseState(
 		UBlackboardComponent& Blackboard,
 		const FVector& TrackingLocation,
-		ETwoStageMannequinTier Tier
+		ETwoStageMannequinTier Tier,
+		EMannequinTrackingEvidence TrackingEvidence
 		);
 	
 	// 배회 상태 적용 함수
@@ -100,6 +101,21 @@ private:
 	// 전달받은 위치를 NavMesh 위의 이동 가능한 위치로 보정한다.
 	bool TryProjectTrackingLocation(
 		const FVector& CandidateLocation,
+		FVector& OutTrackingLocation
+		) const;
+	
+	// 후보 위치와 정지 마네킹 사이가 벽으로 차단되지 않았는지 검사한다.
+	bool CanCandidateSeeStoppedMannequin(
+		const FVector& CandidateLocation,
+		const AMannequinAICharacter& StoppedMannequin,
+		const TArray<AActor*>& AllMannequins
+		) const;
+	
+	// 플레이어 시선으로 멈춘 마네킹들의 단서를 이용해 위치 후보를 계산한다.
+	bool TryCalculateIndirectTrackingLocation(
+		const AMannequinAICharacter& CurrentMannequin,
+		const TArray<AActor*>& AllMannequins,
+		const FMannequinPlayerObservation& ReferenceObservation,
 		FVector& OutTrackingLocation
 		) const;
 	
@@ -143,4 +159,24 @@ private:
 	// 예상 위치를 NavMesh 위로 보정할 때 사용하는 검색 범위
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
 	FVector PredictionNavigationExtent = FVector(200.0f, 200.0f, 300.0f);
+	
+	// 정지 마네킹이 플레이어 위치 단서로 작용할 수 있는 최대 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	float StoppedMannequinClueRadius = 2000.0f;
+	
+	// 간접 위치 후보를 생성하는 간격
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	float IndirectCandidateSpacing = 250.0f;
+	
+	// 한 원 둘레에 생성할 간접 위치 후보 개수
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "4"))
+	int32 IndirectCandidateDirectionCount = 12;
+	
+	// 플레이어가 마지막 관측 이후 이동할 수 있다고 보는 최대 속도
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float EstimatedPlayerMaximumSpeed = 600.0f;
+	
+	// 간접 추론 검색 범위의 최대 크기
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	float MaximumIndirectSearchRadius = 1800.0f;
 };
