@@ -83,6 +83,8 @@
 # Build-only UE config layer (Config/Generated*.ini): may hold the EOS GameClient secret during packaging.
 /Source Code/ProjectProject01/Config/Generated*.ini
 /Source Code/ProjectProject01/Config/*/Generated*.ini
+# Pak encryption and signing keys (Config/DefaultCrypto.ini, Docs/Security.md): never on GitHub. Keep a private backup.
+/Source Code/ProjectProject01/Config/DefaultCrypto.ini
 
 # ProjectProject01 build/server helper (.NET generated output)
 /Source Code/ProjectProject01/Tools/ProjectProject01BuildServerHelper/bin/
