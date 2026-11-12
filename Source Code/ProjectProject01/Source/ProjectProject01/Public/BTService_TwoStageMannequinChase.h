@@ -68,7 +68,7 @@ private:
 	bool TryFindBestPrimaryObservation(
 		const AMannequinAICharacter& CurrentMannequin,
 		const TArray<AActor*>& AllMannequins,
-		bool bRequiredDirectObservation,
+		bool bRequireDirectObservation,
 		FMannequinPlayerObservation& OutObservation
 		) const;
 	
@@ -165,7 +165,7 @@ private:
 	float StoppedMannequinClueRadius = 2000.0f;
 	
 	// 간접 위치 후보를 생성하는 간격
-	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "1.0", Units = "cm"))
 	float IndirectCandidateSpacing = 250.0f;
 	
 	// 한 원 둘레에 생성할 간접 위치 후보 개수

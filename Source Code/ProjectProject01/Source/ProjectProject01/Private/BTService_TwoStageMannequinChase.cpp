@@ -136,7 +136,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			
 			if (PrimaryObservation.bDirectlyVisible)
 			{
-				if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
+				if (TryProjectTrackingLocation(PrimaryObservation.LastSeenLocation, TrackingLocation))
 				{
 					CurrentMannequin->SetPredictedPlayerLocation(TrackingLocation);
 					
@@ -196,7 +196,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			// 우선순위 3: 마지막 위치와 속도를 이용한 예측
 			if (TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
 			{
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::DirectObservation);
+				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
 			}
 			else
 			{
@@ -600,25 +600,9 @@ bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMann
 	
 	const double CurrentTime = World->GetTimeSeconds();
 	const double ElapsedTime = FMath::Max(0.0, CurrentTime - Observation.LastSeenTime);
+	
 	const double PredictionTime = FMath::Min(ElapsedTime, static_cast<double>(MaximumPredictionSeconds));
-	
 	const FVector PredictedLocation = Observation.LastSeenLocation + Observation.LastSeenVelocity * PredictionTime;
-	
-	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
-	if (!IsValid(NavigationSystem))
-	{
-		return false;
-	}
-	
-	FNavLocation NavigationLocation;
-	
-	const bool bProjectedToNavigation = NavigationSystem->ProjectPointToNavigation(PredictedLocation, NavigationLocation, PredictionNavigationExtent);
-	if (!bProjectedToNavigation)
-	{
-		return false;
-	}
-	
-	OutTrackingLocation = NavigationLocation.Location;
 	
 	return TryProjectTrackingLocation(PredictedLocation, OutTrackingLocation);
 }
@@ -780,6 +764,9 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 	
 	TArray<const AMannequinAICharacter*> StoppedMannequins;
 	
+	// 현재 간접 추론을 수행하는 마네킹의 위치
+	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
+	
 	for (AActor* MannequinActor : AllMannequins)
 	{
 		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
@@ -788,7 +775,24 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 			continue;
 		}
 		
+		// 자기 자신은 간접 단서 대상에서 제외한다.
 		if (!OtherMannequin->IsObservedByPlayer())
+		{
+			continue;
+		}
+		
+		// 플레이어 시선으로 멈춘 마네킹만 간접 단서로 사용한다.
+		if (!OtherMannequin->IsObservedByPlayer())
+		{
+			continue;
+		}
+		
+		const FVector OtherLocation = OtherMannequin->GetActorLocation();
+		
+		const float HeightDifference = FMath::Abs(CurrentLocation.Z - OtherLocation.Z);
+		
+		// 다른 층에 있는 정지 마네킹은 간접 단서에서 제외한다.
+		if (HeightDifference > MaximumHeightDifference)
 		{
 			continue;
 		}
@@ -890,7 +894,7 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 		
 		if (!bFoundCandidate || CandidateScore < BestCandidateScore)
 		{
-			BestCandidateLocation = PredictedLocation;
+			BestCandidateLocation = ProjectedLocation;
 			BestCandidateScore = CandidateScore;
 			bFoundCandidate = true;
 		}
