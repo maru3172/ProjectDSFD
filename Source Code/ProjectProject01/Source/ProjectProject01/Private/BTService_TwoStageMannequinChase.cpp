@@ -186,7 +186,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			}
 			
 			// 우선순위 2: 플레이어 시선으로 멈춘 마네킹 단서
-			if (TryCalculateIndirectTrackingLocation(*CurrentMannequin, AllMannequins, SharedObservation, TrackingLocation))
+			if (TryGetCachedIndirectTrackingLocation(*CurrentMannequin, AllMannequins, SharedObservation, TrackingLocation))
 			{
 				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::StoppedMannequinClue);
 				
@@ -908,4 +908,54 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 	OutTrackingLocation = BestCandidateLocation;
 	
 	return true;
+}
+
+bool UBTService_TwoStageMannequinChase::TryGetCachedIndirectTrackingLocation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, const FMannequinPlayerObservation& ReferenceObservation, FVector& OutTrackingLocation)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	const double CurrentTime = World->GetTimeSeconds();
+	const double ElapsedSinceInference = CurrentTime - LastIndirectInferenceTime;
+	
+	if (LastIndirectInferenceTime >= 0.0 && ElapsedSinceInference < static_cast<double>(IndirectInferenceInterval))
+	{
+		if (!bHasCachedIndirectTrackingLocation)
+		{
+			return false;
+		}
+		
+		OutTrackingLocation = CachedIndirectTrackingLocation;
+		
+		return true;
+	}
+	
+	LastIndirectInferenceTime = CurrentTime;
+	
+	FVector NewIndirectTrackingLocation;
+	
+	const bool bCalculatedIndirectLocation = TryCalculateIndirectTrackingLocation(CurrentMannequin, AllMannequins, ReferenceObservation, NewIndirectTrackingLocation);
+	
+	if (!bCalculatedIndirectLocation)
+	{
+		bHasCachedIndirectTrackingLocation = false;
+		return false;
+	}
+	
+	CachedIndirectTrackingLocation = NewIndirectTrackingLocation;
+	bHasCachedIndirectTrackingLocation = true;
+	
+	OutTrackingLocation = CachedIndirectTrackingLocation;
+	
+	return true;
+}
+
+void UBTService_TwoStageMannequinChase::ResetIndirectTrackingCache()
+{
+	LastIndirectInferenceTime = -1.0;
+	CachedIndirectTrackingLocation = FVector::ZeroVector;
+	bHasCachedIndirectTrackingLocation = false;
 }

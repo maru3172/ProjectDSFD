@@ -119,6 +119,17 @@ private:
 		FVector& OutTrackingLocation
 		) const;
 	
+	// 계산 주기가 되지 않았다면 이전 간접 추론 결과를 재사용한다.
+	bool TryGetCachedIndirectTrackingLocation(
+		const AMannequinAICharacter& CurrentMannequin,
+		const TArray<AActor*>& AllMannequins,
+		const FMannequinPlayerObservation& ReferenceObservation,
+		FVector& OutTrackingLocation
+		);
+	
+	// 저장된 간섭 추론 결과를 초기화한다.
+	void ResetIndirectTrackingCache();
+	
 	// 더 이상 플레이어 반경이 아니라 직접 관측 정보로 결정되므로 사용되지 않는다.
 	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
 	// UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
@@ -179,4 +190,17 @@ private:
 	// 간접 추론 검색 범위의 최대 크기
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
 	float MaximumIndirectSearchRadius = 1800.0f;
+	
+	// 간접 위치 추론을 다시 계산하는 시간 간격
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Optimization", meta = (ClampMin = "0.0", Units = "s"))
+	float IndirectInferenceInterval = 0.25f;
+	
+	// 마지막으로 간접 위치를 계산한 월드 시각
+	double LastIndirectInferenceTime = -1.0;
+	
+	// 마지막으로 성공한 간접 위치
+	FVector CachedIndirectTrackingLocation = FVector::ZeroVector;
+	
+	// 사용할 수 있는 간접 위치 캐시가 있는지
+	bool bHasCachedIndirectTrackingLocation = false;
 };
