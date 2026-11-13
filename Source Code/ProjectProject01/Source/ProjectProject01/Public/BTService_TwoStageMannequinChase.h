@@ -242,4 +242,8 @@ private:
 	
 	// 현재 안정화된 추적 위치를 계산할 때 사용한 정보 종류
 	EMannequinTrackingEvidence StabilizedTrackingEvidence = EMannequinTrackingEvidence::None;
+	
+	// 간접 단서 후보로 수집할 정지 마네킹의 최대 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	float StoppedMannequinCollectionRadius = 2500.0f;
 };

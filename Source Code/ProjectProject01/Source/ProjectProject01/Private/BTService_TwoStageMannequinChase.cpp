@@ -834,6 +834,25 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 			continue;
 		}
 		
+		// 현재 추론 중인 마네킹과 너무 멀리 떨어진 단서는 제외한다.
+		const double DistanceToStoppedMannequinSquared = FVector::DistSquared2D(CurrentLocation, OtherLocation);
+		const double CollectionRadiusSquared = FMath::Square(static_cast<double>(StoppedMannequinCollectionRadius));
+		
+		if (DistanceToStoppedMannequinSquared > CollectionRadiusSquared)
+		{
+			continue;
+		}
+		
+		// 마지막 관측 위치에서 논리적으로 연결될 수 없는 단서는 제외한다.
+		const double MaximumClueConnectionDistance = static_cast<double>(MaximumIndirectSearchRadius + StoppedMannequinCollectionRadius);
+		const double DistanceFromLastObservationSquared = FVector::DistSquared2D(ReferenceObservation.LastSeenLocation, OtherLocation);
+		
+		if (DistanceFromLastObservationSquared > FMath::Square(MaximumClueConnectionDistance))
+		{
+			continue;
+		}
+		
+		// 모든 조건을 통과한 마네킹만 간접 단서로 사용한다.
 		StoppedMannequins.Add(OtherMannequin);
 	}
 	
