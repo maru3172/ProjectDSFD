@@ -144,10 +144,19 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 				}
 				else
 				{
-					ApplyRoamingState(*Blackboard, *CurrentMannequin);
+					if (Blackboard->IsVectorValueSet(TEXT("TrackingLocation")))
+					{
+						const FVector ExistingTrackingLocation = Blackboard->GetValueAsVector(TEXT("TrackingLocation"));
+						
+						ApplyChaseState(*Blackboard, ExistingTrackingLocation, Tier, EMannequinTrackingEvidence::DirectObservation);
+					}
+					else
+					{
+						ApplyRoamingState(*Blackboard, *CurrentMannequin);
+					}
 				}
 			}
-			else if (TryCalculateTrackingLocation(PrimaryObservation, TrackingLocation))
+			else if (TryResolveObservationTrackingLocation(PrimaryObservation, TrackingLocation))
 			{
 				CurrentMannequin->SetPredictedPlayerLocation(TrackingLocation);
 				
@@ -155,7 +164,17 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			}
 			else
 			{
-				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+				// 새 예상 위치와 마지막 관측 위치를 모두 NavMesh 에 보정하지 못했으면 기존 추적 위치를 유지한다.
+				if (Blackboard->IsVectorValueSet(TEXT("TrackingLocation")))
+				{
+					const FVector ExistingTrackingLocation = Blackboard->GetValueAsVector(TEXT("TrackingLocation"));
+					
+					ApplyChaseState(*Blackboard, ExistingTrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
+				}
+				else
+				{
+					ApplyRoamingState(*Blackboard, *CurrentMannequin);
+				}
 			}
 			
 			break;
@@ -194,13 +213,23 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			}
 			
 			// 우선순위 3: 마지막 위치와 속도를 이용한 예측
-			if (TryCalculateTrackingLocation(SharedObservation, TrackingLocation))
+			if (TryResolveObservationTrackingLocation(SharedObservation, TrackingLocation))
 			{
 				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
 			}
 			else
 			{
-				ApplyRoamingState(*Blackboard, *CurrentMannequin);
+				// 새 예상 위치와 마지막 관측 위치를 사용할 수 없다면 이전에 설정된 추적 위치를 유지한다.
+				if (Blackboard->IsVectorValueSet(TEXT("TrackingLocation")))
+				{
+					const FVector ExistingTrackingLocation = Blackboard->GetValueAsVector(TEXT("TrackingLocation"));
+					
+					ApplyChaseState(*Blackboard, ExistingTrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
+				}
+				else
+				{
+					ApplyRoamingState(*Blackboard, *CurrentMannequin);
+				}
 			}
 			
 			break;
@@ -1038,4 +1067,14 @@ void UBTService_TwoStageMannequinChase::ResetTrackingLocationStabilization()
 	LastTrackingLocationChangeTime = -1.0;
 	bHasStabilizedTrackingLocation = false;
 	StabilizedTrackingEvidence = EMannequinTrackingEvidence::None;
+}
+
+bool UBTService_TwoStageMannequinChase::TryResolveObservationTrackingLocation(const FMannequinPlayerObservation& Observation, FVector& OutTrackingLocation) const
+{
+	if (TryCalculateTrackingLocation(Observation, OutTrackingLocation))
+	{
+		return true;
+	}
+	
+	return TryProjectTrackingLocation(Observation.LastSeenLocation, OutTrackingLocation);
 }

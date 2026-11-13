@@ -139,6 +139,12 @@ private:
 	// 저장된 추적 목표 안정화 상태를 초기화한다.
 	void ResetTrackingLocationStabilization();
 	
+	// 예측 위치가 실패하면 마지막 관측 위치를 대체 목표로 사용한다.
+	bool TryResolveObservationTrackingLocation(
+		const FMannequinPlayerObservation& Observation,
+		FVector& OutTrackingLocation
+		) const;
+	
 	// 더 이상 플레이어 반경이 아니라 직접 관측 정보로 결정되므로 사용되지 않는다.
 	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
 	// UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
