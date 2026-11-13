@@ -610,8 +610,12 @@ bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMann
 void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Blackboard, const FVector& TrackingLocation, ETwoStageMannequinTier Tier, EMannequinTrackingEvidence TrackingEvidence)
 {
 	Blackboard.ClearValue(TEXT("TargetActor"));
-	Blackboard.SetValueAsVector(TEXT("TrackingLocation"), TrackingLocation);
+	
+	const FVector StableTrackingLocation = StabilizeTrackingLocation(TrackingLocation, TrackingEvidence);
+	Blackboard.SetValueAsVector(TEXT("TrackingLocation"), StableTrackingLocation);
+	
 	Blackboard.ClearValue(TEXT("RoamingLocation"));
+	
 	Blackboard.SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
 	Blackboard.SetValueAsInt(TEXT("ChaseTier"), static_cast<int32>(Tier));
 	Blackboard.SetValueAsInt(TEXT("TrackingEvidence"), static_cast<int32>(TrackingEvidence));
@@ -649,6 +653,10 @@ bool UBTService_TwoStageMannequinChase::TryFindRoamingLocation(const AMannequinA
 
 void UBTService_TwoStageMannequinChase::ApplyRoamingState(UBlackboardComponent& Blackboard, AMannequinAICharacter& CurrentMannequin)
 {
+	// 캐시 초기화
+	ResetTrackingLocationStabilization();
+	ResetIndirectTrackingCache();
+	
 	Blackboard.ClearValue(TEXT("TargetActor"));
 	Blackboard.ClearValue(TEXT("TrackingLocation"));
 
@@ -958,4 +966,76 @@ void UBTService_TwoStageMannequinChase::ResetIndirectTrackingCache()
 	LastIndirectInferenceTime = -1.0;
 	CachedIndirectTrackingLocation = FVector::ZeroVector;
 	bHasCachedIndirectTrackingLocation = false;
+}
+
+FVector UBTService_TwoStageMannequinChase::StabilizeTrackingLocation(const FVector& NewTrackingLocation, EMannequinTrackingEvidence TrackingEvidence)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return NewTrackingLocation;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+	
+	// 직접 관측 정보는 즉시 반영한다.
+	if (TrackingEvidence == EMannequinTrackingEvidence::DirectObservation)
+	{
+		StabilizedTrackingLocation = NewTrackingLocation;
+		LastTrackingLocationChangeTime = CurrentTime;
+		bHasStabilizedTrackingLocation = true;
+		StabilizedTrackingEvidence = TrackingEvidence;
+		
+		return StabilizedTrackingLocation;
+	}
+	
+	// 저장된 목표가 없다면 첫 목표를 바로 사용한다.
+	if (!bHasStabilizedTrackingLocation)
+	{
+		StabilizedTrackingLocation = NewTrackingLocation;
+		LastTrackingLocationChangeTime = CurrentTime;
+		bHasStabilizedTrackingLocation = true;
+		StabilizedTrackingEvidence = TrackingEvidence;
+		
+		return StabilizedTrackingLocation;
+	}
+	
+	// 사용하는 정보 종류가 바뀌면 즉시 목표를 갱신한다.
+	if (StabilizedTrackingEvidence != TrackingEvidence)
+	{
+		StabilizedTrackingLocation = NewTrackingLocation;
+		LastTrackingLocationChangeTime = CurrentTime;
+		StabilizedTrackingEvidence = TrackingEvidence;
+		
+		return StabilizedTrackingLocation;
+	}
+	
+	const double TrackingLocationDistanceSquared = FVector::DistSquared2D(StabilizedTrackingLocation, NewTrackingLocation);
+	const double MinimumChangeSquared = FMath::Square(static_cast<double>(MinimumTrackingLocationChange));
+	const double ImmediateChangeSquared = FMath::Square(static_cast<double>(ImmediateTrackingLocationChange));
+	
+	// 변화량이 아주 작다면 기존 목표를 유지한다.
+	if (TrackingLocationDistanceSquared <= MinimumChangeSquared)
+	{
+		return StabilizedTrackingLocation;
+	}
+	
+	const double TimeSinceTrackingLocationChange = CurrentTime - LastTrackingLocationChangeTime;
+	
+	// 큰 변화거나 최소 유지 시간이 지났으면 새 목표를 사용한다.
+	if (TrackingLocationDistanceSquared >= ImmediateChangeSquared || TimeSinceTrackingLocationChange >= static_cast<double>(MinimumTrackingLocationHoldTime))
+	{
+		StabilizedTrackingLocation = NewTrackingLocation;
+		LastTrackingLocationChangeTime = CurrentTime;
+	}
+	
+	return StabilizedTrackingLocation;
+}
+
+void UBTService_TwoStageMannequinChase::ResetTrackingLocationStabilization()
+{
+	StabilizedTrackingLocation = FVector::ZeroVector;
+	LastTrackingLocationChangeTime = -1.0;
+	bHasStabilizedTrackingLocation = false;
+	StabilizedTrackingEvidence = EMannequinTrackingEvidence::None;
 }

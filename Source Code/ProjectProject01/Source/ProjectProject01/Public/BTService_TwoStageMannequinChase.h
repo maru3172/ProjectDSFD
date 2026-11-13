@@ -130,6 +130,15 @@ private:
 	// 저장된 간섭 추론 결과를 초기화한다.
 	void ResetIndirectTrackingCache();
 	
+	// 목표 위치가 지나치게 자주 바뀌지 않도록 안정화한다.
+	FVector StabilizeTrackingLocation(
+		const FVector& NewTrackingLocation,
+		EMannequinTrackingEvidence TrackingEvidence
+		);
+	
+	// 저장된 추적 목표 안정화 상태를 초기화한다.
+	void ResetTrackingLocationStabilization();
+	
 	// 더 이상 플레이어 반경이 아니라 직접 관측 정보로 결정되므로 사용되지 않는다.
 	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
 	// UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
@@ -203,4 +212,28 @@ private:
 	
 	// 사용할 수 있는 간접 위치 캐시가 있는지
 	bool bHasCachedIndirectTrackingLocation = false;
+	
+	// 이 거리보다 작은 목표 변화는 기존 위치를 유지한다.
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Stabilization", meta = (ClampMin = "0.0", Units = "cm"))
+	float MinimumTrackingLocationChange = 100.0f;
+	
+	// 이 거리 이상 목표가 바뀌면 유지 시간과 관계없이 즉시 교체한다.
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Stabilization", meta = (ClampMin = "0.0", Units = "cm"))
+	float ImmediateTrackingLocationChange = 400.0f;
+	
+	// 작은 목표 변화가 있을 때 기존 목표를 유지하는 최대 시간
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Stabilization", meta = (ClampMin = "0.0", Units = "s"))
+	float MinimumTrackingLocationHoldTime = 0.25f;
+	
+	// 목표 위치가 자주 바뀌지 않도록 현재 유지하고 있는 추적 위치
+	FVector StabilizedTrackingLocation = FVector::ZeroVector;
+	
+	// 현재 추적 위치를 마지막으로 교체한 월드 시각
+	double LastTrackingLocationChangeTime = -1.0;
+	
+	// 현재 사용할 수 있는 안정화된 추적 위치가 저장되어 있는지
+	bool bHasStabilizedTrackingLocation = false;
+	
+	// 현재 안정화된 추적 위치를 계산할 때 사용한 정보 종류
+	EMannequinTrackingEvidence StabilizedTrackingEvidence = EMannequinTrackingEvidence::None;
 };
