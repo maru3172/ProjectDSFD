@@ -246,4 +246,11 @@ private:
 	// 간접 단서 후보로 수집할 정지 마네킹의 최대 거리
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
 	float StoppedMannequinCollectionRadius = 2500.0f;
+	
+	// 카메라가 안정될 때까지 마네킹을 정지시키는 시간
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Startup", meta = (ClampMin = "0.0", Units = "s"))
+	float InitialCameraGracePeriod = 0.5f;
+	
+	// 이 서비스가 처음 실행된 월드 시각
+	double FirstServiceTickTime = -1.0;
 };

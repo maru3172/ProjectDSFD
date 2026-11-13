@@ -77,6 +77,15 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMannequinAICharacter::StaticClass(), AllMannequins);
 
+	const double CurrentTime = GetWorld()->GetTimeSeconds();
+	
+	if (FirstServiceTickTime < 0.0)
+	{
+		FirstServiceTickTime = CurrentTime;
+	}
+	
+	const bool bWithinInitialCameraGracePeriod = CurrentTime - FirstServiceTickTime < static_cast<double>(InitialCameraGracePeriod);
+	
 	// 직접 시야 판정
 	// 1. 직접 시야 판정
 	// 2. 관측 데이터 갱신
@@ -86,12 +95,12 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	// 6. 아니면 기존 추적/배회 진행
 	bool bObservedByPlayer = false;
 	
-	const bool bObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins, bObservedByPlayer);
+	const bool bActuallyObservedByPlayerOrHelper = IsObservedByPlayerOrHelper(*Player, *CurrentMannequin, AllMannequins, bObservedByPlayer);
+	
+	const bool bObservedByPlayerOrHelper = bWithinInitialCameraGracePeriod || bActuallyObservedByPlayerOrHelper;
 	CurrentMannequin->SetObservedByPlayer(bObservedByPlayer);
 	
 	const bool bMannequinCanSeePlayer = CanMannequinSeePlayer(*CurrentMannequin, *Player, AllMannequins);
-	
-	const double CurrentTime = GetWorld()->GetTimeSeconds();
 	
 	CurrentMannequin->SetPlayerDirectlyVisible(bMannequinCanSeePlayer);
 	
