@@ -127,7 +127,7 @@ private:
 		FVector& OutTrackingLocation
 		);
 	
-	// 저장된 간섭 추론 결과를 초기화한다.
+	// 저장된 간접 추론 결과를 초기화한다.
 	void ResetIndirectTrackingCache();
 	
 	// 목표 위치가 지나치게 자주 바뀌지 않도록 안정화한다.

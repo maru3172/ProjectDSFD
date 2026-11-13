@@ -55,6 +55,14 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	{
 		AIController->StopMovement();
 		CurrentMannequin->SetFrozen(true);
+		
+		CurrentMannequin->SetObservedByPlayer(false);
+		CurrentMannequin->SetPlayerDirectlyVisible(false);
+		CurrentMannequin->ClearPlayerObservation();
+		
+		ResetTrackingLocationStabilization();
+		ResetIndirectTrackingCache();
+		
 		Blackboard->SetValueAsBool(TEXT("PlayerLookingAtMannequin"), false);
 		Blackboard->SetValueAsBool(TEXT("MannequinCanSeePlayer"), false);
 		Blackboard->ClearValue(TEXT("TargetActor"));
@@ -67,8 +75,6 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->SetValueAsFloat(TEXT("ObservationConfidence"), 0.0f);
 		Blackboard->ClearValue(TEXT("LastSeenPlayerLocation"));
 		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
-		
-		CurrentMannequin->ClearPlayerObservation();
 
 		return;
 	}
@@ -822,7 +828,7 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 		}
 		
 		// 자기 자신은 간접 단서 대상에서 제외한다.
-		if (!OtherMannequin->IsObservedByPlayer())
+		if (OtherMannequin == &CurrentMannequin)
 		{
 			continue;
 		}
@@ -853,7 +859,7 @@ bool UBTService_TwoStageMannequinChase::TryCalculateIndirectTrackingLocation(con
 		}
 		
 		// 마지막 관측 위치에서 논리적으로 연결될 수 없는 단서는 제외한다.
-		const double MaximumClueConnectionDistance = static_cast<double>(MaximumIndirectSearchRadius + StoppedMannequinCollectionRadius);
+		const double MaximumClueConnectionDistance = static_cast<double>(MaximumIndirectSearchRadius + StoppedMannequinClueRadius);
 		const double DistanceFromLastObservationSquared = FVector::DistSquared2D(ReferenceObservation.LastSeenLocation, OtherLocation);
 		
 		if (DistanceFromLastObservationSquared > FMath::Square(MaximumClueConnectionDistance))
@@ -1099,6 +1105,11 @@ void UBTService_TwoStageMannequinChase::ResetTrackingLocationStabilization()
 
 bool UBTService_TwoStageMannequinChase::TryResolveObservationTrackingLocation(const FMannequinPlayerObservation& Observation, FVector& OutTrackingLocation) const
 {
+	if (!Observation.bHasObservation || Observation.Confidence <= 0.0f)
+	{
+		return false;
+	}
+	
 	if (TryCalculateTrackingLocation(Observation, OutTrackingLocation))
 	{
 		return true;
