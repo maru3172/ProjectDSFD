@@ -8,6 +8,14 @@
 #include "ProjectProject01DiagnosticsSubsystem.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/Tasks/BTTask_Wait.h"
+#include "ProjectShutterNavigation.h"
+
+AMannequinAIController::AMannequinAIController()
+{
+    // Mannequins treat a lowered working fire shutter as a wall and go around (Docs/FireShutterLayout.md).
+    // Nothing else changes: the filter only excludes that one area.
+    DefaultNavigationFilterClass = UProjectMannequinNavFilter::StaticClass();
+}
 
 void AMannequinAIController::BeginPlay()
 {

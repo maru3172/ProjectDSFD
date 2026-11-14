@@ -69,6 +69,10 @@ public:
 	/** 체크포인트 역직렬화 뒤 저장된 상태를 실제 조명 컴포넌트와 감지 타이머에 반영합니다. */
 	void RefreshAfterCheckpointRestore();
 
+	/** This match the fixture is dead (Docs/FireShutterLayout.md, damage zones): no light, no glow, steadily. Not a flicker. */
+	void SetMatchDead(bool bDead);
+	bool IsMatchDead() const { return bMatchDead; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -96,6 +100,7 @@ private:
 	void UpdateBlinkingFromDetectedCount();
 	void ApplyLightState(bool bNewLightOn);
 	void ApplyBrightness(float Brightness);
+	bool bMatchDead = false;
 	void ApplyRecoveryProjection(float Brightness, float FlashScale, float WakeBlend);
 	void ApplyColdTint(float Tint);
 	bool ScheduleNearbyCascade(TSet<TWeakObjectPtr<AMannequinReactiveLight>>& Members, uint64 GroupId,

@@ -12,6 +12,10 @@
 #include "PlayerCharacter.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "NavModifierComponent.h"
+#include "NavAreas/NavArea_Null.h"
+#include "ProjectShutterNavigation.h"
 
 AFireShutterActor::AFireShutterActor()
 {
@@ -41,6 +45,14 @@ AFireShutterActor::AFireShutterActor()
 	}
 }
 
+void AFireShutterActor::OnConstruction(const FTransform& Transform)
+{
+    Super::OnConstruction(Transform);
+    // Layout shutters (Docs/FireShutterLayout.md) are up or down per match, so the baked navmesh must not see them;
+    // a broken one cuts paths at runtime with its own modifier instead. Shutters outside the layout keep the old behaviour.
+    if(ItemMesh&&LayoutRole!=EProjectShutterLayoutRole::None)ItemMesh->SetCanEverAffectNavigation(false);
+}
+
 void AFireShutterActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -49,6 +61,7 @@ void AFireShutterActor::BeginPlay()
 	
 	// 에디터에서 배치한 셔터 메시의 위치를 닫힌 위치로 사용한다.
 	ClosedLocation = ItemMesh->GetRelativeLocation();
+	ClosedRotation = ItemMesh->GetRelativeRotation();
 	
 	// 닫힌 위치에서 OpenHeight 만큼 위쪽을 열린 위치로 사용한다.
 	OpenLocation = ClosedLocation + FVector(0, 0, OpenHeight);
@@ -65,6 +78,7 @@ void AFireShutterActor::BeginPlay()
 	SetActorTickEnabled(false);
     bMotionReady=true;
     if(GetNetMode()!=NM_Standalone)OnRep_Motion();
+    if(LayoutState!=EProjectShutterLayoutState::Default)ShowLayoutState(); // Layout replicated before BeginPlay.
 }
 
 void AFireShutterActor::Tick(float DeltaTime)
@@ -132,13 +146,14 @@ void AFireShutterActor::HandleInteraction(APawn* Interator)
         if(!HasAuthority()||!CanInteract_Implementation(Interator))return;
         if(IsActorTickEnabled())Tick(0);
         Motion.Start=CurrentOpenAlpha;Motion.Target=Motion.Target>=.5f?0.f:1.f;Motion.Speed=FMath::Max(0.f,MoveSpeed);Motion.Height=FMath::Max(0.f,OpenHeight);Motion.StartedAt=ServerNow();
-        ForceNetUpdate();OnRep_Motion();return;
+        ForceNetUpdate();OnRep_Motion();RefreshNavCut();return;
     }
 	Super::HandleInteraction(Interator);
 	
 	// 현재 목표가 열린 상태라면 닫힌 상태로 변경하고, 닫힌 상태라면 열린 상태로 변경한다.
 	// 이동 중에 다시 상호작용해도 목표값이 반전되므로 현재 위치부터 즉시 반대 방향으로 이동한다.
 	TargetOpenAlpha = TargetOpenAlpha >= 0.5f ? 0.0f : 1.0f;
+	RefreshNavCut();
 	
 	if (TargetOpenAlpha >= 0.5f)
 	{
@@ -160,14 +175,79 @@ void AFireShutterActor::OnRep_Motion()
     // The prompt follows the replicated target on every machine (server and clients alike).
     InteractionText=Motion.Target>=.5f?NSLOCTEXT("Interaction","LowerFireShutter","F 키: 방화 셔터 내리기"):NSLOCTEXT("Interaction","RaiseFireShutter","F 키: 방화 셔터 올리기");
     if(bMotionReady){SetActorTickEnabled(true);Tick(0);}
-    // A shutter coming down or going up shakes the pad of a player close by (Docs/Gamepad.md 7).
-    if(bMotionReady&&GetNetMode()!=NM_DedicatedServer)
+    // A shutter coming down or going up shakes the pad of a player close by (Docs/Gamepad.md 7). A layout snap does not move.
+    if(bMotionReady&&GetNetMode()!=NM_DedicatedServer&&!FMath::IsNearlyEqual(Motion.Start,Motion.Target))
         if(const APlayerController* PC=GetWorld()->GetFirstPlayerController();PC&&PC->GetPawn()&&FVector::Dist(PC->GetPawn()->GetActorLocation(),GetActorLocation())<1500.f)
             if(auto* Pad=UProjectGamepadSubsystem::Get(this))Pad->Pulse(.45f,.5f,true);
 }
-void AFireShutterActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps)const{Super::GetLifetimeReplicatedProps(OutLifetimeProps);DOREPLIFETIME(AFireShutterActor,Motion);}
+void AFireShutterActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps)const{Super::GetLifetimeReplicatedProps(OutLifetimeProps);DOREPLIFETIME(AFireShutterActor,Motion);DOREPLIFETIME(AFireShutterActor,LayoutState);DOREPLIFETIME(AFireShutterActor,BrokenTilt);}
+
+void AFireShutterActor::ApplyLayout(const EProjectShutterLayoutState NewState,const float OpenAlpha,const float TiltDegrees)
+{
+    if(!HasAuthority())return;
+    LayoutState=NewState;BrokenTilt=TiltDegrees;
+    const float Alpha=FMath::Clamp(OpenAlpha,0.f,1.f);const bool bOpen=Alpha>=.5f;
+    if(GetNetMode()==NM_Standalone)
+    {
+        CurrentOpenAlpha=TargetOpenAlpha=Alpha;
+        ItemMesh->SetRelativeLocation(FMath::Lerp(ClosedLocation,OpenLocation,Alpha));
+        InteractionText=bOpen?NSLOCTEXT("Interaction","LowerFireShutter","F 키: 방화 셔터 내리기"):NSLOCTEXT("Interaction","RaiseFireShutter","F 키: 방화 셔터 올리기");
+        SetActorTickEnabled(false);
+    }
+    else
+    {
+        // Start == Target: every machine places it there at once (no motion, no pad shake).
+        Motion.Start=Motion.Target=Alpha;Motion.Speed=FMath::Max(0.f,MoveSpeed);Motion.Height=FMath::Max(0.f,OpenHeight);Motion.StartedAt=ServerNow();
+        ForceNetUpdate();OnRep_Motion();
+    }
+    ShowLayoutState();
+}
+bool AFireShutterActor::IsHeadingDown()const{return (GetNetMode()==NM_Standalone?TargetOpenAlpha:Motion.Target)<.5f;}
+void AFireShutterActor::OpenByServer()
+{
+    if(!HasAuthority()||!bMotionReady||!IsHeadingDown()||LayoutState==EProjectShutterLayoutState::Sealed||LayoutState==EProjectShutterLayoutState::Raised||LayoutState==EProjectShutterLayoutState::Hanging)return;
+    if(GetNetMode()==NM_Standalone)
+    {
+        TargetOpenAlpha=1.f;InteractionText=NSLOCTEXT("Interaction","LowerFireShutter","F 키: 방화 셔터 내리기");SetActorTickEnabled(true);RefreshNavCut();return;
+    }
+    if(IsActorTickEnabled())Tick(0);
+    Motion.Start=CurrentOpenAlpha;Motion.Target=1.f;Motion.Speed=FMath::Max(0.f,MoveSpeed);Motion.Height=FMath::Max(0.f,OpenHeight);Motion.StartedAt=ServerNow();
+    ForceNetUpdate();OnRep_Motion();RefreshNavCut();
+}
+void AFireShutterActor::OnRep_LayoutState(){ShowLayoutState();}
+void AFireShutterActor::ShowLayoutState()
+{
+    if(bMotionReady)ItemMesh->SetRelativeRotation(ClosedRotation+FRotator(0.f,0.f,BrokenTilt));
+    const bool bSealed=LayoutState==EProjectShutterLayoutState::Sealed||LayoutState==EProjectShutterLayoutState::Hanging; // broken look
+    if(BrokenMesh)
+    {
+        if(!NormalMesh)NormalMesh=ItemMesh->GetStaticMesh();
+        ItemMesh->SetStaticMesh(bSealed?BrokenMesh.Get():NormalMesh.Get());
+    }
+    RefreshNavCut();
+}
+void AFireShutterActor::RefreshNavCut()
+{
+    // Pathfinding lives on the server (needs a navmesh that takes runtime modifiers: Dynamic Modifiers Only).
+    if(GetNetMode()==NM_Client)return;
+    TSubclassOf<UNavArea> Area=nullptr;
+    if(LayoutState==EProjectShutterLayoutState::Sealed)Area=UNavArea_Null::StaticClass();
+    else if(LayoutState==EProjectShutterLayoutState::Operable&&IsHeadingDown())Area=UNavArea_ProjectShutterDoor::StaticClass();
+    if(!Area){if(SealNavModifier){SealNavModifier->DestroyComponent();SealNavModifier=nullptr;}return;}
+    if(!SealNavModifier)
+    {
+        SealNavModifier=NewObject<UNavModifierComponent>(this,TEXT("SealNavModifier"));
+        // Layout shutters do not affect navigation through their mesh, so the modifier uses this box (shutter-sized, actor-rotated).
+        SealNavModifier->FailsafeExtent=FVector(40.f,150.f*FMath::Abs(GetActorScale3D().Y),220.f);
+        SealNavModifier->SetAreaClass(Area);
+        SealNavModifier->RegisterComponent();
+    }
+    else if(SealNavModifier->AreaClass!=Area)SealNavModifier->SetAreaClass(Area);
+}
 bool AFireShutterActor::CanInteract_Implementation(APawn* Interactor)const
 {
+    // Broken shutters and unused corridor slots are not operable (Docs/FireShutterLayout.md).
+    if(LayoutState==EProjectShutterLayoutState::Sealed||LayoutState==EProjectShutterLayoutState::Raised||LayoutState==EProjectShutterLayoutState::Hanging)return false;
     if(GetNetMode()==NM_Standalone)return Super::CanInteract_Implementation(Interactor);
     const auto* Survivor=Cast<APlayerCharacter>(Interactor);const auto* PC=Survivor?Cast<AMultiplayTestPlayerController>(Survivor->GetController()):nullptr;
     if(!Super::CanInteract_Implementation(Interactor)||!Survivor||Survivor->IsGameOver()||!PC||PC->IsServerControlledBot()||PC->GetSurvivorState()!=EMultiplayTestSurvivorState::Active)return false;

@@ -481,11 +481,20 @@ void AMannequinReactiveLight::ApplyRecoveryProjection(float Brightness, float Fl
     LastRecoveryProjection=Projection;
 }
 
+void AMannequinReactiveLight::SetMatchDead(const bool bDead)
+{
+    if (bMatchDead==bDead) return;
+    bMatchDead=bDead;
+    LastBrightness=-1.f; // force the next apply through the change cache
+    ApplyBrightness(bDead ? 0.f : 1.f);
+}
+
 void AMannequinReactiveLight::ApplyBrightness(float Brightness)
 {
     const auto* Settings=UProjectProject01GameUserSettings::Get();
     const float Flash=Settings ? FMath::Clamp(Settings->GetLocalFlashScale(),0.f,1.f) : 1.f;
-    const float Presented=FMath::Lerp(1.f,FMath::Clamp(Brightness,0.f,1.f),Flash);
+    // A dead fixture stays dark whatever the flash setting (it is not a flash, it is simply off).
+    const float Presented=bMatchDead ? 0.f : FMath::Lerp(1.f,FMath::Clamp(Brightness,0.f,1.f),Flash);
     const float Wake=FMath::Clamp(WakeBlendElapsed/.25f,0.f,1.f);
     const float WakeAlpha=Wake*Wake*(3-2*Wake);
     ApplyColdTint(Presented>UE_SMALL_NUMBER && Flash>0.f ? FMath::Lerp(WakeFromColdTint,FaultPattern.ColdTint*Flash,WakeAlpha) : 0.f);
