@@ -3,6 +3,42 @@
 #include "CoreMinimal.h"
 #include "MannequinTrackingTypes.generated.h"
 
+class AMannequinAICharacter;
+
+UENUM()
+enum class ETwoStageMannequinTier : uint8
+{
+	// 유효한 추적 역할이나 수색 목표가 없는 기본 배회 상태
+	Roaming = 0,
+
+	// 현재 플레이어를 직접 관측하고 있는 1 차 마네킹
+	Primary = 1,
+
+	// 플레이어 시야로 정지했지만 플레이어를 직접 보지 못하는 2 차 마네킹
+	Secondary = 2,
+
+	// 전달받은 위치로 이동해 실제 수색을 수행하는 3 차 마네킹
+	Tertiary = 3
+};
+
+UENUM()
+enum class EMannequinTrackingEvidence : uint8
+{
+	None = 0,
+	DirectObservation = 1,
+	StoppedMannequinClue = 2,
+	VelocityPrediction = 3
+};
+
+UENUM()
+enum class EMannequinTrackingInformationType : uint8
+{
+	None = 0,
+	DirectObservation = 1,
+	LastObservation = 2,
+	IndirectPrediction = 3
+};
+
 USTRUCT(BlueprintType)
 struct FMannequinPlayerObservation
 {
@@ -35,4 +71,53 @@ struct FMannequinPlayerObservation
 	// 현재 플레이어를 직접 보고 있는지
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Tracking")
 	bool bDirectlyVisible = false;
+};
+
+USTRUCT()
+struct FMannequinSharedTrackingInformation
+{
+	GENERATED_BODY()
+	
+	// 현재 정보의 종류
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	EMannequinTrackingInformationType InformationType = EMannequinTrackingInformationType::None;
+	
+	// 정보가 나타내는 플레이어 위치
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	FVector PlayerLocation = FVector::ZeroVector;
+	
+	// 정보를 생성했을 때 확인한 플레이어 속도
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	FVector PlayerVelocity = FVector::ZeroVector;
+	
+	// 정보가 생성된 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double ObservationTime = -1.0;
+	
+	// 이 정보가 만료되는 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double ExpirationTime = -1.0;
+	
+	// 현재 정보의 신뢰도
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	float Confidence = 0.0f;
+	
+	// 이 정보를 생성한 마네킹
+	UPROPERTY(Transient, VisibleAnywhere, Category = "AI|Tracking")
+	TWeakObjectPtr<AMannequinAICharacter> SourceMannequin;
+	
+	// 중앙 관리자가 발급한 정보 고유 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 InformationId = INDEX_NONE;
+	
+	// 현재 시각을 기준으로 사용할 수 있는 정보인지 반환한다.
+	bool IsActive(double CurrentTime) const
+	{
+		return
+			InformationType != EMannequinTrackingInformationType::None &&
+			SourceMannequin.IsValid() &&
+			Confidence > 0.0f &&
+			ExpirationTime >= CurrentTime &&
+			InformationId != INDEX_NONE;
+	}
 };
