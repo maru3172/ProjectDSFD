@@ -374,6 +374,8 @@ private:
 	void RequestResetFollowingMannequins();
 	void RequestToggleMannequinCatchDamage();
 	void RequestMannequinAttack();
+	/** F as the mannequin player: raise or lower the working fire shutter in front of the viewed body. */
+	void RequestMannequinShutter();
 	void ToggleSessionMenu();
 	void SelectPreviousSpectatorTarget();
 	void SelectNextSpectatorTarget();
@@ -410,6 +412,9 @@ private:
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestMannequinAttack();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerRequestMannequinShutter();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDeclareVoluntaryExit();
@@ -525,8 +530,8 @@ private:
 	FString AuthenticatedDisplayName;
 	FString AuthenticatedMatchId;
 	FString AuthenticatedRole;
-	float RpcWindowStartSeconds[10] = {};
-	int32 RpcWindowCallCount[10] = {};
+	float RpcWindowStartSeconds[11] = {};
+	int32 RpcWindowCallCount[11] = {};
 	bool bVoluntaryExitDeclared = false;
 	bool bHadAuthenticatedSession = false;
 	/** 직접 조작 해제 후 적용할 명령이 지정됐는지 소유 클라이언트 HUD에도 복제한다. */

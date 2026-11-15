@@ -24,7 +24,7 @@ struct PROJECTPROJECT01_API FShutterLayoutGraph
 	 * Crosses: every other link the shutter physically stands across (wide corridors on a fine graph have parallel
 	 * links); they close and open together with Edge.
 	 */
-	struct FSlot { int32 Edge = INDEX_NONE; FVector2D Location = FVector2D::ZeroVector; TArray<int32> Crosses; bool bChokepoint = false; float Width = 300.f; };
+	struct FSlot { int32 Edge = INDEX_NONE; FVector2D Location = FVector2D::ZeroVector; TArray<int32> Crosses; bool bChokepoint = false; float Width = 300.f; int32 Line = INDEX_NONE; };
 	/** One escalator: the junction in front of each of its shutters (one entry per side shutter). */
 	struct FEscalator { TArray<int32> Sides; };
 
@@ -62,6 +62,8 @@ struct PROJECTPROJECT01_API FShutterLayoutSettings
 	 * show as smashed or hanging rows. Closing happens in narrow corridors and chokepoints.
 	 */
 	float MaxClosableRowWidth = 1000.f;
+	/** Chance a whole fire compartment line (slots sharing Line) stays open this match: no shutter down along it. */
+	float OpenLineChance = .35f;
 	/** Chance a closed chokepoint is broken shutters only (no way through there); otherwise one working shutter in the row. */
 	float ChokepointSealedChance = .4f;
 	/** Extra distance counted for opening a working shutter on the way. */
@@ -103,6 +105,8 @@ struct PROJECTPROJECT01_API FShutterLayoutResult
 	/** Closed chokepoints this match (in SealedEdges when broken through, in DoorEdges when one shutter works). */
 	int32 ChokepointEdges = 0;
 	int32 SealedChokepoints = 0;
+	/** Compartment lines left open this match. */
+	TArray<int32> OpenLines;
 	/** The nodes that must stay reachable (escalator working sides, then exits). */
 	TArray<int32> Targets;
 	/** Shortest start->target distances before and after, [Start * Targets.Num() + Target]; < 0 = unreachable. */

@@ -389,7 +389,15 @@ AActor* AProjectProject01Elevator::FindArrivalStart(UWorld* World, const FString
 			if (Found) { UE_LOG(LogTemp,Error,TEXT("Duplicate elevator ArrivalId: %s"),*Requested); return nullptr; }
 			Found=*It;
 		}
-	if (!Found) { UE_LOG(LogTemp,Error,TEXT("No elevator for arrival ID %s"),*Requested); return nullptr; }
+	if (!Found)
+	{
+		// Not an elevator: a way that goes both ways (1F <-> rescue basement) marks its arrival spots with PlayerStarts
+		// tagged with the same id. Several spots: one at random, so arriving survivors do not stack.
+		TArray<APlayerStart*> Spots;
+		for (TActorIterator<APlayerStart> It(World);It;++It) if (It->PlayerStartTag==FName(*Requested)) Spots.Add(*It);
+		if (!Spots.IsEmpty()) return Spots[FMath::RandHelper(Spots.Num())];
+		UE_LOG(LogTemp,Error,TEXT("No elevator or tagged PlayerStart for arrival ID %s"),*Requested); return nullptr;
+	}
 	// Spawn selection already has the authoritative travel option, even if BeginPlay saw an incomplete World URL.
 	if (Found->State.Phase==EProjectElevatorPhase::Disabled || Found->State.Phase==EProjectElevatorPhase::Locked)
 		Found->SetPhase(EProjectElevatorPhase::WaitingForArrival);

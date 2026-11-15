@@ -185,6 +185,14 @@ public:
 	bool TryResetFollowingMannequins(class AMultiplayTestPlayerController* RequestingController);
 	bool ToggleMannequinCatchDamage(class AMultiplayTestPlayerController* RequestingController);
 	bool TryMannequinAttack(class AMultiplayTestPlayerController* RequestingController);
+	/** The mannequin player (human or bot) raises or lowers the working fire shutter in front of the body it views. Only the
+	 *  mannequin player can: the bodies' own AI never operates shutters (closed working shutters are off their navigation). */
+	class AFireShutterActor* TryMannequinShutter(class AMultiplayTestPlayerController* RequestingController);
+	/** The working shutter the body could operate now (in front, within reach, nothing between), or null. */
+	class AFireShutterActor* FindMannequinShutter(const class AMannequinAICharacter* Body) const;
+	/** How far in front of the viewed body a shutter can be operated. */
+	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Mannequin", meta = (ClampMin = "100", Units = "cm"))
+	float MannequinShutterReach = 400.f;
 	void DeclareVoluntaryExit(class AMultiplayTestPlayerController* RequestingController);
 	void CycleSurvivorSpectator(class AMultiplayTestPlayerController* RequestingController, int32 Direction);
 	bool TryBroadcastSurvivorPing(class AMultiplayTestPlayerController* RequestingController,

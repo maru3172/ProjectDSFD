@@ -6,6 +6,17 @@
 #include "ProjectShutterLayout.generated.h"
 
 class AFireShutterActor;
+class UWorld;
+
+namespace ProjectShutterLayout
+{
+	/** Short map name used as the key in the ShutterSeeds travel option. */
+	PROJECTPROJECT01_API FString MapKey(const UWorld* World);
+	/** This map's seed from a ShutterSeeds option ("Map-123.Other-456"), 0 when absent. */
+	PROJECTPROJECT01_API int32 SeedFromOptions(const FString& Options, const FString& Map);
+	/** Every floor seed visited so far plus this floor's, for the next travel URL. */
+	PROJECTPROJECT01_API FString SeedsForTravel(const UWorld* World);
+}
 class AProjectProject01LevelTransitionTrigger;
 
 /**
@@ -60,6 +71,8 @@ public:
 		TArray<AFireShutterActor*> SlotShutters;          // Per Graph.Slots entry.
 		TArray<AFireShutterActor*> OffLinkShutters;       // Corridor shutters not near any route link.
 		TArray<AFireShutterActor*> StoreShutters;
+		/** Exit rows (tag ExitRow_<n>, one group per row), each sorted by name. */
+		TArray<TArray<AFireShutterActor*>> ExitRows;
 		TArray<FName> EscalatorIds;
 	};
 	FPlacement Collect() const;
@@ -79,17 +92,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0", ClampMax = "8"))
 	int32 MaxWorkingCorridors = 2;
 
-	/** Chokepoints (shutters with the Chokepoint role) closed each match, always with one working shutter in the row. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0", ClampMax = "4"))
-	int32 MinChokepoints = 1;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0", ClampMax = "4"))
-	int32 MaxChokepoints = 2;
+	/**
+	 * Fire compartment openings (shutters with the Chokepoint role, placed along compartment lines) closed each match.
+	 * Default: all of them, like a store whose fire doors have dropped; each is either openable (working shutters in the
+	 * row) or, by Chokepoint Sealed Chance, broken through so survivors go around. Every area always stays reachable.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0", ClampMax = "999"))
+	int32 MinChokepoints = 999;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0", ClampMax = "999"))
+	int32 MaxChokepoints = 999;
+	/** Exit rows: one working shutter per this many cm of row (at least one, and at least one broken when the row has two). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "300"))
+	float ExitWorkingSpacing = 900.f;
+	/** Chance a whole fire compartment line stays open this match (no shutter down along it): zones that are not blocked. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float OpenLineChance = .35f;
 	/** Rows wider than this (main corridors) never close; they only look smashed or hang. Keeps the store's corridors open. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "300.0", Units = "cm"))
 	float MaxClosableRowWidth = 1000.f;
 	/** Chance a closed chokepoint is broken shutters only (no way through there; another way always remains). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ChokepointSealedChance = .4f;
+	float ChokepointSealedChance = .3f;
 
 	/** Longest allowed way around: original distance x ratio + slack. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "1.0", ClampMax = "3.0"))
@@ -181,6 +204,8 @@ public:
 
 	/** Damage zones of the last roll (for checks and debugging). */
 	const TArray<FVector2D>& GetRuinZones() const { return LastRuinZones; }
+	/** The seed this floor was rolled with this match (0 before the roll). */
+	int32 GetRolledSeed() const { return RolledSeed; }
 
 protected:
 	virtual void BeginPlay() override;

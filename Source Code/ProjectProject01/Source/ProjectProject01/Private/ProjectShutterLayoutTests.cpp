@@ -12,6 +12,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeExit.h"
+#include "GameFramework/PlayerStart.h"
+#include "ProjectProject01Elevator.h"
 #include "NavModifierComponent.h"
 #include "NavAreas/NavArea_Null.h"
 #include "ProjectShutterNavigation.h"
@@ -164,6 +166,9 @@ bool FProjectShutterLayoutRulesTest::RunTest(const FString&)
 		for (const int32 E : R.SealedEdges) Blocked[E] = true;
 		for (const int32 E : R.DoorEdges) DoorBits[E] = true;
 		TArray<int32> Closed = R.SealedEdges; Closed.Append(R.DoorEdges);
+		// Spacing and one-per-junction apply to scattered corridor shutters; compartment openings (chokepoint slots)
+		// close together along their line by design.
+		Closed.RemoveAll([&](const int32 E) { for (const FShutterLayoutGraph::FSlot& Slot : G.Slots) if (Slot.Edge == E && Slot.bChokepoint) return true; return false; });
 		TMap<int32, int32> PerNode;
 		for (const int32 E : Closed)
 		{
@@ -307,8 +312,31 @@ bool FProjectShutterLayoutRuntimeTest::RunTest(const FString&)
 	auto* Plain = World->SpawnActor<AFireShutterActor>(AFireShutterActor::StaticClass(), FTransform(FVector(0, -9000, 0)), Spawn);
 	Plain->DispatchBeginPlay();
 	APawn* Viewer = World->SpawnActor<APawn>(APawn::StaticClass(), FTransform(FVector(0, 0, 500)), Spawn);
+	// The 1F exit row: three panels across the way out (tag ExitRow_0).
+	TArray<AFireShutterActor*> ExitRow;
+	for (int32 K = 0; K < 3; ++K)
+	{
+		auto* Shutter = World->SpawnActor<AFireShutterActor>(AFireShutterActor::StaticClass(), FTransform(FVector(-9000, K * 300.f, 0)), Spawn);
+		Shutter->LayoutRole = EProjectShutterLayoutRole::Exit; Shutter->Tags.Add(TEXT("ExitRow_0")); Shutter->DispatchBeginPlay(); ExitRow.Add(Shutter);
+	}
 	auto* Layout = World->SpawnActor<AProjectShutterLayout>(AProjectShutterLayout::StaticClass(), FTransform::Identity, Spawn);
 
+	for (int32 Seed = 1; Seed <= 40; ++Seed)
+	{
+		Layout->Generate(Seed);
+		int32 Working = 0, Broken = 0;
+		for (AFireShutterActor* Shutter : ExitRow)
+		{
+			TestTrue(TEXT("Every exit panel is down (or jammed too low to pass) at the start of every match"), Shutter->CurrentOpenAlpha * Shutter->GetOpenHeight() <= 40.f);
+			Working += Shutter->GetLayoutState() == EProjectShutterLayoutState::Operable;
+			Broken += Shutter->GetLayoutState() == EProjectShutterLayoutState::Sealed;
+		}
+		TestTrue(TEXT("The exit row always has a working shutter (the way out exists)"), Working >= 1);
+		TestTrue(TEXT("The exit row mixes in broken shutters"), Broken >= 1);
+		TestEqual(TEXT("Every exit panel is working or broken"), Working + Broken, ExitRow.Num());
+		for (AFireShutterActor* Shutter : ExitRow)
+			TestEqual(TEXT("Only a working exit shutter can be raised from the server (mannequin player rule)"), Shutter->ToggleByServer(), Shutter->GetLayoutState() == EProjectShutterLayoutState::Operable);
+	}
 	Layout->Generate(1234);
 	AFireShutterActor* AnyWorking = nullptr; AFireShutterActor* AnyBroken = nullptr;
 	for (int32 E = 0; E < 3; ++E)
@@ -460,5 +488,32 @@ bool FProjectShutterLayoutHorrorTest::RunTest(const FString&)
 		PlainBehind, HorrorBehind, Plain.Ambush / 400, Horror.Ambush / 400, 100 * Plain.FarSide / FMath::Max(1, Plain.Sides), 100 * Horror.FarSide / FMath::Max(1, Horror.Sides)));
 	return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectShutterLayoutTravelTest, "ProjectProject01.ShutterLayout.TravelSeedsAndArrivals",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProjectShutterLayoutTravelTest::RunTest(const FString&)
+{
+	// Floors keep their layout across travel: the seeds ride in the URL, one entry per visited floor.
+	const FString Options = TEXT("?ElevatorArrival=F1_FromB1?ShutterSeeds=MultiplayTest-12.MultiplayTest1-77.MultiplayTest2-345");
+	TestEqual(TEXT("1F seed read back"), ProjectShutterLayout::SeedFromOptions(Options, TEXT("MultiplayTest2")), 345);
+	TestEqual(TEXT("3F seed read back"), ProjectShutterLayout::SeedFromOptions(Options, TEXT("MultiplayTest")), 12);
+	TestEqual(TEXT("A floor not visited yet has no seed"), ProjectShutterLayout::SeedFromOptions(Options, TEXT("MultiplayerRescueTest")), 0);
+	TestEqual(TEXT("No option, no seed"), ProjectShutterLayout::SeedFromOptions(TEXT("?ElevatorArrival="), TEXT("MultiplayTest2")), 0);
+
+	// A plain PlayerStart tagged with an arrival id is an arrival spot (stairs, not only elevators).
+	const auto Values = UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+	if (!TestNotNull(TEXT("World"), World)) return false;
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	ON_SCOPE_EXIT { GEngine->DestroyWorldContext(World); World->DestroyWorld(false); };
+	FActorSpawnParameters Spawn; Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	APlayerStart* Landing = World->SpawnActor<APlayerStart>(APlayerStart::StaticClass(), FTransform(FVector(500, 0, 100)), Spawn);
+	Landing->PlayerStartTag = TEXT("F1_FromB1");
+	World->SpawnActor<APlayerStart>(APlayerStart::StaticClass(), FTransform(FVector(-500, 0, 100)), Spawn); // an ordinary start
+	TestTrue(TEXT("The tagged landing is chosen for that arrival id"), AProjectProject01Elevator::FindArrivalStart(World, TEXT("?ElevatorArrival=F1_FromB1")) == Landing);
+	AddExpectedError(TEXT("No elevator or tagged PlayerStart for arrival ID Nowhere"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestNull(TEXT("An unknown arrival id finds nothing (falls back to normal starts)"), AProjectProject01Elevator::FindArrivalStart(World, TEXT("?ElevatorArrival=Nowhere")));
+	return true;
+}
 #endif
+
 

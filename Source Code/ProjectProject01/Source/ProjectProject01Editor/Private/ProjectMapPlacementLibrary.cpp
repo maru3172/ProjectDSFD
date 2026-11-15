@@ -54,3 +54,60 @@ FString UProjectMapPlacementLibrary::MoveFixturesOutOfWalls(UObject* WorldContex
 	}
 	return FString::Printf(TEXT("%d,%d"), Moved, Removed);
 }
+
+FString UProjectMapPlacementLibrary::FitShuttersToWalls(UObject* WorldContext, const float CeilingHeight)
+{
+	UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	if (!World) return TEXT("0,0,0");
+	FAssetCompilingManager::Get().FinishAllCompilation(); // collision only exists once the meshes have built
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(ShutterFit), true);
+	TArray<AFireShutterActor*> Shutters;
+	for (TActorIterator<AFireShutterActor> It(World); It; ++It) { Params.AddIgnoredActor(*It); if (It->Tags.Contains(FName(TEXT("ShutterLayoutAuto")))) Shutters.Add(*It); }
+	for (TActorIterator<AMannequinReactiveLight> It(World); It; ++It) Params.AddIgnoredActor(*It);
+	int32 Narrowed = 0, Lowered = 0, Removed = 0;
+	for (AFireShutterActor* Shutter : Shutters)
+	{
+		const FVector Base = Shutter->GetActorLocation(); // the panel's bottom centre (pivot at the floor)
+		const FVector Right = Shutter->GetActorRightVector().GetSafeNormal2D();
+		const FVector Scale = Shutter->GetActorScale3D();
+		const float Half = 150.f * FMath::Abs(Scale.Y);
+		// Width: from the centre along the panel at several heights, how far is clear on each side.
+		float ClearLeft = Half, ClearRight = Half;
+		for (const float Z : { 60.f, 200.f, 350.f })
+			for (int32 Side = 0; Side < 2; ++Side)
+			{
+				const FVector From = Base + FVector(0, 0, Z), Dir = Side == 0 ? -Right : Right;
+				FHitResult Hit;
+				if (World->LineTraceSingleByChannel(Hit, From, From + Dir * (Half + 5.f), ECC_Visibility, Params))
+					(Side == 0 ? ClearLeft : ClearRight) = FMath::Min(Side == 0 ? ClearLeft : ClearRight, FMath::Max(0.f, Hit.Distance - 5.f));
+			}
+		if (ClearLeft + ClearRight < 60.f) { World->DestroyActor(Shutter); ++Removed; continue; }
+		if (ClearLeft < Half - 1.f || ClearRight < Half - 1.f)
+		{
+			Shutter->Modify();
+			Shutter->SetActorLocation(Base + Right * ((ClearRight - ClearLeft) * .5f));
+			Shutter->SetActorScale3D(FVector(Scale.X, (ClearLeft + ClearRight) / 300.f, Scale.Z));
+			++Narrowed;
+		}
+		// Height: straight up from a few points across the panel; the lowest hit (a lintel, a beam) caps the panel.
+		const FVector Centre = Shutter->GetActorLocation();
+		const float NewHalf = 150.f * FMath::Abs(Shutter->GetActorScale3D().Y);
+		float Top = CeilingHeight + 10.f;
+		for (const float T : { -.8f, 0.f, .8f })
+		{
+			const FVector From = Centre + Right * (NewHalf * T) + FVector(0, 0, 40.f);
+			FHitResult Hit;
+			if (World->LineTraceSingleByChannel(Hit, From, From + FVector(0, 0, CeilingHeight), ECC_Visibility, Params))
+				Top = FMath::Min(Top, 40.f + Hit.Distance - 5.f);
+		}
+		if (Top < CeilingHeight)
+		{
+			if (Top < 200.f) { World->DestroyActor(Shutter); ++Removed; continue; } // a passage lower than a person: not a shutter spot
+			Shutter->Modify();
+			const FVector S = Shutter->GetActorScale3D();
+			Shutter->SetActorScale3D(FVector(S.X, S.Y, Top / 400.f));
+			++Lowered;
+		}
+	}
+	return FString::Printf(TEXT("%d,%d,%d"), Narrowed, Lowered, Removed);
+}

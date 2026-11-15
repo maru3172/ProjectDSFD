@@ -300,12 +300,20 @@ FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLa
 	TMap<int32, TArray<int32>> EdgeSlots;
 	for (int32 S = 0; S < Graph.Slots.Num(); ++S) if (Graph.Edges.IsValidIndex(Graph.Slots[S].Edge)) EdgeSlots.FindOrAdd(Graph.Slots[S].Edge).Add(S);
 	TArray<int32> Candidates; EdgeSlots.GetKeys(Candidates); Candidates.Sort();
-	// Main corridors stay open: rows wider than the limit are never closed (only look smashed, see RollRuin).
-	Candidates.RemoveAll([&](const int32 E)
+	// Chokepoint slots are the openings of fire compartment lines (Docs/FireShutterLayout.md): they close together along
+	// a line, so the spacing and per-junction limits (meant to keep scattered corridor shutters apart) do not apply.
+	auto IsCompartment = [&](const int32 E) { for (const int32 S : EdgeSlots[E]) if (Graph.Slots[S].bChokepoint) return true; return false; };
+	auto RowWidth = [&](const int32 E) { float W = 0.f; for (const int32 S : EdgeSlots[E]) W += Graph.Slots[S].Width; return W; };
+	// Main corridors stay open unless they are a compartment line: wide scattered rows never close (only look smashed).
+	Candidates.RemoveAll([&](const int32 E) { return !IsCompartment(E) && RowWidth(E) > Settings.MaxClosableRowWidth; });
+	// Some compartment lines stay open this match (no shutters along them): zones that are simply not blocked.
 	{
-		float Width = 0.f; for (const int32 S : EdgeSlots[E]) Width += Graph.Slots[S].Width;
-		return Width > Settings.MaxClosableRowWidth;
-	});
+		TSet<int32> Lines; for (const FShutterLayoutGraph::FSlot& Slot : Graph.Slots) if (Slot.Line != INDEX_NONE) Lines.Add(Slot.Line);
+		TArray<int32> Sorted = Lines.Array(); Sorted.Sort();
+		for (const int32 Line : Sorted)
+			if (Random.FRand() < Settings.OpenLineChance) Result.OpenLines.Add(Line);
+		Candidates.RemoveAll([&](const int32 E) { for (const int32 S : EdgeSlots[E]) if (Result.OpenLines.Contains(Graph.Slots[S].Line)) return true; return false; });
+	}
 
 	TSet<int32> Protected;
 	if (Settings.bProtectObjectiveEdges) { Protected.Append(Graph.Starts); Protected.Append(Result.Targets); }
@@ -316,6 +324,7 @@ FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLa
 	{
 		const FShutterLayoutGraph::FEdge& Edge = Graph.Edges[E];
 		if (Blocked[E] || Doors[E] || Protected.Contains(Edge.A) || Protected.Contains(Edge.B)) return false;
+		if (IsCompartment(E)) return true;
 		if (ClosedAtNode[Edge.A] >= Settings.MaxSealsPerNode || ClosedAtNode[Edge.B] >= Settings.MaxSealsPerNode) return false;
 		for (const int32 S : EdgeSlots[E])
 			for (const FVector2D& Other : ClosedAt)
@@ -427,8 +436,12 @@ FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLa
 			Result.DoorEdges.Add(E); Close(E);
 			(bChoke ? Chokepoints : CorridorDoors)++;
 			const TArray<int32>& Barrier = EdgeSlots[E];
-			const int32 Working = Barrier[Random.RandRange(0, Barrier.Num() - 1)];
-			for (const int32 S : Barrier) Result.SlotStates[S] = S == Working ? EShutterSlotState::Door : EShutterSlotState::Sealed;
+			// One working shutter per row, or one per 9 m on a wide compartment row (a wide corridor has several doors).
+			TArray<int32> Order = Barrier;
+			for (int32 I = Order.Num() - 1; I > 0; --I) Order.Swap(I, Random.RandRange(0, I));
+			const int32 Doorways = FMath::Clamp(FMath::RoundToInt(RowWidth(E) / 900.f), 1, Order.Num());
+			for (const int32 S : Barrier) Result.SlotStates[S] = EShutterSlotState::Sealed;
+			for (int32 I = 0; I < Doorways; ++I) Result.SlotStates[Order[I]] = EShutterSlotState::Door;
 		}
 	Result.ChokepointEdges = Chokepoints;
 

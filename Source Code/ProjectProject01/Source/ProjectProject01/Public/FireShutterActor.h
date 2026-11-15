@@ -18,7 +18,8 @@ enum class EProjectShutterLayoutRole : uint8
 	Corridor,  // Corridor candidate: sealed (broken, down) or raised out of the way, per match.
 	Escalator, // Around an escalator opening: one working (operable) shutter per opening, the rest broken.
 	Store,     // Store front (normal shutter): operable, starts down or up at random.
-	Chokepoint // A narrow passage between areas: closed now and then, always with one working shutter in the row.
+	Chokepoint, // A narrow passage between areas: closed now and then, always with one working shutter in the row.
+	Exit       // The row in front of the 1F exit: always closed every match, working shutters mixed with broken ones.
 };
 
 /** What the layout made of the shutter this match. */
@@ -76,6 +77,10 @@ public:
 	bool IsHeadingDown() const;
 	/** Server: raises an operable shutter without a player (bots cannot press F). Does nothing if already going up. */
 	void OpenByServer();
+	/** Server: raise or lower a working shutter (the mannequin player's F through the body it views). False if not operable. */
+	bool ToggleByServer();
+	/** A working shutter players can raise and lower (layout Operable, or a plain shutter outside the layout). */
+	bool IsOperableShutter() const { return LayoutState != EProjectShutterLayoutState::Sealed && LayoutState != EProjectShutterLayoutState::Raised && LayoutState != EProjectShutterLayoutState::Hanging; }
 	
 protected:
 	virtual void BeginPlay() override;

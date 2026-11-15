@@ -36,7 +36,7 @@ public:
 	bool RequestTransition(APlayerCharacter* Survivor);
 
 	/** Bot routing may approach ordinary enabled overlap exits, never bypass button devices. */
-	bool IsAutomaticBotObjective() const { return bUseOverlapActivation && !bTransitionStarted && IsDestinationAvailable(); }
+	bool IsAutomaticBotObjective() const { return bUseOverlapActivation && bBotObjective && !bTransitionStarted && IsDestinationAvailable(); }
 	/** Custom game escort: this way out leads to another floor (buttons included; the round end presses it). */
 	bool IsEscortObjective() const { return !bTransitionStarted && IsDestinationAvailable(); }
 	/** Custom game escort: moves every survivor still in play to the next floor (the round is over). */
@@ -95,6 +95,10 @@ private:
 	/** 멀티에서 켜면 살아 있는 생존자 전원이 들어와야 이동합니다. 끄면 한 명만 들어와도 이동합니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Level Transition|Multiplayer", meta = (AllowPrivateAccess = "true"))
 	bool bRequireAllLivingSurvivors = true;
+
+	/** Bots head for this way as an exit. Off for side trips (1F <-> rescue basement stairs): only people choose those. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Level Transition|Multiplayer", meta = (AllowPrivateAccess = "true"))
+	bool bBotObjective = true;
 
 	/** 조건 달성 후 실제 이동까지의 짧은 지연입니다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Level Transition", meta = (ClampMin = "0.0", Units = "s", AllowPrivateAccess = "true"))

@@ -72,6 +72,9 @@ public:
 	/** This match the fixture is dead (Docs/FireShutterLayout.md, damage zones): no light, no glow, steadily. Not a flicker. */
 	void SetMatchDead(bool bDead);
 	bool IsMatchDead() const { return bMatchDead; }
+	/** Server-side sense for bots: is this floor point inside the pool of a fixture that is on right now (dead and failing
+	 *  fixtures do not count). Cached for a quarter second per world. */
+	static bool IsPointLit(const UWorld* World, const FVector& Point);
 
 protected:
 	virtual void BeginPlay() override;

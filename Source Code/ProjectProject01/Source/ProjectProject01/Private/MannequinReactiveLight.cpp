@@ -481,6 +481,29 @@ void AMannequinReactiveLight::ApplyRecoveryProjection(float Brightness, float Fl
     LastRecoveryProjection=Projection;
 }
 
+bool AMannequinReactiveLight::IsPointLit(const UWorld* World, const FVector& Point)
+{
+    if (!World) return false;
+    struct FCache { TWeakObjectPtr<const UWorld> World; double At = -1; TArray<FVector> Pools; };
+    static FCache Cache;
+    const double Now = World->GetTimeSeconds();
+    if (Cache.World.Get() != World || Now < Cache.At || Now - Cache.At > .25)
+    {
+        Cache.World = World; Cache.At = Now; Cache.Pools.Reset();
+        for (TActorIterator<AMannequinReactiveLight> It(const_cast<UWorld*>(World)); It; ++It)
+        {
+            const USpotLightComponent* Spot = It->ReactiveSpotLight;
+            // On and bright: a fixture failing near mannequins or put out for the match lights nothing for this sense.
+            if (It->bMatchDead || !Spot || !Spot->IsVisible() || Spot->Intensity < .35f * FMath::Max(1.f, It->LightOnIntensity)) continue;
+            Cache.Pools.Add(Spot->GetComponentLocation());
+        }
+    }
+    // A 6 m ceiling spot with a 44 degree cone: a pool about 6 m across the floor, a little wider at chest height.
+    for (const FVector& Pool : Cache.Pools)
+        if (FVector::DistSquared2D(Pool, Point) < FMath::Square(650.f) && Pool.Z > Point.Z - 100.f && Pool.Z - Point.Z < 900.f) return true;
+    return false;
+}
+
 void AMannequinReactiveLight::SetMatchDead(const bool bDead)
 {
     if (bMatchDead==bDead) return;

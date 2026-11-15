@@ -12,6 +12,9 @@
 #include "UObject/ConstructorHelpers.h"
 #include "MannequinReactiveLight.h"
 #include "Net/UnrealNetwork.h"
+#include "MultiplayTestGameMode.h"
+#include "Kismet/GameplayStatics.h"
+#include "Misc/PackageName.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectShutterLayout, Log, All);
 
@@ -99,7 +102,14 @@ void AProjectShutterLayout::BeginPlay()
 	// Next tick: every placed shutter has run BeginPlay (and captured its closed position) by then.
 	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]
 	{
-		Generate(FixedSeed != 0 ? FixedSeed : FMath::Max(1, FMath::Rand())); // never 0: clients learn the seed through a replicated change
+		// A floor keeps its layout for the whole match: going down to the rescue basement and back up must not reshuffle 1F.
+		// Floor changes carry every visited floor's seed in the travel URL (ShutterSeeds, see the level transition trigger).
+		int32 Seed = FixedSeed;
+		if (Seed == 0)
+			if (const AGameModeBase* Mode = GetWorld()->GetAuthGameMode())
+				Seed = ProjectShutterLayout::SeedFromOptions(Mode->OptionsString, ProjectShutterLayout::MapKey(GetWorld()));
+		if (Seed == 0) Seed = FMath::Max(1, FMath::Rand()); // never 0: clients learn the seed through a replicated change
+		Generate(Seed);
 		if (bBotsOpenWorkingShutters && !WorkingShutters.IsEmpty())
 			GetWorldTimerManager().SetTimer(BotTimer, FTimerDelegate::CreateUObject(this, &AProjectShutterLayout::CheckBots), .5f, true);
 	}));
@@ -196,6 +206,8 @@ AProjectShutterLayout::FPlacement AProjectShutterLayout::Collect() const
 				FShutterLayoutGraph::FSlot Slot; Slot.Edge = Edge; Slot.Location = FVector2D(Shutter->GetActorLocation());
 				Slot.bChokepoint = Shutter->GetLayoutRole() == EProjectShutterLayoutRole::Chokepoint;
 				Slot.Width = 300.f * FMath::Abs(Shutter->GetActorScale3D().Y);
+				for (const FName& Tag : Shutter->Tags)
+					if (const FString T = Tag.ToString(); T.StartsWith(TEXT("CompLine_"))) Slot.Line = FCString::Atoi(*T.RightChop(9));
 				// Every link the shutter stands across closes with it (a wide corridor has parallel links on a fine graph).
 				const FVector2D Half = FVector2D(Shutter->GetActorRightVector()).GetSafeNormal() * (150.f * Shutter->GetActorScale3D().Y);
 				for (int32 E = 0; E < Graph.Edges.Num(); ++E)
@@ -206,6 +218,16 @@ AProjectShutterLayout::FPlacement AProjectShutterLayout::Collect() const
 			else Out.OffLinkShutters.Add(Shutter);
 			break;
 		case EProjectShutterLayoutRole::Store: Out.StoreShutters.Add(Shutter); break;
+		case EProjectShutterLayoutRole::Exit:
+		{
+			// Not a slot: the exit is never cut off (a working shutter always stays in the row), so the rules do not see it.
+			int32 Row = 0;
+			for (const FName& Tag : Shutter->Tags)
+				if (const FString T = Tag.ToString(); T.StartsWith(TEXT("ExitRow_"))) Row = FCString::Atoi(*T.RightChop(8));
+			if (Out.ExitRows.Num() <= Row) Out.ExitRows.SetNum(Row + 1);
+			Out.ExitRows[Row].Add(Shutter);
+			break;
+		}
 		default: break;
 		}
 
@@ -215,9 +237,46 @@ AProjectShutterLayout::FPlacement AProjectShutterLayout::Collect() const
 	Settings.MinChokepoints = MinChokepoints; Settings.MaxChokepoints = FMath::Max(MinChokepoints, MaxChokepoints);
 	Settings.ChokepointSealedChance = ChokepointSealedChance;
 	Settings.MaxClosableRowWidth = MaxClosableRowWidth;
+	Settings.OpenLineChance = OpenLineChance;
 	Settings.MaxDetourRatio = MaxDetourRatio; Settings.DetourSlack = DetourSlack; Settings.MinSealSpacing = MinSealSpacing;
 	Settings.bProtectObjectiveEdges = bProtectObjectiveCorridors; Settings.HorrorWeight = HorrorWeight;
 	return Out;
+}
+
+namespace ProjectShutterLayout
+{
+FString MapKey(const UWorld* World)
+{
+	return World ? FPackageName::GetShortName(UWorld::RemovePIEPrefix(World->GetOutermost()->GetName())) : FString();
+}
+
+int32 SeedFromOptions(const FString& Options, const FString& Map)
+{
+	TArray<FString> Entries;
+	UGameplayStatics::ParseOption(Options, TEXT("ShutterSeeds")).ParseIntoArray(Entries, TEXT("."));
+	for (const FString& Entry : Entries)
+	{
+		FString Name, Value;
+		if (Entry.Split(TEXT("-"), &Name, &Value, ESearchCase::CaseSensitive, ESearchDir::FromEnd) && Name == Map) return FCString::Atoi(*Value);
+	}
+	return 0;
+}
+
+FString SeedsForTravel(const UWorld* World)
+{
+	if (!World) return FString();
+	const AGameModeBase* Mode = World->GetAuthGameMode();
+	TArray<FString> Entries;
+	if (Mode) UGameplayStatics::ParseOption(Mode->OptionsString, TEXT("ShutterSeeds")).ParseIntoArray(Entries, TEXT("."));
+	const FString Here = MapKey(World);
+	for (TActorIterator<AProjectShutterLayout> It(const_cast<UWorld*>(World)); It; ++It)
+		if (It->GetRolledSeed() != 0)
+		{
+			Entries.RemoveAll([&](const FString& E) { FString N, V; return E.Split(TEXT("-"), &N, &V, ESearchCase::CaseSensitive, ESearchDir::FromEnd) && N == Here; });
+			Entries.Add(FString::Printf(TEXT("%s-%d"), *Here, It->GetRolledSeed()));
+		}
+	return FString::Join(Entries, TEXT("."));
+}
 }
 
 FShutterRuinSettings AProjectShutterLayout::RuinSettings() const
@@ -271,6 +330,23 @@ FShutterLayoutResult AProjectShutterLayout::Generate(const int32 Seed)
 		UE_LOG(LogProjectShutterLayout, Warning, TEXT("%s is not on any route link; it stays raised."), *GetNameSafe(Shutter));
 		Shutter->ApplyLayout(EProjectShutterLayoutState::Raised, true);
 	}
+	// The 1F exit is always shut: working shutters (closed, players raise them) mixed with broken ones that stay down.
+	int32 ExitWorking = 0;
+	for (const TArray<AFireShutterActor*>& Row : Placement.ExitRows)
+	{
+		if (Row.IsEmpty()) continue;
+		float Width = 0.f; for (const AFireShutterActor* S : Row) Width += 300.f * FMath::Abs(S->GetActorScale3D().Y);
+		const int32 Working = Row.Num() < 2 ? Row.Num() : FMath::Clamp(FMath::RoundToInt(Width / FMath::Max(300.f, ExitWorkingSpacing)), 1, Row.Num() - 1);
+		TArray<int32> Order; for (int32 I = 0; I < Row.Num(); ++I) Order.Add(I);
+		for (int32 I = Order.Num() - 1; I > 0; --I) Order.Swap(I, Look.RandRange(0, I));
+		for (int32 K = 0; K < Order.Num(); ++K)
+		{
+			AFireShutterActor* Shutter = Row[Order[K]];
+			if (K < Working) { Shutter->ApplyLayout(EProjectShutterLayoutState::Operable, 0.f, 0.f); WorkingShutters.Add(Shutter); ++ExitWorking; }
+			else if (Look.FRand() < .5f) Shutter->ApplyLayout(EProjectShutterLayoutState::Sealed, 0.f, Look.FRandRange(-4.f, 4.f));
+			else Shutter->ApplyLayout(EProjectShutterLayoutState::Sealed, Alpha(Shutter, Look.FRandRange(15.f, 35.f)), Look.FRandRange(-6.f, 6.f)); // jammed low: a gap to peek under, no way through
+		}
+	}
 	for (AFireShutterActor* Shutter : Placement.StoreShutters)
 	{
 		// Store fronts: down, up, or half up so you can look under into the store (still operable).
@@ -279,8 +355,8 @@ FShutterLayoutResult AProjectShutterLayout::Generate(const int32 Seed)
 		Shutter->ApplyLayout(EProjectShutterLayoutState::Operable, Open, 0.f);
 	}
 
-	UE_LOG(LogProjectShutterLayout, Log, TEXT("Fire shutter layout seed=%d nodes=%d links=%d escalators=%d corridor slots=%d sealed corridors=%d working-shutter corridors=%d (chokepoints %d)%s%s"),
+	UE_LOG(LogProjectShutterLayout, Log, TEXT("Fire shutter layout seed=%d nodes=%d links=%d escalators=%d corridor slots=%d sealed corridors=%d working-shutter corridors=%d (chokepoints %d) exit rows=%d (working %d)%s%s"),
 		Seed, Placement.Graph.Nodes.Num(), Placement.Graph.Edges.Num(), Placement.EscalatorIds.Num(), Placement.Graph.Slots.Num(),
-		Result.SealedEdges.Num(), Result.DoorEdges.Num(), Result.ChokepointEdges, Result.Note.IsEmpty() ? TEXT("") : TEXT(" note="), *Result.Note);
+		Result.SealedEdges.Num(), Result.DoorEdges.Num(), Result.ChokepointEdges, Placement.ExitRows.Num(), ExitWorking, Result.Note.IsEmpty() ? TEXT("") : TEXT(" note="), *Result.Note);
 	return Result;
 }

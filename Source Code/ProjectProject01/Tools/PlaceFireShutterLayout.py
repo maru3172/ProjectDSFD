@@ -642,40 +642,111 @@ for floor, path, dest in MAPS:
                 if k in ds and k in dg and ds[k] + dg[k] == ds[g]:
                     traffic[k] += 1
 
-    # Fire compartments of the main corridor: between each pair of neighbouring openings, a row across the corridor
-    # halfway between their facing edges (wall to wall, or to an opening's edge). Placed first, always.
+    # Fire compartments (user, 2026-11-15): like a real department store, the floor is split into zones and every passage
+    # on a zone boundary has a shutter row. Each match closes them; most can be opened, some are broken through (go around).
+    # Boundaries run north-south between the atrium columns (3F/2F) or split the floor in three (1F), each nudged within
+    # 10 m to where the passages are narrowest (more wall, fewer and smaller openings).
+    xs_walk = [grid.x0 + (c % grid.w + .5) * CELL for c in range(grid.w * grid.h) if grid.walk[c]]
+    building_min, building_max = min(xs_walk), max(xs_walk)
+    columns = []
+    for h in sorted(f["holes"], key=lambda h: h["center"][0]):
+        lo, hi = min(v[0] for v in h["poly"]), max(v[0] for v in h["poly"])
+        if columns and lo - columns[-1][1] < 300:
+            columns[-1] = (min(columns[-1][0], lo), max(columns[-1][1], hi))
+        else:
+            columns.append((lo, hi))
+    if len(columns) >= 2:
+        line_xs = [(columns[k][1] + columns[k + 1][0]) / 2 for k in range(len(columns) - 1) if columns[k + 1][0] - columns[k][1] > 1200]
+    else:
+        line_xs = [building_min + (building_max - building_min) * t for t in (1 / 3, 2 / 3)]
+    def openings_at(x):
+        runs, start = [], None
+        y = grid.y0
+        while y <= grid.y0 + grid.h * CELL:
+            ok = grid.ok(x, y) and not shut_in((x, y))
+            if ok and start is None:
+                start = y
+            elif not ok and start is not None:
+                runs.append((start, y - CELL))
+                start = None
+            y += CELL / 2
+        return [r for r in runs if r[1] - r[0] >= 120]
     compartments = []
-    opening_polys = sorted([h["poly"] for h in f["holes"]], key=lambda q: sum(v[0] for v in q) / len(q))
-    for i in range(len(opening_polys)):
-        for j in range(i + 1, len(opening_polys)):
-            pa_, pb_ = opening_polys[i], opening_polys[j]
-            ca = (sum(v[0] for v in pa_) / len(pa_), sum(v[1] for v in pa_) / len(pa_))
-            cb = (sum(v[0] for v in pb_) / len(pb_), sum(v[1] for v in pb_) / len(pb_))
-            gap_edges = math.dist(ca, cb)
-            if gap_edges > 14000:
-                continue  # far apart: not neighbours along one corridor
-            # Facing edge points along the centre line.
-            dirv = ((cb[0] - ca[0]) / gap_edges, (cb[1] - ca[1]) / gap_edges)
-            ea = max(((v[0] - ca[0]) * dirv[0] + (v[1] - ca[1]) * dirv[1]) for v in pa_)
-            eb = min(((v[0] - ca[0]) * dirv[0] + (v[1] - ca[1]) * dirv[1]) for v in pb_)
-            if eb - ea < 1200:
+    for line_index, line_x in enumerate(line_xs):
+        best_x = min((line_x + dx for dx in range(-1000, 1001, 100)), key=lambda x: sum(b - a for a, b in openings_at(x)) + abs(x - line_x) * .05)
+        for y0, y1 in openings_at(best_x):
+            mid = (best_x, (y0 + y1) / 2)
+            if near_gate(mid, 400):
                 continue
-            mid = (ca[0] + dirv[0] * (ea + eb) / 2, ca[1] + dirv[1] * (ea + eb) / 2)
-            pv = (-dirv[1], dirv[0])
-            left, right, w = width_at(mid, pv)
-            unreal.log("[ShutterLayout] %s compartment %d-%d mid=(%d,%d) width=%s left=%s right=%s gap=%d" % (floor, i, j, mid[0], mid[1], w, left, right, eb - ea))
-            if w is None or w > 6000 or left is None or right is None or shut_in(mid):
-                continue
-            span = left + right + 2 * AGENT_MARGIN
-            ka, kb = nearest_kept(mid), nearest_kept(mid)
-            compartments.append((mid, dirv, pv, left, right, span, ka, kb))
+            half = (y1 - y0) / 2 - 20.0  # ends reach the wall line (navmesh edge + 20 cm), not into the wall
+            k = nearest_kept(mid)
+            compartments.append((mid, (1.0, 0.0), (0.0, 1.0), half, half, 2 * half + 2 * AGENT_MARGIN, k, ("line", line_index)))
     floor_report["compartments"] = len(compartments)
+
+    # The exit row (user, 2026-11-15): the 1F exit is always shut, working shutters mixed with broken ones (the runtime picks
+    # which, ExitRow_<n>). The row goes wall to wall across the narrowest passage within 15 m in front of the exit that really
+    # cuts the exit off from the rest of the floor (a flood fill from the exit side must stay small).
+    def row_cells(a, b, pad=60.0):
+        cells, n = set(), max(1, int(math.dist(a, b) / 20.0))
+        for k in range(n + 1):
+            x, y = a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n
+            for dx in (-pad, -pad / 2, 0, pad / 2, pad):
+                for dy in (-pad, -pad / 2, 0, pad / 2, pad):
+                    cells.add(grid.cell(x + dx, y + dy))
+        return cells
+
+    def cut_off(start, blocked, limit=5000):
+        seen, stack = {grid.cell(*start)}, [grid.cell(*start)]
+        while stack:
+            i, j = stack.pop()
+            for ni, nj in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+                if (ni, nj) in seen or (ni, nj) in blocked or not (0 <= ni < grid.w and 0 <= nj < grid.h) or not grid.walk[nj * grid.w + ni]:
+                    continue
+                seen.add((ni, nj))
+                stack.append((ni, nj))
+                if len(seen) > limit:
+                    return False
+        return True
+
+    exit_rows = []
+    for e in (f["exits"] if floor == "1F" else []):  # the way out of the building is on 1F only
+        best = None
+        for step in range(8):
+            u = (math.cos(step * math.pi / 4), math.sin(step * math.pi / 4))
+            pp = (-u[1], u[0])
+            for t in range(150, 1501, 50):
+                c = (e[0] + u[0] * t, e[1] + u[1] * t)
+                if not grid.ok(*c) or shut_in(c):
+                    continue
+                left, right, w = width_at(c, pp)
+                if w is None or w >= 99999 or w > 1800:
+                    continue
+                score = w + t * .5
+                if best and score >= best[0]:
+                    continue
+                a = (c[0] - pp[0] * left, c[1] - pp[1] * left)
+                b = (c[0] + pp[0] * right, c[1] + pp[1] * right)
+                behind = (c[0] - u[0] * 120, c[1] - u[1] * 120)  # the exit side of the row
+                if not grid.ok(*behind) or not cut_off(behind, row_cells(a, b)):
+                    continue
+                # Centred on the run, ends at the wall line (navmesh edge + 20 cm).
+                mid = (c[0] + pp[0] * (right - left) / 2, c[1] + pp[1] * (right - left) / 2)
+                half = w / 2 - 20.0
+                best = (score, (mid, u, pp, half, half, 2 * half + 2 * AGENT_MARGIN, nearest_kept(mid), ("exit", len(exit_rows))))
+        if best:
+            exit_rows.append(best[1])
+        else:
+            floor_report["warnings"].append("exit at (%d, %d): no passage in front of it to shut" % e)
+    floor_report["exit_rows"] = len(exit_rows)
+    # Compartment openings right at the exit row would double it.
+    compartments = [c for c in compartments if all(math.dist(c[0], r[0]) > 600 for r in exit_rows)]
 
     # Spread out: corridors and chokepoints 12 m apart from each other, store fronts 5 m apart (6 m from the rest).
     import random
     shuffle = random.Random(floor)
-    chosen = [("main", c) for c in compartments]
-    for kind, cap in (("main", 8), ("chokepoint", 16), ("corridor", 20), ("store", 24)):
+    chosen = [("compartment", c) for c in compartments] + [("exit", r) for r in exit_rows]
+    # Scattered corridor rows are no longer placed (they looked random); store fronts stay.
+    for kind, cap in (("store", 24),):
         pool = candidates[kind][:]
         shuffle.shuffle(pool)
         if kind == "main":
@@ -695,7 +766,7 @@ for floor, path, dest in MAPS:
             if ok:
                 chosen.append((kind, cand))
                 count += 1
-    roles = {"main": unreal.ProjectShutterLayoutRole.CORRIDOR, "corridor": unreal.ProjectShutterLayoutRole.CORRIDOR, "chokepoint": unreal.ProjectShutterLayoutRole.CHOKEPOINT, "store": unreal.ProjectShutterLayoutRole.STORE}
+    roles = {"exit": unreal.ProjectShutterLayoutRole.EXIT, "compartment": unreal.ProjectShutterLayoutRole.CHOKEPOINT, "main": unreal.ProjectShutterLayoutRole.CORRIDOR, "corridor": unreal.ProjectShutterLayoutRole.CORRIDOR, "chokepoint": unreal.ProjectShutterLayoutRole.CHOKEPOINT, "store": unreal.ProjectShutterLayoutRole.STORE}
     for index, (kind, (m, d, p, left, right, span, _a, _b)) in enumerate(chosen):
         a = (m[0] - p[0] * (left + AGENT_MARGIN), m[1] - p[1] * (left + AGENT_MARGIN))
         n = max(1, math.ceil(span / SHUTTER_WIDTH))
@@ -706,9 +777,18 @@ for floor, path, dest in MAPS:
             shutter.set_editor_property("open_height", SHUTTER_OPEN_HEIGHT)
             shutter.set_editor_property("move_speed", SHUTTER_SPEED)
             shutter.set_editor_property("layout_role", roles[kind])
+            if kind == "compartment" and isinstance(_b, tuple):
+                shutter.tags = [TAG, "CompLine_%d" % _b[1]]  # the runtime may leave a whole line open in a match
+            if kind == "exit":
+                shutter.tags = [TAG, "ExitRow_%d" % _b[1]]  # always shut; the runtime picks the working panels
         paint.append((kind, [a, (a[0] + p[0] * span, a[1] + p[1] * span)]))
     floor_report["barriers"] = {kind: sum(1 for k, _ in chosen if k == kind) for kind in candidates}
     floor_report["candidates"] = {kind: len(v) for kind, v in candidates.items()}
+
+    # Real collision (C++, after the meshes build): narrow shutters that reach into a wall or column, lower those under a
+    # lintel or beam, so no panel sticks into the modelled walls.
+    narrowed, lowered, dropped = (int(v) for v in unreal.ProjectMapPlacementLibrary.fit_shutters_to_walls(world, CEILING_HEIGHT).split(","))
+    floor_report["shutters_fitted"] = {"narrowed": narrowed, "lowered": lowered, "removed": dropped}
 
     # ------------------------------------------------------------ lights and darkness (a dark, ruined store; lights still there)
     # Pools of light along the way with darkness between them, dead fixtures here and there, a red emergency light over every
@@ -719,7 +799,7 @@ for floor, path, dest in MAPS:
     def far_from_fixtures(pt, need):
         return all(math.dist(pt, o[0]) >= need for o in fixtures)
     # Never over a shutter line: a fixture there would stick into the panel (rows reach the ceiling).
-    shutter_lines = [tuple(pts) for kind_, pts in paint if kind_ in ("main", "corridor", "chokepoint", "store")]
+    shutter_lines = [tuple(pts) for kind_, pts in paint if kind_ in ("exit", "compartment", "main", "corridor", "chokepoint", "store")]
     shutter_lines += [(sa, sb) for r in rings for sa, sb in r["blocks"]]
     def clear_of_shutters(pt):
         # Also clear of the modelled walls: open floor all around (the navmesh edge is already ~40 cm off a wall).
@@ -916,9 +996,9 @@ for floor, path, dest in MAPS:
         for s in range(13):
             dot(pa[0] + (pb[0] - pa[0]) * s / 12, pa[1] + (pb[1] - pa[1]) * s / 12, (150, 170, 200), 0)
     for kind, pts in paint:
-        if kind in ("main", "corridor", "chokepoint", "store"):
+        if kind in ("exit", "compartment", "main", "corridor", "chokepoint", "store"):
             a, b = pts
-            color = {"main": (255, 60, 0), "corridor": (240, 140, 0), "chokepoint": (0, 200, 220), "store": (230, 210, 40)}[kind]
+            color = {"exit": (255, 0, 120), "compartment": (0, 200, 220), "main": (255, 60, 0), "corridor": (240, 140, 0), "chokepoint": (0, 200, 220), "store": (230, 210, 40)}[kind]
             for s in range(21):
                 dot(a[0] + (b[0] - a[0]) * s / 20, a[1] + (b[1] - a[1]) * s / 20, color, 1)
         elif kind.startswith("light_"):

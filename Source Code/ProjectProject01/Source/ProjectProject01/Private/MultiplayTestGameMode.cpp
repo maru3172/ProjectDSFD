@@ -23,6 +23,7 @@
 #include "ProjectOpenObserver.h"
 #include "ProjectMatchReplay.h"
 #include "EngineUtils.h"
+#include "FireShutterActor.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -4289,6 +4290,42 @@ bool AMultiplayTestGameMode::TryMannequinAttack(AMultiplayTestPlayerController* 
 	const bool bHit = IsValid(Target) && Target->HandleMannequinCatch(Controlled);
     if(AffixRuntime)AffixRuntime->OnManualAttack(Controlled,bHit);
 	return bHit;
+}
+
+AFireShutterActor* AMultiplayTestGameMode::FindMannequinShutter(const AMannequinAICharacter* Body) const
+{
+	if (!IsValid(Body)) return nullptr;
+	FVector Eye; FRotator Facing; Body->GetActorEyesViewPoint(Eye, Facing);
+	const FVector Forward = Body->GetActorForwardVector();
+	AFireShutterActor* Best = nullptr; double BestDistance = FMath::Square(static_cast<double>(MannequinShutterReach));
+	for (TActorIterator<AFireShutterActor> It(GetWorld()); It; ++It)
+	{
+		AFireShutterActor* Shutter = *It;
+		if (!Shutter->IsOperableShutter()) continue;
+		// Closest point on the shutter's face (a long row panel is wide), at the body's height.
+		const FVector Center = Shutter->GetActorLocation();
+		const FVector Along = Shutter->GetActorRightVector();
+		const float Half = 150.f * FMath::Abs(Shutter->GetActorScale3D().Y);
+		const FVector Near = Center + Along * FMath::Clamp(FVector::DotProduct(Body->GetActorLocation() - Center, Along), -Half, Half);
+		FVector Offset = Near - Body->GetActorLocation(); Offset.Z = 0;
+		const double Distance = Offset.SizeSquared();
+		if (Distance > BestDistance || FMath::Abs(Center.Z - Body->GetActorLocation().Z) > 300.f) continue;
+		if (Distance > FMath::Square(80.) && FVector::DotProduct(Forward, Offset.GetSafeNormal()) < .3f) continue; // facing it
+		FHitResult Hit; FCollisionQueryParams Query(SCENE_QUERY_STAT(MannequinShutter), false, Body);
+		const FVector Target(Near.X, Near.Y, Eye.Z);
+		if (GetWorld()->LineTraceSingleByChannel(Hit, Eye, Target, ECC_Visibility, Query) && Hit.GetActor() != Shutter) continue;
+		Best = Shutter; BestDistance = Distance;
+	}
+	return Best;
+}
+
+AFireShutterActor* AMultiplayTestGameMode::TryMannequinShutter(AMultiplayTestPlayerController* RequestingController)
+{
+	if (!HasAuthority() || !IsMannequinController(RequestingController) || AuthoritativeMatchPhase != EMultiplayTestMatchPhase::InProgress) return nullptr;
+	AMannequinAICharacter* Body = RequestingController->GetViewedMannequin();
+	if (!IsValid(Body) || Body->IsHidden()) return nullptr;
+	AFireShutterActor* Shutter = FindMannequinShutter(Body);
+	return Shutter && Shutter->ToggleByServer() ? Shutter : nullptr;
 }
 
 void AMultiplayTestGameMode::QueueDefaultAIControllerRestore(AMannequinAICharacter* Mannequin) const

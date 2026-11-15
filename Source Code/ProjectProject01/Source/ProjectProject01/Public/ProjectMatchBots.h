@@ -64,6 +64,9 @@ struct FProjectMatchBotBrain
     TArray<FVector> Path;
     int32 PathIndex=0;
     double SeenAt=-100,ReactAt=0,SenseAt=0,PathAt=0,AttackAt=0,CommandAt=0;
+    // Mannequin player bot: when it may next raise a working fire shutter in front of the body it views, and since when the
+    // chase has been stuck at one (it reacts like a person: a moment later, not on the frame it arrives).
+    double ShutterAt=0,ShutterSince=-1;
     // Cached environment-based tactic point and rest-spot hunt state.
     FVector TacticGoal=FVector::ZeroVector,TacticKnown=FVector::ZeroVector;
     double TacticAt=-100,SpotIgnoreUntil=0;

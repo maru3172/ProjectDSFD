@@ -1,4 +1,6 @@
 #include "ProjectMatchBots.h"
+#include "FireShutterActor.h"
+#include "MannequinReactiveLight.h"
 #include "MultiplayTestGameMode.h"
 #include "MannequinAICharacter.h"
 #include "AIController.h"
@@ -23,12 +25,25 @@ namespace
 {
     ProjectBots::Vec V(const FVector& P){return {float(P.X),float(P.Y),float(P.Z)};}
     FVector U(ProjectBots::Vec P){return FVector(P.X,P.Y,P.Z);}
+    // Bots see what a player would on the dark floors: far into a lit pool, only a few metres into the dark
+    // (Docs/FireShutterLayout.md, lighting). Maps without the reactive fixtures count as lit (old behaviour).
+    constexpr float BotSightRange=2400.f,BotDarkSightRange=1000.f;
+    bool LitFor(const UWorld* World,const AActor* Target)
+    {
+        static TWeakObjectPtr<const UWorld> CheckedWorld;static bool bHasFixtures=false;
+        if(CheckedWorld.Get()!=World){CheckedWorld=World;bHasFixtures=false;for(TActorIterator<AMannequinReactiveLight> It(const_cast<UWorld*>(World));It;++It){bHasFixtures=true;break;}}
+        if(!bHasFixtures)return true;
+        if(const auto* Survivor=Cast<APlayerCharacter>(Target);Survivor&&Survivor->IsPlaygroundFlashlightOn())return true;
+        return AMannequinReactiveLight::IsPointLit(World,Target->GetActorLocation());
+    }
+    float SightRangeTo(const UWorld* World,const AActor* Target){return LitFor(World,Target)?BotSightRange:BotDarkSightRange;}
     bool Sees(APawn* Observer,AActor* Target)
     {
         if(!Observer||!Target||Target->IsHidden()||!Observer->GetController())return false;
         FVector Eye;FRotator Facing;Observer->GetActorEyesViewPoint(Eye,Facing);
         const FVector Offset=Target->GetActorLocation()-Eye;
-        return Offset.SizeSquared()<FMath::Square(2400.f)&&FVector::DotProduct(Facing.Vector(),Offset.GetSafeNormal())>.573576f&&Observer->GetController()->LineOfSightTo(Target);
+        if(Offset.SizeSquared()>=FMath::Square(BotSightRange))return false;
+        return Offset.SizeSquared()<FMath::Square(SightRangeTo(Observer->GetWorld(),Target))&&FVector::DotProduct(Facing.Vector(),Offset.GetSafeNormal())>.573576f&&Observer->GetController()->LineOfSightTo(Target);
     }
 }
 void UProjectMatchBotMovement::TickComponent(float Delta,ELevelTick Kind,FActorComponentTickFunction* TickFunction)
@@ -1477,7 +1492,8 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         // Several survivors detected: who to go for depends on level (ChooseTarget). Retargeting is
         // re-judged about once a second, so even an indecisive beginner does not jitter every frame.
         TargetCandidate Candidates[4];APlayerCharacter* Pawns[4]={};int32 Count=0,Kept=-1;
-        for(const auto& S:Survivors)if(Count<4&&GM->CanMannequinDetectSurvivor(Body,S.Pawn))
+        for(const auto& S:Survivors)if(Count<4&&GM->CanMannequinDetectSurvivor(Body,S.Pawn)&&
+            FVector::DistSquared(Body->GetActorLocation(),S.Pawn->GetActorLocation())<FMath::Square(SightRangeTo(World,S.Pawn))) // dark: closer
         {
             auto& Candidate=Candidates[Count];
             Candidate.Distance=FVector::Dist(Body->GetActorLocation(),S.Pawn->GetActorLocation());
@@ -1495,6 +1511,21 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             else{const int32 Pick=ChooseTarget(B.Policy.Profile,Candidates,Count,B.Policy.Random());Target=Pick>=0?Pawns[Pick]:nullptr;B.RetargetAt=Now+.8+.8*B.Policy.Random();}
         }
         Sense(Body,Target,1,B,Target!=nullptr);
+        // The mannequin player's own shutter rule (same as a human's F): only the body it views, a working shutter right in
+        // front, and the survivor it is after on the far side. The bodies' AI never does this by itself.
+        if(Body==PC->GetViewedMannequin()&&B.Target.IsValid()&&Now-B.SeenAt<=B.Policy.Profile.Memory&&Now>=B.ShutterAt)
+        {
+            const AFireShutterActor* Shutter=GM->FindMannequinShutter(Body);
+            bool Across=false;
+            if(Shutter&&Shutter->IsHeadingDown())
+            {
+                const FVector At=Shutter->GetActorLocation(),Normal=Shutter->GetActorForwardVector();
+                Across=FVector::DotProduct(Body->GetActorLocation()-At,Normal)*FVector::DotProduct(B.Known-At,Normal)<0;
+            }
+            if(!Across)B.ShutterSince=-1;
+            else if(B.ShutterSince<0)B.ShutterSince=Now;
+            else if(Now-B.ShutterSince>=B.Policy.Profile.Reaction&&GM->TryMannequinShutter(PC)){B.ShutterAt=Now+2.;B.ShutterSince=-1;}
+        }
         if(!B.Visible&&B.Policy.Random()<B.Policy.Profile.Sharing)
             for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==1&&Entry.Seen.Target&&Entry.Seen.At>=0&&Now-Entry.Seen.At<=B.Policy.Profile.Memory)
                 for(const auto& Pair:GM->MatchPlayerRecords)if(auto* Known=Pair.Value.SurvivorPawn.Get();Known&&Known->GetUniqueID()==Entry.Seen.Target)

@@ -2,6 +2,7 @@
 // Build target: ProjectProject01Server / ProjectProject01
 
 #include "MultiplayTestPlayerController.h"
+#include "FireShutterActor.h"
 #include "ProjectMannequinWheel.h"
 #include "ProjectMannequinAimMarker.h"
 #include "ProjectInstantReplay.h"
@@ -745,6 +746,8 @@ void AMultiplayTestPlayerController::SetupInputComponent()
 	// Mannequin orders are given only through the command wheel (right mouse button); 0~9 still pick the view.
 	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinAttack);
 	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleMannequinWheel);
+	// F as the mannequin player: the shutter in front of the viewed body. Not consumed, so a survivor's own F still works.
+	InputComponent->BindKey(EKeys::F, IE_Pressed, this, &AMultiplayTestPlayerController::RequestMannequinShutter).bConsumeInput = false;
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AMultiplayTestPlayerController::ToggleSessionMenu);
 	InputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AMultiplayTestPlayerController::SelectPreviousSpectatorTarget);
 	InputComponent->BindKey(EKeys::Right, IE_Pressed, this, &AMultiplayTestPlayerController::SelectNextSpectatorTarget);
@@ -1801,6 +1804,22 @@ void AMultiplayTestPlayerController::RequestMannequinAttack()
 		if (auto* Pad = UProjectGamepadSubsystem::Get(this)) Pad->Pulse(.5f, .12f, false);
 	}
 }
+
+void AMultiplayTestPlayerController::RequestMannequinShutter()
+{
+	if (IsLocalController() && !bShowMouseCursor && !MannequinWheel.IsValid() && SurvivorState == EMultiplayTestSurvivorState::NotApplicable && IsValid(GetViewedMannequin()))
+		ServerRequestMannequinShutter();
+}
+
+void AMultiplayTestPlayerController::ServerRequestMannequinShutter_Implementation()
+{
+	if (!AllowServerRequest(10, 3, 1.0f)) return;
+	if (AMultiplayTestGameMode* Mode = GetWorld()->GetAuthGameMode<AMultiplayTestGameMode>(); IsValid(Mode))
+		if (const AFireShutterActor* Shutter = Mode->TryMannequinShutter(this))
+			ClientNotifyMannequinCommand(Shutter->IsHeadingDown() ? TEXT("방화 셔터 내림") : TEXT("방화 셔터 올림"));
+}
+
+bool AMultiplayTestPlayerController::ServerRequestMannequinShutter_Validate() { return true; }
 
 void AMultiplayTestPlayerController::EnterInfectedBody(AMannequinAICharacter* Body)
 {

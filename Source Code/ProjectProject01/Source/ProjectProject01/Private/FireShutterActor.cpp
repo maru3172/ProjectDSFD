@@ -203,6 +203,21 @@ void AFireShutterActor::ApplyLayout(const EProjectShutterLayoutState NewState,co
     ShowLayoutState();
 }
 bool AFireShutterActor::IsHeadingDown()const{return (GetNetMode()==NM_Standalone?TargetOpenAlpha:Motion.Target)<.5f;}
+bool AFireShutterActor::ToggleByServer()
+{
+    if(!HasAuthority()||!IsOperableShutter())return false;
+    if(GetNetMode()==NM_Standalone)
+    {
+        TargetOpenAlpha=TargetOpenAlpha>=.5f?0.f:1.f;
+        InteractionText=TargetOpenAlpha>=.5f?NSLOCTEXT("Interaction","LowerFireShutter","F 키: 방화 셔터 내리기"):NSLOCTEXT("Interaction","RaiseFireShutter","F 키: 방화 셔터 올리기");
+        SetActorTickEnabled(true);RefreshNavCut();return true;
+    }
+    if(!bMotionReady)return false;
+    if(IsActorTickEnabled())Tick(0);
+    Motion.Start=CurrentOpenAlpha;Motion.Target=Motion.Target>=.5f?0.f:1.f;Motion.Speed=FMath::Max(0.f,MoveSpeed);Motion.Height=FMath::Max(0.f,OpenHeight);Motion.StartedAt=ServerNow();
+    ForceNetUpdate();OnRep_Motion();RefreshNavCut();return true;
+}
+
 void AFireShutterActor::OpenByServer()
 {
     if(!HasAuthority()||!bMotionReady||!IsHeadingDown()||LayoutState==EProjectShutterLayoutState::Sealed||LayoutState==EProjectShutterLayoutState::Raised||LayoutState==EProjectShutterLayoutState::Hanging)return;

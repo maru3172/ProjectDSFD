@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ProjectProject01LevelTransitionTrigger.h"
+#include "ProjectShutterLayout.h"
 
 #include "MultiplayTestGameMode.h"
 #include "MultiplayTestPlayerController.h"
@@ -472,6 +473,8 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		DestinationPackage += TEXT("?ElevatorArrival=") + Id;
 	}
 	else DestinationPackage += TEXT("?ElevatorArrival="); // Do not carry an old elevator option into ordinary travel.
+	// Floors keep their fire shutter layout for the match (1F <-> rescue basement goes both ways).
+	if (const FString Seeds = ProjectShutterLayout::SeedsForTravel(World); !Seeds.IsEmpty()) DestinationPackage += TEXT("?ShutterSeeds=") + Seeds;
 	// Recheck after the fade delay (editor asset changes / uncooked destinations).
     AsyncTravelWatchdogChecks=0;
 	if (!IsDestinationAvailable())
@@ -488,7 +491,8 @@ void AProjectProject01LevelTransitionTrigger::ExecuteTransition()
 		{
 			GameInstance->MarkPendingSinglePlayerLevelTransitionFade();
 		}
-		const FString ArrivalOption = DestinationArrivalId.IsNone() ? FString() : TEXT("ElevatorArrival=") + DestinationArrivalId.ToString();
+		FString ArrivalOption = DestinationArrivalId.IsNone() ? FString() : TEXT("ElevatorArrival=") + DestinationArrivalId.ToString();
+		if (const FString Seeds = ProjectShutterLayout::SeedsForTravel(World); !Seeds.IsEmpty()) ArrivalOption += (ArrivalOption.IsEmpty() ? TEXT("") : TEXT("?")) + (TEXT("ShutterSeeds=") + Seeds);
 		UGameplayStatics::OpenLevel(this, FName(*GetDestinationPackageName()), true, ArrivalOption);
 		return;
 	}
