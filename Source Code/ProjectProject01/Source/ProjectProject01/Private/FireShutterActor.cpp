@@ -201,6 +201,9 @@ void AFireShutterActor::ApplyLayout(const EProjectShutterLayoutState NewState,co
         ForceNetUpdate();OnRep_Motion();
     }
     ShowLayoutState();
+    // Not in play this match (a compartment line that does not stand, an unused slot): the server stops checking it.
+    // Going dormant still sends the pending state first, and a connection that joins later gets it once.
+    if(GetNetMode()!=NM_Standalone)SetNetDormancy(LayoutState==EProjectShutterLayoutState::Raised?DORM_DormantAll:DORM_Awake);
 }
 bool AFireShutterActor::IsHeadingDown()const{return (GetNetMode()==NM_Standalone?TargetOpenAlpha:Motion.Target)<.5f;}
 bool AFireShutterActor::ToggleByServer()
@@ -232,6 +235,9 @@ void AFireShutterActor::OpenByServer()
 void AFireShutterActor::OnRep_LayoutState(){ShowLayoutState();}
 void AFireShutterActor::ShowLayoutState()
 {
+    // Tucked away this match: not drawn, no collision (it sits above the ceiling, out of play). Server and clients alike.
+    const bool bAway=LayoutState==EProjectShutterLayoutState::Raised;
+    SetActorHiddenInGame(bAway);SetActorEnableCollision(!bAway);
     if(bMotionReady)ItemMesh->SetRelativeRotation(ClosedRotation+FRotator(0.f,0.f,BrokenTilt));
     const bool bSealed=LayoutState==EProjectShutterLayoutState::Sealed||LayoutState==EProjectShutterLayoutState::Hanging; // broken look
     if(BrokenMesh)

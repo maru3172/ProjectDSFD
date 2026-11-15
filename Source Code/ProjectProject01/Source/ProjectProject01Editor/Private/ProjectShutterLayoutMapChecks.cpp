@@ -2,6 +2,8 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Engine/TriggerBox.h"
+#include "FireShutterActor.h"
 #include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
@@ -103,7 +105,9 @@ bool FProjectShutterLayoutMapChecks::RunTest(const FString&)
 		const FShutterLayoutGraph& G = Placement.Graph;
 		TestTrue(FString::Printf(TEXT("%s: has route nodes, spawns and targets"), Level),
 			G.Nodes.Num() > 0 && G.Starts.Num() > 0 && (G.Escalators.Num() > 0 || G.Exits.Num() > 0));
-		int32 Short = 0, Mixed = 0; bool bReach = true, bDetour = true, bOneSide = true, bNoAreaCutOff = true;
+		int32 Short = 0, Mixed = 0; bool bReach = true, bDetour = true, bOneSide = true, bNoAreaCutOff = true, bLineWays = true;
+		TSet<int32> Lines; for (const FShutterLayoutGraph::FSlot& Slot : G.Slots) if (Slot.Line != INDEX_NONE) Lines.Add(Slot.Line);
+		TSet<uint32> DistinctLayouts;
 		const int32 WholeFloor = ProjectShutterLayout::CountReachable(G, TBitArray<>(false, G.Edges.Num()));
 		TArray<FShutterLayoutResult> Preview; TArray<FShutterRuin> PreviewRuins;
 		for (int32 Seed = 1; Seed <= 200; ++Seed)
@@ -124,6 +128,14 @@ bool FProjectShutterLayoutMapChecks::RunTest(const FString&)
 			bNoAreaCutOff &= ProjectShutterLayout::CountReachable(G, Blocked) == WholeFloor;
 			for (int32 E = 0; E < G.Escalators.Num(); ++E) bOneSide &= G.Escalators[E].Sides.IsValidIndex(R.EscalatorSide[E]);
 			Short += R.Note.IsEmpty() ? 0 : 1;
+			for (const int32 Line : Lines)
+				bLineWays &= ProjectShutterLayout::PassableOpenings(G, R.SlotStates, Line) >= FMath::Min(Placement.Settings.MinWaysPerLine, ProjectShutterLayout::LineOpenings(G, Line).Num());
+			{
+				uint32 Hash = 0;
+				for (const EShutterSlotState State : R.SlotStates) Hash = HashCombineFast(Hash, static_cast<uint32>(State));
+				for (const int32 Side : R.EscalatorSide) Hash = HashCombineFast(Hash, static_cast<uint32>(Side + 1));
+				DistinctLayouts.Add(Hash);
+			}
 			Mixed += R.CountSlots(EShutterSlotState::Door) > 0 && R.CountSlots(EShutterSlotState::Sealed) > 0 ? 1 : 0;
 			if (Seed <= 4) { Preview.Add(R); PreviewRuins.Add(ProjectShutterLayout::RollRuin(G, R, Layout->RuinSettings(), Seed)); }
 		}
@@ -134,6 +146,30 @@ bool FProjectShutterLayoutMapChecks::RunTest(const FString&)
 		TestTrue(FString::Printf(TEXT("%s: no long detours"), Level), bDetour);
 		TestTrue(FString::Printf(TEXT("%s: no part of the floor is ever cut off"), Level), bNoAreaCutOff);
 		TestTrue(FString::Printf(TEXT("%s: every escalator gets a working side"), Level), bOneSide);
+		TestTrue(FString::Printf(TEXT("%s: every compartment line keeps two ways through (or all it has)"), Level), bLineWays);
+		AddInfo(FString::Printf(TEXT("%s: %d compartment lines; 200 seeds gave %d different layouts"), Level, Lines.Num(), DistinctLayouts.Num()));
+		// The exit row really shuts the way out: the WHOLE escape volume lies behind the row, away from every survivor start
+		// (2026-11-16: a diagonal row once crossed the middle of the box, so anyone could escape without opening a shutter).
+		for (const TArray<AFireShutterActor*>& Row : Placement.ExitRows)
+		{
+			FVector2D A, B; float Span = -1.f; // the two panels farthest apart are the row ends
+			for (const AFireShutterActor* P : Row) for (const AFireShutterActor* Q : Row)
+				if (P && Q && FVector2D::Distance(FVector2D(P->GetActorLocation()), FVector2D(Q->GetActorLocation())) > Span)
+				{ Span = FVector2D::Distance(FVector2D(P->GetActorLocation()), FVector2D(Q->GetActorLocation())); A = FVector2D(P->GetActorLocation()); B = FVector2D(Q->GetActorLocation()); }
+			if (Span <= 0.f) continue;
+			const FVector2D Normal = FVector2D(-(B - A).Y, (B - A).X).GetSafeNormal();
+			auto Side = [&](const FVector2D& Q) { return FVector2D::DotProduct(Q - A, Normal); };
+			float StartSide = 0.f; for (const int32 Start : G.Starts) StartSide += Side(G.Nodes[Start]);
+			bool bChecked = false, bBehind = true;
+			for (TActorIterator<ATriggerBox> It(World); It; ++It)
+			{
+				if (FVector2D::Distance(FVector2D(It->GetActorLocation()), (A + B) / 2) > 2000.f) continue;
+				FVector Origin, Extent; It->GetActorBounds(false, Origin, Extent); bChecked = true;
+				for (const float SX : { -1.f, 1.f }) for (const float SY : { -1.f, 1.f })
+					bBehind &= Side(FVector2D(Origin.X + SX * Extent.X, Origin.Y + SY * Extent.Y)) * FMath::Sign(StartSide) < -50.f;
+			}
+			TestTrue(FString::Printf(TEXT("%s: the whole escape volume is behind its exit row"), Level), bChecked && bBehind);
+		}
 		AddInfo(FString::Printf(TEXT("%s: nodes %d links %d escalators %d corridor slots %d starts %d | 200 rolls: %d short, %d mixed"),
 			Level, G.Nodes.Num(), G.Edges.Num(), G.Escalators.Num(), G.Slots.Num(), G.Starts.Num(), Short, Mixed));
 		// Horror weighting on the real floor: the same 200 seeds with and without it.

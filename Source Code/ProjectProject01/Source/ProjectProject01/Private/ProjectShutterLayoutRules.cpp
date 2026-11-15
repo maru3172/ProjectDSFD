@@ -246,6 +246,40 @@ int32 AmbushJunctions(const FShutterLayoutGraph& Graph, const TArray<int32>& Tar
 	return Count;
 }
 
+TArray<TArray<int32>> LineOpenings(const FShutterLayoutGraph& Graph, const int32 Line)
+{
+	TArray<int32> Slots;
+	for (int32 S = 0; S < Graph.Slots.Num(); ++S) if (Graph.Slots[S].Line == Line && Line != INDEX_NONE) Slots.Add(S);
+	// Panels of one row stand edge to edge: chain slots closer than their half widths (+ 60 cm) into one opening.
+	TArray<TArray<int32>> Openings; TArray<bool> Used; Used.Init(false, Slots.Num());
+	for (int32 I = 0; I < Slots.Num(); ++I)
+	{
+		if (Used[I]) continue;
+		TArray<int32> Row{ Slots[I] }; Used[I] = true;
+		for (int32 K = 0; K < Row.Num(); ++K)
+			for (int32 J = 0; J < Slots.Num(); ++J)
+				if (!Used[J])
+				{
+					const FShutterLayoutGraph::FSlot& A = Graph.Slots[Row[K]]; const FShutterLayoutGraph::FSlot& B = Graph.Slots[Slots[J]];
+					if (FVector2D::Distance(A.Location, B.Location) <= (A.Width + B.Width) * .5f + 60.f) { Used[J] = true; Row.Add(Slots[J]); }
+				}
+		Openings.Add(MoveTemp(Row));
+	}
+	return Openings;
+}
+
+int32 PassableOpenings(const FShutterLayoutGraph& Graph, const TArray<EShutterSlotState>& States, const int32 Line)
+{
+	int32 Ways = 0;
+	for (const TArray<int32>& Row : LineOpenings(Graph, Line))
+	{
+		bool bThrough = false;
+		for (const int32 S : Row) bThrough |= !States.IsValidIndex(S) || States[S] != EShutterSlotState::Sealed;
+		Ways += bThrough ? 1 : 0;
+	}
+	return Ways;
+}
+
 FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLayoutSettings& Settings, const int32 Seed)
 {
 	FShutterLayoutResult Result; Result.Seed = Seed;
@@ -310,8 +344,15 @@ FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLa
 	{
 		TSet<int32> Lines; for (const FShutterLayoutGraph::FSlot& Slot : Graph.Slots) if (Slot.Line != INDEX_NONE) Lines.Add(Slot.Line);
 		TArray<int32> Sorted = Lines.Array(); Sorted.Sort();
-		for (const int32 Line : Sorted)
-			if (Random.FRand() < Settings.OpenLineChance) Result.OpenLines.Add(Line);
+		// Which candidate lines stand this match; the rest are not there at all.
+		for (int32 I = Sorted.Num() - 1; I > 0; --I) Sorted.Swap(I, Random.RandRange(0, I));
+		const int32 MinActive = FMath::Clamp(Settings.MinActiveLines, 0, Sorted.Num());
+		const int32 Active = FMath::Clamp(Random.RandRange(MinActive, FMath::Max(MinActive, Settings.MaxActiveLines)), 0, Sorted.Num());
+		for (int32 I = Active; I < Sorted.Num(); ++I) Result.OpenLines.Add(Sorted[I]);
+		// A standing line is now and then left open too (never every one): zones that are simply not blocked.
+		int32 Standing = Active;
+		for (int32 I = 0; I < Active; ++I)
+			if (Standing > 1 && Random.FRand() < Settings.OpenLineChance) { Result.OpenLines.Add(Sorted[I]); --Standing; }
 		Candidates.RemoveAll([&](const int32 E) { for (const int32 S : EdgeSlots[E]) if (Result.OpenLines.Contains(Graph.Slots[S].Line)) return true; return false; });
 	}
 
@@ -384,6 +425,21 @@ FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLa
 	const int32 MinSealed = FMath::Clamp(Settings.MinSealed, 0, FMath::Max(0, Settings.MaxSealed));
 	const int32 WantedSealed = Random.RandRange(MinSealed, FMath::Max(MinSealed, Settings.MaxSealed));
 	auto IsChokepoint = [&](const int32 E) { for (const int32 S : EdgeSlots[E]) if (Graph.Slots[S].bChokepoint) return true; return false; };
+	// Would sealing E (all its panels broken) leave every line it is on with enough ways through?
+	TMap<int32, int32> LineOpeningCount;
+	auto KeepsWays = [&](const int32 E)
+	{
+		TArray<EShutterSlotState> After = Result.SlotStates;
+		for (const int32 S : EdgeSlots[E]) After[S] = EShutterSlotState::Sealed;
+		for (const int32 S : EdgeSlots[E])
+			if (const int32 Line = Graph.Slots[S].Line; Line != INDEX_NONE)
+			{
+				int32* Count = LineOpeningCount.Find(Line);
+				if (!Count) Count = &LineOpeningCount.Add(Line, ProjectShutterLayout::LineOpenings(Graph, Line).Num());
+				if (ProjectShutterLayout::PassableOpenings(Graph, After, Line) < FMath::Min(Settings.MinWaysPerLine, *Count)) return false;
+			}
+		return true;
+	};
 	for (const int32 E : Ordered(Candidates, SealWeight, Random))
 	{
 		if (Result.SealedEdges.Num() >= WantedSealed) break;
@@ -420,7 +476,8 @@ FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLa
 			if (bChoke ? Chokepoints >= WantedChoke : CorridorDoors >= WantedDoors) continue;
 			if (!MayClose(E)) continue;
 			// Some chokepoints are broken shutters only: no way through there (the rules above keep another way).
-			if (bChoke && Random.FRand() < Settings.ChokepointSealedChance)
+			// Never down to fewer than MinWaysPerLine passable openings on its compartment line.
+			if (bChoke && Random.FRand() < Settings.ChokepointSealedChance && KeepsWays(E))
 			{
 				const TArray<int32> Sealed = Cut(Blocked, E);
 				if (StillFine())
@@ -524,6 +581,10 @@ FShutterRuin RollRuin(const FShutterLayoutGraph& Graph, const FShutterLayoutResu
 			}
 			continue;
 		}
+		// A compartment line that is not there this match: out of sight entirely (it must not give its spot away).
+		bool bLineAway = false;
+		for (const int32 S : Row) bLineAway |= Graph.Slots[S].Line != INDEX_NONE && Layout.OpenLines.Contains(Graph.Slots[S].Line);
+		if (bLineAway) { for (const int32 S : Row) Out.Slots[S] = FShutterLook(); continue; }
 		// Open this match. Sometimes smashed: some panels down, at least one wide panel left open (still a way through).
 		TArray<int32> Wide; for (const int32 S : Row) if (Graph.Slots[S].Width >= Settings.MinOpenPanel) Wide.Add(S);
 		float RowWidth = 0.f; for (const int32 S : Row) RowWidth += Graph.Slots[S].Width;

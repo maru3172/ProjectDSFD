@@ -61,6 +61,11 @@ MAIN_CORRIDOR_WIDTH = 1600.0  # wider than this: a main corridor row
 BARRIER_SPACING = 1200.0
 MAX_BARRIERS = 30
 AGENT_MARGIN = 40.0          # navmesh is shrunk by the agent radius; shutters reach the real wall
+EXIT_BOX_CLEARANCE = 100.0   # the exit row stays this far in front of every corner of the escape volume
+MAX_LINES = 6                # compartment line candidates per floor (2-3 stand in a match)
+LINE_MIN_GAP = 1500.0        # candidate lines at least 15 m apart
+LINE_EVEN_SPACING = 2500.0   # evenly spread candidates about every 25 m
+LINE_EDGE_MARGIN = 1200.0    # not right at the building's ends
 OUT = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_saved_dir()) + "ShutterLayoutQA/"
 os.makedirs(OUT, exist_ok=True)
 
@@ -238,6 +243,7 @@ for floor, path, dest in MAPS:
     unreal.EditorLoadingAndSavingUtils.load_map(path)
     world = editor.get_editor_world()
     frame, elevators, spawns, mannequins, triggers, exits = None, [], [], [], [], []
+    exit_boxes = {}  # exit centre -> its four corners on the ground (the whole escape volume must sit behind the exit row)
     for actor in actors_sub.get_all_level_actors():
         cls = actor.get_class().get_name()
         loc = actor.get_actor_location()
@@ -252,6 +258,8 @@ for floor, path, dest in MAPS:
             (spawns if "SURVIVOR" in role else mannequins).append((loc.x, loc.y))
         elif cls == "TriggerBox":
             exits.append((loc.x, loc.y))
+            _o, _e = actor.get_actor_bounds(False)
+            exit_boxes[(loc.x, loc.y)] = [(_o.x + sx * _e.x, _o.y + sy * _e.y) for sx in (-1, 1) for sy in (-1, 1)]
     origin, extent = frame.get_actor_bounds(False)
     x0, y0 = origin.x - extent.x, origin.y - extent.y
     grid = Grid(world, x0, y0, int(extent.x * 2 / CELL) + 1, int(extent.y * 2 / CELL) + 1, 50.0)
@@ -272,7 +280,7 @@ for floor, path, dest in MAPS:
         cx, cy = sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
         holes.append({"poly": poly, "center": (cx, cy), "area": area, "size": (bw, bh)})
     floors[floor] = {"path": path, "dest": dest, "grid": grid, "holes": holes, "elevators": elevators, "spawns": spawns,
-                     "mannequins": mannequins, "exits": exits}
+                     "mannequins": mannequins, "exits": exits, "exit_boxes": exit_boxes}
     unreal.log("[ShutterLayout] %s scanned: %d holes, %d survivor spawns, %d mannequin spawns" % (floor, len(holes), len(spawns), len(mannequins)))
 
 # Safety: an unreadable navmesh (it happened once, transiently) would make this script wipe the layout and place
@@ -655,10 +663,19 @@ for floor, path, dest in MAPS:
             columns[-1] = (min(columns[-1][0], lo), max(columns[-1][1], hi))
         else:
             columns.append((lo, hi))
-    if len(columns) >= 2:
-        line_xs = [(columns[k][1] + columns[k + 1][0]) / 2 for k in range(len(columns) - 1) if columns[k + 1][0] - columns[k][1] > 1200]
-    else:
-        line_xs = [building_min + (building_max - building_min) * t for t in (1 / 3, 2 / 3)]
+    # Candidates (user, 2026-11-15): more boundary lines than stand in a match. Each match the runtime picks 2-3 of them
+    # (MinActiveLines/MaxActiveLines), so where shutters appear changes too and cannot be learned. Atrium gaps first (the
+    # natural zone edges), then evenly across the building; lines keep LINE_MIN_GAP apart, at most MAX_LINES per floor.
+    natural = [(columns[k][1] + columns[k + 1][0]) / 2 for k in range(len(columns) - 1) if columns[k + 1][0] - columns[k][1] > 1200]
+    even_count = max(2, int((building_max - building_min - 2 * LINE_EDGE_MARGIN) / LINE_EVEN_SPACING))
+    even = [building_min + LINE_EDGE_MARGIN + (building_max - building_min - 2 * LINE_EDGE_MARGIN) * (k + .5) / even_count for k in range(even_count)]
+    line_xs = []
+    for x in natural + even:
+        if len(line_xs) < MAX_LINES and all(abs(x - o) >= LINE_MIN_GAP for o in line_xs):
+            line_xs.append(x)
+    line_xs.sort()
+    # Arrival spots and the stairs to the basement stay clear of any line.
+    keep_clear = [(a.get_actor_location().x, a.get_actor_location().y) for a in actors_sub.get_all_level_actors() if "BasementLinkAuto" in [str(t) for t in a.tags]]
     def openings_at(x):
         runs, start = [], None
         y = grid.y0
@@ -672,16 +689,21 @@ for floor, path, dest in MAPS:
             y += CELL / 2
         return [r for r in runs if r[1] - r[0] >= 120]
     compartments = []
+    placed_xs = []
     for line_index, line_x in enumerate(line_xs):
-        best_x = min((line_x + dx for dx in range(-1000, 1001, 100)), key=lambda x: sum(b - a for a, b in openings_at(x)) + abs(x - line_x) * .05)
+        best_x = min((line_x + dx for dx in range(-800, 801, 100)), key=lambda x: sum(b - a for a, b in openings_at(x)) + abs(x - line_x) * .05)
+        if any(abs(best_x - o) < LINE_MIN_GAP * .6 for o in placed_xs):
+            continue  # nudged onto a neighbour: one line there is enough
+        placed_xs.append(best_x)
         for y0, y1 in openings_at(best_x):
             mid = (best_x, (y0 + y1) / 2)
-            if near_gate(mid, 400):
+            if near_gate(mid, 400) or any(abs(best_x - c[0]) < 400 and y0 - 400 < c[1] < y1 + 400 for c in keep_clear):
                 continue
             half = (y1 - y0) / 2 - 20.0  # ends reach the wall line (navmesh edge + 20 cm), not into the wall
             k = nearest_kept(mid)
             compartments.append((mid, (1.0, 0.0), (0.0, 1.0), half, half, 2 * half + 2 * AGENT_MARGIN, k, ("line", line_index)))
     floor_report["compartments"] = len(compartments)
+    floor_report["compartment_lines"] = len({c[7][1] for c in compartments})
 
     # The exit row (user, 2026-11-15): the 1F exit is always shut, working shutters mixed with broken ones (the runtime picks
     # which, ExitRow_<n>). The row goes wall to wall across the narrowest passage within 15 m in front of the exit that really
@@ -728,6 +750,10 @@ for floor, path, dest in MAPS:
                 b = (c[0] + pp[0] * right, c[1] + pp[1] * right)
                 behind = (c[0] - u[0] * 120, c[1] - u[1] * 120)  # the exit side of the row
                 if not grid.ok(*behind) or not cut_off(behind, row_cells(a, b)):
+                    continue
+                # The WHOLE escape volume stays behind the row, a body width clear of it (2026-11-16: a diagonal row once
+                # crossed the middle of the box, so part of it lay outside and anyone could escape without opening a shutter).
+                if any((q[0] - c[0]) * u[0] + (q[1] - c[1]) * u[1] > -EXIT_BOX_CLEARANCE for q in f["exit_boxes"].get(e, [e])):
                     continue
                 # Centred on the run, ends at the wall line (navmesh edge + 20 cm).
                 mid = (c[0] + pp[0] * (right - left) / 2, c[1] + pp[1] * (right - left) / 2)

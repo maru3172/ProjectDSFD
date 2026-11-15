@@ -108,7 +108,7 @@ void AProjectShutterLayout::BeginPlay()
 		if (Seed == 0)
 			if (const AGameModeBase* Mode = GetWorld()->GetAuthGameMode())
 				Seed = ProjectShutterLayout::SeedFromOptions(Mode->OptionsString, ProjectShutterLayout::MapKey(GetWorld()));
-		if (Seed == 0) Seed = FMath::Max(1, FMath::Rand()); // never 0: clients learn the seed through a replicated change
+		if (Seed == 0) Seed = FMath::Max(1, FMath::Rand32()); // never 0 (clients learn the seed through a replicated change); full 31 bits, Rand() is only 15
 		Generate(Seed);
 		if (bBotsOpenWorkingShutters && !WorkingShutters.IsEmpty())
 			GetWorldTimerManager().SetTimer(BotTimer, FTimerDelegate::CreateUObject(this, &AProjectShutterLayout::CheckBots), .5f, true);
@@ -238,6 +238,8 @@ AProjectShutterLayout::FPlacement AProjectShutterLayout::Collect() const
 	Settings.ChokepointSealedChance = ChokepointSealedChance;
 	Settings.MaxClosableRowWidth = MaxClosableRowWidth;
 	Settings.OpenLineChance = OpenLineChance;
+	Settings.MinActiveLines = MinActiveLines;
+	Settings.MaxActiveLines = MaxActiveLines;
 	Settings.MaxDetourRatio = MaxDetourRatio; Settings.DetourSlack = DetourSlack; Settings.MinSealSpacing = MinSealSpacing;
 	Settings.bProtectObjectiveEdges = bProtectObjectiveCorridors; Settings.HorrorWeight = HorrorWeight;
 	return Out;

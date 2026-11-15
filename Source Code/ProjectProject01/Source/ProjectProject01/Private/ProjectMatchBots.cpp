@@ -3,6 +3,7 @@
 #include "MannequinReactiveLight.h"
 #include "MultiplayTestGameMode.h"
 #include "MannequinAICharacter.h"
+#include "PlayerCharacter.h"
 #include "AIController.h"
 #include "Engine/World.h"
 #include "Engine/TriggerBox.h"
@@ -537,7 +538,26 @@ bool UProjectMatchBots::Move(APawn* Pawn,FProjectMatchBotBrain& B,const FVector&
     auto Clear=[&](FVector D){return !World->SweepSingleByChannel(Hit,Pawn->GetActorLocation(),Pawn->GetActorLocation()+D*85,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(),FMath::Max(Capsule->GetScaledCapsuleRadius(),Capsule->GetScaledCapsuleHalfHeight()-8)),Query);};
     if(!Clear(Travel))Travel=Direction;
     if(!Clear(Travel)){Travel=(B.Path[B.PathIndex]-Pawn->GetActorLocation()).GetSafeNormal2D();} // Sway never blocks a clear path.
-    if(!Clear(Travel)){B.Path.Reset();B.PathAt=Now+.3;return false;}
+    if(!Clear(Travel))
+    {
+        // A closed working fire shutter in the way (the 1F exit row is always shut): a survivor bot opens it like a player
+        // does - working panel, right in front, after a human beat - and waits while it rises (Docs/FireShutterLayout.md).
+        // Broken panels never open; mannequin bodies never get here (only survivors are APlayerCharacter).
+        auto* Shutter=Cast<AFireShutterActor>(Hit.GetActor());const auto* Survivor=Cast<APlayerCharacter>(Pawn);auto* GM=Mode();
+        if(Shutter&&Shutter->IsOperableShutter()&&Survivor&&!Survivor->IsGameOver()&&GM&&GM->IsAuthoritativeMatchInProgress()&&GM->IsRegisteredActiveSurvivor(Survivor))
+        {
+            if(Shutter->IsHeadingDown())
+            {
+                if(B.ShutterSince<0)B.ShutterSince=Now;
+                if(Now>=B.ShutterAt&&Now-B.ShutterSince>=FMath::Max(.25f,.6f*B.Policy.Profile.Reaction)&&Shutter->ToggleByServer())
+                {B.ShutterAt=Now+1.5;B.ShutterSince=-1;UE_LOG(LogTemp,Display,TEXT("[BotShutter] %s opened %s (%s)"),*GetNameSafe(Pawn),*GetNameSafe(Shutter),Shutter->GetLayoutRole()==EProjectShutterLayoutRole::Exit?TEXT("exit row"):TEXT("corridor"));}
+            }
+            if(FaceTravel){const FRotator Look=HumanLook(B,Pawn->GetActorRotation(),Travel.Rotation(),Delta);Pawn->SetActorRotation(FRotator(0,Look.Yaw,0));}
+            return true;
+        }
+        B.Path.Reset();B.PathAt=Now+.3;return false;
+    }
+    B.ShutterSince=-1;
     Pawn->AddMovementInput(Travel,Velocity.Length());
     if(FaceTravel){const FRotator Look=HumanLook(B,Pawn->GetActorRotation(),Travel.Rotation(),Delta);Pawn->SetActorRotation(FRotator(0,Look.Yaw,0));}
     return true;
@@ -638,9 +658,19 @@ AActor* UProjectMatchBots::DiscoverExits(FBotPlayState& State,const FProjectMatc
     {
         if(KnowsExit(State,Spec,Objective,Level))continue;
         // Exits are noticed with peripheral vision too: distance and a clear line, no view cone.
+        bool Seen=false;
         for(APawn* Eye:Eyes)if(Eye&&Eye->GetController()&&FVector::DistSquared(Eye->GetActorLocation(),Objective->GetActorLocation())<FMath::Square(1800.f)&&
-            Eye->GetController()->LineOfSightTo(Objective))
-        {State.KnownExits.Add(Entry);if(!Found)Found=Objective;break;}
+            Eye->GetController()->LineOfSightTo(Objective)){Seen=true;break;}
+        // The 1F exit sits behind its always-shut shutter row: seeing that row (red exit lights over it) is seeing the way
+        // out, as it is for a player.
+        if(!Seen)for(TActorIterator<AFireShutterActor> It(Mode()->GetWorld());It&&!Seen;++It)
+            if(It->GetLayoutRole()==EProjectShutterLayoutRole::Exit&&!It->IsHidden()&&FVector::DistSquared2D(It->GetActorLocation(),Objective->GetActorLocation())<FMath::Square(1500.f))
+                for(APawn* Eye:Eyes)if(Eye&&FVector::DistSquared(Eye->GetActorLocation(),It->GetActorLocation())<FMath::Square(1800.f))
+                {
+                    FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(BotExitRow),false,Eye);
+                    if(!Eye->GetWorld()->LineTraceSingleByChannel(Hit,Eye->GetPawnViewLocation(),It->GetActorLocation()+FVector(0,0,150),ECC_Visibility,Query)||Hit.GetActor()==*It){Seen=true;break;}
+                }
+        if(Seen){State.KnownExits.Add(Entry);if(!Found)Found=Objective;}
     }
     return Found;
 }

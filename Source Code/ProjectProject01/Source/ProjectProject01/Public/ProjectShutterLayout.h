@@ -106,7 +106,12 @@ public:
 	float ExitWorkingSpacing = 900.f;
 	/** Chance a whole fire compartment line stays open this match (no shutter down along it): zones that are not blocked. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float OpenLineChance = .35f;
+	float OpenLineChance = .15f;
+	/** How many of the placed compartment lines stand each match (the rest are tucked out of sight). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0"))
+	int32 MinActiveLines = 2;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "0"))
+	int32 MaxActiveLines = 3;
 	/** Rows wider than this (main corridors) never close; they only look smashed or hang. Keeps the store's corridors open. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "300.0", Units = "cm"))
 	float MaxClosableRowWidth = 1000.f;

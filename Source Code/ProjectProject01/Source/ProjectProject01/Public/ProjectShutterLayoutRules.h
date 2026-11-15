@@ -62,8 +62,15 @@ struct PROJECTPROJECT01_API FShutterLayoutSettings
 	 * show as smashed or hanging rows. Closing happens in narrow corridors and chokepoints.
 	 */
 	float MaxClosableRowWidth = 1000.f;
+	/** Ways to keep passable across every compartment line (open, or a working shutter); a line with fewer openings keeps
+	 *  all of them passable. Stops a match from funnelling everyone through one passage (user, 2026-11-15). */
+	int32 MinWaysPerLine = 2;
 	/** Chance a whole fire compartment line (slots sharing Line) stays open this match: no shutter down along it. */
-	float OpenLineChance = .35f;
+	float OpenLineChance = .15f;
+	/** Compartment lines that stand this match, picked from the placed candidates (user, 2026-11-15: where shutters appear
+	 *  changes every match too, so players cannot learn the spots). The others are tucked out of sight. */
+	int32 MinActiveLines = 2;
+	int32 MaxActiveLines = 3;
 	/** Chance a closed chokepoint is broken shutters only (no way through there); otherwise one working shutter in the row. */
 	float ChokepointSealedChance = .4f;
 	/** Extra distance counted for opening a working shutter on the way. */
@@ -105,7 +112,7 @@ struct PROJECTPROJECT01_API FShutterLayoutResult
 	/** Closed chokepoints this match (in SealedEdges when broken through, in DoorEdges when one shutter works). */
 	int32 ChokepointEdges = 0;
 	int32 SealedChokepoints = 0;
-	/** Compartment lines left open this match. */
+	/** Compartment lines left open this match (not picked, or picked and then left open). */
 	TArray<int32> OpenLines;
 	/** The nodes that must stay reachable (escalator working sides, then exits). */
 	TArray<int32> Targets;
@@ -133,7 +140,11 @@ namespace ProjectShutterLayout
 	/** Per node, 0..1: how much mannequin presence is around it (Threat summed within Radius, then normalised). */
 	PROJECTPROJECT01_API TArray<float> ThreatField(const FShutterLayoutGraph& Graph, float Radius);
 	/** Junctions on the way (shortest start->target routes) that have 3+ open corridors and mannequins around: ambush spots. */
-	PROJECTPROJECT01_API int32 AmbushJunctions(const FShutterLayoutGraph& Graph, const TArray<int32>& Targets, const TBitArray<>& Blocked, const TArray<float>& Field);
+	PROJECTPROJECT01_API int32 AmbushJunctions(const FShutterLayoutGraph& Graph, const TArray<int32>& Targets, const TBitArray<>& Blocked, const TArray<float>& Field);
+	/** The openings of one compartment line: its slots grouped into rows (panels side by side belong to one opening). */
+	PROJECTPROJECT01_API TArray<TArray<int32>> LineOpenings(const FShutterLayoutGraph& Graph, int32 Line);
+	/** How many openings of the line people can get through with these slot states (open, or a working shutter in it). */
+	PROJECTPROJECT01_API int32 PassableOpenings(const FShutterLayoutGraph& Graph, const TArray<EShutterSlotState>& States, int32 Line);
 	PROJECTPROJECT01_API FShutterLayoutResult Generate(const FShutterLayoutGraph& Graph, const FShutterLayoutSettings& Settings, int32 Seed);
 }
 
