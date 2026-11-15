@@ -58,6 +58,23 @@ public:
 		return SecondaryClueGroups;
 	}
 
+	// 마지막 관측 정보와 2 차 단서 그룹을 이용해 NavMesh 위의 수색 후보들을 생성한다.
+	void RefreshIndirectSearchCandidates(
+		float RefreshInterval,
+		float CandidateSpacing,
+		int32 CandidateDirectionCount,
+		float EstimatedMaximumSpeed,
+		float MaximumSearchRadius,
+		float MaximumPredictionSeconds,
+		const FVector& NavigationExtent
+		);
+
+	// 현재 생성된 예상 위치 후보들을 반환한다.
+	const TArray<FMannequinSearchCandidate>& GetIndirectSearchCandidates() const
+	{
+		return IndirectSearchCandidates;
+	}
+
 private:
 	// 중앙 추적 관리에 등록된 마네킹 목록
 	UPROPERTY(Transient)
@@ -75,6 +92,10 @@ private:
 	UPROPERTY(Transient)
 	TArray<FMannequinSecondaryClueGroup> SecondaryClueGroups;
 
+	// 마지막 관측 정보와 2 차 단서를 이용해 생성한 NavMesh 수색 후보들
+	UPROPERTY(Transient)
+	TArray<FMannequinSearchCandidate> IndirectSearchCandidates;
+
 	// 다음 관측 정보에 부여할 번호
 	int32 NextInformationId = 1;
 
@@ -83,4 +104,7 @@ private:
 
 	// 같은 프레임에 2 차 단서 그룹을 중복 계산하는 것을 막기 위한 시각
 	double LastSecondaryClueRefreshTime = -1.0;
+
+	// 간접 수색 후보를 마지막으로 계산한 월드 시각
+	double LastIndirectCandidateRefreshTime = -1.0;
 };

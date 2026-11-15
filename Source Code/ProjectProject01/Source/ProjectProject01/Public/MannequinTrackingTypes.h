@@ -157,3 +157,25 @@ struct FMannequinSecondaryClueGroup
 	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
 	double LatestStopTime = -1.0;
 };
+
+USTRUCT()
+struct FMannequinSearchCandidate
+{
+	GENERATED_BODY()
+	
+	// NavMesh 위로 보정된 예상 플레이어 위치
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	FVector Location = FVector::ZeroVector;
+	
+	// 이 후보를 생성할 때 기준으로 사용한 2 차 단서 그룹 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 SecondaryGroupIndex = INDEX_NONE;
+	
+	// 이 후보를 생성할 때 사용한 마지막 관측 정보 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 ReferenceInformationId = INDEX_NONE;
+	
+	// 후보 생성 시점의 마지막 관측 정보 신뢰도
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	float Confidence = 0.0f;
+};

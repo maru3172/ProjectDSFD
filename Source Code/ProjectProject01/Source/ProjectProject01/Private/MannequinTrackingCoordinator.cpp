@@ -1,6 +1,7 @@
 #include "MannequinTrackingCoordinator.h"
 
 #include "Engine/World.h"
+#include "NavigationSystem.h"
 
 #include "MannequinAICharacter.h"
 
@@ -15,6 +16,7 @@ void UMannequinTrackingCoordinator::RegisterMannequin(AMannequinAICharacter& Man
 		// 새 마네킹이 추가된 프레임에는 중앙 정보와 2 차 단서 그룹을 다시 계산한다.
 		LastRefreshTime = -1.0;
 		LastSecondaryClueRefreshTime = -1.0;
+		LastIndirectCandidateRefreshTime = -1.0;
 	}
 }
 
@@ -337,5 +339,176 @@ void UMannequinTrackingCoordinator::RefreshSecondaryClueGroups(
 		BestGroup->EarliestStopTime = FMath::Min(BestGroup->EarliestStopTime, StopStartTime);
 		BestGroup->LatestStopTime = FMath::Max(BestGroup->LatestStopTime, StopStartTime);
 		BestGroup->ClueMannequins.Add(Mannequin);
+	}
+}
+
+void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
+	float RefreshInterval,
+	float CandidateSpacing,
+	int32 CandidateDirectionCount,
+	float EstimatedMaximumSpeed,
+	float MaximumSearchRadius,
+	float MaximumPredictionSeconds,
+	const FVector& NavigationExtent
+	)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		IndirectSearchCandidates.Reset();
+		LastIndirectCandidateRefreshTime = -1.0;
+		return;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+
+	// 현재 직접 관측 정보가 있다면 예상 후보보다 직접 위치를 우선한다.
+	if (LatestDirectInformation.IsActive(CurrentTime))
+	{
+		IndirectSearchCandidates.Reset();
+		LastIndirectCandidateRefreshTime = -1.0;
+		return;
+	}
+
+	if (!LastKnownInformation.IsActive(CurrentTime))
+	{
+		IndirectSearchCandidates.Reset();
+		LastIndirectCandidateRefreshTime = -1.0;
+		return;
+	}
+
+	const double SafeRefreshInterval = static_cast<double>(FMath::Max(0.0f, RefreshInterval));
+	if (LastIndirectCandidateRefreshTime >= 0.0 &&
+		CurrentTime - LastIndirectCandidateRefreshTime < SafeRefreshInterval)
+	{
+		return;
+	}
+
+	LastIndirectCandidateRefreshTime = CurrentTime;
+	IndirectSearchCandidates.Reset();
+
+	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
+	if (!IsValid(NavigationSystem))
+	{
+		return;
+	}
+
+	const float SafeCandidateSpacing = FMath::Max(1.0f, CandidateSpacing);
+	const int32 SafeCandidateDirectionCount = FMath::Max(4, CandidateDirectionCount);
+	const float SafeMaximumSearchRadius = FMath::Max(0.0f, MaximumSearchRadius);
+	const float SafeEstimatedMaximumSpeed = FMath::Max(0.0f, EstimatedMaximumSpeed);
+	const double ElapsedTime = FMath::Max(
+		0.0,
+		CurrentTime - LastKnownInformation.ObservationTime
+		);
+	const double PredictionTime = FMath::Min(
+		ElapsedTime,
+		static_cast<double>(FMath::Max(0.0f, MaximumPredictionSeconds))
+		);
+	const float MaximumReachableDistance = FMath::Min(
+		SafeEstimatedMaximumSpeed * static_cast<float>(ElapsedTime),
+		SafeMaximumSearchRadius
+		);
+
+	const FVector PredictedLocation =
+		LastKnownInformation.PlayerLocation +
+		LastKnownInformation.PlayerVelocity * PredictionTime;
+	const FVector SafeNavigationExtent(
+		FMath::Abs(NavigationExtent.X),
+		FMath::Abs(NavigationExtent.Y),
+		FMath::Abs(NavigationExtent.Z)
+		);
+	const double MinimumCandidateSeparationSquared =
+		FMath::Square(static_cast<double>(SafeCandidateSpacing * 0.25f));
+
+	auto AddProjectedCandidate =
+		[this,
+		 NavigationSystem,
+		 &SafeNavigationExtent,
+		 MinimumCandidateSeparationSquared]
+		(const FVector& CandidateLocation, int32 SecondaryGroupIndex)
+		{
+			FNavLocation NavigationLocation;
+
+			if (!NavigationSystem->ProjectPointToNavigation(
+				CandidateLocation,
+				NavigationLocation,
+				SafeNavigationExtent
+				))
+			{
+				return;
+			}
+
+			for (const FMannequinSearchCandidate& ExistingCandidate : IndirectSearchCandidates)
+			{
+				if (FVector::DistSquared2D(
+					ExistingCandidate.Location,
+					NavigationLocation.Location
+					) <= MinimumCandidateSeparationSquared)
+				{
+					return;
+				}
+			}
+
+			FMannequinSearchCandidate NewCandidate;
+			NewCandidate.Location = NavigationLocation.Location;
+			NewCandidate.SecondaryGroupIndex = SecondaryGroupIndex;
+			NewCandidate.ReferenceInformationId = LastKnownInformation.InformationId;
+			NewCandidate.Confidence = LastKnownInformation.Confidence;
+
+			IndirectSearchCandidates.Add(MoveTemp(NewCandidate));
+		};
+
+	// 마지막 직접 관측 위치와 속도 예측 위치는 항상 기본 후보로 사용한다.
+	AddProjectedCandidate(LastKnownInformation.PlayerLocation, INDEX_NONE);
+	AddProjectedCandidate(PredictedLocation, INDEX_NONE);
+
+	TArray<FVector> SearchCenters;
+	TArray<int32> SearchCenterGroupIndices;
+	SearchCenters.Add(PredictedLocation);
+	SearchCenterGroupIndices.Add(INDEX_NONE);
+
+	for (int32 GroupIndex = 0; GroupIndex < SecondaryClueGroups.Num(); ++GroupIndex)
+	{
+		const FMannequinSecondaryClueGroup& Group = SecondaryClueGroups[GroupIndex];
+
+		if (Group.ClueMannequins.IsEmpty())
+		{
+			continue;
+		}
+
+		AddProjectedCandidate(Group.CenterLocation, GroupIndex);
+		SearchCenters.Add(Group.CenterLocation);
+		SearchCenterGroupIndices.Add(GroupIndex);
+	}
+
+	const int32 RingCount = MaximumReachableDistance > 0.0f
+		? FMath::CeilToInt(MaximumReachableDistance / SafeCandidateSpacing)
+		: 0;
+
+	for (int32 CenterIndex = 0; CenterIndex < SearchCenters.Num(); ++CenterIndex)
+	{
+		for (int32 RingIndex = 1; RingIndex <= RingCount; ++RingIndex)
+		{
+			const float RingRadius = FMath::Min(
+				SafeCandidateSpacing * static_cast<float>(RingIndex),
+				MaximumReachableDistance
+				);
+
+			for (int32 DirectionIndex = 0; DirectionIndex < SafeCandidateDirectionCount; ++DirectionIndex)
+			{
+				const float AngleDegrees =
+					360.0f * static_cast<float>(DirectionIndex) /
+					static_cast<float>(SafeCandidateDirectionCount);
+				const FVector Direction = FRotator(0.0f, AngleDegrees, 0.0f).Vector();
+				const FVector CandidateLocation =
+					SearchCenters[CenterIndex] + Direction * RingRadius;
+
+				AddProjectedCandidate(
+					CandidateLocation,
+					SearchCenterGroupIndices[CenterIndex]
+					);
+			}
+		}
 	}
 }
