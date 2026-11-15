@@ -39,6 +39,20 @@ enum class EMannequinTrackingInformationType : uint8
 	IndirectPrediction = 3
 };
 
+UENUM()
+enum class EMannequinStopReason : uint8
+{
+	None = 0,
+	PlayerSight = 1,
+	Command = 2,
+	NavigationFailure = 3,
+	Animation = 4,
+	HitReaction = 5,
+	Waiting = 6,
+	Scripted = 7,
+	SystemForced = 8
+};
+
 USTRUCT(BlueprintType)
 struct FMannequinPlayerObservation
 {
