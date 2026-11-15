@@ -4,29 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "BehaviorTree/BTService.h"
+#include "MannequinTrackingTypes.h"
 #include "BTService_TwoStageMannequinChase.generated.h"
 
 class AMannequinAICharacter;
 class APlayerCharacter;
 class UBlackboardComponent;
-struct FMannequinPlayerObservation;
-
-UENUM()
-enum class ETwoStageMannequinTier : uint8
-{
-	Roaming = 0,
-	Primary = 1,
-	Secondary = 2
-};
-
-UENUM()
-enum class EMannequinTrackingEvidence : uint8
-{
-	None = 0,
-	DirectObservation = 1,
-	StoppedMannequinClue = 2,
-	VelocityPrediction = 3
-};
 
 /**
  * 
@@ -58,7 +41,7 @@ private:
 		const TArray<AActor*>& AllMannequins
 		) const;
 	
-	// 현재 마네킹이 직접 관측자, 2 차 추적자 또는 배회 상태인지 판단한다.
+	// 현재 마네킹이 0·1·2·3 차 중 어떤 역할인지 판단한다.
 	ETwoStageMannequinTier DetermineChaseTier(
 		const AMannequinAICharacter& CurrentMannequin,
 		const TArray<AActor*>& AllMannequins
@@ -90,6 +73,11 @@ private:
 		const FVector& TrackingLocation,
 		ETwoStageMannequinTier Tier,
 		EMannequinTrackingEvidence TrackingEvidence
+		);
+
+	// 플레이어 시야로 정지한 2 차 마네킹 상태를 적용한다.
+	void ApplyStoppedClueState(
+		UBlackboardComponent& Blackboard
 		);
 	
 	// 배회 상태 적용 함수
@@ -177,6 +165,34 @@ private:
 	// 마지막 직접 관측 이후 정보를 유지할 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
 	float ObservationLifetime = 8.0f;
+	
+	// 플레이어 시야 정지 상태를 2 차 단서로 인정할 수 있는 최대 갱신 간격
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "s"))
+	float SecondaryClueLifetime = 0.5f;
+	
+	// 같은 2 차 단서 그룹으로 묶을 수 있는 정지 시작 시각의 최대 차이
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "s"))
+	float SecondaryGroupMaximumTimeDifference = 1.0f;
+	
+	// 같은 2 차 단서 그룹으로 묶을 수 있는 마네킹 사이의 최대 수평 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	float SecondaryGroupMaximumDistance = 1500.0f;
+	
+	// 후보 위치에서 한 번에 2 차 단서들을 볼 수 있다고 가정하는 플레이어 시야각의 절반
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
+	float EstimatedPlayerClueSightHalfAngle = 45.0f;
+	
+	// 예상 이동 위치와 가까운 후보에 적용할 점수 비중
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
+	float IndirectDistanceScoreWeight = 1.0f;
+	
+	// 마지막 이동 방향과 일치하는 후보에 적용할 점수 비중
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
+	float IndirectDirectionScoreWeight = 0.5f;
+	
+	// 더 많은 2 차 단서를 설명하는 후보에 적용할 점수 비중
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
+	float IndirectClueScoreWeight = 1.0f;
 	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))

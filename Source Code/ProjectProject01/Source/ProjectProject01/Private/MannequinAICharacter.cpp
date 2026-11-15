@@ -711,6 +711,11 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	}
 }
 
+void AMannequinAICharacter::SetTrackingTier(ETwoStageMannequinTier NewTrackingTier)
+{
+	CurrentTrackingTier = NewTrackingTier;
+}
+
 void AMannequinAICharacter::UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime)
 {
 	PlayerObservation.LastSeenLocation = PlayerLocation;
@@ -734,6 +739,25 @@ void AMannequinAICharacter::SetPlayerDirectlyVisible(bool bDirectlyVisible)
 
 void AMannequinAICharacter::SetObservedByPlayer(bool bObserved)
 {
+	const UWorld* World = GetWorld();
+	const double CurrentTime = IsValid(World) ? World->GetTimeSeconds() : -1.0;
+	
+	if (bObserved)
+	{
+		if (!bObservedByPlayer)
+		{
+			PlayerSightStopStartTime = CurrentTime;
+		}
+		
+		LastPlayerSightStopTime = CurrentTime;
+		CurrentStopReason = EMannequinStopReason::PlayerSight;
+	}
+	else if (CurrentStopReason == EMannequinStopReason::PlayerSight)
+	{
+		CurrentStopReason = EMannequinStopReason::None;
+		PlayerSightStopStartTime = -1.0;
+	}
+	
 	bObservedByPlayer = bObserved;
 }
 

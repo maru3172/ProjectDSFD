@@ -154,6 +154,33 @@ public:
 		return bObservedByPlayer;
 	}
 	
+	// 현재 마네킹이 정지한 원인을 반환한다.
+	EMannequinStopReason GetStopReason() const
+	{
+		return CurrentStopReason;
+	}
+	
+	// 현재 플레이어 시야 정지가 시작된 월드 시각을 반환한다.
+	double GetPlayerSightStopStartTime() const
+	{
+		return PlayerSightStopStartTime;
+	}
+	
+	// 플레이어 시야로 마지막 정지 상태를 갱신한 월드 시각을 반환한다.
+	double GetLastPlayerSightStopTime() const
+	{
+		return LastPlayerSightStopTime;
+	}
+	
+	// 현재 플레이어 시야 정지를 간접 단서로 사용할 수 있는지 반환한다.
+	bool HasActivePlayerSightStopClue() const
+	{
+		return
+			bObservedByPlayer &&
+			CurrentStopReason == EMannequinStopReason::PlayerSight &&
+			PlayerSightStopStartTime >= 0.0;
+	}
+	
 	// 마지막 관측 이후 경과 시간에 따라 신뢰도를 갱신한다.
 	void UpdatePlayerObservationConfidence(double CurrentTime, float ObservationLifetime);
 	
@@ -162,6 +189,17 @@ public:
 	
 	// PlayerObservation 초기화 함수
 	void ClearPlayerObservation();
+	
+	// 현재 마네킹의 추적 역할을 저장한다.
+	void SetTrackingTier(
+		ETwoStageMannequinTier NewTrackingTier
+		);
+	
+	// 현재 마네킹의 추적 역할을 반환한다.
+	ETwoStageMannequinTier GetTrackingTier() const
+	{
+		return CurrentTrackingTier;
+	}
 
 private:
 	friend class AMultiplayTestGameMode;
@@ -325,7 +363,23 @@ private:
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
 	bool bObservedByPlayer = false;
 	
+	// 현재 마네킹이 정지한 원인
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	EMannequinStopReason CurrentStopReason = EMannequinStopReason::None;
+	
+	// 현재 플레이어 시야 정지가 시작된 월드 시각
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	double PlayerSightStopStartTime = -1.0;
+	
+	// 플레이어 시야로 마지막 정지 상태를 갱신한 월드 시각
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	double LastPlayerSightStopTime = -1.0;
+	
 	// 이 마네킹이 마지막으로 직접 확인한 플레이어 정보
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
 	FMannequinPlayerObservation PlayerObservation;
+	
+	// 현재 중앙 추적 시스템에서 사용하는 0·1·2·3 차 역할
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	ETwoStageMannequinTier CurrentTrackingTier = ETwoStageMannequinTier::Roaming;
 };
