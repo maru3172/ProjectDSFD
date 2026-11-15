@@ -8,11 +8,13 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
 
 #include "HelperRearGuardCharacter.h"
 #include "MannequinAICharacter.h"
+#include "MannequinTrackingCoordinator.h"
 #include "PlayerCharacter.h"
 
 UBTService_TwoStageMannequinChase::UBTService_TwoStageMannequinChase()
@@ -141,6 +143,15 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 
 	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, AllMannequins);
 	CurrentMannequin->SetTrackingTier(Tier);
+	
+	UMannequinTrackingCoordinator* TrackingCoordinator =
+		GetWorld()->GetSubsystem<UMannequinTrackingCoordinator>();
+	
+	if (IsValid(TrackingCoordinator))
+	{
+		TrackingCoordinator->RegisterMannequin(*CurrentMannequin);
+		TrackingCoordinator->RefreshTrackingInformation(ObservationLifetime);
+	}
 
 	switch (Tier)
 	{
