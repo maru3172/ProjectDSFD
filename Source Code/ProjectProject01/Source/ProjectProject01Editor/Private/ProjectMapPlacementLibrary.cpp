@@ -6,6 +6,10 @@
 #include "FireShutterActor.h"
 #include "MannequinReactiveLight.h"
 #include "NavigationSystem.h"
+#include "NavigationPath.h"
+#include "NavMesh/RecastNavMesh.h"
+#include "ProjectProject01RoleSpawnPoint.h"
+#include "ProjectProject01LevelTransitionTrigger.h"
 
 namespace
 {
@@ -110,4 +114,31 @@ FString UProjectMapPlacementLibrary::FitShuttersToWalls(UObject* WorldContext, c
 		}
 	}
 	return FString::Printf(TEXT("%d,%d,%d"), Narrowed, Lowered, Removed);
+}
+
+FString UProjectMapPlacementLibrary::RebuildNavigation(UObject* WorldContext)
+{
+	UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	UNavigationSystemV1* Nav = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+	if (!Nav) return TEXT("0,0,0");
+	FAssetCompilingManager::Get().FinishAllCompilation(); // collision of freshly loaded meshes
+	const uint8 Locks = ENavigationBuildLock::NoUpdateInEditor | ENavigationBuildLock::InitialLock | ENavigationBuildLock::Custom | ENavigationBuildLock::AsyncLoadLock;
+	Nav->RemoveNavigationBuildLock(Locks, UNavigationSystemV1::ELockRemovalRebuildAction::NoRebuild);
+	Nav->Build(); // waits for the build to finish
+	int32 Tiles = 0;
+	for (TActorIterator<ARecastNavMesh> It(World); It; ++It) Tiles += It->GetNavMeshTilesCount();
+	TArray<FVector> Starts, Exits;
+	for (TActorIterator<AProjectProject01RoleSpawnPoint> It(World); It; ++It) if (It->GetSpawnRole() == EProjectProject01SpawnRole::Survivor) Starts.Add(It->GetActorLocation());
+	for (TActorIterator<AProjectProject01LevelTransitionTrigger> It(World); It; ++It) Exits.Add(It->GetActorLocation());
+	int32 Ok = 0, Checked = 0;
+	for (const FVector& From : Starts)
+		for (const FVector& To : Exits)
+		{
+			++Checked;
+			FNavLocation A, B;
+			if (!Nav->ProjectPointToNavigation(From, A, FVector(200, 200, 300)) || !Nav->ProjectPointToNavigation(To, B, FVector(300, 300, 400))) continue;
+			const UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(World, A.Location, B.Location);
+			Ok += Path && Path->IsValid() && !Path->IsPartial();
+		}
+	return FString::Printf(TEXT("%d,%d,%d"), Tiles, Ok, Checked);
 }

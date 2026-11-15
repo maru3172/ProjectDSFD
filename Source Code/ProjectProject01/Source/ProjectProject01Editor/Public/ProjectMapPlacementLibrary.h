@@ -25,4 +25,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Project|Placement", meta = (WorldContext = "WorldContext"))
 	static FString FitShuttersToWalls(UObject* WorldContext, float CeilingHeight = 600.f);
+
+	/** Full navigation build of the loaded editor map (works from a commandlet: lifts the editor's load lock first), then
+	 *  checks a complete path from every survivor start to every exit. Returns "tiles,paths ok,paths checked". Dynamic
+	 *  Modifiers Only maps need this after any change, or tiles around runtime shutters come back empty. */
+	UFUNCTION(BlueprintCallable, Category = "Project|Placement", meta = (WorldContext = "WorldContext"))
+	static FString RebuildNavigation(UObject* WorldContext);
 };
