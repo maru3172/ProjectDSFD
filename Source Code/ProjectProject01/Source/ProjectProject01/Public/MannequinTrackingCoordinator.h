@@ -29,8 +29,37 @@ public:
 		TArray<AMannequinAICharacter*>& OutMannequins
 		) const;
 
+	// 등록된 마네킹들의 현재 관측 정보를 중앙 상태에 반영한다.
+	void RefreshTrackingInformation(
+		float InformationLifetime
+		);
+
+	// 현재 직접 관측 중인 가장 최신 정보를 반환한다.
+	bool TryGetLatestDirectInformation(
+		FMannequinSharedTrackingInformation& OutInformation
+		) const;
+
+	// 직접 시야를 잃은 뒤에도 유효한 마지막 관측 정보를 반환한다.
+	bool TryGetLastKnownInformation(
+		FMannequinSharedTrackingInformation& OutInformation
+		) const;
+
 private:
 	// 중앙 추적 관리에 등록된 마네킹 목록
 	UPROPERTY(Transient)
 	TArray<TWeakObjectPtr<AMannequinAICharacter>> RegisteredMannequins;
+
+	// 현재 직접 관측 중인 마네킹 중 가장 최신 정보
+	UPROPERTY(Transient)
+	FMannequinSharedTrackingInformation LatestDirectInformation;
+
+	// 직접 시야를 잃은 뒤 유지하는 마지막 관측 정보
+	UPROPERTY(Transient)
+	FMannequinSharedTrackingInformation LastKnownInformation;
+
+	// 다음 관측 정보에 부여할 번호
+	int32 NextInformationId = 1;
+
+	// 같은 프레임에 여러 서비스가 중복 계산하는 것을 막기 위한 시각
+	double LastRefreshTime = -1.0;
 };
