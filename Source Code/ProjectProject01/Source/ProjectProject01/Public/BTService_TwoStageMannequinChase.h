@@ -178,6 +178,10 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
 	float SecondaryGroupMaximumDistance = 1500.0f;
 	
+	// 후보 위치에서 한 번에 2 차 단서들을 볼 수 있다고 가정하는 플레이어 시야각의 절반
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
+	float EstimatedPlayerClueSightHalfAngle = 45.0f;
+	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
 	float MaximumPredictionSeconds = 3.0f;

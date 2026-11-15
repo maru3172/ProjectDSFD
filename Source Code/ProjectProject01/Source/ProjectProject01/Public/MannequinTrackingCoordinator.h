@@ -75,7 +75,45 @@ public:
 		return IndirectSearchCandidates;
 	}
 
+	// 생성된 후보들 중 이동 가능 범위와 2 차 단서 시야 조건을 통과한 후보만 유지한다.
+	void FilterIndirectSearchCandidates(
+		float EstimatedMaximumSpeed,
+		float MaximumSearchRadius,
+		float SecondaryClueRadius,
+		float PlayerClueSightHalfAngle,
+		float MannequinSightRadius,
+		float MannequinSightHalfAngle,
+		float MannequinSightMaximumHeightDifference,
+		const FVector& NavigationExtent
+		);
+
 private:
+	// 후보 위치에서 지정한 2 차 단서 그룹을 설명할 수 있는지 검사한다.
+	bool DoesCandidateExplainSecondaryGroup(
+		const FVector& CandidateLocation,
+		const FMannequinSecondaryClueGroup& Group,
+		float SecondaryClueRadius,
+		float PlayerClueSightHalfAngle,
+		float MannequinSightRadius,
+		float MannequinSightHalfAngle,
+		float MannequinSightMaximumHeightDifference
+		) const;
+
+	// 후보 위치에서 2 차 마네킹까지 벽에 막히지 않았는지 검사한다.
+	bool CanCandidateSeeSecondaryClue(
+		const FVector& CandidateLocation,
+		const AMannequinAICharacter& SecondaryMannequin
+		) const;
+
+	// 2 차 마네킹이 후보 위치를 직접 볼 수 있는지 검사한다.
+	bool CanSecondaryClueSeeCandidate(
+		const AMannequinAICharacter& SecondaryMannequin,
+		const FVector& CandidateLocation,
+		float MannequinSightRadius,
+		float MannequinSightHalfAngle,
+		float MannequinSightMaximumHeightDifference
+		) const;
+
 	// 중앙 추적 관리에 등록된 마네킹 목록
 	UPROPERTY(Transient)
 	TArray<TWeakObjectPtr<AMannequinAICharacter>> RegisteredMannequins;
@@ -107,4 +145,7 @@ private:
 
 	// 간접 수색 후보를 마지막으로 계산한 월드 시각
 	double LastIndirectCandidateRefreshTime = -1.0;
+
+	// 간접 수색 후보를 마지막으로 필터링한 월드 시각
+	double LastIndirectCandidateFilterTime = -1.0;
 };

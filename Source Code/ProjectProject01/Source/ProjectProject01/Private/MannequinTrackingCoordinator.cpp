@@ -1,6 +1,7 @@
 #include "MannequinTrackingCoordinator.h"
 
 #include "Engine/World.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "NavigationSystem.h"
 
 #include "MannequinAICharacter.h"
@@ -17,6 +18,7 @@ void UMannequinTrackingCoordinator::RegisterMannequin(AMannequinAICharacter& Man
 		LastRefreshTime = -1.0;
 		LastSecondaryClueRefreshTime = -1.0;
 		LastIndirectCandidateRefreshTime = -1.0;
+		LastIndirectCandidateFilterTime = -1.0;
 	}
 }
 
@@ -357,6 +359,7 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	{
 		IndirectSearchCandidates.Reset();
 		LastIndirectCandidateRefreshTime = -1.0;
+		LastIndirectCandidateFilterTime = -1.0;
 		return;
 	}
 
@@ -367,6 +370,7 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	{
 		IndirectSearchCandidates.Reset();
 		LastIndirectCandidateRefreshTime = -1.0;
+		LastIndirectCandidateFilterTime = -1.0;
 		return;
 	}
 
@@ -374,6 +378,7 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	{
 		IndirectSearchCandidates.Reset();
 		LastIndirectCandidateRefreshTime = -1.0;
+		LastIndirectCandidateFilterTime = -1.0;
 		return;
 	}
 
@@ -385,6 +390,7 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	}
 
 	LastIndirectCandidateRefreshTime = CurrentTime;
+	LastIndirectCandidateFilterTime = -1.0;
 	IndirectSearchCandidates.Reset();
 
 	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
@@ -511,4 +517,333 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 			}
 		}
 	}
+}
+
+void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
+	float EstimatedMaximumSpeed,
+	float MaximumSearchRadius,
+	float SecondaryClueRadius,
+	float PlayerClueSightHalfAngle,
+	float MannequinSightRadius,
+	float MannequinSightHalfAngle,
+	float MannequinSightMaximumHeightDifference,
+	const FVector& NavigationExtent
+	)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World) || IndirectSearchCandidates.IsEmpty())
+	{
+		return;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+	if (FMath::IsNearlyEqual(CurrentTime, LastIndirectCandidateFilterTime))
+	{
+		return;
+	}
+
+	LastIndirectCandidateFilterTime = CurrentTime;
+
+	if (!LastKnownInformation.IsActive(CurrentTime) || LatestDirectInformation.IsActive(CurrentTime))
+	{
+		IndirectSearchCandidates.Reset();
+		return;
+	}
+
+	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
+	if (!IsValid(NavigationSystem))
+	{
+		IndirectSearchCandidates.Reset();
+		return;
+	}
+
+	const FVector SafeNavigationExtent(
+		FMath::Abs(NavigationExtent.X),
+		FMath::Abs(NavigationExtent.Y),
+		FMath::Abs(NavigationExtent.Z)
+		);
+	FNavLocation NavigationStartLocation;
+
+	if (!NavigationSystem->ProjectPointToNavigation(
+		LastKnownInformation.PlayerLocation,
+		NavigationStartLocation,
+		SafeNavigationExtent
+		))
+	{
+		IndirectSearchCandidates.Reset();
+		return;
+	}
+
+	const double ElapsedTime = FMath::Max(
+		0.0,
+		CurrentTime - LastKnownInformation.ObservationTime
+		);
+	const double MaximumReachableDistance = FMath::Min(
+		static_cast<double>(FMath::Max(0.0f, EstimatedMaximumSpeed)) * ElapsedTime,
+		static_cast<double>(FMath::Max(0.0f, MaximumSearchRadius))
+		);
+	TArray<FMannequinSearchCandidate> FilteredCandidates;
+
+	for (const FMannequinSearchCandidate& Candidate : IndirectSearchCandidates)
+	{
+		double NavigationPathLength = 0.0;
+		const ENavigationQueryResult::Type PathResult = UNavigationSystemV1::GetPathLength(
+			World,
+			NavigationStartLocation.Location,
+			Candidate.Location,
+			NavigationPathLength
+			);
+
+		if (PathResult != ENavigationQueryResult::Success ||
+			NavigationPathLength > MaximumReachableDistance)
+		{
+			continue;
+		}
+
+		FMannequinSearchCandidate FilteredCandidate = Candidate;
+
+		// 2 차 단서가 없다면 마지막 관측 정보만을 사용하는 후보로 유지한다.
+		if (SecondaryClueGroups.IsEmpty())
+		{
+			FilteredCandidates.Add(MoveTemp(FilteredCandidate));
+			continue;
+		}
+
+		bool bExplainsSecondaryGroup = false;
+
+		if (Candidate.SecondaryGroupIndex != INDEX_NONE &&
+			SecondaryClueGroups.IsValidIndex(Candidate.SecondaryGroupIndex))
+		{
+			bExplainsSecondaryGroup = DoesCandidateExplainSecondaryGroup(
+				Candidate.Location,
+				SecondaryClueGroups[Candidate.SecondaryGroupIndex],
+				SecondaryClueRadius,
+				PlayerClueSightHalfAngle,
+				MannequinSightRadius,
+				MannequinSightHalfAngle,
+				MannequinSightMaximumHeightDifference
+				);
+		}
+		else
+		{
+			for (int32 GroupIndex = 0; GroupIndex < SecondaryClueGroups.Num(); ++GroupIndex)
+			{
+				if (!DoesCandidateExplainSecondaryGroup(
+					Candidate.Location,
+					SecondaryClueGroups[GroupIndex],
+					SecondaryClueRadius,
+					PlayerClueSightHalfAngle,
+					MannequinSightRadius,
+					MannequinSightHalfAngle,
+					MannequinSightMaximumHeightDifference
+					))
+				{
+					continue;
+				}
+
+				FilteredCandidate.SecondaryGroupIndex = GroupIndex;
+				bExplainsSecondaryGroup = true;
+				break;
+			}
+		}
+
+		if (bExplainsSecondaryGroup)
+		{
+			FilteredCandidates.Add(MoveTemp(FilteredCandidate));
+		}
+	}
+
+	IndirectSearchCandidates = MoveTemp(FilteredCandidates);
+}
+
+bool UMannequinTrackingCoordinator::DoesCandidateExplainSecondaryGroup(
+	const FVector& CandidateLocation,
+	const FMannequinSecondaryClueGroup& Group,
+	float SecondaryClueRadius,
+	float PlayerClueSightHalfAngle,
+	float MannequinSightRadius,
+	float MannequinSightHalfAngle,
+	float MannequinSightMaximumHeightDifference
+	) const
+{
+	if (Group.ClueMannequins.IsEmpty())
+	{
+		return false;
+	}
+
+	const double SafeSecondaryClueRadiusSquared =
+		FMath::Square(static_cast<double>(FMath::Max(0.0f, SecondaryClueRadius)));
+	TArray<float> ClueAngles;
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : Group.ClueMannequins)
+	{
+		const AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+
+		if (!IsValid(Mannequin) || !Mannequin->HasActivePlayerSightStopClue())
+		{
+			return false;
+		}
+
+		const FVector MannequinLocation = Mannequin->GetActorLocation();
+
+		if (FVector::DistSquared2D(CandidateLocation, MannequinLocation) > SafeSecondaryClueRadiusSquared)
+		{
+			return false;
+		}
+
+		if (!CanCandidateSeeSecondaryClue(CandidateLocation, *Mannequin))
+		{
+			return false;
+		}
+
+		if (CanSecondaryClueSeeCandidate(
+			*Mannequin,
+			CandidateLocation,
+			MannequinSightRadius,
+			MannequinSightHalfAngle,
+			MannequinSightMaximumHeightDifference
+			))
+		{
+			return false;
+		}
+
+		const FVector CandidateToMannequin = MannequinLocation - CandidateLocation;
+		ClueAngles.Add(FMath::Fmod(
+			FMath::RadiansToDegrees(FMath::Atan2(CandidateToMannequin.Y, CandidateToMannequin.X)) + 360.0f,
+			360.0f
+			));
+	}
+
+	if (ClueAngles.Num() <= 1)
+	{
+		return true;
+	}
+
+	ClueAngles.Sort();
+	float LargestAngularGap = 0.0f;
+
+	for (int32 AngleIndex = 0; AngleIndex < ClueAngles.Num(); ++AngleIndex)
+	{
+		const float CurrentAngle = ClueAngles[AngleIndex];
+		const float NextAngle = AngleIndex + 1 < ClueAngles.Num()
+			? ClueAngles[AngleIndex + 1]
+			: ClueAngles[0] + 360.0f;
+
+		LargestAngularGap = FMath::Max(LargestAngularGap, NextAngle - CurrentAngle);
+	}
+
+	const float MinimumRequiredFieldOfView = 360.0f - LargestAngularGap;
+	const float AvailableFieldOfView = FMath::Clamp(PlayerClueSightHalfAngle, 0.0f, 180.0f) * 2.0f;
+
+	return MinimumRequiredFieldOfView <= AvailableFieldOfView;
+}
+
+bool UMannequinTrackingCoordinator::CanCandidateSeeSecondaryClue(
+	const FVector& CandidateLocation,
+	const AMannequinAICharacter& SecondaryMannequin
+	) const
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	const FVector TraceStart = CandidateLocation + FVector::UpVector * 80.0f;
+	FVector TraceEnd = SecondaryMannequin.GetActorLocation() + FVector::UpVector * 60.0f;
+	const USkeletalMeshComponent* MannequinMesh = SecondaryMannequin.GetMesh();
+
+	if (IsValid(MannequinMesh) && MannequinMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
+	{
+		TraceEnd = MannequinMesh->GetBoneLocation(TEXT("head"));
+	}
+
+	FCollisionQueryParams QueryParams;
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		if (const AMannequinAICharacter* Mannequin = MannequinPointer.Get())
+		{
+			QueryParams.AddIgnoredActor(Mannequin);
+		}
+	}
+
+	FHitResult HitResult;
+	const bool bBlocked = World->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_GameTraceChannel1,
+		QueryParams
+		);
+
+	return !bBlocked;
+}
+
+bool UMannequinTrackingCoordinator::CanSecondaryClueSeeCandidate(
+	const AMannequinAICharacter& SecondaryMannequin,
+	const FVector& CandidateLocation,
+	float MannequinSightRadius,
+	float MannequinSightHalfAngle,
+	float MannequinSightMaximumHeightDifference
+	) const
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	const FVector MannequinLocation = SecondaryMannequin.GetActorLocation();
+	const FVector MannequinToCandidate = CandidateLocation - MannequinLocation;
+
+	if (FMath::Abs(MannequinToCandidate.Z) > FMath::Max(0.0f, MannequinSightMaximumHeightDifference) ||
+		MannequinToCandidate.SizeSquared2D() > FMath::Square(static_cast<double>(FMath::Max(0.0f, MannequinSightRadius))))
+	{
+		return false;
+	}
+
+	const FVector DirectionToCandidate = MannequinToCandidate.GetSafeNormal2D();
+	if (!DirectionToCandidate.IsNearlyZero())
+	{
+		const FVector MannequinForward = SecondaryMannequin.GetActorForwardVector().GetSafeNormal2D();
+		const float SightMinimumDot = FMath::Cos(
+			FMath::DegreesToRadians(FMath::Clamp(MannequinSightHalfAngle, 0.0f, 180.0f))
+			);
+
+		if (FVector::DotProduct(MannequinForward, DirectionToCandidate) < SightMinimumDot)
+		{
+			return false;
+		}
+	}
+
+	FVector TraceStart = MannequinLocation + FVector::UpVector * 60.0f;
+	const USkeletalMeshComponent* MannequinMesh = SecondaryMannequin.GetMesh();
+
+	if (IsValid(MannequinMesh) && MannequinMesh->GetBoneIndex(TEXT("head")) != INDEX_NONE)
+	{
+		TraceStart = MannequinMesh->GetBoneLocation(TEXT("head"));
+	}
+
+	const FVector TraceEnd = CandidateLocation + FVector::UpVector * 80.0f;
+	FCollisionQueryParams QueryParams;
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		if (const AMannequinAICharacter* Mannequin = MannequinPointer.Get())
+		{
+			QueryParams.AddIgnoredActor(Mannequin);
+		}
+	}
+
+	FHitResult HitResult;
+	const bool bBlocked = World->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_GameTraceChannel1,
+		QueryParams
+		);
+
+	return !bBlocked;
 }
