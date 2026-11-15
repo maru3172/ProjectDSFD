@@ -197,54 +197,84 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	
 	case ETwoStageMannequinTier::Secondary:
 		{
-			// 주변 1 차의 관측 정보를 지역변수로 전달받는다.
+			// 2 차는 플레이어 위치를 직접 추적하지 않고
+			// 플레이어 시야로 정지한 간접 단서 역할만 수행한다.
+			ApplyStoppedClueState(*Blackboard);
+			
+			break;
+		}
+	
+	case ETwoStageMannequinTier::Tertiary:
+		{
+			// 주변에서 현재 직접 관측 중인 1 차의 최신 정보를 전달받는다.
 			FMannequinPlayerObservation SharedObservation;
 			FVector TrackingLocation;
 			
-			const bool bFoundSharedObservation = TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, false, SharedObservation);
+			const bool bFoundPrimaryObservation =
+				TryFindBestPrimaryObservation(
+					*CurrentMannequin,
+					AllMannequins,
+					true,
+					SharedObservation
+					);
 			
-			if (!bFoundSharedObservation)
+			if (!bFoundPrimaryObservation)
 			{
-				ApplyRoamingState(*Blackboard, *CurrentMannequin);
-				break;
-			}
-			
-			FMannequinPlayerObservation DirectObservation;
-			
-			// 우선순위 1: 현재 직접 보고 있는 1 차의 최신 위치
-			if (TryFindBestPrimaryObservation(*CurrentMannequin, AllMannequins, true, DirectObservation) && TryProjectTrackingLocation(DirectObservation.LastSeenLocation, TrackingLocation))
-			{
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::DirectObservation);
-			
-				break;
-			}
-			
-			// 우선순위 2: 플레이어 시선으로 멈춘 마네킹 단서
-			if (TryGetCachedIndirectTrackingLocation(*CurrentMannequin, AllMannequins, SharedObservation, TrackingLocation))
-			{
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::StoppedMannequinClue);
+				ApplyRoamingState(
+					*Blackboard,
+					*CurrentMannequin
+					);
 				
 				break;
 			}
 			
-			// 우선순위 3: 마지막 위치와 속도를 이용한 예측
-			if (TryResolveObservationTrackingLocation(SharedObservation, TrackingLocation))
+			// 현재 직접 관측 정보가 있으므로 직접 확인한 위치를 가장 먼저 사용한다.
+			if (TryProjectTrackingLocation(
+				SharedObservation.LastSeenLocation,
+				TrackingLocation
+				))
 			{
-				ApplyChaseState(*Blackboard, TrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
+				ApplyChaseState(
+					*Blackboard,
+					TrackingLocation,
+					Tier,
+					EMannequinTrackingEvidence::DirectObservation
+					);
+			}
+			else if (TryResolveObservationTrackingLocation(
+				SharedObservation,
+				TrackingLocation
+				))
+			{
+				ApplyChaseState(
+					*Blackboard,
+					TrackingLocation,
+					Tier,
+					EMannequinTrackingEvidence::VelocityPrediction
+					);
+			}
+			else if (Blackboard->IsVectorValueSet(
+				TEXT("TrackingLocation")
+				))
+			{
+				const FVector ExistingTrackingLocation =
+					Blackboard->GetValueAsVector(
+						TEXT("TrackingLocation")
+						);
+				
+				ApplyChaseState(
+					*Blackboard,
+					ExistingTrackingLocation,
+					Tier,
+					EMannequinTrackingEvidence::VelocityPrediction
+					);
 			}
 			else
 			{
-				// 새 예상 위치와 마지막 관측 위치를 사용할 수 없다면 이전에 설정된 추적 위치를 유지한다.
-				if (Blackboard->IsVectorValueSet(TEXT("TrackingLocation")))
-				{
-					const FVector ExistingTrackingLocation = Blackboard->GetValueAsVector(TEXT("TrackingLocation"));
-					
-					ApplyChaseState(*Blackboard, ExistingTrackingLocation, Tier, EMannequinTrackingEvidence::VelocityPrediction);
-				}
-				else
-				{
-					ApplyRoamingState(*Blackboard, *CurrentMannequin);
-				}
+				ApplyRoamingState(
+					*Blackboard,
+					*CurrentMannequin
+					);
 			}
 			
 			break;
@@ -536,18 +566,29 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 
 ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
 {
-	// 자신의 유효한 직접 관측 정보를 가진 마네킹은 1 차다.
-	if (CurrentMannequin.HasActivePlayerObservation())
+	const FMannequinPlayerObservation& CurrentObservation = CurrentMannequin.GetPlayerObservation();
+	
+	// 현재 플레이어를 직접 볼 수 있으면 1 차다.
+	// 플레이어가 동시에 이 마네킹을 보고 있어도 1 차가 우선한다.
+	if (CurrentObservation.bDirectlyVisible)
 	{
 		return ETwoStageMannequinTier::Primary;
 	}
 	
-	FMannequinPlayerObservation SharedObservation;
-	
-	// 자체 관측 정보가 없지만 주변 1 차의 정보를 받을 수 있으면 2 차다.
-	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, false, SharedObservation))
+	// 플레이어를 직접 보지 못하고 플레이어 시야로 정지했다면 2 차다.
+	if (CurrentMannequin.IsObservedByPlayer())
 	{
 		return ETwoStageMannequinTier::Secondary;
+	}
+	
+	FMannequinPlayerObservation SharedObservation;
+	
+	// 1 일차에는 주변의 현재 1 차 정보를 받을 수 있는 마네킹을
+	// 임시 3 차 수색자로 판정한다.
+	// 중앙 관리자의 정식 목표 배정은 2 일차에 구현한다.
+	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, true, SharedObservation))
+	{
+		return ETwoStageMannequinTier::Tertiary;
 	}
 	
 	return ETwoStageMannequinTier::Roaming;
