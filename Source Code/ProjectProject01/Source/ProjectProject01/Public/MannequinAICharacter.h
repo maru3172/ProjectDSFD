@@ -162,6 +162,17 @@ public:
 	
 	// PlayerObservation 초기화 함수
 	void ClearPlayerObservation();
+	
+	// 현재 마네킹의 추적 역할을 저장한다.
+	void SetTrackingTier(
+		ETwoStageMannequinTier NewTrackingTier
+		);
+	
+	// 현재 마네킹의 추적 역할을 반환한다.
+	ETwoStageMannequinTier GetTrackingTier() const
+	{
+		return CurrentTrackingTier;
+	}
 
 private:
 	friend class AMultiplayTestGameMode;
@@ -328,4 +339,8 @@ private:
 	// 이 마네킹이 마지막으로 직접 확인한 플레이어 정보
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
 	FMannequinPlayerObservation PlayerObservation;
+	
+	// 현재 중앙 추적 시스템에서 사용하는 0·1·2·3 차 역할
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	ETwoStageMannequinTier CurrentTrackingTier = ETwoStageMannequinTier::Roaming;
 };

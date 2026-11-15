@@ -711,6 +711,11 @@ void AMannequinAICharacter::PlayFootstep(FName FootBoneName)
 	}
 }
 
+void AMannequinAICharacter::SetTrackingTier(ETwoStageMannequinTier NewTrackingTier)
+{
+	CurrentTrackingTier = NewTrackingTier;
+}
+
 void AMannequinAICharacter::UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime)
 {
 	PlayerObservation.LastSeenLocation = PlayerLocation;

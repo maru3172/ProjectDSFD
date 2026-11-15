@@ -59,6 +59,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		CurrentMannequin->SetObservedByPlayer(false);
 		CurrentMannequin->SetPlayerDirectlyVisible(false);
 		CurrentMannequin->ClearPlayerObservation();
+		CurrentMannequin->SetTrackingTier(ETwoStageMannequinTier::Roaming);
 		
 		ResetTrackingLocationStabilization();
 		ResetIndirectTrackingCache();
@@ -139,6 +140,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	}
 
 	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, AllMannequins);
+	CurrentMannequin->SetTrackingTier(Tier);
 
 	switch (Tier)
 	{
