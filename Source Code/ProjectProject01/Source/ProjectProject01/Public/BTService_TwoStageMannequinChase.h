@@ -14,9 +14,17 @@ struct FMannequinPlayerObservation;
 UENUM()
 enum class ETwoStageMannequinTier : uint8
 {
+	// 유효한 추적 역할이나 수색 목표가 없는 기본 배회 상태
 	Roaming = 0,
+
+	// 현재 플레이어를 직접 관측하고 있는 1 차 마네킹
 	Primary = 1,
-	Secondary = 2
+
+	// 플레이어 시야로 정지했지만 플레이어를 직접 보지 못하는 2 차 마네킹
+	Secondary = 2,
+
+	// 전달받은 위치로 이동해 실제 수색을 수행하는 3 차 마네킹
+	Tertiary = 3
 };
 
 UENUM()
