@@ -99,6 +99,11 @@ private:
 		ETwoStageMannequinTier Tier,
 		EMannequinTrackingEvidence TrackingEvidence
 		);
+
+	// 플레이어 시야로 정지한 2 차 마네킹 상태를 적용한다.
+	void ApplyStoppedClueState(
+		UBlackboardComponent& Blackboard
+		);
 	
 	// 배회 상태 적용 함수
 	void ApplyRoamingState(

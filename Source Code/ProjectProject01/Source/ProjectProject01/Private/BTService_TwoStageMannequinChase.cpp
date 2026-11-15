@@ -665,6 +665,27 @@ void UBTService_TwoStageMannequinChase::ApplyChaseState(UBlackboardComponent& Bl
 	Blackboard.SetValueAsInt(TEXT("TrackingEvidence"), static_cast<int32>(TrackingEvidence));
 }
 
+void UBTService_TwoStageMannequinChase::ApplyStoppedClueState(UBlackboardComponent& Blackboard)
+{
+	ResetTrackingLocationStabilization();
+	ResetIndirectTrackingCache();
+	
+	// 2 차는 직접 수색하지 않으므로 추적 목표와 배회 목표를 제거한다.
+	Blackboard.ClearValue(TEXT("TargetActor"));
+	Blackboard.ClearValue(TEXT("TrackingLocation"));
+	Blackboard.ClearValue(TEXT("RoamingLocation"));
+	
+	Blackboard.SetValueAsBool(TEXT("RoamingSequenceCompleted"), false);
+	Blackboard.SetValueAsInt(
+		TEXT("ChaseTier"),
+		static_cast<int32>(ETwoStageMannequinTier::Secondary)
+		);
+	Blackboard.SetValueAsInt(
+		TEXT("TrackingEvidence"),
+		static_cast<int32>(EMannequinTrackingEvidence::StoppedMannequinClue)
+		);
+}
+
 bool UBTService_TwoStageMannequinChase::TryFindRoamingLocation(const AMannequinAICharacter& CurrentMannequin, FVector& OutLocation) const
 {
 	UWorld* World = GetWorld();
