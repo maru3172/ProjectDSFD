@@ -205,3 +205,128 @@ bool UMannequinTrackingCoordinator::TryGetLastKnownInformation(FMannequinSharedT
 
 	return true;
 }
+
+void UMannequinTrackingCoordinator::RefreshSecondaryClueGroups(
+	float ClueLifetime,
+	float MaximumGroupTimeDifference,
+	float MaximumGroupDistance,
+	float MaximumHeightDifference
+	)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		SecondaryClueGroups.Reset();
+		return;
+	}
+
+	RemoveInvalidMannequins();
+	SecondaryClueGroups.Reset();
+
+	const double CurrentTime = World->GetTimeSeconds();
+	const double SafeClueLifetime = static_cast<double>(FMath::Max(0.0f, ClueLifetime));
+	const double SafeMaximumGroupTimeDifference =
+		static_cast<double>(FMath::Max(0.0f, MaximumGroupTimeDifference));
+	const double SafeMaximumGroupDistanceSquared =
+		FMath::Square(static_cast<double>(FMath::Max(0.0f, MaximumGroupDistance)));
+	const float SafeMaximumHeightDifference = FMath::Max(0.0f, MaximumHeightDifference);
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+
+		// 현재 역할이 2 차인 마네킹만 간접 단서 후보가 될 수 있다.
+		if (Mannequin->GetTrackingTier() != ETwoStageMannequinTier::Secondary)
+		{
+			continue;
+		}
+
+		// 플레이어 시야 정지가 아닌 다른 정지 원인은 제외한다.
+		if (!Mannequin->HasActivePlayerSightStopClue() ||
+			Mannequin->GetStopReason() != EMannequinStopReason::PlayerSight)
+		{
+			continue;
+		}
+
+		// 자신도 플레이어를 직접 보고 있다면 2 차가 아니라 1 차 정보로 사용해야 한다.
+		if (Mannequin->GetPlayerObservation().bDirectlyVisible)
+		{
+			continue;
+		}
+
+		const double StopStartTime = Mannequin->GetPlayerSightStopStartTime();
+		const double LastStopUpdateTime = Mannequin->GetLastPlayerSightStopTime();
+
+		if (StopStartTime < 0.0 || LastStopUpdateTime < 0.0)
+		{
+			continue;
+		}
+
+		// 마지막 갱신 이후 너무 오래된 정지 단서는 제외한다.
+		if (CurrentTime - LastStopUpdateTime > SafeClueLifetime)
+		{
+			continue;
+		}
+
+		const FVector MannequinLocation = Mannequin->GetActorLocation();
+		FMannequinSecondaryClueGroup* BestGroup = nullptr;
+		double BestGroupDistanceSquared = TNumericLimits<double>::Max();
+
+		for (FMannequinSecondaryClueGroup& Group : SecondaryClueGroups)
+		{
+			const double DifferenceFromEarliestStop = FMath::Abs(StopStartTime - Group.EarliestStopTime);
+			const double DifferenceFromLatestStop = FMath::Abs(StopStartTime - Group.LatestStopTime);
+
+			if (DifferenceFromEarliestStop > SafeMaximumGroupTimeDifference ||
+				DifferenceFromLatestStop > SafeMaximumGroupTimeDifference)
+			{
+				continue;
+			}
+
+			const float HeightDifference = FMath::Abs(MannequinLocation.Z - Group.CenterLocation.Z);
+			if (HeightDifference > SafeMaximumHeightDifference)
+			{
+				continue;
+			}
+
+			const double GroupDistanceSquared = FVector::DistSquared2D(
+				MannequinLocation,
+				Group.CenterLocation
+				);
+
+			if (GroupDistanceSquared > SafeMaximumGroupDistanceSquared ||
+				GroupDistanceSquared >= BestGroupDistanceSquared)
+			{
+				continue;
+			}
+
+			BestGroup = &Group;
+			BestGroupDistanceSquared = GroupDistanceSquared;
+		}
+
+		if (BestGroup == nullptr)
+		{
+			FMannequinSecondaryClueGroup NewGroup;
+			NewGroup.ClueMannequins.Add(Mannequin);
+			NewGroup.CenterLocation = MannequinLocation;
+			NewGroup.EarliestStopTime = StopStartTime;
+			NewGroup.LatestStopTime = StopStartTime;
+
+			SecondaryClueGroups.Add(MoveTemp(NewGroup));
+			continue;
+		}
+
+		const int32 ExistingMannequinCount = BestGroup->ClueMannequins.Num();
+		BestGroup->CenterLocation =
+			(BestGroup->CenterLocation * static_cast<float>(ExistingMannequinCount) + MannequinLocation) /
+			static_cast<float>(ExistingMannequinCount + 1);
+		BestGroup->EarliestStopTime = FMath::Min(BestGroup->EarliestStopTime, StopStartTime);
+		BestGroup->LatestStopTime = FMath::Max(BestGroup->LatestStopTime, StopStartTime);
+		BestGroup->ClueMannequins.Add(Mannequin);
+	}
+}

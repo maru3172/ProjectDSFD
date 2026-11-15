@@ -44,6 +44,20 @@ public:
 		FMannequinSharedTrackingInformation& OutInformation
 		) const;
 
+	// 현재 유효한 2 차 마네킹을 수집하여 시간·거리·높이 조건으로 그룹화한다.
+	void RefreshSecondaryClueGroups(
+		float ClueLifetime,
+		float MaximumGroupTimeDifference,
+		float MaximumGroupDistance,
+		float MaximumHeightDifference
+		);
+
+	// 현재 계산된 2 차 단서 그룹들을 반환한다.
+	const TArray<FMannequinSecondaryClueGroup>& GetSecondaryClueGroups() const
+	{
+		return SecondaryClueGroups;
+	}
+
 private:
 	// 중앙 추적 관리에 등록된 마네킹 목록
 	UPROPERTY(Transient)
@@ -56,6 +70,10 @@ private:
 	// 직접 시야를 잃은 뒤 유지하는 마지막 관측 정보
 	UPROPERTY(Transient)
 	FMannequinSharedTrackingInformation LastKnownInformation;
+
+	// 현재 유효한 2 차 단서들을 시간·거리·높이 조건으로 묶은 그룹들
+	UPROPERTY(Transient)
+	TArray<FMannequinSecondaryClueGroup> SecondaryClueGroups;
 
 	// 다음 관측 정보에 부여할 번호
 	int32 NextInformationId = 1;

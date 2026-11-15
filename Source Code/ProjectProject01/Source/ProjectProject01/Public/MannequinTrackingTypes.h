@@ -135,3 +135,25 @@ struct FMannequinSharedTrackingInformation
 			InformationId != INDEX_NONE;
 	}
 };
+
+USTRUCT()
+struct FMannequinSecondaryClueGroup
+{
+	GENERATED_BODY()
+	
+	// 이 그룹에 포함된 플레이어 시야 정지 마네킹들
+	UPROPERTY(Transient, VisibleAnywhere, Category = "AI|Tracking")
+	TArray<TWeakObjectPtr<AMannequinAICharacter>> ClueMannequins;
+	
+	// 그룹에 포함된 마네킹 위치의 평균
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	FVector CenterLocation = FVector::ZeroVector;
+	
+	// 그룹에서 가장 먼저 플레이어 시야 정지가 시작된 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double EarliestStopTime = -1.0;
+	
+	// 그룹에서 가장 늦게 플레이어 시야 정지가 시작된 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double LatestStopTime = -1.0;
+};
