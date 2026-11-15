@@ -182,6 +182,18 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
 	float EstimatedPlayerClueSightHalfAngle = 45.0f;
 	
+	// 예상 이동 위치와 가까운 후보에 적용할 점수 비중
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
+	float IndirectDistanceScoreWeight = 1.0f;
+	
+	// 마지막 이동 방향과 일치하는 후보에 적용할 점수 비중
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
+	float IndirectDirectionScoreWeight = 0.5f;
+	
+	// 더 많은 2 차 단서를 설명하는 후보에 적용할 점수 비중
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
+	float IndirectClueScoreWeight = 1.0f;
+	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
 	float MaximumPredictionSeconds = 3.0f;

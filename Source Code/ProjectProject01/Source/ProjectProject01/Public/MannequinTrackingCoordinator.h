@@ -87,6 +87,20 @@ public:
 		const FVector& NavigationExtent
 		);
 
+	// 필터를 통과한 후보들의 점수를 계산하고 가장 좋은 간접 예상 정보를 갱신한다.
+	void EvaluateIndirectSearchCandidates(
+		float MaximumPredictionSeconds,
+		float MaximumSearchRadius,
+		float DistanceScoreWeight,
+		float DirectionScoreWeight,
+		float ClueScoreWeight
+		);
+
+	// 현재 가장 높은 점수를 가진 간접 예상 정보를 반환한다.
+	bool TryGetBestIndirectInformation(
+		FMannequinSharedTrackingInformation& OutInformation
+		) const;
+
 private:
 	// 후보 위치에서 지정한 2 차 단서 그룹을 설명할 수 있는지 검사한다.
 	bool DoesCandidateExplainSecondaryGroup(
@@ -134,6 +148,10 @@ private:
 	UPROPERTY(Transient)
 	TArray<FMannequinSearchCandidate> IndirectSearchCandidates;
 
+	// 현재 후보 중 가장 높은 점수를 가진 간접 예상 정보
+	UPROPERTY(Transient)
+	FMannequinSharedTrackingInformation BestIndirectInformation;
+
 	// 다음 관측 정보에 부여할 번호
 	int32 NextInformationId = 1;
 
@@ -148,4 +166,7 @@ private:
 
 	// 간접 수색 후보를 마지막으로 필터링한 월드 시각
 	double LastIndirectCandidateFilterTime = -1.0;
+
+	// 간접 수색 후보 점수를 마지막으로 계산한 월드 시각
+	double LastIndirectCandidateEvaluationTime = -1.0;
 };

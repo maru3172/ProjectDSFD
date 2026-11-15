@@ -19,6 +19,7 @@ void UMannequinTrackingCoordinator::RegisterMannequin(AMannequinAICharacter& Man
 		LastSecondaryClueRefreshTime = -1.0;
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
+		LastIndirectCandidateEvaluationTime = -1.0;
 	}
 }
 
@@ -358,8 +359,10 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	if (!IsValid(World))
 	{
 		IndirectSearchCandidates.Reset();
+		BestIndirectInformation = FMannequinSharedTrackingInformation();
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
+		LastIndirectCandidateEvaluationTime = -1.0;
 		return;
 	}
 
@@ -369,16 +372,20 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	if (LatestDirectInformation.IsActive(CurrentTime))
 	{
 		IndirectSearchCandidates.Reset();
+		BestIndirectInformation = FMannequinSharedTrackingInformation();
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
+		LastIndirectCandidateEvaluationTime = -1.0;
 		return;
 	}
 
 	if (!LastKnownInformation.IsActive(CurrentTime))
 	{
 		IndirectSearchCandidates.Reset();
+		BestIndirectInformation = FMannequinSharedTrackingInformation();
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
+		LastIndirectCandidateEvaluationTime = -1.0;
 		return;
 	}
 
@@ -391,6 +398,7 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 
 	LastIndirectCandidateRefreshTime = CurrentTime;
 	LastIndirectCandidateFilterTime = -1.0;
+	LastIndirectCandidateEvaluationTime = -1.0;
 	IndirectSearchCandidates.Reset();
 
 	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
@@ -605,6 +613,7 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 		// 2 차 단서가 없다면 마지막 관측 정보만을 사용하는 후보로 유지한다.
 		if (SecondaryClueGroups.IsEmpty())
 		{
+			FilteredCandidate.ExplainedClueCount = 0;
 			FilteredCandidates.Add(MoveTemp(FilteredCandidate));
 			continue;
 		}
@@ -623,6 +632,12 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 				MannequinSightHalfAngle,
 				MannequinSightMaximumHeightDifference
 				);
+
+			if (bExplainsSecondaryGroup)
+			{
+				FilteredCandidate.ExplainedClueCount =
+					SecondaryClueGroups[Candidate.SecondaryGroupIndex].ClueMannequins.Num();
+			}
 		}
 		else
 		{
@@ -642,6 +657,8 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 				}
 
 				FilteredCandidate.SecondaryGroupIndex = GroupIndex;
+				FilteredCandidate.ExplainedClueCount =
+					SecondaryClueGroups[GroupIndex].ClueMannequins.Num();
 				bExplainsSecondaryGroup = true;
 				break;
 			}
@@ -654,6 +671,156 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 	}
 
 	IndirectSearchCandidates = MoveTemp(FilteredCandidates);
+}
+
+void UMannequinTrackingCoordinator::EvaluateIndirectSearchCandidates(
+	float MaximumPredictionSeconds,
+	float MaximumSearchRadius,
+	float DistanceScoreWeight,
+	float DirectionScoreWeight,
+	float ClueScoreWeight
+	)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		BestIndirectInformation = FMannequinSharedTrackingInformation();
+		return;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+
+	if (LatestDirectInformation.IsActive(CurrentTime) ||
+		!LastKnownInformation.IsActive(CurrentTime) ||
+		IndirectSearchCandidates.IsEmpty())
+	{
+		BestIndirectInformation = FMannequinSharedTrackingInformation();
+		return;
+	}
+
+	// 새 후보 목록이 생성된 뒤에만 점수를 다시 계산한다.
+	if (LastIndirectCandidateRefreshTime < 0.0 ||
+		LastIndirectCandidateEvaluationTime >= LastIndirectCandidateRefreshTime)
+	{
+		return;
+	}
+
+	LastIndirectCandidateEvaluationTime = CurrentTime;
+
+	const double ElapsedTime = FMath::Max(
+		0.0,
+		CurrentTime - LastKnownInformation.ObservationTime
+		);
+	const double PredictionTime = FMath::Min(
+		ElapsedTime,
+		static_cast<double>(FMath::Max(0.0f, MaximumPredictionSeconds))
+		);
+	const FVector PredictedLocation =
+		LastKnownInformation.PlayerLocation +
+		LastKnownInformation.PlayerVelocity * PredictionTime;
+	const FVector LastMovementDirection = LastKnownInformation.PlayerVelocity.GetSafeNormal2D();
+	const float SafeMaximumSearchRadius = FMath::Max(1.0f, MaximumSearchRadius);
+	const float SafeDistanceScoreWeight = FMath::Max(0.0f, DistanceScoreWeight);
+	const float SafeDirectionScoreWeight = FMath::Max(0.0f, DirectionScoreWeight);
+	const float SafeClueScoreWeight = FMath::Max(0.0f, ClueScoreWeight);
+	const float TotalScoreWeight = FMath::Max(
+		KINDA_SMALL_NUMBER,
+		SafeDistanceScoreWeight + SafeDirectionScoreWeight + SafeClueScoreWeight
+		);
+	int32 MaximumExplainedClueCount = 0;
+
+	for (const FMannequinSearchCandidate& Candidate : IndirectSearchCandidates)
+	{
+		MaximumExplainedClueCount = FMath::Max(
+			MaximumExplainedClueCount,
+			Candidate.ExplainedClueCount
+			);
+	}
+
+	for (FMannequinSearchCandidate& Candidate : IndirectSearchCandidates)
+	{
+		const float DistanceFromPrediction = FVector::Dist2D(
+			Candidate.Location,
+			PredictedLocation
+			);
+		const float DistanceScore = 1.0f - FMath::Clamp(
+			DistanceFromPrediction / SafeMaximumSearchRadius,
+			0.0f,
+			1.0f
+			);
+		const FVector DirectionFromLastObservation =
+			(Candidate.Location - LastKnownInformation.PlayerLocation).GetSafeNormal2D();
+		const float DirectionScore = LastMovementDirection.IsNearlyZero()
+			? 0.5f
+			: FMath::Clamp(
+				(FVector::DotProduct(LastMovementDirection, DirectionFromLastObservation) + 1.0f) * 0.5f,
+				0.0f,
+				1.0f
+				);
+		const float ClueScore = MaximumExplainedClueCount > 0
+			? static_cast<float>(Candidate.ExplainedClueCount) /
+				static_cast<float>(MaximumExplainedClueCount)
+			: 0.0f;
+		const float WeightedScore =
+			DistanceScore * SafeDistanceScoreWeight +
+			DirectionScore * SafeDirectionScoreWeight +
+			ClueScore * SafeClueScoreWeight;
+
+		Candidate.Score = FMath::Clamp(
+			Candidate.Confidence * WeightedScore / TotalScoreWeight,
+			0.0f,
+			1.0f
+			);
+	}
+
+	IndirectSearchCandidates.Sort(
+		[](const FMannequinSearchCandidate& Left, const FMannequinSearchCandidate& Right)
+		{
+			return Left.Score > Right.Score;
+		}
+		);
+
+	const FMannequinSearchCandidate& BestCandidate = IndirectSearchCandidates[0];
+	FMannequinSharedTrackingInformation NewBestInformation;
+	NewBestInformation.InformationType = EMannequinTrackingInformationType::IndirectPrediction;
+	NewBestInformation.PlayerLocation = BestCandidate.Location;
+	NewBestInformation.PlayerVelocity = LastKnownInformation.PlayerVelocity;
+	NewBestInformation.ObservationTime = CurrentTime;
+	NewBestInformation.ExpirationTime = LastKnownInformation.ExpirationTime;
+	NewBestInformation.Confidence = BestCandidate.Score;
+	NewBestInformation.SourceMannequin = LastKnownInformation.SourceMannequin;
+	NewBestInformation.InformationId = NextInformationId;
+
+	if (NextInformationId == MAX_int32)
+	{
+		NextInformationId = 1;
+	}
+	else
+	{
+		++NextInformationId;
+	}
+
+	BestIndirectInformation = NewBestInformation;
+}
+
+bool UMannequinTrackingCoordinator::TryGetBestIndirectInformation(
+	FMannequinSharedTrackingInformation& OutInformation
+	) const
+{
+	const UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	if (!BestIndirectInformation.IsActive(World->GetTimeSeconds()))
+	{
+		return false;
+	}
+
+	OutInformation = BestIndirectInformation;
+
+	return true;
 }
 
 bool UMannequinTrackingCoordinator::DoesCandidateExplainSecondaryGroup(

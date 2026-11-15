@@ -178,4 +178,12 @@ struct FMannequinSearchCandidate
 	// 후보 생성 시점의 마지막 관측 정보 신뢰도
 	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
 	float Confidence = 0.0f;
+	
+	// 이 후보 위치로 설명할 수 있는 2 차 단서 마네킹 수
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 ExplainedClueCount = 0;
+	
+	// 거리·이동 방향·2 차 단서 수를 조합한 최종 후보 점수
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	float Score = 0.0f;
 };

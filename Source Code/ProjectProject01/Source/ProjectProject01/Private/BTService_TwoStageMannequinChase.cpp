@@ -176,6 +176,13 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			MannequinSightMaximumHeightDifference,
 			PredictionNavigationExtent
 			);
+		TrackingCoordinator->EvaluateIndirectSearchCandidates(
+			MaximumPredictionSeconds,
+			MaximumIndirectSearchRadius,
+			IndirectDistanceScoreWeight,
+			IndirectDirectionScoreWeight,
+			IndirectClueScoreWeight
+			);
 	}
 
 	switch (Tier)
