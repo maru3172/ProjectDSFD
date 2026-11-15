@@ -66,7 +66,7 @@ private:
 		const TArray<AActor*>& AllMannequins
 		) const;
 	
-	// 현재 마네킹이 직접 관측자, 2 차 추적자 또는 배회 상태인지 판단한다.
+	// 현재 마네킹이 0·1·2·3 차 중 어떤 역할인지 판단한다.
 	ETwoStageMannequinTier DetermineChaseTier(
 		const AMannequinAICharacter& CurrentMannequin,
 		const TArray<AActor*>& AllMannequins

@@ -17,7 +17,7 @@
 
 UBTService_TwoStageMannequinChase::UBTService_TwoStageMannequinChase()
 {
-	NodeName = TEXT("Two Stage Mannequin Chase");
+	NodeName = TEXT("Four Tier Mannequin Tracking");
 	
 	// 각 마네킹이 독립된 서비스 상태를 갖도록 한다.
 	bCreateNodeInstance = true;
