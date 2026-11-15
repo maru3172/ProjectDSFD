@@ -12,8 +12,9 @@ void UMannequinTrackingCoordinator::RegisterMannequin(AMannequinAICharacter& Man
 	{
 		RegisteredMannequins.Add(MannequinPointer);
 
-		// 새 마네킹이 추가된 프레임에는 중앙 정보를 다시 계산한다.
+		// 새 마네킹이 추가된 프레임에는 중앙 정보와 2 차 단서 그룹을 다시 계산한다.
 		LastRefreshTime = -1.0;
+		LastSecondaryClueRefreshTime = -1.0;
 	}
 }
 
@@ -220,10 +221,18 @@ void UMannequinTrackingCoordinator::RefreshSecondaryClueGroups(
 		return;
 	}
 
+	const double CurrentTime = World->GetTimeSeconds();
+
+	// 같은 프레임에 여러 마네킹 서비스가 호출하더라도 한 번만 계산한다.
+	if (FMath::IsNearlyEqual(CurrentTime, LastSecondaryClueRefreshTime))
+	{
+		return;
+	}
+
+	LastSecondaryClueRefreshTime = CurrentTime;
 	RemoveInvalidMannequins();
 	SecondaryClueGroups.Reset();
 
-	const double CurrentTime = World->GetTimeSeconds();
 	const double SafeClueLifetime = static_cast<double>(FMath::Max(0.0f, ClueLifetime));
 	const double SafeMaximumGroupTimeDifference =
 		static_cast<double>(FMath::Max(0.0f, MaximumGroupTimeDifference));

@@ -151,6 +151,12 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	{
 		TrackingCoordinator->RegisterMannequin(*CurrentMannequin);
 		TrackingCoordinator->RefreshTrackingInformation(ObservationLifetime);
+		TrackingCoordinator->RefreshSecondaryClueGroups(
+			SecondaryClueLifetime,
+			SecondaryGroupMaximumTimeDifference,
+			SecondaryGroupMaximumDistance,
+			MaximumHeightDifference
+			);
 	}
 
 	switch (Tier)

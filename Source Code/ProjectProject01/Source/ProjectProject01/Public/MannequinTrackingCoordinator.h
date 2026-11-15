@@ -80,4 +80,7 @@ private:
 
 	// 같은 프레임에 여러 서비스가 중복 계산하는 것을 막기 위한 시각
 	double LastRefreshTime = -1.0;
+
+	// 같은 프레임에 2 차 단서 그룹을 중복 계산하는 것을 막기 위한 시각
+	double LastSecondaryClueRefreshTime = -1.0;
 };

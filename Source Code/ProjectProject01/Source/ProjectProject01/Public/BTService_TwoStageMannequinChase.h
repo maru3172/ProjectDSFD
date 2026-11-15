@@ -166,6 +166,18 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
 	float ObservationLifetime = 8.0f;
 	
+	// 플레이어 시야 정지 상태를 2 차 단서로 인정할 수 있는 최대 갱신 간격
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "s"))
+	float SecondaryClueLifetime = 0.5f;
+	
+	// 같은 2 차 단서 그룹으로 묶을 수 있는 정지 시작 시각의 최대 차이
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "s"))
+	float SecondaryGroupMaximumTimeDifference = 1.0f;
+	
+	// 같은 2 차 단서 그룹으로 묶을 수 있는 마네킹 사이의 최대 수평 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue", meta = (ClampMin = "0.0", Units = "cm"))
+	float SecondaryGroupMaximumDistance = 1500.0f;
+	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
 	float MaximumPredictionSeconds = 3.0f;
