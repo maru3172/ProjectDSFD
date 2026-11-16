@@ -59,15 +59,22 @@ struct Difficulty
     static float BaseSkill(int Level){const float T=(std::max(1,std::min(5,Level))-1)/4.f;return T*T;}
     // Per-match condition (-1 bad day .. +1 good day). It moves skill by at most a fifth of the gap to the
     // neighbouring level, so a level never reaches its neighbour. Level-keyed tables do not change.
-    static float ConditionSkill(int Level,float Condition)
+    // Match skill per side (balance ladder, 2026-11-16): mannequin bots were too weak at 1 and far too strong
+    // from 3 up; survivor bots gained too little at 4. Both curves stay strictly increasing.
+    static float SideSkill(int Level,bool Mannequin)
     {
-        const int L=std::max(1,std::min(5,Level));const float C=Finite(Condition)?Clamp(Condition,-1,1):0.f,S=BaseSkill(L);
-        const float Up=L<5?BaseSkill(L+1)-S:0.f,Down=L>1?S-BaseSkill(L-1):0.f;
+        static constexpr float M[]={.02f,.07f,.2f,.32f,.55f},S[]={0.f,.0625f,.25f,.68f,1.f};
+        const int I=std::max(1,std::min(5,Level))-1;return Mannequin?M[I]:S[I];
+    }
+    static float ConditionSkill(int Level,float Condition,bool Mannequin=false)
+    {
+        const int L=std::max(1,std::min(5,Level));const float C=Finite(Condition)?Clamp(Condition,-1,1):0.f,S=SideSkill(L,Mannequin);
+        const float Up=L<5?SideSkill(L+1,Mannequin)-S:0.f,Down=L>1?S-SideSkill(L-1,Mannequin):0.f;
         return Clamp(S+(C>=0?C*.2f*Up:C*.2f*Down),0,1);
     }
-    static Difficulty For(int Level,float Condition)
+    static Difficulty For(int Level,float Condition,bool Mannequin=false)
     {
-        Difficulty D=For(Level);const float S=ConditionSkill(D.Level,Condition);
+        Difficulty D=For(Level);const float S=ConditionSkill(D.Level,Condition,Mannequin);
         D.Reaction=1.65f-1.25f*S;D.Memory=2.5f+8.5f*S;D.Sharing=.15f+.75f*S;D.Adaptation=.04f+.48f*S;
         D.Coordination=.12f+.78f*S;D.TurnRate=85.f+125.f*S;D.Skill=S;
         // Balance runs only: give a master one value of the expert curve to find what weakens it.
@@ -515,7 +522,7 @@ struct Policy
         float Rhythm=(.7f+Random()*.5f)*(1+.35f*Clamp(Relief,0,1));
         if(Random()<(.06f+.14f*MistakeScale(Profile))*(1.3f-.6f*Clamp(Character.Patience,0,1))*(1-.5f*Clamp(Resolve,0,1)))Rhythm*=1.6f+Random();
         Recent[static_cast<size_t>(Chosen)]=std::min(10.f,Recent[static_cast<size_t>(Chosen)]+1);
-        Current={Root::Active,Child,Chosen};NextDecision=Now+Profile.Reaction*(C.HumanAlly?1.25f:1.f)*Rhythm;return Current;
+        Current={Root::Active,Child,Chosen};NextDecision=Now+Profile.Reaction*(C.HumanAlly?1.1f:1.f)*Rhythm;return Current;
     }
 };
 
@@ -714,7 +721,7 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
-inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.25f,.49f,.68f,.82f,.9f};return L[ProbeIndex(D,5)];}
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.2f,.42f,.68f,.85f,.94f};return L[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
 inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}
@@ -963,10 +970,10 @@ inline bool& HumanTeamOverride(){static bool Value=false;return Value;}
 // Balance runs only (-BotSimSoloDiag=1): in the solo stand-in the "SimHelper" plays as an ordinary bot partner instead
 // of a helper, to measure how much of the solo gap the deliberately weaker helper accounts for.
 inline int& SoloDiagnostic(){static int Value=0;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,8,5,0},E[]={8,8,7,5,0};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,7,6,3},E[]={8,8,6,5,2};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 // One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
 // values apply only then (two humans and bot-only teams keep the plain tables).
-inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int S[]={0,0,0,1,0};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return std::min(9,Base+S[std::max(1,std::min(5,D.Level))-1]);}
+inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int S[]={0,0,0,2,1};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return std::min(9,Base+S[std::max(1,std::min(5,D.Level))-1]);}
 inline float SoloAttackScale(const Difficulty& D,bool SoloHuman){static constexpr float S[]={1,1,1,1,1};return SoloHuman?S[std::max(1,std::min(5,D.Level))-1]:1.f;}
 // With a lone human, the helper falling must not turn the whole mannequin on that human: lower levels keep their
 // ordinary hunt (no endgame push, no extra bodies woken), higher levels still close the match.

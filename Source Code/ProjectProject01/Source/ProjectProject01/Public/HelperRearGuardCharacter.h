@@ -134,6 +134,8 @@ private:
 	void BeginVisionRetreat(const FVector& CurrentViewDirection);
 	void UpdateRetreatContact();
 	void ResetVisionDirectionChangeTracking();
+	/** 플레이어 위치에서 목표까지 벽이 있으면 벽 앞(플레이어가 보이는 쪽)으로 목표를 당깁니다. */
+	FVector KeepTargetInPlayerSight(const FVector& Target) const;
 	void UpdateLastPlayerMovementDirection();
 	void DrawGuardDebug() const;
 
@@ -165,6 +167,7 @@ private:
 	bool bRetreatLocationInitialized = false;
 	bool bRetreatContactConfirmed = false;
 	friend class FProjectProject01HelperRetreatContactTest;
+	friend class FProjectProject01HelperWallSightTest;
 
 	UPROPERTY(SaveGame)
 	bool bGuardHalfAngleInitialized = false;

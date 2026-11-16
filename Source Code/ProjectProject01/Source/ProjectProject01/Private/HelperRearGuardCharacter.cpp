@@ -3,6 +3,7 @@
 
 #include "HelperRearGuardCharacter.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "CollisionShape.h"
 #include "DrawDebugHelpers.h"
@@ -161,6 +162,59 @@ bool FProjectProject01HelperRetreatContactTest::RunTest(const FString&)
 	Helper->SetActorLocation(FVector(5020, 0, 100));
 	Helper->UpdateRetreatContact();
 	TestEqual(TEXT("Disabled player collision does not permit a retreat push"), Player->GetRemainingDeathCount(), 3);
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectProject01HelperWallSightTest,
+	"ProjectProject01.Helper.StaysOnPlayerSideOfWall", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProjectProject01HelperWallSightTest::RunTest(const FString&)
+{
+	const auto Values = UWorld::InitializationValues().AllowAudioPlayback(false).CreatePhysicsScene(true)
+		.CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+	AHelperRearGuardCharacter* Helper = World->SpawnActor<AHelperRearGuardCharacter>();
+	APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
+	AActor* Wall = World->SpawnActor<AActor>();
+	if (!IsValid(Helper) || !IsValid(Player) || !IsValid(Wall))
+	{
+		AddError(TEXT("Wall fixture actors could not spawn"));
+		World->DestroyWorld(false);
+		return false;
+	}
+	UBoxComponent* Box = NewObject<UBoxComponent>(Wall);
+	Box->SetBoxExtent(FVector(50, 600, 300));
+	Box->SetCollisionObjectType(ECC_WorldStatic);
+	Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	Box->SetCollisionResponseToAllChannels(ECR_Block);
+	Wall->SetRootComponent(Box);
+	Box->RegisterComponent();
+
+	Player->SetActorLocation(FVector(0, 0, 100));
+	Helper->SetActorLocation(FVector(-300, 0, 100));
+	Helper->GuardedPlayer = Player;
+	Helper->LastPlayerMovementDirection = FVector::ForwardVector;
+	FVector Target;
+
+	Wall->SetActorLocation(FVector(0, 50000, 100));
+	TestTrue(TEXT("Open floor gives a follow target"), Helper->GetFollowTargetLocation(Target));
+	TestTrue(TEXT("With no wall the helper keeps the full follow distance"), FMath::IsNearlyEqual(Target.X, -Helper->FollowDistance, 1.0f));
+
+	Wall->SetActorLocation(FVector(-1500, 0, 100));
+	Helper->GetFollowTargetLocation(Target);
+	TestTrue(TEXT("A wall behind the player stops the target on the player's side"), Target.X > -1450.0f && Target.X < -1300.0f);
+
+	Helper->bFollowDistanceLocked = true;
+	Helper->LockedRetreatTarget = FVector(-9000, 0, 100);
+	Helper->GetFollowTargetLocation(Target);
+	TestTrue(TEXT("A retreat never crosses the wall either"), Target.X > -1450.0f);
+	Helper->bFollowDistanceLocked = false;
+
+	Wall->SetActorLocation(FVector(-120, 0, 100));
+	Helper->SetActorLocation(FVector(200, 300, 100));
+	Helper->GetFollowTargetLocation(Target);
+	TestTrue(TEXT("A wall right behind the player keeps the helper where it stands"), Target.Equals(Helper->GetActorLocation(), 1.0f));
 	World->DestroyWorld(false);
 	return true;
 }
@@ -502,7 +556,7 @@ bool AHelperRearGuardCharacter::GetFollowTargetLocation(FVector& OutFollowTarget
 			return false;
 		}
 
-		OutFollowTarget = LockedRetreatTarget;
+		OutFollowTarget = KeepTargetInPlayerSight(LockedRetreatTarget);
 		return true;
 	}
 
@@ -515,7 +569,44 @@ bool AHelperRearGuardCharacter::GetFollowTargetLocation(FVector& OutFollowTarget
 	const float DesiredFollowDistance = FMath::Max(0.0f, FollowDistance);
 	OutFollowTarget = GuardedPlayer->GetActorLocation() - (PlayerMovementDirection * DesiredFollowDistance);
 	OutFollowTarget.Z = GuardedPlayer->GetActorLocation().Z;
+	OutFollowTarget = KeepTargetInPlayerSight(OutFollowTarget);
 	return true;
+}
+
+FVector AHelperRearGuardCharacter::KeepTargetInPlayerSight(const FVector& Target) const
+{
+	// 사용자 요청(2026-11-16): 이격 지점이 벽 너머나 플레이어 시야가 닿지 않는 곳이면 벽을 넘지 않는다.
+	// 플레이어에서 목표로 선을 그어 처음 막히는 곳 바로 앞에 멈추고, 그 자리에서 후방 시야만 계속 돌린다.
+	UWorld* World = GetWorld();
+	if (!GuardedPlayer.IsValid() || !IsValid(World))
+	{
+		return Target;
+	}
+
+	const FVector From = GuardedPlayer->GetActorLocation();
+	const FVector To(Target.X, Target.Y, From.Z);
+	FCollisionObjectQueryParams Objects;
+	Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+	Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(HelperKeepInPlayerSight), false, this);
+	Params.AddIgnoredActor(GuardedPlayer.Get());
+	FHitResult Hit;
+	if (!World->LineTraceSingleByObjectType(Hit, From, To, Objects, Params) || !Hit.bBlockingHit)
+	{
+		return Target;
+	}
+
+	// 캡슐이 벽에 묻히지 않게 반경의 두 배만큼 플레이어 쪽으로 물러선 지점을 쓴다.
+	const float Radius = IsValid(GetCapsuleComponent()) ? GetCapsuleComponent()->GetScaledCapsuleRadius() : 40.0f;
+	const FVector Back = (From - To).GetSafeNormal2D();
+	FVector Clamped = Hit.Location + Back * (Radius * 2.0f);
+	// 벽이 플레이어 바로 뒤라 물러설 공간이 없으면 플레이어 쪽으로 다가가지 않고 지금 자리에 선다.
+	if (FVector::DotProduct(Clamped - From, To - From) <= 0.0f || FVector::Dist2D(Clamped, From) < Radius * 4.0f)
+	{
+		return GetActorLocation();
+	}
+	Clamped.Z = Target.Z;
+	return Clamped;
 }
 
 float AHelperRearGuardCharacter::GetMaximumFollowAcceptanceRadius() const

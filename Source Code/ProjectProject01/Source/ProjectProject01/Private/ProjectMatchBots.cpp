@@ -437,7 +437,7 @@ void UProjectMatchBots::Sense(APawn* Observer,AActor* Target,uint32 Team,FProjec
     const float Turn=Fresh?0:FMath::FindDeltaAngleDegrees(B.PreviousYaw,Facing.Yaw)/90.f;B.PreviousYaw=Facing.Yaw;
     if(Fresh)
     {
-        B.ReactAt=Now+B.Policy.Profile.Reaction*(HumanAlly?1.25:1.)*(.85+.4*B.Policy.Random());
+        B.ReactAt=Now+B.Policy.Profile.Reaction*(HumanAlly?1.1:1.)*(.85+.4*B.Policy.Random());
         // A sudden close encounter costs a human an extra beat ("whoa"), less for skilled and bold players.
         B.ReactAt+=ProjectBots::StartleSeconds(B.Policy.Profile,B.Policy.Character,FVector::Dist(Observer->GetActorLocation(),Target->GetActorLocation()));
     }
@@ -965,7 +965,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         if(!B.Visible&&B.Policy.Random()<B.Policy.Profile.Sharing)
             for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==2&&Entry.Seen.Target&&Entry.Seen.At>=0&&Now-Entry.Seen.At<=B.Policy.Profile.Memory)
                 for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(It->GetUniqueID()==Entry.Seen.Target)
-                {if(B.Target.Get()!=*It||Now-B.SeenAt>B.Policy.Profile.Memory)B.ReactAt=Now+B.Policy.Profile.Reaction*(HumanTeam?1.25:1.);B.Target=*It;B.Known=U(Entry.Seen.Position);B.SeenAt=Entry.Seen.At;break;}
+                {if(B.Target.Get()!=*It||Now-B.SeenAt>B.Policy.Profile.Memory)B.ReactAt=Now+B.Policy.Profile.Reaction*(HumanTeam?1.1:1.);B.Target=*It;B.Known=U(Entry.Seen.Position);B.SeenAt=Entry.Seen.At;break;}
     }
     // Combo feedback: a play worked for the survivor if it ended with no unfrozen mannequin in reach.
     {
@@ -1460,7 +1460,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* GM=Mode();auto* World=GM->GetWorld();const double Now=World->GetTimeSeconds();TArray<AMannequinAICharacter*> Bodies;
     for(TActorIterator<AMannequinAICharacter> It(World);It&&Bodies.Num()<10;++It)if(!It->IsHidden()&&(!GM->GetAffixRuntime()||GM->GetAffixRuntime()->CanCommand(*It)))Bodies.Add(*It); // C09: cracked bodies cannot be steered.
     // Today's form: a small swing inside the level's band (never reaching a neighbouring level).
-    const Difficulty Level=Difficulty::For(Spec.Difficulty,ConditionOf(Spec));
+    const Difficulty Level=Difficulty::For(Spec.Difficulty,ConditionOf(Spec),true);
     const float ReliefNow=MannequinRelief.Value(Now,Level);
     auto& Mine=Plays.FindOrAdd(Spec.BotId);LoadExperience(Mine,Spec,Level);auto& Dir=Mine.Director;Dir.Update(Level,Now,ReliefNow);
     // Play style decides how readily this bot reaches for each play; the Director still enforces level, tells and cooldowns.

@@ -367,8 +367,8 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
             Persona Waiter;Waiter.Patience=1;
             Check(LurkPatience(Master,Waiter)>LurkPatience(Rookie,Ordinary),"Patient experts wait longer before going anyway");
         }
-        Check(ParkedBodies(Difficulty::For(1),false)>ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)==0&&
-            ParkedBodies(Difficulty::For(1),true)<=ParkedBodies(Difficulty::For(1),false)&&ParkedBodies(Difficulty::For(3),true)<ParkedBodies(Difficulty::For(3),false),"Beginners leave more bodies parked; masters none; fewer in the endgame");
+        Check(ParkedBodies(Difficulty::For(1),false)>ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)<ParkedBodies(Difficulty::For(4),false)&&
+            ParkedBodies(Difficulty::For(1),true)<=ParkedBodies(Difficulty::For(1),false)&&ParkedBodies(Difficulty::For(3),true)<ParkedBodies(Difficulty::For(3),false),"Beginners leave more bodies parked; masters the fewest; fewer in the endgame");
         {
             bool Untouched=true,Bounded=true;
             for(int L=1;L<=5;++L)for(bool E:{false,true})
