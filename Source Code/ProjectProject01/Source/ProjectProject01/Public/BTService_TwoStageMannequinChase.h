@@ -46,14 +46,6 @@ private:
 		const AMannequinAICharacter& CurrentMannequin
 		) const;
 	
-	// 현재 마네킹 주변에서 사용할 수 있는 가장 최신 1 차 마네킹의 관측 정보를 찾는다.
-	bool TryFindBestPrimaryObservation(
-		const AMannequinAICharacter& CurrentMannequin,
-		const TArray<AActor*>& AllMannequins,
-		bool bRequireDirectObservation,
-		FMannequinPlayerObservation& OutObservation
-		) const;
-	
 	// 전달받은 관측 정보를 이용해 플레이어 예상 위치를 계산한다.
 	bool TryCalculateTrackingLocation(
 		const FMannequinPlayerObservation& Observation,
@@ -136,10 +128,6 @@ private:
 	// // 플레이어를 중심으로 1차 마네킹을 지정하는 반경
 	// UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
 	// float PlayerPrimaryRadius = 1000.0f;
-	
-	// 각각의 1차 마네킹을 중심으로 2차 마네킹을 지정하는 반경
-	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))
-	float PrimaryPropagationRadius = 600.0f;
 	
 	// 배회 마네킹의 랜덤 목적지 검색 반경
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "cm"))

@@ -257,51 +257,35 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	
 	case ETwoStageMannequinTier::Tertiary:
 		{
-			// 주변에서 현재 직접 관측 중인 1 차의 최신 정보를 전달받는다.
-			FMannequinPlayerObservation SharedObservation;
+			const UWorld* World = CurrentMannequin->GetWorld();
+			const FMannequinTertiaryAssignment& Assignment =
+				CurrentMannequin->GetTertiaryAssignment();
 			FVector TrackingLocation;
-			
-			const bool bFoundPrimaryObservation =
-				TryFindBestPrimaryObservation(
-					*CurrentMannequin,
-					AllMannequins,
-					true,
-					SharedObservation
-					);
-			
-			if (!bFoundPrimaryObservation)
+			const bool bHasActiveAssignment =
+				IsValid(World) &&
+				Assignment.IsActive(World->GetTimeSeconds());
+
+			if (!bHasActiveAssignment)
 			{
 				ApplyRoamingState(
 					*Blackboard,
 					*CurrentMannequin
 					);
-				
+
 				break;
 			}
-			
-			// 현재 직접 관측 정보가 있으므로 직접 확인한 위치를 가장 먼저 사용한다.
+
+			// 중앙 관리자가 배정한 목표가 아직 유효하면 해당 위치와 근거를 그대로 사용한다.
 			if (TryProjectTrackingLocation(
-				SharedObservation.LastSeenLocation,
-				TrackingLocation
-				))
+					Assignment.TargetLocation,
+					TrackingLocation
+					))
 			{
 				ApplyChaseState(
 					*Blackboard,
 					TrackingLocation,
 					Tier,
-					EMannequinTrackingEvidence::DirectObservation
-					);
-			}
-			else if (TryResolveObservationTrackingLocation(
-				SharedObservation,
-				TrackingLocation
-				))
-			{
-				ApplyChaseState(
-					*Blackboard,
-					TrackingLocation,
-					Tier,
-					EMannequinTrackingEvidence::VelocityPrediction
+					Assignment.TrackingEvidence
 					);
 			}
 			else if (Blackboard->IsVectorValueSet(
@@ -317,7 +301,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 					*Blackboard,
 					ExistingTrackingLocation,
 					Tier,
-					EMannequinTrackingEvidence::VelocityPrediction
+					Assignment.TrackingEvidence
 					);
 			}
 			else
@@ -642,82 +626,6 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 	}
 	
 	return ETwoStageMannequinTier::Roaming;
-}
-
-bool UBTService_TwoStageMannequinChase::TryFindBestPrimaryObservation(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins, bool bRequireDirectObservation, FMannequinPlayerObservation& OutObservation) const
-{
-	const FVector CurrentLocation = CurrentMannequin.GetActorLocation();
-	const double PropagationRadiusSquared = FMath::Square(static_cast<double>(PrimaryPropagationRadius));
-	
-	bool bFoundPrimary = false;
-	double NewestObservationTime = -1.0;
-	
-	for (AActor* MannequinActor : AllMannequins)
-	{
-		const AMannequinAICharacter* OtherMannequin = Cast<AMannequinAICharacter>(MannequinActor);
-		
-		// 1. 유효한 마네킹인가
-		if (!IsValid(OtherMannequin))
-		{
-			continue;
-		}
-		
-		// 2. 자기 자신은 아닌가
-		// 자기 자신을 정보 전달자로 선택하지 않는다.
-		if (OtherMannequin == &CurrentMannequin)
-		{
-			continue;
-		}
-		
-		// 3. 자체 관측 정보를 가진 진짜 1 차인가
-		// 플레이어를 직접 관측했거나 아직 유효한 자체 관측 정보를 가진 마네킹만 1 차 정보 전달자가 될 수 있다.
-		if (!OtherMannequin->HasActivePlayerObservation())
-		{
-			continue;
-		}
-		
-		const FVector OtherLocation = OtherMannequin->GetActorLocation();
-		const float HeightDifference = FMath::Abs(CurrentLocation.Z - OtherLocation.Z);
-		
-		// 4. 같은 층인가
-		// 다른 층에 있는 마네킹의 정보는 전달받지 않는다.
-		if (HeightDifference > MaximumHeightDifference)
-		{
-			continue;
-		}
-		
-		const double DistanceToPrimarySquared = FVector::DistSquared2D(CurrentLocation, OtherLocation);
-		
-		// 5. 전파 반경 안인가
-		if (DistanceToPrimarySquared > PropagationRadiusSquared)
-		{
-			continue;
-		}
-		
-		const FMannequinPlayerObservation& OtherObservation = OtherMannequin->GetPlayerObservation();
-		
-		// 6. 관측 정보가 유효한가
-		if (!OtherObservation.bHasObservation || OtherObservation.Confidence <= 0.0f)
-		{
-			continue;
-		}
-		
-		if (bRequireDirectObservation && !OtherObservation.bDirectlyVisible)
-		{
-			continue;
-		}
-		
-		// 7. 기존 후보보다 최근 정보인가
-		// 여러 1 차 마네킹이 있다면 가장 최근에 플레이어를 본 정보를 사용한다.
-		if (!bFoundPrimary || OtherObservation.LastSeenTime > NewestObservationTime)
-		{
-			OutObservation = OtherObservation;
-			NewestObservationTime = OtherObservation.LastSeenTime;
-			bFoundPrimary = true;
-		}
-	}
-	
-	return bFoundPrimary;
 }
 
 bool UBTService_TwoStageMannequinChase::TryCalculateTrackingLocation(const FMannequinPlayerObservation& Observation, FVector& OutTrackingLocation) const
