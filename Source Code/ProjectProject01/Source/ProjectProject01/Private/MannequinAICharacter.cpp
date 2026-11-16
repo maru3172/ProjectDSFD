@@ -718,6 +718,11 @@ void AMannequinAICharacter::SetTrackingTier(ETwoStageMannequinTier NewTrackingTi
 
 void AMannequinAICharacter::SetTertiaryAssignment(const FMannequinTertiaryAssignment& NewAssignment)
 {
+	if (TertiaryAssignment.AssignmentId != NewAssignment.AssignmentId)
+	{
+		TertiarySearchState = FMannequinTertiarySearchState();
+	}
+
 	TertiaryAssignment = NewAssignment;
 	TertiaryAssignment.bHasAssignment = true;
 }
@@ -725,6 +730,62 @@ void AMannequinAICharacter::SetTertiaryAssignment(const FMannequinTertiaryAssign
 void AMannequinAICharacter::ClearTertiaryAssignment()
 {
 	TertiaryAssignment = FMannequinTertiaryAssignment();
+	TertiarySearchState = FMannequinTertiarySearchState();
+}
+
+bool AMannequinAICharacter::BeginTertiarySearch(double SearchStartTime)
+{
+	if (!TertiaryAssignment.bHasAssignment ||
+		TertiaryAssignment.AssignmentId == INDEX_NONE ||
+		SearchStartTime < 0.0)
+	{
+		return false;
+	}
+
+	if (TertiarySearchState.IsSearchingAssignment(TertiaryAssignment.AssignmentId))
+	{
+		return true;
+	}
+
+	TertiarySearchState = FMannequinTertiarySearchState();
+	TertiarySearchState.AssignmentId = TertiaryAssignment.AssignmentId;
+	TertiarySearchState.Result = EMannequinTertiarySearchResult::Searching;
+	TertiarySearchState.SearchStartTime = SearchStartTime;
+
+	return true;
+}
+
+bool AMannequinAICharacter::CompleteTertiarySearch(
+	EMannequinTertiarySearchResult SearchResult,
+	double CompletionTime
+	)
+{
+	if (!TertiarySearchState.IsSearchingAssignment(TertiaryAssignment.AssignmentId) ||
+		CompletionTime < TertiarySearchState.SearchStartTime ||
+		(SearchResult != EMannequinTertiarySearchResult::PlayerFound &&
+		 SearchResult != EMannequinTertiarySearchResult::Failed))
+	{
+		return false;
+	}
+
+	TertiarySearchState.Result = SearchResult;
+	TertiarySearchState.CompletionTime = CompletionTime;
+
+	if (SearchResult == EMannequinTertiarySearchResult::Failed)
+	{
+		++TertiarySearchFailureCount;
+	}
+	else
+	{
+		TertiarySearchFailureCount = 0;
+	}
+
+	return true;
+}
+
+void AMannequinAICharacter::ResetTertiarySearchFailureCount()
+{
+	TertiarySearchFailureCount = 0;
 }
 
 void AMannequinAICharacter::UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime)

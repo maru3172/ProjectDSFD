@@ -220,6 +220,30 @@ public:
 	{
 		return TertiaryAssignment;
 	}
+	
+	// 현재 3 차 배정 목표에 도착한 뒤 주변 탐색을 시작한다.
+	bool BeginTertiarySearch(double SearchStartTime);
+	
+	// 현재 3 차 배정에 대한 플레이어 발견 또는 탐색 실패 결과를 저장한다.
+	bool CompleteTertiarySearch(
+		EMannequinTertiarySearchResult SearchResult,
+		double CompletionTime
+		);
+	
+	// 현재 저장된 3 차 탐색 진행·완료 상태를 반환한다.
+	const FMannequinTertiarySearchState& GetTertiarySearchState() const
+	{
+		return TertiarySearchState;
+	}
+	
+	// 지금까지 연속으로 완료한 3 차 탐색 실패 횟수를 반환한다.
+	int32 GetTertiarySearchFailureCount() const
+	{
+		return TertiarySearchFailureCount;
+	}
+	
+	// 새 직접 관측 정보를 얻었을 때 누적 탐색 실패 횟수를 초기화한다.
+	void ResetTertiarySearchFailureCount();
 
 private:
 	friend class AMultiplayTestGameMode;
@@ -406,4 +430,12 @@ private:
 	// 중앙 관리자로부터 받은 현재 3 차 탐색 위치와 근거 정보
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
 	FMannequinTertiaryAssignment TertiaryAssignment;
+	
+	// 현재 3 차 배정에 대한 목표 도착·탐색 진행·완료 정보
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	FMannequinTertiarySearchState TertiarySearchState;
+	
+	// 플레이어를 발견하지 못하고 끝난 연속 3 차 탐색 횟수
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	int32 TertiarySearchFailureCount = 0;
 };

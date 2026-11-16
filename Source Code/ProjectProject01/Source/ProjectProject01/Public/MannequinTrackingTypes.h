@@ -53,6 +53,22 @@ enum class EMannequinStopReason : uint8
 	SystemForced = 8
 };
 
+UENUM()
+enum class EMannequinTertiarySearchResult : uint8
+{
+	// 아직 탐색을 시작하지 않았거나 기록할 결과가 없는 상태
+	None = 0,
+
+	// 배정된 목표에 도착하여 주변을 탐색하고 있는 상태
+	Searching = 1,
+
+	// 탐색 중 플레이어를 직접 발견한 상태
+	PlayerFound = 2,
+
+	// 제한 시간 동안 플레이어를 발견하지 못한 상태
+	Failed = 3
+};
+
 USTRUCT(BlueprintType)
 struct FMannequinPlayerObservation
 {
@@ -243,5 +259,47 @@ struct FMannequinTertiaryAssignment
 			TrackingEvidence != EMannequinTrackingEvidence::None &&
 			Confidence > 0.0f &&
 			ExpirationTime >= CurrentTime;
+	}
+};
+
+USTRUCT()
+struct FMannequinTertiarySearchState
+{
+	GENERATED_BODY()
+	
+	// 이 탐색 상태가 대상으로 하는 3 차 배정 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 AssignmentId = INDEX_NONE;
+	
+	// 현재 탐색 진행 또는 완료 결과
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	EMannequinTertiarySearchResult Result = EMannequinTertiarySearchResult::None;
+	
+	// 목표 위치에 도착하여 주변 탐색을 시작한 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double SearchStartTime = -1.0;
+	
+	// 플레이어 발견 또는 탐색 실패가 확정된 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double CompletionTime = -1.0;
+	
+	// 지정한 배정에 대해 현재 주변 탐색이 진행 중인지 반환한다.
+	bool IsSearchingAssignment(int32 InAssignmentId) const
+	{
+		return
+			AssignmentId == InAssignmentId &&
+			AssignmentId != INDEX_NONE &&
+			Result == EMannequinTertiarySearchResult::Searching;
+	}
+	
+	// 지정한 배정에 대해 중앙 관리자가 처리할 완료 결과가 있는지 반환한다.
+	bool HasCompletedAssignment(int32 InAssignmentId) const
+	{
+		return
+			AssignmentId == InAssignmentId &&
+			AssignmentId != INDEX_NONE &&
+			(Result == EMannequinTertiarySearchResult::PlayerFound ||
+			 Result == EMannequinTertiarySearchResult::Failed) &&
+			CompletionTime >= 0.0;
 	}
 };
