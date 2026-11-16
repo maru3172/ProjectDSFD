@@ -1001,10 +1001,20 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 		}
 		);
 
-	const int32 AssignmentCount = FMath::Min(
+	int32 AssignmentCount = FMath::Min(
 		SafeMaximumAssignedMannequins,
 		AssignmentCandidates.Num()
 		);
+
+	// 간접 수색에서는 서로 다른 후보를 배정할 수 있는 수만큼만 3 차를 선정한다.
+	if (!bUsesDirectInformation)
+	{
+		AssignmentCount = FMath::Min(
+			AssignmentCount,
+			IndirectSearchCandidates.Num()
+			);
+	}
+
 	const double SafeAssignmentLifetime =
 		static_cast<double>(FMath::Max(0.0f, AssignmentLifetime));
 
@@ -1035,13 +1045,14 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 		}
 		else
 		{
-			NewAssignment.SearchCandidateIndex = 0;
+			// 후보 배열은 점수가 높은 순서이므로 각 3 차에 서로 다른 후보를 순서대로 배정한다.
+			const FMannequinSearchCandidate& SearchCandidate =
+				IndirectSearchCandidates[AssignmentIndex];
 
-			if (IndirectSearchCandidates.IsValidIndex(0))
-			{
-				NewAssignment.SecondaryGroupIndex =
-					IndirectSearchCandidates[0].SecondaryGroupIndex;
-			}
+			NewAssignment.TargetLocation = SearchCandidate.Location;
+			NewAssignment.SearchCandidateIndex = AssignmentIndex;
+			NewAssignment.SecondaryGroupIndex = SearchCandidate.SecondaryGroupIndex;
+			NewAssignment.Confidence = SearchCandidate.Score;
 
 			NewAssignment.TrackingEvidence =
 				NewAssignment.SecondaryGroupIndex != INDEX_NONE
