@@ -200,6 +200,26 @@ public:
 	{
 		return CurrentTrackingTier;
 	}
+	
+	// 중앙 관리자가 결정한 3 차 탐색 배정을 저장한다.
+	void SetTertiaryAssignment(
+		const FMannequinTertiaryAssignment& NewAssignment
+		);
+	
+	// 현재 저장된 3 차 탐색 배정을 제거한다.
+	void ClearTertiaryAssignment();
+	
+	// 현재 시각을 기준으로 사용할 수 있는 3 차 탐색 배정인지 반환한다.
+	bool HasActiveTertiaryAssignment(double CurrentTime) const
+	{
+		return TertiaryAssignment.IsActive(CurrentTime);
+	}
+	
+	// 현재 중앙 관리자로부터 받은 3 차 탐색 배정을 반환한다.
+	const FMannequinTertiaryAssignment& GetTertiaryAssignment() const
+	{
+		return TertiaryAssignment;
+	}
 
 private:
 	friend class AMultiplayTestGameMode;
@@ -382,4 +402,8 @@ private:
 	// 현재 중앙 추적 시스템에서 사용하는 0·1·2·3 차 역할
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
 	ETwoStageMannequinTier CurrentTrackingTier = ETwoStageMannequinTier::Roaming;
+	
+	// 중앙 관리자로부터 받은 현재 3 차 탐색 위치와 근거 정보
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "AI|Tracking")
+	FMannequinTertiaryAssignment TertiaryAssignment;
 };

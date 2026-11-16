@@ -716,6 +716,17 @@ void AMannequinAICharacter::SetTrackingTier(ETwoStageMannequinTier NewTrackingTi
 	CurrentTrackingTier = NewTrackingTier;
 }
 
+void AMannequinAICharacter::SetTertiaryAssignment(const FMannequinTertiaryAssignment& NewAssignment)
+{
+	TertiaryAssignment = NewAssignment;
+	TertiaryAssignment.bHasAssignment = true;
+}
+
+void AMannequinAICharacter::ClearTertiaryAssignment()
+{
+	TertiaryAssignment = FMannequinTertiaryAssignment();
+}
+
 void AMannequinAICharacter::UpdatePlayerObservation(const FVector& PlayerLocation, const FVector& PlayerVelocity, double ObservationTime)
 {
 	PlayerObservation.LastSeenLocation = PlayerLocation;

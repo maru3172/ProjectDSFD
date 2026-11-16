@@ -187,3 +187,61 @@ struct FMannequinSearchCandidate
 	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
 	float Score = 0.0f;
 };
+
+USTRUCT()
+struct FMannequinTertiaryAssignment
+{
+	GENERATED_BODY()
+	
+	// 3 차 마네킹이 이동할 NavMesh 위의 탐색 위치
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	FVector TargetLocation = FVector::ZeroVector;
+	
+	// 중앙 관리자가 발급한 배정 고유 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 AssignmentId = INDEX_NONE;
+	
+	// 배정 위치를 결정할 때 사용한 공유 추적 정보 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 ReferenceInformationId = INDEX_NONE;
+	
+	// 배정 위치로 선택된 중앙 탐색 후보 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 SearchCandidateIndex = INDEX_NONE;
+	
+	// 배정 후보가 설명하는 2 차 단서 그룹 번호
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 SecondaryGroupIndex = INDEX_NONE;
+	
+	// 중앙 관리자가 이 배정을 생성한 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double AssignmentTime = -1.0;
+	
+	// 이 배정을 더 이상 사용할 수 없는 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double ExpirationTime = -1.0;
+	
+	// 배정에 사용된 추적 근거
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	EMannequinTrackingEvidence TrackingEvidence = EMannequinTrackingEvidence::None;
+	
+	// 배정 위치에 대한 중앙 추적 정보의 신뢰도
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	float Confidence = 0.0f;
+	
+	// 중앙 관리자로부터 유효한 탐색 위치를 배정받았는지
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	bool bHasAssignment = false;
+	
+	// 현재 시각을 기준으로 사용할 수 있는 3 차 탐색 배정인지 반환한다.
+	bool IsActive(double CurrentTime) const
+	{
+		return
+			bHasAssignment &&
+			AssignmentId != INDEX_NONE &&
+			ReferenceInformationId != INDEX_NONE &&
+			TrackingEvidence != EMannequinTrackingEvidence::None &&
+			Confidence > 0.0f &&
+			ExpirationTime >= CurrentTime;
+	}
+};
