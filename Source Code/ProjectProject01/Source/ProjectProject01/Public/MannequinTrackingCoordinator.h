@@ -101,7 +101,18 @@ public:
 		FMannequinSharedTrackingInformation& OutInformation
 		) const;
 
+	// 중앙 추적 정보 주변의 배회 마네킹을 선정하여 3 차 탐색 위치를 배정한다.
+	void RefreshTertiaryAssignments(
+		float AssignmentRadius,
+		float MaximumHeightDifference,
+		int32 MaximumAssignedMannequins,
+		float AssignmentLifetime
+		);
+
 private:
+	// 등록된 모든 마네킹의 3 차 탐색 배정을 제거한다.
+	void ClearTertiaryAssignments();
+
 	// 후보 위치에서 지정한 2 차 단서 그룹을 설명할 수 있는지 검사한다.
 	bool DoesCandidateExplainSecondaryGroup(
 		const FVector& CandidateLocation,
@@ -155,6 +166,9 @@ private:
 	// 다음 관측 정보에 부여할 번호
 	int32 NextInformationId = 1;
 
+	// 다음 3 차 탐색 배정에 부여할 번호
+	int32 NextAssignmentId = 1;
+
 	// 같은 프레임에 여러 서비스가 중복 계산하는 것을 막기 위한 시각
 	double LastRefreshTime = -1.0;
 
@@ -169,4 +183,7 @@ private:
 
 	// 간접 수색 후보 점수를 마지막으로 계산한 월드 시각
 	double LastIndirectCandidateEvaluationTime = -1.0;
+
+	// 3 차 탐색 마네킹을 마지막으로 선정하고 배정한 월드 시각
+	double LastTertiaryAssignmentRefreshTime = -1.0;
 };

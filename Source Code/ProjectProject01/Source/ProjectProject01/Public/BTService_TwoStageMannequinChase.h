@@ -193,6 +193,18 @@ private:
 	// 더 많은 2 차 단서를 설명하는 후보에 적용할 점수 비중
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Indirect Clue|Scoring", meta = (ClampMin = "0.0"))
 	float IndirectClueScoreWeight = 1.0f;
+
+	// 1 차·2 차 또는 중앙 추적 위치 주변에서 3 차 마네킹을 선정할 최대 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Assignment", meta = (ClampMin = "0.0", Units = "cm"))
+	float TertiaryAssignmentRadius = 2500.0f;
+
+	// 중앙 관리자가 동시에 위치를 배정할 수 있는 3 차 마네킹의 최대 수
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Assignment", meta = (ClampMin = "0"))
+	int32 MaximumTertiaryMannequinCount = 3;
+
+	// 중앙 관리자가 생성한 3 차 탐색 배정을 유지할 시간
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Assignment", meta = (ClampMin = "0.0", Units = "s"))
+	float TertiaryAssignmentLifetime = 1.0f;
 	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))

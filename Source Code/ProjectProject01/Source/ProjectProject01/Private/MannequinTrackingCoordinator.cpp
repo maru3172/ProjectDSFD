@@ -20,6 +20,7 @@ void UMannequinTrackingCoordinator::RegisterMannequin(AMannequinAICharacter& Man
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
 		LastIndirectCandidateEvaluationTime = -1.0;
+		LastTertiaryAssignmentRefreshTime = -1.0;
 	}
 }
 
@@ -821,6 +822,256 @@ bool UMannequinTrackingCoordinator::TryGetBestIndirectInformation(
 	OutInformation = BestIndirectInformation;
 
 	return true;
+}
+
+void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
+	float AssignmentRadius,
+	float MaximumHeightDifference,
+	int32 MaximumAssignedMannequins,
+	float AssignmentLifetime
+	)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		ClearTertiaryAssignments();
+		return;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+
+	// 같은 프레임에 여러 마네킹 서비스가 호출하더라도 한 번만 배정한다.
+	if (FMath::IsNearlyEqual(CurrentTime, LastTertiaryAssignmentRefreshTime))
+	{
+		return;
+	}
+
+	LastTertiaryAssignmentRefreshTime = CurrentTime;
+	RemoveInvalidMannequins();
+
+	FMannequinSharedTrackingInformation AssignmentInformation;
+	const bool bUsesDirectInformation = LatestDirectInformation.IsActive(CurrentTime);
+
+	if (bUsesDirectInformation)
+	{
+		AssignmentInformation = LatestDirectInformation;
+	}
+	else if (BestIndirectInformation.IsActive(CurrentTime))
+	{
+		AssignmentInformation = BestIndirectInformation;
+	}
+	else
+	{
+		ClearTertiaryAssignments();
+		return;
+	}
+
+	const int32 SafeMaximumAssignedMannequins = FMath::Max(0, MaximumAssignedMannequins);
+	if (SafeMaximumAssignedMannequins == 0)
+	{
+		ClearTertiaryAssignments();
+		return;
+	}
+
+	const double SafeAssignmentRadiusSquared =
+		FMath::Square(static_cast<double>(FMath::Max(0.0f, AssignmentRadius)));
+	const float SafeMaximumHeightDifference = FMath::Max(0.0f, MaximumHeightDifference);
+	TArray<FVector> AssignmentAnchorLocations;
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		const AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+
+		const ETwoStageMannequinTier TrackingTier = Mannequin->GetTrackingTier();
+		if (TrackingTier == ETwoStageMannequinTier::Primary ||
+			TrackingTier == ETwoStageMannequinTier::Secondary)
+		{
+			AssignmentAnchorLocations.Add(Mannequin->GetActorLocation());
+		}
+	}
+
+	for (const FMannequinSecondaryClueGroup& Group : SecondaryClueGroups)
+	{
+		AssignmentAnchorLocations.Add(Group.CenterLocation);
+	}
+
+	if (AssignmentAnchorLocations.IsEmpty())
+	{
+		const AMannequinAICharacter* SourceMannequin = AssignmentInformation.SourceMannequin.Get();
+		if (IsValid(SourceMannequin))
+		{
+			AssignmentAnchorLocations.Add(SourceMannequin->GetActorLocation());
+		}
+	}
+
+	if (AssignmentAnchorLocations.IsEmpty())
+	{
+		AssignmentAnchorLocations.Add(AssignmentInformation.PlayerLocation);
+	}
+
+	struct FTertiaryAssignmentCandidate
+	{
+		AMannequinAICharacter* Mannequin = nullptr;
+		double DistanceToAnchorSquared = TNumericLimits<double>::Max();
+		double DistanceToTargetSquared = TNumericLimits<double>::Max();
+	};
+
+	TArray<FTertiaryAssignmentCandidate> AssignmentCandidates;
+	ClearTertiaryAssignments();
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+
+		const ETwoStageMannequinTier TrackingTier = Mannequin->GetTrackingTier();
+
+		// 1 차와 2 차는 각각 직접 관측자와 정지 단서이므로 3 차 배정에서 제외한다.
+		if (TrackingTier == ETwoStageMannequinTier::Primary ||
+			TrackingTier == ETwoStageMannequinTier::Secondary)
+		{
+			continue;
+		}
+
+		// 역할 갱신 순서와 관계없이 직접 관측·플레이어 시야 정지 마네킹은 제외한다.
+		if (Mannequin->GetPlayerObservation().bDirectlyVisible ||
+			Mannequin->IsObservedByPlayer())
+		{
+			continue;
+		}
+
+		const FVector MannequinLocation = Mannequin->GetActorLocation();
+		double ClosestAnchorDistanceSquared = TNumericLimits<double>::Max();
+
+		for (const FVector& AnchorLocation : AssignmentAnchorLocations)
+		{
+			const float HeightDifference = FMath::Abs(
+				MannequinLocation.Z - AnchorLocation.Z
+				);
+
+			if (HeightDifference > SafeMaximumHeightDifference)
+			{
+				continue;
+			}
+
+			ClosestAnchorDistanceSquared = FMath::Min(
+				ClosestAnchorDistanceSquared,
+				FVector::DistSquared2D(MannequinLocation, AnchorLocation)
+				);
+		}
+
+		if (ClosestAnchorDistanceSquared > SafeAssignmentRadiusSquared)
+		{
+			continue;
+		}
+
+		FTertiaryAssignmentCandidate& NewCandidate = AssignmentCandidates.AddDefaulted_GetRef();
+		NewCandidate.Mannequin = Mannequin;
+		NewCandidate.DistanceToAnchorSquared = ClosestAnchorDistanceSquared;
+		NewCandidate.DistanceToTargetSquared = FVector::DistSquared2D(
+			MannequinLocation,
+			AssignmentInformation.PlayerLocation
+			);
+	}
+
+	AssignmentCandidates.Sort(
+		[](const FTertiaryAssignmentCandidate& Left, const FTertiaryAssignmentCandidate& Right)
+		{
+			if (!FMath::IsNearlyEqual(Left.DistanceToAnchorSquared, Right.DistanceToAnchorSquared))
+			{
+				return Left.DistanceToAnchorSquared < Right.DistanceToAnchorSquared;
+			}
+
+			if (!FMath::IsNearlyEqual(Left.DistanceToTargetSquared, Right.DistanceToTargetSquared))
+			{
+				return Left.DistanceToTargetSquared < Right.DistanceToTargetSquared;
+			}
+
+			return
+				IsValid(Left.Mannequin) &&
+				IsValid(Right.Mannequin) &&
+				Left.Mannequin->GetUniqueID() < Right.Mannequin->GetUniqueID();
+		}
+		);
+
+	const int32 AssignmentCount = FMath::Min(
+		SafeMaximumAssignedMannequins,
+		AssignmentCandidates.Num()
+		);
+	const double SafeAssignmentLifetime =
+		static_cast<double>(FMath::Max(0.0f, AssignmentLifetime));
+
+	for (int32 AssignmentIndex = 0; AssignmentIndex < AssignmentCount; ++AssignmentIndex)
+	{
+		AMannequinAICharacter* AssignedMannequin =
+			AssignmentCandidates[AssignmentIndex].Mannequin;
+
+		if (!IsValid(AssignedMannequin))
+		{
+			continue;
+		}
+
+		FMannequinTertiaryAssignment NewAssignment;
+		NewAssignment.TargetLocation = AssignmentInformation.PlayerLocation;
+		NewAssignment.AssignmentId = NextAssignmentId;
+		NewAssignment.ReferenceInformationId = AssignmentInformation.InformationId;
+		NewAssignment.AssignmentTime = CurrentTime;
+		NewAssignment.ExpirationTime = FMath::Min(
+			AssignmentInformation.ExpirationTime,
+			CurrentTime + SafeAssignmentLifetime
+			);
+		NewAssignment.Confidence = AssignmentInformation.Confidence;
+
+		if (bUsesDirectInformation)
+		{
+			NewAssignment.TrackingEvidence = EMannequinTrackingEvidence::DirectObservation;
+		}
+		else
+		{
+			NewAssignment.SearchCandidateIndex = 0;
+
+			if (IndirectSearchCandidates.IsValidIndex(0))
+			{
+				NewAssignment.SecondaryGroupIndex =
+					IndirectSearchCandidates[0].SecondaryGroupIndex;
+			}
+
+			NewAssignment.TrackingEvidence =
+				NewAssignment.SecondaryGroupIndex != INDEX_NONE
+				? EMannequinTrackingEvidence::StoppedMannequinClue
+				: EMannequinTrackingEvidence::VelocityPrediction;
+		}
+
+		AssignedMannequin->SetTertiaryAssignment(NewAssignment);
+
+		if (NextAssignmentId == MAX_int32)
+		{
+			NextAssignmentId = 1;
+		}
+		else
+		{
+			++NextAssignmentId;
+		}
+	}
+}
+
+void UMannequinTrackingCoordinator::ClearTertiaryAssignments()
+{
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+		if (IsValid(Mannequin))
+		{
+			Mannequin->ClearTertiaryAssignment();
+		}
+	}
 }
 
 bool UMannequinTrackingCoordinator::DoesCandidateExplainSecondaryGroup(

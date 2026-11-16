@@ -183,6 +183,12 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			IndirectDirectionScoreWeight,
 			IndirectClueScoreWeight
 			);
+		TrackingCoordinator->RefreshTertiaryAssignments(
+			TertiaryAssignmentRadius,
+			MaximumHeightDifference,
+			MaximumTertiaryMannequinCount,
+			TertiaryAssignmentLifetime
+			);
 	}
 
 	switch (Tier)
