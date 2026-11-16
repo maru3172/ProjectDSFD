@@ -141,7 +141,7 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 		Blackboard->ClearValue(TEXT("LastSeenPlayerVelocity"));
 	}
 
-	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin, AllMannequins);
+	const ETwoStageMannequinTier Tier = DetermineChaseTier(*CurrentMannequin);
 	CurrentMannequin->SetTrackingTier(Tier);
 	
 	UMannequinTrackingCoordinator* TrackingCoordinator =
@@ -615,7 +615,7 @@ bool UBTService_TwoStageMannequinChase::CanMannequinSeePlayer(const AMannequinAI
 	return bHit && HitResult.GetActor() == &Player;
 }
 
-ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin, const TArray<AActor*>& AllMannequins) const
+ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(const AMannequinAICharacter& CurrentMannequin) const
 {
 	const FMannequinPlayerObservation& CurrentObservation = CurrentMannequin.GetPlayerObservation();
 	
@@ -632,12 +632,11 @@ ETwoStageMannequinTier UBTService_TwoStageMannequinChase::DetermineChaseTier(con
 		return ETwoStageMannequinTier::Secondary;
 	}
 	
-	FMannequinPlayerObservation SharedObservation;
-	
-	// 1 일차에는 주변의 현재 1 차 정보를 받을 수 있는 마네킹을
-	// 임시 3 차 수색자로 판정한다.
-	// 중앙 관리자의 정식 목표 배정은 2 일차에 구현한다.
-	if (TryFindBestPrimaryObservation(CurrentMannequin, AllMannequins, true, SharedObservation))
+	const UWorld* World = CurrentMannequin.GetWorld();
+
+	// 직접 관측자나 정지 단서가 아니면서 중앙 관리자의 유효한 배정을 받았다면 3 차다.
+	if (IsValid(World) &&
+		CurrentMannequin.HasActiveTertiaryAssignment(World->GetTimeSeconds()))
 	{
 		return ETwoStageMannequinTier::Tertiary;
 	}

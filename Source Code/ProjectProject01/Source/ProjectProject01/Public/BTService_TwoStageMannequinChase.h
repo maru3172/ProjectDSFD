@@ -43,8 +43,7 @@ private:
 	
 	// 현재 마네킹이 0·1·2·3 차 중 어떤 역할인지 판단한다.
 	ETwoStageMannequinTier DetermineChaseTier(
-		const AMannequinAICharacter& CurrentMannequin,
-		const TArray<AActor*>& AllMannequins
+		const AMannequinAICharacter& CurrentMannequin
 		) const;
 	
 	// 현재 마네킹 주변에서 사용할 수 있는 가장 최신 1 차 마네킹의 관측 정보를 찾는다.
