@@ -62,6 +62,7 @@ BARRIER_SPACING = 1200.0
 MAX_BARRIERS = 30
 AGENT_MARGIN = 40.0          # navmesh is shrunk by the agent radius; shutters reach the real wall
 EXIT_BOX_CLEARANCE = 100.0   # the exit row stays this far in front of every corner of the escape volume
+EXIT_MAX_WIDTH = 8000.0      # the exit row spans the hall wall to wall, however wide (user, 2026-11-16: the exit stays where it is)
 MAX_LINES = 6                # compartment line candidates per floor (2-3 stand in a match)
 LINE_MIN_GAP = 1500.0        # candidate lines at least 15 m apart
 LINE_EVEN_SPACING = 2500.0   # evenly spread candidates about every 25 m
@@ -312,6 +313,36 @@ def spawn(cls, label, loc, yaw=0.0, scale=None):
     return actor
 
 
+EXIT_BULB_PATH = "/Game/MyProject/Materials/ShutterLayout/MI_ExitLampRed"
+_exit_bulb = {}
+
+
+def exit_bulb_material(current):
+    """A red copy of the fixture's bulb material (its "Color" parameter), made once and kept as an asset."""
+    # The editor wraps the bulb in a transient dynamic instance; an asset cannot keep that as its parent (it was saved
+    # with no parent and drew the default white material). Walk up to the real material first.
+    while current and isinstance(current, unreal.MaterialInstanceDynamic):
+        current = current.get_editor_property("parent")
+    if not current:
+        return None
+    if current.get_path_name().startswith(EXIT_BULB_PATH):
+        return current  # placed on an earlier run already
+    if "mi" not in _exit_bulb:
+        mi = unreal.load_asset(EXIT_BULB_PATH) if unreal.EditorAssetLibrary.does_asset_exist(EXIT_BULB_PATH) else None
+        if not mi:
+            folder, name = EXIT_BULB_PATH.rsplit("/", 1)
+            mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+        if mi:
+            if mi.get_editor_property("parent") is None:
+                unreal.MaterialEditingLibrary.set_material_instance_parent(mi, current)
+            unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(mi, "Color", unreal.LinearColor(1.0, 0.06, 0.04, 1.0))
+            unreal.MaterialEditingLibrary.update_material_instance(mi)
+            if APPLY:
+                unreal.EditorAssetLibrary.save_loaded_asset(mi)
+        _exit_bulb["mi"] = mi
+    return _exit_bulb["mi"]
+
+
 def write_bmp(path, w, h, px):
     row = (w * 3 + 3) & ~3
     data = bytearray()
@@ -558,9 +589,9 @@ for floor, path, dest in MAPS:
         adjacency[a].add(b)
         adjacency[b].add(a)
 
-    def width_at(c, p):
+    def width_at(c, p, steps=100):
         def reach(sign):
-            for s in range(1, 101):
+            for s in range(1, steps + 1):
                 if not grid.ok(c[0] + p[0] * sign * s * 25, c[1] + p[1] * sign * s * 25):
                     return s * 25
             return None
@@ -733,15 +764,25 @@ for floor, path, dest in MAPS:
     exit_rows = []
     for e in (f["exits"] if floor == "1F" else []):  # the way out of the building is on 1F only
         best = None
-        for step in range(8):
-            u = (math.cos(step * math.pi / 4), math.sin(step * math.pi / 4))
+        # Exit exception (user, 2026-11-16): one straight row parallel to a face of the escape volume, just in front of it,
+        # so it can never cut across the volume. Only the four box-face directions; the row starts past the face.
+        corners = f["exit_boxes"].get(e, [e])
+        why = {}  # per direction: why no row fitted (reported when none does)
+        for step in range(4):
+            d = why.setdefault(step, {"off_floor": 0, "wide": 0, "min_w": None, "not_cut": 0, "box": 0, "ok": 0})
+            u = (math.cos(step * math.pi / 2), math.sin(step * math.pi / 2))
             pp = (-u[1], u[0])
-            for t in range(150, 1501, 50):
+            face = max((q[0] - e[0]) * u[0] + (q[1] - e[1]) * u[1] for q in corners)
+            for t in range(int(face + EXIT_BOX_CLEARANCE), int(face + 1501), 50):
                 c = (e[0] + u[0] * t, e[1] + u[1] * t)
                 if not grid.ok(*c) or shut_in(c):
+                    d["off_floor"] += 1
                     continue
-                left, right, w = width_at(c, pp)
-                if w is None or w >= 99999 or w > 1800:
+                left, right, w = width_at(c, pp, int(EXIT_MAX_WIDTH / 25))
+                if w is not None and w < 99999:
+                    d["min_w"] = int(w) if d["min_w"] is None else min(d["min_w"], int(w))
+                if w is None or w >= 99999 or w > EXIT_MAX_WIDTH:
+                    d["wide"] += 1
                     continue
                 score = w + t * .5
                 if best and score >= best[0]:
@@ -750,22 +791,46 @@ for floor, path, dest in MAPS:
                 b = (c[0] + pp[0] * right, c[1] + pp[1] * right)
                 behind = (c[0] - u[0] * 120, c[1] - u[1] * 120)  # the exit side of the row
                 if not grid.ok(*behind) or not cut_off(behind, row_cells(a, b)):
+                    d["not_cut"] += 1
                     continue
                 # The WHOLE escape volume stays behind the row, a body width clear of it (2026-11-16: a diagonal row once
                 # crossed the middle of the box, so part of it lay outside and anyone could escape without opening a shutter).
                 if any((q[0] - c[0]) * u[0] + (q[1] - c[1]) * u[1] > -EXIT_BOX_CLEARANCE for q in f["exit_boxes"].get(e, [e])):
+                    d["box"] += 1
                     continue
+                d["ok"] += 1
                 # Centred on the run, ends at the wall line (navmesh edge + 20 cm).
                 mid = (c[0] + pp[0] * (right - left) / 2, c[1] + pp[1] * (right - left) / 2)
                 half = w / 2 - 20.0
                 best = (score, (mid, u, pp, half, half, 2 * half + 2 * AGENT_MARGIN, nearest_kept(mid), ("exit", len(exit_rows))))
         if best:
             exit_rows.append(best[1])
+            floor_report["exit_row_detail"] = {"mid": [int(best[1][0][0]), int(best[1][0][1])], "width_m": round((best[1][3] + best[1][4]) / 100, 1), "along": [round(best[1][2][0], 2), round(best[1][2][1], 2)]}
         else:
-            floor_report["warnings"].append("exit at (%d, %d): no passage in front of it to shut" % e)
+            floor_report["warnings"].append("exit at (%d, %d): no passage in front of it to shut %s" % (e[0], e[1], json.dumps(why)))
     floor_report["exit_rows"] = len(exit_rows)
     # Compartment openings right at the exit row would double it.
     compartments = [c for c in compartments if all(math.dist(c[0], r[0]) > 600 for r in exit_rows)]
+    # Nor may a compartment line run through the escape volume or stand in the pocket between the exit row and the exit
+    # (2026-11-16: a candidate line crossed the 1F escape box, so it looked like a wall cutting through the exit).
+    def near_exit(c):
+        mid, pp, half_a, half_b = c[0], c[2], c[3], c[4]
+        steps = max(1, int((half_a + half_b) / 50))
+        for i in range(steps + 1):
+            s = -half_a + (half_a + half_b) * i / steps
+            q = (mid[0] + pp[0] * s, mid[1] + pp[1] * s)
+            for box in f["exit_boxes"].values():
+                xs, ys = [b[0] for b in box], [b[1] for b in box]
+                if min(xs) - 300 <= q[0] <= max(xs) + 300 and min(ys) - 300 <= q[1] <= max(ys) + 300:
+                    return True
+        for r in exit_rows:
+            rel = (mid[0] - r[0][0], mid[1] - r[0][1])
+            if rel[0] * r[1][0] + rel[1] * r[1][1] < 0 and abs(rel[0] * r[2][0] + rel[1] * r[2][1]) <= r[3] + 200:
+                return True  # on the exit's side of the row, within its span
+        return False
+    dropped_near_exit = [c for c in compartments if near_exit(c)]
+    compartments = [c for c in compartments if not near_exit(c)]
+    floor_report["compartments_dropped_at_exit"] = len(dropped_near_exit)
 
     # Spread out: corridors and chokepoints 12 m apart from each other, store fronts 5 m apart (6 m from the rest).
     import random
@@ -844,10 +909,26 @@ for floor, path, dest in MAPS:
             k = clear_node_near(gate)
             if k:
                 fixtures.append((node_at[k], "exit"))
+    # From here to the basement links: the 1F way-out lamps, drawn as all-red warning lamps (user, 2026-11-16). The escalator
+    # lamps above keep their old look (user: escalators excluded).
+    warning_from = len(fixtures)
     for e in f["exits"]:
         k = clear_node_near(e)
         if k:
             fixtures.append((node_at[k], "exit"))
+    # In the dark the way out must still be findable (user, 2026-11-16: lights only, no signs). The exit row stands well in
+    # front of the exit, so its red light above stays behind the shutters: one more on the survivors' side of each row.
+    for r in exit_rows:
+        k = clear_node_near((r[0][0] + r[1][0] * 300, r[0][1] + r[1][1] * 300), 800.0)
+        if k:
+            fixtures.append((node_at[k], "exit"))
+    # And one red light over each way down to the rescue basement (BasementLinkAuto), which had only its floating text.
+    for link in actors_sub.get_all_level_actors():
+        if link.get_class().get_name() == "ProjectProject01LevelTransitionTrigger" and "BasementLinkAuto" in [str(t) for t in link.tags]:
+            k = clear_node_near((link.get_actor_location().x, link.get_actor_location().y), 800.0)
+            if k:
+                fixtures.append((node_at[k], "exit"))
+    warning_lamps = set(range(warning_from, len(fixtures))) if floor == "1F" else set()
     # A lit fixture by the survivors' starts, so a match never begins in the dark.
     for sp in f["spawns"]:
         k = clear_node_near(sp)
@@ -911,9 +992,15 @@ for floor, path, dest in MAPS:
         else:
             light.set_editor_property("light_on_intensity", {"exit": 90000.0, "start": 70000.0, "route": 130000.0, "side": 30000.0}[kind])  # 6 m ceiling: about 2.1x the 4.14 m corridor value
         spot = light.get_editor_property("reactive_spot_light")
-        if kind == "exit":
-            spot.set_editor_property("light_color", unreal.Color(r=255, g=70, b=55, a=255))   # emergency red: the way out
+        if index in warning_lamps:
+            spot.set_editor_property("light_color", unreal.Color(r=255, g=18, b=10, a=255))   # warning-lamp red: the way out
+            # The bulb glows red too (user, 2026-11-16: a white lamp throwing red light looked wrong; a warning lamp).
+            bulb = light.get_editor_property("bulb_mesh")
+            red_bulb = exit_bulb_material(bulb.get_material(0))
+            if red_bulb:
+                bulb.set_material(0, red_bulb)
         else:
+            # Escalator way-down lamps too (user, 2026-11-16): plain white like the rest; they still never go dark.
             spot.set_editor_property("light_color", unreal.Color(r=205, g=222, b=255, a=255))  # cold fluorescent
         counts[kind] += 1
         paint.append(("light_dead" if dead else "light_" + kind, [pt]))
@@ -931,6 +1018,9 @@ for floor, path, dest in MAPS:
             actor.light_component.set_editor_property("intensity", 0.0)
         elif cls == "SkyLight":
             actor.light_component.set_editor_property("intensity", SKY_INTENSITY)
+            # Indoors with the sky and clouds hidden, a real-time capture has nothing to capture and the editor warns
+            # ("sky light with real-time capture ... needs a SkyAtmosphere / VolumetricCloud / IsSky mesh"). Capture once.
+            actor.light_component.set_editor_property("real_time_capture", False)
         elif cls == "ExponentialHeightFog":
             fog = actor.component
             fog.set_editor_property("fog_density", 0.035)

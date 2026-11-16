@@ -171,6 +171,11 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		if (!Mode || !Mode->Controller.IsValid() || !Mode->Interaction || !Mode->Overlay) return false;
 		auto& PC = *Mode->Controller;
 		auto& Pawn = *PC.GetPawn();
+		// Everything past the shutter (mannequin, partner, encounter trigger, hats) sits further down the hall since the
+		// finale corridor grew to seven light sections (Tools/CreateSinglePlayerIntro.py HALL_SHIFT). Read the shift off the
+		// encounter trigger (authored at Y 310 before) instead of copying the script constant.
+		const double HallShift = Mode->Passage ? Mode->Passage->GetActorLocation().Y - 310.0 : 0.0;
+		auto Hall = [HallShift](double X, double Y, double Z) { return FVector(X, Y + HallShift, Z); };
 		auto AimAt = [&](const FVector& Position)
 		{
 			PC.SetControlRotation((Position - Pawn.GetPawnViewLocation()).Rotation());
@@ -341,14 +346,14 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 		case 6:
 			if (Mode->Phase == EPhase::LeaveTogether)
 			{
-				Place(FVector(-900,850,96), FVector(-900,-550,140));
+				Place(Hall(-900,850,96), Hall(-900,-550,140));
 				++State->Step;
 			}
 			break;
 		case 7:
 			if (Mode->Phase == EPhase::WalkToShutter)
 			{
-				Place(FVector(-900,548,96), FVector(-900,-550,140));
+				Place(Hall(-900,548,96), Hall(-900,-550,140));
 				++State->Step;
 			}
 			break;
@@ -356,7 +361,7 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 			TestTrue(TEXT("Passing the mannequin does not lock the view or force the player to look"),
 				Mode->Phase == EPhase::WalkToShutter && PC.GetViewTarget() == &Pawn && !PC.IsLookInputIgnored());
 			State->ApproachView = PC.GetControlRotation();
-			Pawn.SetActorLocation(FVector(-900,310,96), false, nullptr, ETeleportType::TeleportPhysics);
+			Pawn.SetActorLocation(Hall(-900,310,96), false, nullptr, ETeleportType::TeleportPhysics);
 			TestTrue(TEXT("Crossing the trigger after the mannequin immediately starts the injury scene"),
 				Mode->Phase == EPhase::PartnerInjured && Mode->PartnerScream && PC.IsLookInputIgnored()
 				&& PC.GetControlRotation().Equals(State->ApproachView, 1.f));
@@ -388,7 +393,7 @@ bool FProjectSingleIntroPIETest::RunTest(const FString&)
 				TestTrue(TEXT("Controls and interior lighting remain available before the blackout"),
 					!PC.IsLookInputIgnored() && !PC.IsMoveInputIgnored() && !Mode->StoreLights.IsEmpty()
 					&& Mode->StoreLights[0]->IsVisible());
-				Place(FVector(-885,-695,96), Mode->ShutterHandle->GetActorLocation());
+				Place(Hall(-885,-695,96), Mode->ShutterHandle->GetActorLocation());
 				++State->Step;
 			}
 			break;

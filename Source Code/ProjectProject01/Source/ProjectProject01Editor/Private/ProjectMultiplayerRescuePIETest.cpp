@@ -9,6 +9,7 @@
 #include "PlayerCharacter.h"
 #include "PlayerInteractionComponent.h"
 #include "ProjectMultiplayerRescue.h"
+#include "ProjectProject01LevelTransitionTrigger.h"
 #include "ProjectProject01TutorialEditorLibrary.h"
 #include "ProjectProject01VoiceChatSubsystem.h"
 #include "UObject/UnrealType.h"
@@ -232,6 +233,13 @@ bool FProjectMultiplayerRescuePIETest::RunTest(const FString&)
 			if (State->Captive.IsValid() && State->Rescuer.IsValid() && State->Station.IsValid())
 			{
 				if (!State->WalkingClient.IsValid()) break;
+				// The ramp top now also holds the two-way 1F <-> B1 link (BasementLinkAuto, 2026-11-15) that travels to the 1F
+				// match map. This step checks the physical walk up the ramp inside this map, so the link stays out of it.
+				if (State->RampWaypoint == 0)
+					for (const auto& Context : GEngine->GetWorldContexts())
+						if (UWorld* PieWorld = Context.World(); PieWorld && PieWorld->WorldType == EWorldType::PIE)
+							for (TActorIterator<AProjectProject01LevelTransitionTrigger> It(PieWorld); It; ++It)
+								if (It->ActorHasTag(TEXT("BasementLinkAuto"))) It->SetActorEnableCollision(false);
 				const FVector Route[] = {
 					FVector(3840,585,-344), FVector(3510,585,-344), FVector(3260,565,-344),
 					FVector(2725,550,-151), FVector(2050,550,96), FVector(1850,550,96)
