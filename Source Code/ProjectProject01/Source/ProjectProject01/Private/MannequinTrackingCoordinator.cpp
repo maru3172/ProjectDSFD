@@ -400,6 +400,8 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	LastIndirectCandidateRefreshTime = CurrentTime;
 	LastIndirectCandidateFilterTime = -1.0;
 	LastIndirectCandidateEvaluationTime = -1.0;
+	TArray<FMannequinSearchCandidate> PreviousCandidates =
+		MoveTemp(IndirectSearchCandidates);
 	IndirectSearchCandidates.Reset();
 
 	UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
@@ -440,6 +442,7 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 		[this,
 		 NavigationSystem,
 		 &SafeNavigationExtent,
+		 &PreviousCandidates,
 		 MinimumCandidateSeparationSquared]
 		(const FVector& CandidateLocation, int32 SecondaryGroupIndex)
 		{
@@ -470,6 +473,40 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 			NewCandidate.SecondaryGroupIndex = SecondaryGroupIndex;
 			NewCandidate.ReferenceInformationId = LastKnownInformation.InformationId;
 			NewCandidate.Confidence = LastKnownInformation.Confidence;
+
+			const FMannequinSearchCandidate* PreviousCandidate = nullptr;
+			double PreviousCandidateDistanceSquared = TNumericLimits<double>::Max();
+
+			for (const FMannequinSearchCandidate& Candidate : PreviousCandidates)
+			{
+				if (Candidate.ReferenceInformationId != NewCandidate.ReferenceInformationId)
+				{
+					continue;
+				}
+
+				const double CandidateDistanceSquared = FVector::DistSquared2D(
+					Candidate.Location,
+					NewCandidate.Location
+					);
+
+				if (CandidateDistanceSquared > MinimumCandidateSeparationSquared ||
+					CandidateDistanceSquared >= PreviousCandidateDistanceSquared)
+				{
+					continue;
+				}
+
+				PreviousCandidate = &Candidate;
+				PreviousCandidateDistanceSquared = CandidateDistanceSquared;
+			}
+
+			if (PreviousCandidate != nullptr)
+			{
+				NewCandidate.SearchConfidenceMultiplier =
+					PreviousCandidate->SearchConfidenceMultiplier;
+				NewCandidate.SearchFailureCount = PreviousCandidate->SearchFailureCount;
+				NewCandidate.LastSearchTime = PreviousCandidate->LastSearchTime;
+				NewCandidate.bSearchCompleted = PreviousCandidate->bSearchCompleted;
+			}
 
 			IndirectSearchCandidates.Add(MoveTemp(NewCandidate));
 		};
@@ -674,6 +711,104 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 	IndirectSearchCandidates = MoveTemp(FilteredCandidates);
 }
 
+void UMannequinTrackingCoordinator::ProcessTertiarySearchResults(
+	float SearchLocationMatchTolerance,
+	float FailureConfidenceMultiplier
+	)
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+	const double SafeMatchToleranceSquared = FMath::Square(
+		static_cast<double>(FMath::Max(0.0f, SearchLocationMatchTolerance))
+		);
+	const float SafeFailureConfidenceMultiplier = FMath::Clamp(
+		FailureConfidenceMultiplier,
+		0.0f,
+		1.0f
+		);
+	bool bCandidateStateChanged = false;
+
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+		if (!IsValid(Mannequin))
+		{
+			continue;
+		}
+
+		const FMannequinTertiaryAssignment Assignment =
+			Mannequin->GetTertiaryAssignment();
+		const FMannequinTertiarySearchState SearchState =
+			Mannequin->GetTertiarySearchState();
+
+		if (!SearchState.HasCompletedAssignment(Assignment.AssignmentId))
+		{
+			continue;
+		}
+
+		if (SearchState.Result == EMannequinTertiarySearchResult::PlayerFound)
+		{
+			Mannequin->ResetTertiarySearchFailureCount();
+			Mannequin->ClearTertiaryAssignment();
+			continue;
+		}
+
+		// 직접 관측 목표는 새로운 직접 정보가 계속 갱신하므로 간접 후보 실패로 기록하지 않는다.
+		if (Assignment.TrackingEvidence == EMannequinTrackingEvidence::DirectObservation)
+		{
+			Mannequin->ClearTertiaryAssignment();
+			continue;
+		}
+
+		FMannequinSearchCandidate* MatchedCandidate = nullptr;
+		double ClosestCandidateDistanceSquared = TNumericLimits<double>::Max();
+
+		for (FMannequinSearchCandidate& Candidate : IndirectSearchCandidates)
+		{
+			const double CandidateDistanceSquared = FVector::DistSquared2D(
+				Candidate.Location,
+				Assignment.TargetLocation
+				);
+
+			if (CandidateDistanceSquared > SafeMatchToleranceSquared ||
+				CandidateDistanceSquared >= ClosestCandidateDistanceSquared)
+			{
+				continue;
+			}
+
+			MatchedCandidate = &Candidate;
+			ClosestCandidateDistanceSquared = CandidateDistanceSquared;
+		}
+
+		if (MatchedCandidate != nullptr)
+		{
+			MatchedCandidate->SearchConfidenceMultiplier = FMath::Clamp(
+				MatchedCandidate->SearchConfidenceMultiplier * SafeFailureConfidenceMultiplier,
+				0.0f,
+				1.0f
+				);
+			++MatchedCandidate->SearchFailureCount;
+			MatchedCandidate->LastSearchTime = CurrentTime;
+			MatchedCandidate->bSearchCompleted = true;
+			bCandidateStateChanged = true;
+		}
+
+		// 결과를 한 번만 처리하고 다음 중앙 배정을 받을 수 있도록 기존 배정을 제거한다.
+		Mannequin->ClearTertiaryAssignment();
+	}
+
+	if (bCandidateStateChanged)
+	{
+		// 같은 후보 생성 주기 안에서도 실패 결과를 반영해 점수를 다시 계산한다.
+		LastIndirectCandidateEvaluationTime = -1.0;
+	}
+}
+
 void UMannequinTrackingCoordinator::EvaluateIndirectSearchCandidates(
 	float MaximumPredictionSeconds,
 	float MaximumSearchRadius,
@@ -768,7 +903,10 @@ void UMannequinTrackingCoordinator::EvaluateIndirectSearchCandidates(
 			ClueScore * SafeClueScoreWeight;
 
 		Candidate.Score = FMath::Clamp(
-			Candidate.Confidence * WeightedScore / TotalScoreWeight,
+			Candidate.Confidence *
+			Candidate.SearchConfidenceMultiplier *
+			WeightedScore /
+			TotalScoreWeight,
 			0.0f,
 			1.0f
 			);
@@ -777,6 +915,11 @@ void UMannequinTrackingCoordinator::EvaluateIndirectSearchCandidates(
 	IndirectSearchCandidates.Sort(
 		[](const FMannequinSearchCandidate& Left, const FMannequinSearchCandidate& Right)
 		{
+			if (Left.bSearchCompleted != Right.bSearchCompleted)
+			{
+				return !Left.bSearchCompleted;
+			}
+
 			return Left.Score > Right.Score;
 		}
 		);

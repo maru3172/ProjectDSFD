@@ -176,6 +176,10 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			MannequinSightMaximumHeightDifference,
 			PredictionNavigationExtent
 			);
+		TrackingCoordinator->ProcessTertiarySearchResults(
+			TertiarySearchResultMatchTolerance,
+			TertiarySearchFailureConfidenceMultiplier
+			);
 		TrackingCoordinator->EvaluateIndirectSearchCandidates(
 			MaximumPredictionSeconds,
 			MaximumIndirectSearchRadius,

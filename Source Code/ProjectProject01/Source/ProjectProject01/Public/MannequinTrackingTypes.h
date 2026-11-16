@@ -202,6 +202,22 @@ struct FMannequinSearchCandidate
 	// 거리·이동 방향·2 차 단서 수를 조합한 최종 후보 점수
 	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
 	float Score = 0.0f;
+	
+	// 탐색 실패 결과에 따라 최종 점수에 적용할 신뢰도 배율
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	float SearchConfidenceMultiplier = 1.0f;
+	
+	// 이 후보 위치에서 플레이어를 찾지 못한 누적 횟수
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	int32 SearchFailureCount = 0;
+	
+	// 이 후보 위치의 탐색 실패가 마지막으로 기록된 월드 시각
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	double LastSearchTime = -1.0;
+	
+	// 현재 마지막 관측 정보에서 이 후보를 한 번 이상 수색했는지
+	UPROPERTY(VisibleAnywhere, Category = "AI|Tracking")
+	bool bSearchCompleted = false;
 };
 
 USTRUCT()

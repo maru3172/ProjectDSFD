@@ -204,6 +204,14 @@ private:
 	// 목표 도착 후 플레이어를 찾지 못했을 때 탐색 실패로 처리할 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", Units = "s"))
 	float TertiarySearchDuration = 2.0f;
+
+	// 완료된 탐색 위치와 중앙 후보를 같은 위치로 연결할 최대 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", Units = "cm"))
+	float TertiarySearchResultMatchTolerance = 200.0f;
+
+	// 탐색에 실패한 후보의 기존 신뢰도에 곱할 값
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float TertiarySearchFailureConfidenceMultiplier = 0.5f;
 	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))

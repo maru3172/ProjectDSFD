@@ -87,6 +87,12 @@ public:
 		const FVector& NavigationExtent
 		);
 
+	// 완료된 3 차 탐색 결과를 후보 신뢰도와 재배정 상태에 반영한다.
+	void ProcessTertiarySearchResults(
+		float SearchLocationMatchTolerance,
+		float FailureConfidenceMultiplier
+		);
+
 	// 필터를 통과한 후보들의 점수를 계산하고 가장 좋은 간접 예상 정보를 갱신한다.
 	void EvaluateIndirectSearchCandidates(
 		float MaximumPredictionSeconds,
