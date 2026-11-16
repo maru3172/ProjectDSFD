@@ -374,6 +374,8 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	{
 		IndirectSearchCandidates.Reset();
 		BestIndirectInformation = FMannequinSharedTrackingInformation();
+		IndirectSearchExpansionLevel = 0;
+		IndirectSearchRadiusBonus = 0.0f;
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
 		LastIndirectCandidateEvaluationTime = -1.0;
@@ -384,6 +386,8 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 	{
 		IndirectSearchCandidates.Reset();
 		BestIndirectInformation = FMannequinSharedTrackingInformation();
+		IndirectSearchExpansionLevel = 0;
+		IndirectSearchRadiusBonus = 0.0f;
 		LastIndirectCandidateRefreshTime = -1.0;
 		LastIndirectCandidateFilterTime = -1.0;
 		LastIndirectCandidateEvaluationTime = -1.0;
@@ -412,7 +416,10 @@ void UMannequinTrackingCoordinator::RefreshIndirectSearchCandidates(
 
 	const float SafeCandidateSpacing = FMath::Max(1.0f, CandidateSpacing);
 	const int32 SafeCandidateDirectionCount = FMath::Max(4, CandidateDirectionCount);
-	const float SafeMaximumSearchRadius = FMath::Max(0.0f, MaximumSearchRadius);
+	const float SafeMaximumSearchRadius = FMath::Max(
+		0.0f,
+		MaximumSearchRadius + IndirectSearchRadiusBonus
+		);
 	const float SafeEstimatedMaximumSpeed = FMath::Max(0.0f, EstimatedMaximumSpeed);
 	const double ElapsedTime = FMath::Max(
 		0.0,
@@ -626,7 +633,10 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 		);
 	const double MaximumReachableDistance = FMath::Min(
 		static_cast<double>(FMath::Max(0.0f, EstimatedMaximumSpeed)) * ElapsedTime,
-		static_cast<double>(FMath::Max(0.0f, MaximumSearchRadius))
+		static_cast<double>(FMath::Max(
+			0.0f,
+			MaximumSearchRadius + IndirectSearchRadiusBonus
+			))
 		);
 	TArray<FMannequinSearchCandidate> FilteredCandidates;
 
@@ -713,7 +723,9 @@ void UMannequinTrackingCoordinator::FilterIndirectSearchCandidates(
 
 void UMannequinTrackingCoordinator::ProcessTertiarySearchResults(
 	float SearchLocationMatchTolerance,
-	float FailureConfidenceMultiplier
+	float FailureConfidenceMultiplier,
+	float SearchRadiusExpansionStep,
+	int32 MaximumSearchExpansionLevel
 	)
 {
 	UWorld* World = GetWorld();
@@ -802,11 +814,58 @@ void UMannequinTrackingCoordinator::ProcessTertiarySearchResults(
 		Mannequin->ClearTertiaryAssignment();
 	}
 
-	if (bCandidateStateChanged)
+	if (!bCandidateStateChanged)
+	{
+		return;
+	}
+
+	const bool bAllCandidatesSearched =
+		!IndirectSearchCandidates.IsEmpty() &&
+		IndirectSearchCandidates.ContainsByPredicate(
+			[](const FMannequinSearchCandidate& Candidate)
+			{
+				return !Candidate.bSearchCompleted;
+			}
+			) == false;
+
+	if (!bAllCandidatesSearched)
 	{
 		// 같은 후보 생성 주기 안에서도 실패 결과를 반영해 점수를 다시 계산한다.
 		LastIndirectCandidateEvaluationTime = -1.0;
+		return;
 	}
+
+	const int32 SafeMaximumSearchExpansionLevel = FMath::Max(
+		0,
+		MaximumSearchExpansionLevel
+		);
+
+	if (IndirectSearchExpansionLevel < SafeMaximumSearchExpansionLevel)
+	{
+		++IndirectSearchExpansionLevel;
+		IndirectSearchRadiusBonus =
+			FMath::Max(0.0f, SearchRadiusExpansionStep) *
+			static_cast<float>(IndirectSearchExpansionLevel);
+
+		// 기존 후보의 완료 기록을 유지한 채 넓어진 반경에서 새 후보를 추가 생성한다.
+		BestIndirectInformation = FMannequinSharedTrackingInformation();
+		LastIndirectCandidateRefreshTime = -1.0;
+		LastIndirectCandidateFilterTime = -1.0;
+		LastIndirectCandidateEvaluationTime = -1.0;
+		ClearTertiaryAssignments();
+		return;
+	}
+
+	// 최대 확장 단계의 모든 후보까지 확인했다면 기존 추적 정보를 포기한다.
+	LastKnownInformation = FMannequinSharedTrackingInformation();
+	BestIndirectInformation = FMannequinSharedTrackingInformation();
+	IndirectSearchCandidates.Reset();
+	IndirectSearchExpansionLevel = 0;
+	IndirectSearchRadiusBonus = 0.0f;
+	LastIndirectCandidateRefreshTime = -1.0;
+	LastIndirectCandidateFilterTime = -1.0;
+	LastIndirectCandidateEvaluationTime = -1.0;
+	ClearTertiaryAssignments();
 }
 
 void UMannequinTrackingCoordinator::EvaluateIndirectSearchCandidates(
@@ -855,7 +914,10 @@ void UMannequinTrackingCoordinator::EvaluateIndirectSearchCandidates(
 		LastKnownInformation.PlayerLocation +
 		LastKnownInformation.PlayerVelocity * PredictionTime;
 	const FVector LastMovementDirection = LastKnownInformation.PlayerVelocity.GetSafeNormal2D();
-	const float SafeMaximumSearchRadius = FMath::Max(1.0f, MaximumSearchRadius);
+	const float SafeMaximumSearchRadius = FMath::Max(
+		1.0f,
+		MaximumSearchRadius + IndirectSearchRadiusBonus
+		);
 	const float SafeDistanceScoreWeight = FMath::Max(0.0f, DistanceScoreWeight);
 	const float SafeDirectionScoreWeight = FMath::Max(0.0f, DirectionScoreWeight);
 	const float SafeClueScoreWeight = FMath::Max(0.0f, ClueScoreWeight);

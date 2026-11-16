@@ -90,7 +90,9 @@ public:
 	// 완료된 3 차 탐색 결과를 후보 신뢰도와 재배정 상태에 반영한다.
 	void ProcessTertiarySearchResults(
 		float SearchLocationMatchTolerance,
-		float FailureConfidenceMultiplier
+		float FailureConfidenceMultiplier,
+		float SearchRadiusExpansionStep,
+		int32 MaximumSearchExpansionLevel
 		);
 
 	// 필터를 통과한 후보들의 점수를 계산하고 가장 좋은 간접 예상 정보를 갱신한다.
@@ -190,6 +192,12 @@ private:
 
 	// 간접 수색 후보 점수를 마지막으로 계산한 월드 시각
 	double LastIndirectCandidateEvaluationTime = -1.0;
+
+	// 모든 후보 수색 실패 후 현재까지 확장한 간접 탐색 단계
+	int32 IndirectSearchExpansionLevel = 0;
+
+	// 현재 확장 단계에 따라 기본 간접 탐색 반경에 더할 거리
+	float IndirectSearchRadiusBonus = 0.0f;
 
 	// 3 차 탐색 마네킹을 마지막으로 선정하고 배정한 월드 시각
 	double LastTertiaryAssignmentRefreshTime = -1.0;

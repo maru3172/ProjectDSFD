@@ -212,6 +212,14 @@ private:
 	// 탐색에 실패한 후보의 기존 신뢰도에 곱할 값
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TertiarySearchFailureConfidenceMultiplier = 0.5f;
+
+	// 한 단계의 모든 후보 수색이 실패했을 때 간접 탐색 반경에 추가할 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", Units = "cm"))
+	float IndirectSearchRadiusExpansionStep = 600.0f;
+
+	// 마지막 관측 정보를 포기하기 전에 간접 탐색 반경을 확장할 최대 단계
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0"))
+	int32 MaximumIndirectSearchExpansionLevel = 2;
 	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
