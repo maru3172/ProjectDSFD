@@ -230,6 +230,9 @@ public:
 		double CompletionTime
 		);
 	
+	// 목표에서 다시 멀어졌거나 배정이 바뀌기 전에 진행 중인 현장 탐색을 취소한다.
+	void CancelTertiarySearch();
+	
 	// 현재 저장된 3 차 탐색 진행·완료 상태를 반환한다.
 	const FMannequinTertiarySearchState& GetTertiarySearchState() const
 	{

@@ -828,7 +828,8 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 	float AssignmentRadius,
 	float MaximumHeightDifference,
 	int32 MaximumAssignedMannequins,
-	float AssignmentLifetime
+	float AssignmentLifetime,
+	float AssignmentTargetChangeTolerance
 	)
 {
 	UWorld* World = GetWorld();
@@ -921,7 +922,6 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 	};
 
 	TArray<FTertiaryAssignmentCandidate> AssignmentCandidates;
-	ClearTertiaryAssignments();
 
 	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
 	{
@@ -1017,6 +1017,10 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 
 	const double SafeAssignmentLifetime =
 		static_cast<double>(FMath::Max(0.0f, AssignmentLifetime));
+	const double SafeTargetChangeToleranceSquared = FMath::Square(
+		static_cast<double>(FMath::Max(0.0f, AssignmentTargetChangeTolerance))
+		);
+	TSet<AMannequinAICharacter*> AssignedMannequins;
 
 	for (int32 AssignmentIndex = 0; AssignmentIndex < AssignmentCount; ++AssignmentIndex)
 	{
@@ -1030,9 +1034,7 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 
 		FMannequinTertiaryAssignment NewAssignment;
 		NewAssignment.TargetLocation = AssignmentInformation.PlayerLocation;
-		NewAssignment.AssignmentId = NextAssignmentId;
 		NewAssignment.ReferenceInformationId = AssignmentInformation.InformationId;
-		NewAssignment.AssignmentTime = CurrentTime;
 		NewAssignment.ExpirationTime = FMath::Min(
 			AssignmentInformation.ExpirationTime,
 			CurrentTime + SafeAssignmentLifetime
@@ -1060,15 +1062,49 @@ void UMannequinTrackingCoordinator::RefreshTertiaryAssignments(
 				: EMannequinTrackingEvidence::VelocityPrediction;
 		}
 
-		AssignedMannequin->SetTertiaryAssignment(NewAssignment);
+		const FMannequinTertiaryAssignment& ExistingAssignment =
+			AssignedMannequin->GetTertiaryAssignment();
+		const bool bKeepsExistingAssignment =
+			ExistingAssignment.IsActive(CurrentTime) &&
+			ExistingAssignment.TrackingEvidence == NewAssignment.TrackingEvidence &&
+			ExistingAssignment.SearchCandidateIndex == NewAssignment.SearchCandidateIndex &&
+			ExistingAssignment.SecondaryGroupIndex == NewAssignment.SecondaryGroupIndex &&
+			FVector::DistSquared2D(
+				ExistingAssignment.TargetLocation,
+				NewAssignment.TargetLocation
+				) <= SafeTargetChangeToleranceSquared;
 
-		if (NextAssignmentId == MAX_int32)
+		if (bKeepsExistingAssignment)
 		{
-			NextAssignmentId = 1;
+			NewAssignment.AssignmentId = ExistingAssignment.AssignmentId;
+			NewAssignment.AssignmentTime = ExistingAssignment.AssignmentTime;
 		}
 		else
 		{
-			++NextAssignmentId;
+			NewAssignment.AssignmentId = NextAssignmentId;
+			NewAssignment.AssignmentTime = CurrentTime;
+
+			if (NextAssignmentId == MAX_int32)
+			{
+				NextAssignmentId = 1;
+			}
+			else
+			{
+				++NextAssignmentId;
+			}
+		}
+
+		AssignedMannequin->SetTertiaryAssignment(NewAssignment);
+		AssignedMannequins.Add(AssignedMannequin);
+	}
+
+	// 이번 갱신에서 선택되지 않은 기존 3 차 마네킹의 이전 배정만 제거한다.
+	for (const TWeakObjectPtr<AMannequinAICharacter>& MannequinPointer : RegisteredMannequins)
+	{
+		AMannequinAICharacter* Mannequin = MannequinPointer.Get();
+		if (IsValid(Mannequin) && !AssignedMannequins.Contains(Mannequin))
+		{
+			Mannequin->ClearTertiaryAssignment();
 		}
 	}
 }

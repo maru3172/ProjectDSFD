@@ -747,6 +747,11 @@ bool AMannequinAICharacter::BeginTertiarySearch(double SearchStartTime)
 		return true;
 	}
 
+	if (TertiarySearchState.HasCompletedAssignment(TertiaryAssignment.AssignmentId))
+	{
+		return false;
+	}
+
 	TertiarySearchState = FMannequinTertiarySearchState();
 	TertiarySearchState.AssignmentId = TertiaryAssignment.AssignmentId;
 	TertiarySearchState.Result = EMannequinTertiarySearchResult::Searching;
@@ -781,6 +786,11 @@ bool AMannequinAICharacter::CompleteTertiarySearch(
 	}
 
 	return true;
+}
+
+void AMannequinAICharacter::CancelTertiarySearch()
+{
+	TertiarySearchState = FMannequinTertiarySearchState();
 }
 
 void AMannequinAICharacter::ResetTertiarySearchFailureCount()

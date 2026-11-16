@@ -187,7 +187,8 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 			TertiaryAssignmentRadius,
 			MaximumHeightDifference,
 			MaximumTertiaryMannequinCount,
-			TertiaryAssignmentLifetime
+			TertiaryAssignmentLifetime,
+			TertiaryAssignmentTargetChangeTolerance
 			);
 	}
 
@@ -195,6 +196,9 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 	{
 	case ETwoStageMannequinTier::Primary:
 		{
+			// 직접 플레이어를 발견했으므로 이전 3 차 탐색 실패 횟수를 초기화한다.
+			CurrentMannequin->ResetTertiarySearchFailureCount();
+
 			// 자신의 관측 정보를 사용한다.
 			const FMannequinPlayerObservation& PrimaryObservation = CurrentMannequin->GetPlayerObservation();
 			
@@ -281,6 +285,40 @@ void UBTService_TwoStageMannequinChase::TickNode(UBehaviorTreeComponent& OwnerCo
 					TrackingLocation
 					))
 			{
+				const double TertiarySearchCurrentTime = World->GetTimeSeconds();
+				const double ArrivalRadiusSquared = FMath::Square(
+					static_cast<double>(FMath::Max(0.0f, TertiarySearchArrivalRadius))
+					);
+				const double DistanceToTrackingLocationSquared = FVector::DistSquared(
+					CurrentMannequin->GetActorLocation(),
+					TrackingLocation
+					);
+				const FMannequinTertiarySearchState& SearchState =
+					CurrentMannequin->GetTertiarySearchState();
+
+				if (DistanceToTrackingLocationSquared <= ArrivalRadiusSquared)
+				{
+					CurrentMannequin->BeginTertiarySearch(TertiarySearchCurrentTime);
+
+					const FMannequinTertiarySearchState& UpdatedSearchState =
+						CurrentMannequin->GetTertiarySearchState();
+					const double SafeSearchDuration =
+						static_cast<double>(FMath::Max(0.0f, TertiarySearchDuration));
+
+					if (UpdatedSearchState.IsSearchingAssignment(Assignment.AssignmentId) &&
+						TertiarySearchCurrentTime - UpdatedSearchState.SearchStartTime >= SafeSearchDuration)
+					{
+						CurrentMannequin->CompleteTertiarySearch(
+							EMannequinTertiarySearchResult::Failed,
+							TertiarySearchCurrentTime
+							);
+					}
+				}
+				else if (SearchState.IsSearchingAssignment(Assignment.AssignmentId))
+				{
+					CurrentMannequin->CancelTertiarySearch();
+				}
+
 				ApplyChaseState(
 					*Blackboard,
 					TrackingLocation,

@@ -106,7 +106,8 @@ public:
 		float AssignmentRadius,
 		float MaximumHeightDifference,
 		int32 MaximumAssignedMannequins,
-		float AssignmentLifetime
+		float AssignmentLifetime,
+		float AssignmentTargetChangeTolerance
 		);
 
 private:

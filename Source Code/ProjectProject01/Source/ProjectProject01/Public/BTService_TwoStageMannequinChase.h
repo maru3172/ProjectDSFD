@@ -192,6 +192,18 @@ private:
 	// 중앙 관리자가 생성한 3 차 탐색 배정을 유지할 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Assignment", meta = (ClampMin = "0.0", Units = "s"))
 	float TertiaryAssignmentLifetime = 1.0f;
+
+	// 이 거리보다 작은 중앙 목표 변화는 같은 3 차 탐색 배정으로 유지한다.
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Assignment", meta = (ClampMin = "0.0", Units = "cm"))
+	float TertiaryAssignmentTargetChangeTolerance = 100.0f;
+
+	// 3 차 마네킹이 배정된 목표에 도착했다고 판정하는 거리
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", Units = "cm"))
+	float TertiarySearchArrivalRadius = 150.0f;
+
+	// 목표 도착 후 플레이어를 찾지 못했을 때 탐색 실패로 처리할 시간
+	UPROPERTY(EditAnywhere, Category = "Two Stage Chase|Tertiary Search", meta = (ClampMin = "0.0", Units = "s"))
+	float TertiarySearchDuration = 2.0f;
 	
 	// 플레이어 위치를 앞쪽으로 예측할 최대 시간
 	UPROPERTY(EditAnywhere, Category = "Two Stage Chase", meta = (ClampMin = "0.0", Units = "s"))
