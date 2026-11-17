@@ -315,7 +315,7 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         Check(Rising,"Map familiarity, ping habits, composure and condition bands all rise with level without overlap");
         Check(Difficulty::For(1,-1).Skill==Difficulty::For(1).Skill&&Difficulty::For(5,1).Skill==Difficulty::For(5).Skill,"Condition never pushes past the ends of the scale");
         Check(Difficulty::For(3,.7f).Level==3&&Difficulty::For(3,.7f).TraitBudget()==Difficulty::For(3).TraitBudget(),"Condition keeps the level and its tables");
-        Check(Difficulty::For(3,std::numeric_limits<float>::quiet_NaN()).Skill==Difficulty::For(3).Skill,"Invalid condition is neutral");
+        Check(Difficulty::For(3,std::numeric_limits<float>::quiet_NaN()).Skill==Difficulty::For(3,0.f).Skill,"Invalid condition is neutral");
         int KnownExits=0;for(uint32_t H=0;H<1000;++H)KnownExits+=KnowsExitAtStart(Difficulty::For(5),H*2654435761u);
         Check(KnownExits>800&&KnownExits<980,"Masters know most exits when a floor starts");
         float Sum=0,Lo=1,Hi=-1;for(uint32_t Seed=1;Seed<=500;++Seed){const float Day=MatchCondition(Seed*747796405u,0);Sum+=Day;Lo=std::min(Lo,Day);Hi=std::max(Hi,Day);}

@@ -844,7 +844,10 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     auto* GM=Mode();auto* World=GM->GetWorld();const double Now=World->GetTimeSeconds();auto& B=Brains.FindOrAdd(Pawn);
     InitializeBrain(B,Spec,0);
     // Today's form: a small swing inside the level's band (never reaching a neighbouring level).
-    if(Now>=B.ConditionAt){B.ConditionAt=Now+5;B.Policy.Profile=Difficulty::For(Spec.Difficulty,ConditionOf(Spec));}
+    // Own value table beside a human (helper) and in a bot-only team; same test as HumanTeam below.
+    bool HelperTeam=HumanTeamOverride()&&SoloDiagnostic()!=1&&Spec.DisplayName==TEXT("SimHelper");
+    for(const auto& Pair:GM->MatchPlayerRecords)HelperTeam|=Pair.Key.Get()!=PC&&Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bServerBot;
+    if(Now>=B.ConditionAt){B.ConditionAt=Now+5;B.Policy.Profile=Difficulty::For(Spec.Difficulty,ConditionOf(Spec),HelperTeam?BotTeam::SurvivorHelper:ReferenceStandIns()&&ParkOverride()<0?BotTeam::ReferenceSurvivor:BotTeam::Survivor);}
     const auto Level=B.Policy.Profile;const float ReliefNow=SurvivorRelief.Value(Now,Level);B.Policy.Relief=ReliefNow;
     auto& Mine=Plays.FindOrAdd(Spec.BotId);LoadExperience(Mine,Spec,Level);auto& Dir=Mine.Director;Dir.Update(Level,Now,ReliefNow);
     // Play style decides how readily this bot reaches for each play; the Director still enforces level, tells and cooldowns.
@@ -1460,21 +1463,22 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     auto* GM=Mode();auto* World=GM->GetWorld();const double Now=World->GetTimeSeconds();TArray<AMannequinAICharacter*> Bodies;
     for(TActorIterator<AMannequinAICharacter> It(World);It&&Bodies.Num()<10;++It)if(!It->IsHidden()&&(!GM->GetAffixRuntime()||GM->GetAffixRuntime()->CanCommand(*It)))Bodies.Add(*It); // C09: cracked bodies cannot be steered.
     // Today's form: a small swing inside the level's band (never reaching a neighbouring level).
-    const Difficulty Level=Difficulty::For(Spec.Difficulty,ConditionOf(Spec),true);
+    // One human with a bot partner, for the whole match (the records keep caught and escaped players; one who left
+    // alive is out of the records or marked replaced, and its stand-in bot counts instead).
+    bool SoloHuman=HumanTeamOverride();int32 SurvivorTotal=0,ActiveCount=0;
+    {
+        int32 Humans=0;
+        for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++SurvivorTotal;ActiveCount+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;Humans+=!Pair.Value.bServerBot;}
+        SoloHuman|=Humans==1&&SurvivorTotal==2;
+    }
+    // Own value table against two humans and against one human with a bot partner.
+    const Difficulty Level=Difficulty::For(Spec.Difficulty,ConditionOf(Spec),ReferenceStandIns()&&ParkOverride()==0?BotTeam::ReferenceMannequin:SoloHuman?BotTeam::MannequinVsSolo:BotTeam::MannequinVsTwo);
     const float ReliefNow=MannequinRelief.Value(Now,Level);
     auto& Mine=Plays.FindOrAdd(Spec.BotId);LoadExperience(Mine,Spec,Level);auto& Dir=Mine.Director;Dir.Update(Level,Now,ReliefNow);
     // Play style decides how readily this bot reaches for each play; the Director still enforces level, tells and cooldowns.
     const uint8 StyleId=static_cast<uint8>(StyleFor(Persona::From(GetTypeHash(Spec.BotId)*2654435761u+1u),Spec.Role==TEXT("Mannequin")));
     // Endgame: only one survivor left in play -> commit to catching it.
-    float Urgency=0;bool SoloHuman=HumanTeamOverride();
-    {
-        int32 Total=0,ActiveCount=0,Humans=0;
-        for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++Total;ActiveCount+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;Humans+=!Pair.Value.bServerBot;}
-        // One human with a bot partner, for the whole match (the records keep caught and escaped players; one who left
-        // alive is out of the records or marked replaced, and its stand-in bot counts instead).
-        SoloHuman|=Humans==1&&Total==2;
-        Urgency=EndgameUrgency(Level,Total,ActiveCount)*SoloEndgameScale(Level,SoloHuman);
-    }
+    const float Urgency=EndgameUrgency(Level,SurvivorTotal,ActiveCount)*SoloEndgameScale(Level,SoloHuman);
     // Deeper floors: firmer judgement; part of it shows as steady pressure even before the endgame.
     const float Resolve=FloorResolve(Level,FloorDepth);
     // A survivor last seen close to an exit this mannequin knows: hurry to stop it. It charges in straighter
