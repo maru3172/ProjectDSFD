@@ -88,6 +88,8 @@ struct FProjectMatchBotBrain
     // Gaze budget: a stare is held only so long, then the eyes leave it for a beat (the mannequin's window).
     double WatchSince=-1,LookAwayUntil=0;
     double NoPathSince=-1; // Has a goal, is not holding, yet cannot move toward it.
+    // Stranded walk-out: every path has failed this long (not reset by goal re-picks); where it walks meanwhile.
+    double StrandedSince=-1,StrandedPlanAt=0;FVector StrandedTo=FVector::ZeroVector;
     // Stuck watchdog: barely moved for a while outside a deliberate hold -> go somewhere else.
     FVector AnchorAt=FVector::ZeroVector;
     double AnchorTime=-1,UnstickUntil=0;

@@ -1374,6 +1374,30 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         }
     }
     else B.NoPathSince=-1;
+    // Stranded: off the walkable area or on a cut-off patch, every path fails (a spot just off the navmesh, a drop into
+    // a pit) and re-picking goals never helps. A player would just walk out: head for the nearest walkable spot, else
+    // follow the partial path toward the goal and press on in a straight line from its end.
+    // Any hold, pause, missing goal or working path clears it: deliberate stops never turn into a walk-out.
+    // Arriving also ends a path (Move returns false at the goal), so only a goal still more than 3 m off counts.
+    if(HasGoal&&!Moving&&!Holding&&Now>=B.PauseUntil&&FVector::DistSquared2D(Here,Goal)>FMath::Square(300.f)){if(B.StrandedSince<0)B.StrandedSince=Now;}
+    else B.StrandedSince=-1;
+    if(B.StrandedSince>=0&&Now-B.StrandedSince>6.)
+    {
+        if(Now>=B.StrandedPlanAt)
+        {
+            B.StrandedPlanAt=Now+1.;B.StrandedTo=Goal;
+            if(auto* Nav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
+            {
+                FNavLocation On;
+                if(!Nav->ProjectPointToNavigation(Here,On,FVector(50,50,150))){if(Nav->ProjectPointToNavigation(Here,On,FVector(800,800,400)))B.StrandedTo=On.Location;}
+                else if(auto* Path=UNavigationSystemV1::FindPathToLocationSynchronously(World,Here,Goal,Pawn);
+                    Path&&Path->IsValid()&&Path->PathPoints.Num()>1&&FVector::DistSquared2D(Path->PathPoints.Last(),Here)>FMath::Square(150.f))B.StrandedTo=Path->PathPoints.Last();
+            }
+            UE_LOG(LogTemp,Display,TEXT("[BotStranded] Survivor=%s At=%s To=%s"),*Spec.BotId.Left(8),*Here.ToCompactString(),*B.StrandedTo.ToCompactString());
+        }
+        const FVector Out=(B.StrandedTo-Here).GetSafeNormal2D();
+        if(!Out.IsNearlyZero())Pawn->AddMovementInput(Out,1.f);
+    }
     // At an exit volume's goal but not through yet: step straight into the box (it triggers on overlap).
     if(HasGoal&&!SelectedElevator&&!Holding&&FVector::DistSquared2D(Here,Goal)<FMath::Square(200.f))
         if(const AActor* Exit=Mine.Objective.Get();Exit&&FVector::DistSquared2D(Goal,InsideGoal(Exit))<FMath::Square(50.f))
@@ -1418,9 +1442,12 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(Stalled&&Now>=Mine.StallLogAt)
     {
         Mine.StallLogAt=Now+10.;
-        UE_LOG(LogTemp,Display,TEXT("[BotStall] Survivor=%s L%d Helper=%d Tactic=%d Knows=%d Watching=%d Danger=%d Holding=%d PlayHold=%d Listening=%d Lurking=%d Moving=%d HasGoal=%d Goal=%.0fm Exit=%s Plays=%d Stamina=%.2f"),
+        // Where it stands and whether that spot is on the walkable area (a stuck bot off the navmesh fails every path).
+        auto* StallNav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);FNavLocation StallOn;
+        const bool OnNav=StallNav&&StallNav->ProjectPointToNavigation(Here,StallOn,FVector(50,50,150));
+        UE_LOG(LogTemp,Display,TEXT("[BotStall] Survivor=%s L%d Helper=%d Tactic=%d Knows=%d Watching=%d Danger=%d Holding=%d PlayHold=%d Listening=%d Lurking=%d Moving=%d HasGoal=%d Goal=%.0fm Exit=%s Plays=%d Stamina=%.2f At=%s GoalAt=%s OnNav=%d"),
             *Spec.BotId.Left(8),Level.Level,HumanTeam,static_cast<int32>(Tactic),Knows,Watching,Danger,Holding,PlayHold,Listening,Lurking,Moving,HasGoal,FVector::Dist2D(Here,Goal)/100.f,
-            *GetNameSafe(Mine.Objective.Get()),Dir.ActiveCount(),C.Stamina);
+            *GetNameSafe(Mine.Objective.Get()),Dir.ActiveCount(),C.Stamina,*Here.ToCompactString(),*Goal.ToCompactString(),OnNav);
     }
     // B09: a held mannequin wakes when someone sprints past it, so walk by unless fleeing.
     const bool PassingDisplay=!Danger&&GM->HasAffixRule(TEXT("B09"))&&[&]{for(TActorIterator<AMannequinAICharacter> It(World);It;++It)
