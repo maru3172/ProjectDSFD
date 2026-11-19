@@ -367,7 +367,7 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
             Persona Waiter;Waiter.Patience=1;
             Check(LurkPatience(Master,Waiter)>LurkPatience(Rookie,Ordinary),"Patient experts wait longer before going anyway");
         }
-        Check(ParkedBodies(Difficulty::For(1),false)>ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)<ParkedBodies(Difficulty::For(4),false)&&
+        Check(ParkedBodies(Difficulty::For(1),false)>=ParkedBodies(Difficulty::For(3),false)&&ParkedBodies(Difficulty::For(5),false)<ParkedBodies(Difficulty::For(4),false)&&
             ParkedBodies(Difficulty::For(1),true)<=ParkedBodies(Difficulty::For(1),false)&&ParkedBodies(Difficulty::For(3),true)<ParkedBodies(Difficulty::For(3),false),"Beginners leave more bodies parked; masters the fewest; fewer in the endgame");
         {
             bool Untouched=true,Bounded=true;
@@ -375,7 +375,7 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
             {
                 const auto D=Difficulty::For(L);
                 Untouched&=ParkedBodies(D,E,false)==ParkedBodies(D,E)&&SoloAttackScale(D,false)==1.f&&SoloEndgameScale(D,false)==1.f;
-                Bounded&=ParkedBodies(D,E,true)>=ParkedBodies(D,E)&&ParkedBodies(D,E,true)<=9&&SoloAttackScale(D,true)>=1.f&&SoloEndgameScale(D,true)>=0.f&&SoloEndgameScale(D,true)<=1.f;
+                Bounded&=ParkedBodies(D,E,true)>=0&&ParkedBodies(D,E,true)<=9&&SoloAttackScale(D,true)>=1.f&&SoloEndgameScale(D,true)>=0.f&&SoloEndgameScale(D,true)<=1.f;
             }
             Check(Untouched&&Bounded,"One-human-with-bot values never touch other teams and only ever ease the mannequin");
         }

@@ -1659,7 +1659,9 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         for(int32 I=0;I<FMath::Min(ParkCount,Order.Num());++I)
         {
             Next.Add(Order[I]);
-            if(!Mine.Parked.ContainsByPredicate([&](const TWeakObjectPtr<AMannequinAICharacter>& W){return W.Get()==Order[I];}))
+            // Re-hold a parked body whose order something else changed since the last review.
+            if(!Mine.Parked.ContainsByPredicate([&](const TWeakObjectPtr<AMannequinAICharacter>& W){return W.Get()==Order[I];})||
+               Order[I]->GetMultiplayCommand()!=EMultiplayMannequinCommand::HoldPosition)
                 GM->AssignMannequinCommand(Order[I],EMultiplayMannequinCommand::HoldPosition);
         }
         for(const auto& Old:Mine.Parked)if(AMannequinAICharacter* X=Old.Get();X&&X!=Body&&!Next.Contains(Old))
@@ -1730,7 +1732,8 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             auto NearestHelper=[&](const FVector& At,float Range)->AMannequinAICharacter*
             {
                 AMannequinAICharacter* Found=nullptr;float Best=Range;
-                for(auto* X:Bodies)if(X!=Body&&!X->IsFrozenBySurvivorVision()){const float D=FVector::Dist2D(X->GetActorLocation(),At);if(D<Best){Best=D;Found=X;}}
+                // Parked bodies stay out of plays (a pincer used to wake one, and parking never re-held it).
+                for(auto* X:Bodies)if(X!=Body&&!X->IsFrozenBySurvivorVision()&&!IsParked(X)){const float D=FVector::Dist2D(X->GetActorLocation(),At);if(D<Best){Best=D;Found=X;}}
                 return Found;
             };
             bool Started=false;
