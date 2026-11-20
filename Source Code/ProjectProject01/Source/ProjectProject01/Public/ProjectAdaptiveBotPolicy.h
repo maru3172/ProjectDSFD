@@ -68,8 +68,8 @@ struct Difficulty
     // MannequinVsSolo = against one human with a bot partner. Every curve stays strictly increasing.
     static float SideSkill(int Level,BotTeam Team)
     {
-        static constexpr float S[]={0.f,.15f,.17f,.8f,1.f},H[]={0.f,.0625f,.15f,.68f,1.f};
-        static constexpr float M2[]={0.f,.04f,.12f,.28f,.62f},M1[]={0.f,.12f,.3f,.34f,.6f};
+        static constexpr float S[]={0.f,.1f,.17f,.8f,1.f},H[]={0.f,.0625f,.15f,.68f,1.f};
+        static constexpr float M2[]={.05f,.07f,.12f,.28f,.62f},M1[]={.08f,.12f,.3f,.34f,.6f};
         static constexpr float RS[]={0.f,.0625f,.25f,.68f,1.f},RM[]={.02f,.07f,.2f,.32f,.55f};
         const int I=std::max(1,std::min(5,Level))-1;
         switch(Team){case BotTeam::ReferenceSurvivor:return RS[I];case BotTeam::ReferenceMannequin:return RM[I];case BotTeam::SurvivorHelper:return H[I];case BotTeam::MannequinVsTwo:return M2[I];case BotTeam::MannequinVsSolo:return M1[I];default:return S[I];}
@@ -729,7 +729,7 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
-inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.2f,.5f,.65f,.9f,.97f},H[]={.2f,.42f,.68f,.85f,.94f},R[]={.2f,.42f,.68f,.85f,.94f};return (D.Team==BotTeam::SurvivorHelper?H:D.Team==BotTeam::ReferenceSurvivor?R:L)[ProbeIndex(D,5)];}
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.02f,.5f,.65f,.9f,.97f},H[]={.2f,.42f,.68f,.85f,.94f},R[]={.2f,.42f,.68f,.85f,.94f};return (D.Team==BotTeam::SurvivorHelper?H:D.Team==BotTeam::ReferenceSurvivor?R:L)[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
 inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}
