@@ -63,3 +63,70 @@ void AProjectShutterAreaGenerator::RefreshAreaVisualization()
 	GenerationArea->SetRelativeLocation(FVector(0.0f, 0.0f, SafeHeight * 0.5f));
 	GenerationArea->SetVisibility(bShowGenerationArea);
 }
+
+FIntPoint AProjectShutterAreaGenerator::GetGridCellCount() const
+{
+	const float SafeLength = FMath::Max(ShutterLength, 1.0f);
+	
+	return FIntPoint(
+		FMath::Max(1, FMath::FloorToInt(AreaSize.X * SafeLength)),
+		FMath::Max(1, FMath::FloorToInt(AreaSize.Y / SafeLength)));
+}
+
+bool AProjectShutterAreaGenerator::IsSegmentInsideArea(const FProjectShutterGridSegment& Segment) const
+{
+	const FIntPoint GridSize = GetGridCellCount();
+	
+	// 가로 셔터: X 방향 한 칸을 사용
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		return Segment.Start.X >= 0 &&
+			Segment.Start.X < GridSize.X &&
+			Segment.Start.Y >= 0 &&
+			Segment.Start.Y <= GridSize.Y;
+	}
+	
+	// 세로 셔터: Y 방향 한 칸을 사용
+	return Segment.Start.X >= 0 &&
+		Segment.Start.X <= GridSize.X &&
+		Segment.Start.Y >= 0 &&
+		Segment.Start.Y < GridSize.Y;
+}
+
+FTransform AProjectShutterAreaGenerator::MakeSegmentWorldTransform(const FProjectShutterGridSegment& Segment) const
+{
+	const FIntPoint GridSize = GetGridCellCount();
+	
+	const float UsedWidth = GridSize.X * ShutterLength;
+	const float UsedDepth = GridSize.Y * ShutterLength;
+	
+	const FVector GridOrigin(-UsedWidth * 0.5f, -UsedDepth * 0.5f, 0.0f);
+	
+	FVector LocalLocation = GridOrigin;
+	float LocalYaw = 0.0f;
+	
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		LocalLocation += FVector(
+			(Segment.Start.X + 0.5f) * ShutterLength,
+			Segment.Start.Y * ShutterLength,
+			0.0f);
+		
+		LocalYaw = 0.0f;
+	}
+	else
+	{
+		LocalLocation += FVector(
+			Segment.Start.X * ShutterLength,
+			(Segment.Start.Y + 0.5f) * ShutterLength,
+			0.0f);
+		
+		LocalYaw = 90.0f;
+	}
+	
+	const FTransform LocalTransform(
+		FRotator(0.0f, LocalYaw, 0.0f),
+		LocalLocation);
+	
+	return LocalTransform * GetActorTransform();
+}
