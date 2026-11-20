@@ -4,6 +4,7 @@
 #include "ProjectShutterAreaGenerator.h"
 
 #include "Components/SceneComponent.h"
+#include "Components/BoxComponent.h"
 
 // Sets default values
 AProjectShutterAreaGenerator::AProjectShutterAreaGenerator()
@@ -15,6 +16,16 @@ AProjectShutterAreaGenerator::AProjectShutterAreaGenerator()
 	SetRootComponent(SceneRoot);
 	
 	SetCanBeDamaged(false);
+
+	
+	GenerationArea = CreateDefaultSubobject<UBoxComponent>(TEXT("GenerationArea"));
+	GenerationArea->SetupAttachment(SceneRoot);
+	GenerationArea->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	GenerationArea->SetGenerateOverlapEvents(false);
+	GenerationArea->SetCanEverAffectNavigation(false);
+	GenerationArea->SetHiddenInGame(true);
+	GenerationArea->SetLineThickness(2.0f);
+	GenerationArea->ShapeColor = FColor(80, 180, 255);
 }
 
 // Called when the game starts or when spawned
@@ -31,3 +42,24 @@ void AProjectShutterAreaGenerator::Tick(float DeltaTime)
 
 }
 
+void AProjectShutterAreaGenerator::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	RefreshAreaVisualization();
+}
+
+void AProjectShutterAreaGenerator::RefreshAreaVisualization()
+{
+	if (!GenerationArea)
+	{
+		return;
+	}
+	
+	const float SafeSizeX = FMath::Max(AreaSize.X, 300.0f);
+	const float SafeSizeY = FMath::Max(AreaSize.Y, 300.0f);
+	const float SafeHeight = FMath::Max(VisualizationHeight, 1.0f);
+	
+	GenerationArea->SetBoxExtent(FVector(SafeSizeX * 0.5, SafeSizeY * 0.5, SafeHeight * 0.5f));
+	GenerationArea->SetRelativeLocation(FVector(0.0f, 0.0f, SafeHeight * 0.5f));
+	GenerationArea->SetVisibility(bShowGenerationArea);
+}
