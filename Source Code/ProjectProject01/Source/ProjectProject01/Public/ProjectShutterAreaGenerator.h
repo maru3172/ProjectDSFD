@@ -8,27 +8,33 @@
 
 class USceneComponent;
 class UBoxComponent;
+class AFireShutterActor;
 
+// 셔터가 배치될 수 있는 가로와 세로 방향을 나타낸다.
 UENUM(BlueprintType)
 enum class EProjectShutterGridDirection : uint8
 {
-	Horizontal,		// 가로 방향
-	Vertical		// 세로 방향
+	// 생성기 액터의 로컬 X축 방향이다.
+	Horizontal,
+
+	// 생성기 액터의 로컬 Y축 방향이다.
+	Vertical
 };
 
+// 격자 위에 배치할 셔터 한 개의 시작 위치와 방향을 나타낸다.
 USTRUCT(BlueprintType)
 struct PROJECTPROJECT01_API FProjectShutterGridSegment
 {
 	GENERATED_BODY()
-	
-	// 셔터가 싲가되는 격자 좌표다.
+
+	// 셔터가 시작되는 격자 좌표다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shutter")
 	FIntPoint Start = FIntPoint::ZeroValue;
-	
+
 	// 셔터가 배치되는 가로 또는 세로 방향이다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shutter")
 	EProjectShutterGridDirection Direction = EProjectShutterGridDirection::Horizontal;
-	
+
 	// 두 셔터 데이터가 같은 위치와 방향을 사용하는지 비교한다.
 	bool operator==(const FProjectShutterGridSegment& Other) const
 	{
@@ -36,25 +42,27 @@ struct PROJECTPROJECT01_API FProjectShutterGridSegment
 	}
 };
 
+// 설정된 구역 안에 방화셔터를 자동으로 배치하는 생성기 액터다.
 UCLASS()
 class PROJECTPROJECT01_API AProjectShutterAreaGenerator : public AActor
 {
 	GENERATED_BODY()
-	
-public:	
-	// Sets default values for this actor's properties
+
+public:
+	// 생성기 액터의 기본 컴포넌트와 설정값을 구성한다.
 	AProjectShutterAreaGenerator();
 
+	// 현재 구역 설정을 기준으로 미리보기 셔터를 생성한다.
+	UFUNCTION(CallInEditor, Category = "Shutter Generator")
+	void GeneratePreview();
+
+	// 이 생성기가 만든 미리보기 셔터를 모두 제거한다.
+	UFUNCTION(CallInEditor, Category = "Shutter Generator")
+	void ClearGeneratedShutters();
+
 protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
-	
 	// 에디터에서 설정이 변경될 때 구역 표시를 갱신한다.
 	virtual void OnConstruction(const FTransform& Transform) override;
-
-public:	
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
 
 private:
 	// 현재 구역 크기에 맞춰 박스 표시를 갱신한다.
@@ -94,4 +102,12 @@ private:
 	// 방화셔터 1 개가 차지하는 격자 길이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Grid", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
 	float ShutterLength = 300.0f;
+
+	// 생성기가 실제로 생성할 방화셔터 액터 또는 BP 클래스다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<AFireShutterActor> ShutterClass;
+
+	// 1 일 차 미리보기에서 생성할 최대 셔터 개수다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	int32 PreviewShutterCount = 12;
 };
