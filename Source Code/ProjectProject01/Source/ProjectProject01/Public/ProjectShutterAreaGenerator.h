@@ -79,6 +79,32 @@ private:
 	FTransform MakeSegmentWorldTransform(
 		const FProjectShutterGridSegment& Segment) const;
 	
+	// 셔터 선분의 시작점과 끝점을 격자 좌표로 반환한다.
+	void GetSegmentEndpoints(
+		const FProjectShutterGridSegment& Segment,
+		FIntPoint& OutStart,
+		FIntPoint& OutEnd) const;
+	
+	// 두 셔터 선분이 같은 격자 위치와 방향인지 확인한다.
+	bool AreSegmentsEqual(
+		const FProjectShutterGridSegment& First,
+		const FProjectShutterGridSegment& Second) const;
+	
+	// 지정된 격자점에 연결된 기존 셔터 개수를 반환한다.
+	int32 CountSegmentsAtPoint(
+		const FIntPoint& Point,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
+	
+	// 후보 셔터가 기존 셔터의 내부를 통과하는지 검사한다.
+	bool DoesSegmentCrossExistingSegment(
+		const FProjectShutterGridSegment& Candidate,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
+	
+	// 후보 셔터가 현재 배치 규칙을 모두 만족하는지 검사한다.
+	bool CanPlaceSegment(
+		const FProjectShutterGridSegment& Candidate,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
+	
 	// 생성기 컴포넌트의 기준이 되는 루트다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Shutter Generator", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;

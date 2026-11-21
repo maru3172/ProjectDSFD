@@ -169,6 +169,147 @@ FTransform AProjectShutterAreaGenerator::MakeSegmentWorldTransform(const FProjec
 	return LocalTransform * GetActorTransform();
 }
 
+void AProjectShutterAreaGenerator::GetSegmentEndpoints(const FProjectShutterGridSegment& Segment, FIntPoint& OutStart, FIntPoint& OutEnd) const
+{
+	// 구조체에 저장된 좌표를 선분의 시작점으로 사용한다.
+	OutStart = Segment.Start;
+	
+	// 가로 셔터는 시작점에서 X 축으로 1 칸 이동한다.
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		OutEnd = Segment.Start + FIntPoint(1, 0);
+		return;
+	}
+	
+	// 세로 셔터는 시작점에서 Y 축으로 한 칸 이동한다.
+	OutEnd = Segment.Start + FIntPoint(0, 1);
+}
+
+bool AProjectShutterAreaGenerator::AreSegmentsEqual(const FProjectShutterGridSegment& First, const FProjectShutterGridSegment& Second) const
+{
+	// 시작 위치와 방향이 모두 같아야 같은 선분이다.
+	return First.Start == Second.Start &&
+		First.Direction == Second.Direction;
+}
+
+int32 AProjectShutterAreaGenerator::CountSegmentsAtPoint(const FIntPoint& Point, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 지정된 점에 연결된 셔터 개수를 기록한다.
+	int32 ConnectedCount = 0;
+	
+	// 현재 배치된 모든 셔터를 확인한다.
+	for (const FProjectShutterGridSegment& Segment : Segments)
+	{
+		// 현저 셔터의 시작점과 끝점을 가져온다.
+		FIntPoint SegmentStart;
+		FIntPoint SegmentEnd;
+		GetSegmentEndpoints(Segment, SegmentStart, SegmentEnd);
+		
+		// 지정된 점이 시작점 또는 끝점이면 연결된 셔터다.
+		if (Point == SegmentStart || Point == SegmentEnd)
+		{
+			++ConnectedCount;
+		}
+	}
+	
+	// 해당 점에 연결된 최종 셔터 개수를 반환한다.
+	return ConnectedCount;
+}
+
+bool AProjectShutterAreaGenerator::DoesSegmentCrossExistingSegment(const FProjectShutterGridSegment& Candidate, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 후보 셔터의 시작점과 끝점을 가져온다.
+	FIntPoint CandidateStart;
+	FIntPoint CandidateEnd;
+	GetSegmentEndpoints(Candidate, CandidateStart, CandidateEnd);
+	
+	// 현재 배치된 모든 셔터와 비교한다.
+	for (const FProjectShutterGridSegment& Existing : Segments)
+	{
+		// 같은 방향의 셔터끼리는 중심 교차하지 않는다.
+		if (Candidate.Direction == Existing.Direction)
+		{
+			continue;
+		}
+		
+		// 기존 셔터의 시작점과 끝점을 가져온다.
+		FIntPoint ExistingStart;
+		FIntPoint ExistingEnd;
+		GetSegmentEndpoints(Existing, ExistingStart, ExistingEnd);
+		
+		// 가로 선분과 세로 선분을 구분해 참조한다.
+		const FProjectShutterGridSegment& Horizontal = Candidate.Direction == EProjectShutterGridDirection::Horizontal ? Candidate : Existing;
+		
+		// 세로 방향 선분을 참조한다.
+		const FProjectShutterGridSegment& Vertical = Candidate.Direction == EProjectShutterGridDirection::Vertical ? Candidate : Existing;
+		
+		// 가로 선분의 X 좌표가 세로 선분 내부에 있는지 확인한다.
+		const bool bInsideHorizontal = 
+			Vertical.Start.X > Horizontal.Start.X &&
+			Vertical.Start.X < Horizontal.Start.X + 1; 
+		
+		// 가로 선분의 X 좌표가 세로 선분 내부에 있는지 확인한다.
+		const bool bInsideVertical = 
+			Horizontal.Start.Y > Vertical.Start.Y &&
+			Horizontal.Start.Y < Vertical.Start.Y + 1;
+		
+		// 양쪽 내부를 모두 통과하면 중심 교차다.
+		if (bInsideHorizontal && bInsideVertical)
+		{
+			return true;
+		}
+	}
+	
+	// 어떤 기존 셔터의 내부도 통과하지 않는다.
+	return false;
+}
+
+bool AProjectShutterAreaGenerator::CanPlaceSegment(const FProjectShutterGridSegment& Candidate, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 생성 구역 밖으로 나가는 셔터는 배치하지 않는다.
+	if (!IsSegmentInsideArea(Candidate))
+	{
+		return false;
+	}
+	
+	// 같은 위치와 방향의 셔터가 이미 있는지 확인한다.
+	for (const FProjectShutterGridSegment& Existing : Segments)
+	{
+		if (AreSegmentsEqual(Candidate, Existing))
+		{
+			return false;
+		}
+	}
+	
+	// 기존 셔터의 중심을 통과하는 후보는 배치하지 않는다.
+	if (DoesSegmentCrossExistingSegment(Candidate, Segments))
+	{
+		return false;
+	}
+	
+	// 후보 셔터의 시작점과 끝점을 가져온다.
+	FIntPoint CandidateStart;
+	FIntPoint CandidateEnd;
+	GetSegmentEndpoints(Candidate, CandidateStart, CandidateEnd);
+	
+	// 시작점에 이미 셔터 2 개가 있다면 T 자 또는 십자가 된다.
+	if (CountSegmentsAtPoint(CandidateStart, Segments) >= 2)
+	{
+		return false;
+	}
+	
+	// 끝점에 이미 셔터 2 개가 있다면 T 자 또는 십자가 된다.
+	if (CountSegmentsAtPoint(CandidateEnd, Segments) >= 1)
+	{
+		return false;
+	}
+	
+	// 모든 배치 규칙을 통과한 후보만 허용한다.
+	return true;
+}
+
+// ===================================================== 디버깅 관련 =====================================================
+
 // 현재 구역 설정을 기준으로 미리보기 셔터를 생성한다.
 void AProjectShutterAreaGenerator::GeneratePreview()
 {
