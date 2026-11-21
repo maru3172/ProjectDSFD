@@ -124,7 +124,7 @@ private:
 		const FProjectShutterGridSegment& Candidate,
 		const TArray<FProjectShutterGridSegment>& Segments) const;
 	
-	// 지정된 끝점에서 선택한 방향으로 이어지는 셔터 선분을 만든다,
+	// 지정된 끝점에서 선택한 방향으로 이어지는 셔터 선분을 만든다.
 	FProjectShutterGridSegment MakeSegmentFromEndpoint(
 		const FIntPoint& Endpoint,
 		EProjectShutterGridDirection Direction,
@@ -155,7 +155,7 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Shutter Generator", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBoxComponent> GenerationArea;
 	
-	// 방화셔터가 생성될 구역의 가로와 세로 크기다.
+	// 생성기 시작점에서 사각형 영역 끝점까지의 로컬 오프셋이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Area", meta = (AllowPrivateAccess = "true", Units = "cm"))
 	FVector2D AreaEndOffset = FVector2D(3000.0, 3000.0);
 	

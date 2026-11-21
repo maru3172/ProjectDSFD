@@ -94,8 +94,8 @@ FIntPoint AProjectShutterAreaGenerator::GetGridCellCount() const
 
 	// 구역 크기를 셔터 길이로 나눠 가로와 세로 칸 수를 계산한다.
 	return FIntPoint(
-		FMath::Max(1, FMath::FloorToInt(FMath::Abs(AreaEndOffset.X) / SafeLength)),
-		FMath::Max(1, FMath::FloorToInt(FMath::Abs(AreaEndOffset.Y) / SafeLength)));
+		FMath::Max(0, FMath::FloorToInt(FMath::Abs(AreaEndOffset.X) / SafeLength)),
+		FMath::Max(0, FMath::FloorToInt(FMath::Abs(AreaEndOffset.Y) / SafeLength)));
 }
 
 EProjectShutterGridDirection AProjectShutterAreaGenerator::GetLongAxisDirection() const
@@ -287,7 +287,7 @@ int32 AProjectShutterAreaGenerator::CountSegmentsAtPoint(const FIntPoint& Point,
 	// 현재 배치된 모든 셔터를 확인한다.
 	for (const FProjectShutterGridSegment& Segment : Segments)
 	{
-		// 현저 셔터의 시작점과 끝점을 가져온다.
+		// 현재 셔터의 시작점과 끝점을 가져온다.
 		FIntPoint SegmentStart;
 		FIntPoint SegmentEnd;
 		GetSegmentEndpoints(Segment, SegmentStart, SegmentEnd);
@@ -335,7 +335,7 @@ bool AProjectShutterAreaGenerator::DoesSegmentCrossExistingSegment(const FProjec
 			Vertical.Start.X > Horizontal.Start.X &&
 			Vertical.Start.X < Horizontal.Start.X + 1; 
 		
-		// 가로 선분의 X 좌표가 세로 선분 내부에 있는지 확인한다.
+		// 가로 선분의 Y 좌표가 세로 선분 내부에 있는지 확인한다.
 		const bool bInsideVertical = 
 			Horizontal.Start.Y > Vertical.Start.Y &&
 			Horizontal.Start.Y < Vertical.Start.Y + 1;
@@ -386,7 +386,7 @@ bool AProjectShutterAreaGenerator::CanPlaceSegment(const FProjectShutterGridSegm
 	}
 	
 	// 끝점에 이미 셔터 2 개가 있다면 T 자 또는 십자가 된다.
-	if (CountSegmentsAtPoint(CandidateEnd, Segments) >= 1)
+	if (CountSegmentsAtPoint(CandidateEnd, Segments) >= 2)
 	{
 		return false;
 	}
