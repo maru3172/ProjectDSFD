@@ -308,6 +308,77 @@ bool AProjectShutterAreaGenerator::CanPlaceSegment(const FProjectShutterGridSegm
 	return true;
 }
 
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeSegmentFromEndpoint(const FIntPoint& Endpoint, EProjectShutterGridDirection Direction, int32 DirectionSign) const
+{
+	// 새로 만들 후보 셔터 데이터를 준비한다.
+	FProjectShutterGridSegment Segment;
+	
+	// 선택한 가로 또는 세로 방향을 후보에 적용한다.
+	Segment.Direction = Direction;
+	
+	// 양수 방향이면 현재 끝점을 그대로 시작점으로 사용한다.
+	if (DirectionSign >= 0)
+	{
+		Segment.Start = Endpoint;
+		return Segment;
+	}
+	
+	// 가로 음수 방향은 끝점 왼쪽을 시작점으로 사용한다.
+	if (Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		Segment.Start = Endpoint - FIntPoint(1, 0);
+		return Segment;
+	}
+	
+	// 세로 음수 방향은 끝점 아래를 시작점으로 사용한다.
+	Segment.Start = Endpoint - FIntPoint(0, 1);
+	return Segment;
+}
+
+float AProjectShutterAreaGenerator::GetContinuationChance(int32 StraightRunLength) const
+{
+	// 기준 개수 이전에는 높은 연속 생성 확률을 사용한다.
+	if (StraightRunLength < ContinuationThreshold)
+	{
+		return FMath::Clamp(EarlyContinuationChance, 0.0f, 1.0f);
+	}
+	
+	// 기준 개수 이후에는 낮은 연속 생성 확률을 사용한다.
+	return FMath::Clamp(LateContinuationChance, 0.0f, 1.0f);
+}
+
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeRandomStartSegment(FRandomStream& RandomStream) const
+{
+	// 현재 생성 구역의 격자 크기를 가져온다.
+	const FIntPoint GridSize = GetGridCellCount();
+	
+	// 새로운 시작 셔터 데이터를 준비한다.
+	FProjectShutterGridSegment Segment;
+	
+	// 가로 또는 세로 방향을 무작위로 선택한다.
+	Segment.Direction = 
+		RandomStream.RandRange(0, 1) == 0
+			? EProjectShutterGridDirection::Horizontal
+			: EProjectShutterGridDirection::Vertical;
+	
+	// 가로 셔터가 들어갈 수 있는 좌표를 무작위로 선택한다.
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		Segment.Start = FIntPoint(
+			RandomStream.RandRange(0, GridSize.X - 1),
+			RandomStream.RandRange(0, GridSize.Y));
+		
+		return Segment;
+	}
+	
+	// 세로 셔터가 들어갈 수 있는 좌표를 무작위로 선택한다.
+	Segment.Start = FIntPoint(
+		RandomStream.RandRange(0, GridSize.X),
+		RandomStream.RandRange(0, GridSize.Y - 1));
+	
+	return Segment;
+}
+
 // ===================================================== 디버깅 관련 =====================================================
 
 // 현재 구역 설정을 기준으로 미리보기 셔터를 생성한다.

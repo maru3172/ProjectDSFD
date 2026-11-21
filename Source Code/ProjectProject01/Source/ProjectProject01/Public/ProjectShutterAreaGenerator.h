@@ -105,6 +105,20 @@ private:
 		const FProjectShutterGridSegment& Candidate,
 		const TArray<FProjectShutterGridSegment>& Segments) const;
 	
+	// 지정된 끝점에서 선택한 방향으로 이어지는 셔터 선분을 만든다,
+	FProjectShutterGridSegment MakeSegmentFromEndpoint(
+		const FIntPoint& Endpoint,
+		EProjectShutterGridDirection Direction,
+		int32 DirectionSign) const;
+	
+	// 현재 연속 개수에 맞는 직선 연속 확률을 반환한다.
+	float GetContinuationChance(
+		int32 StraightRunLength) const;
+	
+	// 현재 배치와 연결되지 않은 새로운 시작 셔터 후보를 만든다.
+	FProjectShutterGridSegment MakeRandomStartSegment(
+		FRandomStream& RandomStream) const;
+	
 	// 생성기 컴포넌트의 기준이 되는 루트다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Shutter Generator", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -136,4 +150,24 @@ private:
 	// 1 일 차 미리보기에서 생성할 최대 셔터 개수다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	int32 PreviewShutterCount = 12;
+	
+	// 높은 연속 생성 확률을 적용할 최대 직선 셔터 개수다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1"))
+	int32 ContinuationThreshold = 4;
+	
+	// 기준 개수에 도달하기 전에 직선 생성을 계속할 확률이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float EarlyContinuationChance = 0.75;
+	
+	// 기준 개수에 도달한 뒤 직선 생성을 계속할 확률이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float LateContinuationChance = 0.25;
+	
+	// 같은 값에서 같은 배치 결과를 만들기 위한 랜덤 시드다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true"))
+	int32 RandomSeed = 12345;
+	
+	// 유효한 위치를 찾지 못할 때 무한 반복을 막는 최대 시도 횟수다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1"))
+	int32 MaxPlacementAttempts = 1000;
 };
