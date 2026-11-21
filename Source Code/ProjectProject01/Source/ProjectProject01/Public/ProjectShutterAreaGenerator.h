@@ -133,8 +133,8 @@ private:
 	TObjectPtr<UBoxComponent> GenerationArea;
 	
 	// 방화셔터가 생성될 구역의 가로와 세로 크기다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Area", meta = (AllowPrivateAccess = "true", ClampMin = "300.0", Units = "cm"))
-	FVector2D AreaSize = FVector2D(3000.0, 3000.0);
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Area", meta = (AllowPrivateAccess = "true", Units = "cm"))
+	FVector2D AreaEndOffset = FVector2D(3000.0, 3000.0);
 	
 	// 에디터에서 표시할 생성 구역의 높이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Area", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))

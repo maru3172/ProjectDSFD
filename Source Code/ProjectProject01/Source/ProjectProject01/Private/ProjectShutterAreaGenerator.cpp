@@ -67,11 +67,11 @@ void AProjectShutterAreaGenerator::RefreshAreaVisualization()
 		return;
 	}
 
-	// 구역의 안전한 가로 크기를 계산한다.
-	const float SafeSizeX = FMath::Max(AreaSize.X, 300.0f);
+	// 시작점과 끝점 사이의 안전한 X 축 길이를 계산한다.
+	const float SafeSizeX = FMath::Max(FMath::Abs(AreaEndOffset.X), ShutterLength);
 
-	// 구역의 안전한 세로 크기를 계산한다.
-	const float SafeSizeY = FMath::Max(AreaSize.Y, 300.0f);
+	// 시작점과 끝점 사이의 안전한 Y 축 길이를 계산한다.
+	const float SafeSizeY = FMath::Max(FMath::Abs(AreaEndOffset.Y), ShutterLength);
 
 	// 구역 표시의 안전한 높이를 계산한다.
 	const float SafeHeight = FMath::Max(VisualizationHeight, 1.0f);
@@ -79,8 +79,8 @@ void AProjectShutterAreaGenerator::RefreshAreaVisualization()
 	// 박스 컴포넌트는 전체 크기의 절반을 Extent로 사용한다.
 	GenerationArea->SetBoxExtent(FVector(SafeSizeX * 0.5f, SafeSizeY * 0.5f, SafeHeight * 0.5f));
 
-	// 생성기 위치가 구역 바닥의 중앙이 되도록 박스를 위로 올린다.
-	GenerationArea->SetRelativeLocation(FVector(0.0f, 0.0f, SafeHeight * 0.5f));
+	// 시작점과 끝점의 중앙으로 영역 박스를 이동한다.
+	GenerationArea->SetRelativeLocation(FVector(AreaEndOffset.X * 0.5f, AreaEndOffset.Y * 0.5f, SafeHeight * 0.5f));
 
 	// 에디터 설정에 따라 구역 박스를 표시하거나 숨긴다.
 	GenerationArea->SetVisibility(bShowGenerationArea);
@@ -94,8 +94,8 @@ FIntPoint AProjectShutterAreaGenerator::GetGridCellCount() const
 
 	// 구역 크기를 셔터 길이로 나눠 가로와 세로 칸 수를 계산한다.
 	return FIntPoint(
-		FMath::Max(1, FMath::FloorToInt(AreaSize.X / SafeLength)),
-		FMath::Max(1, FMath::FloorToInt(AreaSize.Y / SafeLength)));
+		FMath::Max(1, FMath::FloorToInt(FMath::Abs(AreaEndOffset.X) / SafeLength)),
+		FMath::Max(1, FMath::FloorToInt(FMath::Abs(AreaEndOffset.Y) / SafeLength)));
 }
 
 // 셔터 선분이 생성 구역 내부에 있는지 검사한다.
@@ -123,49 +123,59 @@ bool AProjectShutterAreaGenerator::IsSegmentInsideArea(const FProjectShutterGrid
 // 격자 선분을 실제 월드 트랜스폼으로 변환한다.
 FTransform AProjectShutterAreaGenerator::MakeSegmentWorldTransform(const FProjectShutterGridSegment& Segment) const
 {
-	// 현재 생성 구역의 격자 크기를 가져온다.
-	const FIntPoint GridSize = GetGridCellCount();
-
-	// 실제 격자가 사용하는 가로 길이를 계산한다.
-	const float UsedWidth = GridSize.X * ShutterLength;
-
-	// 실제 격자가 사용하는 세로 길이를 계산한다.
-	const float UsedDepth = GridSize.Y * ShutterLength;
-
-	// 생성 구역 중앙을 기준으로 격자의 왼쪽 아래 시작점을 계산한다.
-	const FVector GridOrigin(-UsedWidth * 0.5f, -UsedDepth * 0.5f, 0.0f);
-
-	// 셔터의 생성기 기준 로컬 위치를 보관한다.
-	FVector LocalLocation = GridOrigin;
-
-	// 셔터의 생성기 기준 로컬 회전값을 보관한다.
+	// 끝점이 위치한 X 축 방향을 구한다.
+	const float GridSignX = 
+		AreaEndOffset.X >= 0.0f
+			? 1.0f
+			: -1.0f;
+	
+	// 끝점이 위치한 Y 축 방향을 구한다.
+	const float GridSignY =
+		AreaEndOffset.Y >= 0.0f
+			? 1.0f
+			: -1.0f;
+	
+	// 셔터의 생성기 기준 로컬 위치를 준비한다.
+	FVector LocalLocation = FVector::ZeroVector;
+	
+	// 셔터의 생성기 기준 로컬 회전을 준비한다.
 	float LocalYaw = 0.0f;
 	
+	// 가로 셔터는 X 축 선분 중앙에 배치한다.
 	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
 	{
-		LocalLocation += FVector(
-			(Segment.Start.X + 0.5f) * ShutterLength,
-			Segment.Start.Y * ShutterLength,
+		LocalLocation = FVector(
+			(Segment.Start.X + 0.5f) * ShutterLength * GridSignX,
+			Segment.Start.Y * ShutterLength * GridSignY, 
 			0.0f);
 		
-		LocalYaw = 0.0f;
+		// 음수 X 축 영역에서는 셔터를 반대 방향으로 회전한다.
+		LocalYaw = 
+			GridSignX >= 0.0f
+				? 0.0f
+				: 180.0f;
 	}
 	else
 	{
-		LocalLocation += FVector(
-			Segment.Start.X * ShutterLength,
-			(Segment.Start.Y + 0.5f) * ShutterLength,
+		// 세로 셔터는 Y 축 선분 중앙에 배치한다.
+		LocalLocation = FVector(
+			Segment.Start.X * ShutterLength * GridSignX,
+			(Segment.Start.Y + 0.5f) * ShutterLength * GridSignY,
 			0.0f);
 		
-		LocalYaw = 90.0f;
+		// 끝점의 Y 축 방향에 맞춰 셔터를 회전한다.
+		LocalYaw = 
+			GridSignY >= 0.0f
+				? 90.0f
+				: -90.0f;
 	}
 	
-	// 계산한 위치와 회전으로 생성기 기준 로컬 트랜스폼을 만든다.
+	// 계산한 위치와 회전으로 로컬 트랜스폼을 만든다.
 	const FTransform LocalTransform(
-		FRotator(0.0f, LocalYaw, 0.0f),
+		FRotator(0.0f, LocalYaw, 0.0f), 
 		LocalLocation);
-
-	// 생성기 액터의 트랜스폼을 적용해 월드 트랜스폼으로 변환한다.
+	
+	// 생성기 액터의 위치와 회전을 적용한다.
 	return LocalTransform * GetActorTransform();
 }
 
