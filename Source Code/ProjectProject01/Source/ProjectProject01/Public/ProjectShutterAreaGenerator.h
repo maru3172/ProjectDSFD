@@ -71,6 +71,22 @@ private:
 	// 현재 구역에 들어가는 격자 칸 수를 반환한다.
 	FIntPoint GetGridCellCount() const;
 	
+	// 생성 영역에서 더 긴 축의 셔터 방향을 반환한다.
+	EProjectShutterGridDirection GetLongAxisDirection() const;
+	
+	// 생성 영역의 장축 길이를 cm 단위로 반환한다.
+	float GetLongAxisLength() const;
+	
+	// 생성 영역의 단축 길이를 cm 단위로 반환한다.
+	float GetShortAxisLength() const;
+	
+	// 단축 방향에 배치할 시작 후보 개수를 반환한다.
+	int32 GetShortAxisCandidateCount() const;
+	
+	// 단축 후보 위치에서 장축 방향의 1 번째 셔터를 만든다.
+	FProjectShutterGridSegment MakeLongStartSegment(
+		int32 ShortAxisCandidateIndex) const;
+	
 	// 셔터 선분이 생성 구역 내부에 있는지 검사한다.
 	bool IsSegmentInsideArea(
 		const FProjectShutterGridSegment& Segment) const;

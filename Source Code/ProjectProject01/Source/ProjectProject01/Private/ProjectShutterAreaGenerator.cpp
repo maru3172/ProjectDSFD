@@ -98,6 +98,65 @@ FIntPoint AProjectShutterAreaGenerator::GetGridCellCount() const
 		FMath::Max(1, FMath::FloorToInt(FMath::Abs(AreaEndOffset.Y) / SafeLength)));
 }
 
+EProjectShutterGridDirection AProjectShutterAreaGenerator::GetLongAxisDirection() const
+{
+	// X 축이 같거나 더 길면 가로 방향을 장축으로 사용한다.
+	if (FMath::Abs(AreaEndOffset.X) >= FMath::Abs(AreaEndOffset.Y))
+	{
+		return EProjectShutterGridDirection::Horizontal;
+	}
+	
+	// Y 축이 더 길면 세로 방향을 장축으로 사용한다.
+	return EProjectShutterGridDirection::Vertical;
+}
+
+float AProjectShutterAreaGenerator::GetLongAxisLength() const
+{
+	// X 와 Y 중 더 긴 영역의 길이를 반환한다.
+	return FMath::Max(
+		FMath::Abs(AreaEndOffset.X),
+		FMath::Abs(AreaEndOffset.Y));
+}
+
+float AProjectShutterAreaGenerator::GetShortAxisLength() const
+{
+	// X 와 Y 중 더 짧은 영역 길이를 반환한다.
+	return FMath::Min(
+		FMath::Abs(AreaEndOffset.X),
+		FMath::Abs(AreaEndOffset.Y));
+}
+
+int32 AProjectShutterAreaGenerator::GetShortAxisCandidateCount() const
+{
+	// 0 으로 나누는 상황을 막기 위해 안전한 셔터 길이를 사용한다.
+	const float SafeShutterLength = FMath::Max(ShutterLength, 1.0f);
+	
+	// 단축의 격자점 개수에 시작점을 포함한다.
+	return FMath::FloorToInt(GetShortAxisLength() / SafeShutterLength) + 1;
+}
+
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeLongStartSegment(int32 ShortAxisCandidateIndex) const
+{
+	// 첫 장축 셔터 데이터를 준비한다.
+	FProjectShutterGridSegment Segment;
+	
+	// 현재 영역의 장축 방향을 적용한다.
+	Segment.Direction = GetLongAxisDirection();
+	
+	// 가로가 장축이면 X 축 시작점에서 Y 후보를 사용한다.
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		Segment.Start = FIntPoint(0, ShortAxisCandidateIndex);
+		
+		return Segment;
+	}
+	
+	// 세로가 장축이면 Y 축 시작점에서 X 후보를 사용한다.
+	Segment.Start = FIntPoint(ShortAxisCandidateIndex, 0);
+	
+	return Segment;
+}
+
 // 셔터 선분이 생성 구역 내부에 있는지 검사한다.
 bool AProjectShutterAreaGenerator::IsSegmentInsideArea(const FProjectShutterGridSegment& Segment) const
 {
