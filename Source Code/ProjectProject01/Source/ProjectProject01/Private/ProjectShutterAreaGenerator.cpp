@@ -434,6 +434,24 @@ float AProjectShutterAreaGenerator::GetContinuationChance(int32 StraightRunLengt
 	return FMath::Clamp(LateContinuationChance, 0.0f, 1.0f);
 }
 
+float AProjectShutterAreaGenerator::GetLengthBasedContinuationChance(float CurrentLength) const
+{
+	// 감소 시작 길이 이전에는 기본 연장 확률을 사용한다.
+	if (CurrentLength < ContinuationReductionStartLength)
+	{
+		return FMath::Clamp(
+			EarlyContinuationChance, 
+			0.0f, 
+			1.0f);
+	}
+	
+	// 감소 시작 길이 이후에는 낮아진 연장 확률을 사용한다.
+	return FMath::Clamp(
+		LateContinuationChance,
+		0.0f,
+		1.0f);
+}
+
 FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeRandomStartSegment(FRandomStream& RandomStream) const
 {
 	// 현재 생성 구역의 격자 크기를 가져온다.

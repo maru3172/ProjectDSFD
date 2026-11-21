@@ -134,6 +134,10 @@ private:
 	float GetContinuationChance(
 		int32 StraightRunLength) const;
 	
+	// 현재 긴 구간 길이에 맞는 다음 셔터 연장 확률을 반환한다.
+	float GetLengthBasedContinuationChance(
+		float CurrentLength) const;
+	
 	// 현재 배치와 연결되지 않은 새로운 시작 셔터 후보를 만든다.
 	FProjectShutterGridSegment MakeRandomStartSegment(
 		FRandomStream& RandomStream) const;
@@ -189,11 +193,15 @@ private:
 	
 	// 기준 개수에 도달하기 전에 직선 생성을 계속할 확률이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
-	float EarlyContinuationChance = 0.75;
+	float EarlyContinuationChance = 0.75f;
+	
+	// 낮은 연장 확률을 적용하기 시작할 현재 긴 구간 길이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
+	float ContinuationReductionStartLength = 600.0f;
 	
 	// 기준 개수에 도달한 뒤 직선 생성을 계속할 확률이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
-	float LateContinuationChance = 0.25;
+	float LateContinuationChance = 0.25f;
 	
 	// 같은 값에서 같은 배치 결과를 만들기 위한 랜덤 시드다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true"))
