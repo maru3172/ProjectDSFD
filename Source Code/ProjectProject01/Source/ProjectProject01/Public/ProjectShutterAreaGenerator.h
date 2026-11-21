@@ -119,6 +119,11 @@ private:
 	FProjectShutterGridSegment MakeRandomStartSegment(
 		FRandomStream& RandomStream) const;
 	
+	// 검증이 끝난 셔터 선분 하나를 실제 셔터 액터로 생성한다.
+	bool SpawnPreviewSegment(
+		const FProjectShutterGridSegment& Segment,
+		int32 SegmentIndex);
+	
 	// 생성기 컴포넌트의 기준이 되는 루트다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Shutter Generator", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;
