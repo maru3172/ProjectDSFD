@@ -79,6 +79,51 @@ private:
 	FTransform MakeSegmentWorldTransform(
 		const FProjectShutterGridSegment& Segment) const;
 	
+	// 셔터 선분의 시작점과 끝점을 격자 좌표로 반환한다.
+	void GetSegmentEndpoints(
+		const FProjectShutterGridSegment& Segment,
+		FIntPoint& OutStart,
+		FIntPoint& OutEnd) const;
+	
+	// 두 셔터 선분이 같은 격자 위치와 방향인지 확인한다.
+	bool AreSegmentsEqual(
+		const FProjectShutterGridSegment& First,
+		const FProjectShutterGridSegment& Second) const;
+	
+	// 지정된 격자점에 연결된 기존 셔터 개수를 반환한다.
+	int32 CountSegmentsAtPoint(
+		const FIntPoint& Point,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
+	
+	// 후보 셔터가 기존 셔터의 내부를 통과하는지 검사한다.
+	bool DoesSegmentCrossExistingSegment(
+		const FProjectShutterGridSegment& Candidate,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
+	
+	// 후보 셔터가 현재 배치 규칙을 모두 만족하는지 검사한다.
+	bool CanPlaceSegment(
+		const FProjectShutterGridSegment& Candidate,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
+	
+	// 지정된 끝점에서 선택한 방향으로 이어지는 셔터 선분을 만든다,
+	FProjectShutterGridSegment MakeSegmentFromEndpoint(
+		const FIntPoint& Endpoint,
+		EProjectShutterGridDirection Direction,
+		int32 DirectionSign) const;
+	
+	// 현재 연속 개수에 맞는 직선 연속 확률을 반환한다.
+	float GetContinuationChance(
+		int32 StraightRunLength) const;
+	
+	// 현재 배치와 연결되지 않은 새로운 시작 셔터 후보를 만든다.
+	FProjectShutterGridSegment MakeRandomStartSegment(
+		FRandomStream& RandomStream) const;
+	
+	// 검증이 끝난 셔터 선분 하나를 실제 셔터 액터로 생성한다.
+	bool SpawnPreviewSegment(
+		const FProjectShutterGridSegment& Segment,
+		int32 SegmentIndex);
+	
 	// 생성기 컴포넌트의 기준이 되는 루트다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Shutter Generator", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -110,4 +155,24 @@ private:
 	// 1 일 차 미리보기에서 생성할 최대 셔터 개수다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	int32 PreviewShutterCount = 12;
+	
+	// 높은 연속 생성 확률을 적용할 최대 직선 셔터 개수다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1"))
+	int32 ContinuationThreshold = 4;
+	
+	// 기준 개수에 도달하기 전에 직선 생성을 계속할 확률이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float EarlyContinuationChance = 0.75;
+	
+	// 기준 개수에 도달한 뒤 직선 생성을 계속할 확률이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float LateContinuationChance = 0.25;
+	
+	// 같은 값에서 같은 배치 결과를 만들기 위한 랜덤 시드다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true"))
+	int32 RandomSeed = 12345;
+	
+	// 유효한 위치를 찾지 못할 때 무한 반복을 막는 최대 시도 횟수다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1"))
+	int32 MaxPlacementAttempts = 1000;
 };

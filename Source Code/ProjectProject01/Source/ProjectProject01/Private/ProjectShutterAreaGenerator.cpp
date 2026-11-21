@@ -169,6 +169,265 @@ FTransform AProjectShutterAreaGenerator::MakeSegmentWorldTransform(const FProjec
 	return LocalTransform * GetActorTransform();
 }
 
+void AProjectShutterAreaGenerator::GetSegmentEndpoints(const FProjectShutterGridSegment& Segment, FIntPoint& OutStart, FIntPoint& OutEnd) const
+{
+	// 구조체에 저장된 좌표를 선분의 시작점으로 사용한다.
+	OutStart = Segment.Start;
+	
+	// 가로 셔터는 시작점에서 X 축으로 1 칸 이동한다.
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		OutEnd = Segment.Start + FIntPoint(1, 0);
+		return;
+	}
+	
+	// 세로 셔터는 시작점에서 Y 축으로 한 칸 이동한다.
+	OutEnd = Segment.Start + FIntPoint(0, 1);
+}
+
+bool AProjectShutterAreaGenerator::AreSegmentsEqual(const FProjectShutterGridSegment& First, const FProjectShutterGridSegment& Second) const
+{
+	// 시작 위치와 방향이 모두 같아야 같은 선분이다.
+	return First.Start == Second.Start &&
+		First.Direction == Second.Direction;
+}
+
+int32 AProjectShutterAreaGenerator::CountSegmentsAtPoint(const FIntPoint& Point, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 지정된 점에 연결된 셔터 개수를 기록한다.
+	int32 ConnectedCount = 0;
+	
+	// 현재 배치된 모든 셔터를 확인한다.
+	for (const FProjectShutterGridSegment& Segment : Segments)
+	{
+		// 현저 셔터의 시작점과 끝점을 가져온다.
+		FIntPoint SegmentStart;
+		FIntPoint SegmentEnd;
+		GetSegmentEndpoints(Segment, SegmentStart, SegmentEnd);
+		
+		// 지정된 점이 시작점 또는 끝점이면 연결된 셔터다.
+		if (Point == SegmentStart || Point == SegmentEnd)
+		{
+			++ConnectedCount;
+		}
+	}
+	
+	// 해당 점에 연결된 최종 셔터 개수를 반환한다.
+	return ConnectedCount;
+}
+
+bool AProjectShutterAreaGenerator::DoesSegmentCrossExistingSegment(const FProjectShutterGridSegment& Candidate, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 후보 셔터의 시작점과 끝점을 가져온다.
+	FIntPoint CandidateStart;
+	FIntPoint CandidateEnd;
+	GetSegmentEndpoints(Candidate, CandidateStart, CandidateEnd);
+	
+	// 현재 배치된 모든 셔터와 비교한다.
+	for (const FProjectShutterGridSegment& Existing : Segments)
+	{
+		// 같은 방향의 셔터끼리는 중심 교차하지 않는다.
+		if (Candidate.Direction == Existing.Direction)
+		{
+			continue;
+		}
+		
+		// 기존 셔터의 시작점과 끝점을 가져온다.
+		FIntPoint ExistingStart;
+		FIntPoint ExistingEnd;
+		GetSegmentEndpoints(Existing, ExistingStart, ExistingEnd);
+		
+		// 가로 선분과 세로 선분을 구분해 참조한다.
+		const FProjectShutterGridSegment& Horizontal = Candidate.Direction == EProjectShutterGridDirection::Horizontal ? Candidate : Existing;
+		
+		// 세로 방향 선분을 참조한다.
+		const FProjectShutterGridSegment& Vertical = Candidate.Direction == EProjectShutterGridDirection::Vertical ? Candidate : Existing;
+		
+		// 가로 선분의 X 좌표가 세로 선분 내부에 있는지 확인한다.
+		const bool bInsideHorizontal = 
+			Vertical.Start.X > Horizontal.Start.X &&
+			Vertical.Start.X < Horizontal.Start.X + 1; 
+		
+		// 가로 선분의 X 좌표가 세로 선분 내부에 있는지 확인한다.
+		const bool bInsideVertical = 
+			Horizontal.Start.Y > Vertical.Start.Y &&
+			Horizontal.Start.Y < Vertical.Start.Y + 1;
+		
+		// 양쪽 내부를 모두 통과하면 중심 교차다.
+		if (bInsideHorizontal && bInsideVertical)
+		{
+			return true;
+		}
+	}
+	
+	// 어떤 기존 셔터의 내부도 통과하지 않는다.
+	return false;
+}
+
+bool AProjectShutterAreaGenerator::CanPlaceSegment(const FProjectShutterGridSegment& Candidate, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 생성 구역 밖으로 나가는 셔터는 배치하지 않는다.
+	if (!IsSegmentInsideArea(Candidate))
+	{
+		return false;
+	}
+	
+	// 같은 위치와 방향의 셔터가 이미 있는지 확인한다.
+	for (const FProjectShutterGridSegment& Existing : Segments)
+	{
+		if (AreSegmentsEqual(Candidate, Existing))
+		{
+			return false;
+		}
+	}
+	
+	// 기존 셔터의 중심을 통과하는 후보는 배치하지 않는다.
+	if (DoesSegmentCrossExistingSegment(Candidate, Segments))
+	{
+		return false;
+	}
+	
+	// 후보 셔터의 시작점과 끝점을 가져온다.
+	FIntPoint CandidateStart;
+	FIntPoint CandidateEnd;
+	GetSegmentEndpoints(Candidate, CandidateStart, CandidateEnd);
+	
+	// 시작점에 이미 셔터 2 개가 있다면 T 자 또는 십자가 된다.
+	if (CountSegmentsAtPoint(CandidateStart, Segments) >= 2)
+	{
+		return false;
+	}
+	
+	// 끝점에 이미 셔터 2 개가 있다면 T 자 또는 십자가 된다.
+	if (CountSegmentsAtPoint(CandidateEnd, Segments) >= 1)
+	{
+		return false;
+	}
+	
+	// 모든 배치 규칙을 통과한 후보만 허용한다.
+	return true;
+}
+
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeSegmentFromEndpoint(const FIntPoint& Endpoint, EProjectShutterGridDirection Direction, int32 DirectionSign) const
+{
+	// 새로 만들 후보 셔터 데이터를 준비한다.
+	FProjectShutterGridSegment Segment;
+	
+	// 선택한 가로 또는 세로 방향을 후보에 적용한다.
+	Segment.Direction = Direction;
+	
+	// 양수 방향이면 현재 끝점을 그대로 시작점으로 사용한다.
+	if (DirectionSign >= 0)
+	{
+		Segment.Start = Endpoint;
+		return Segment;
+	}
+	
+	// 가로 음수 방향은 끝점 왼쪽을 시작점으로 사용한다.
+	if (Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		Segment.Start = Endpoint - FIntPoint(1, 0);
+		return Segment;
+	}
+	
+	// 세로 음수 방향은 끝점 아래를 시작점으로 사용한다.
+	Segment.Start = Endpoint - FIntPoint(0, 1);
+	return Segment;
+}
+
+float AProjectShutterAreaGenerator::GetContinuationChance(int32 StraightRunLength) const
+{
+	// 기준 개수 이전에는 높은 연속 생성 확률을 사용한다.
+	if (StraightRunLength < ContinuationThreshold)
+	{
+		return FMath::Clamp(EarlyContinuationChance, 0.0f, 1.0f);
+	}
+	
+	// 기준 개수 이후에는 낮은 연속 생성 확률을 사용한다.
+	return FMath::Clamp(LateContinuationChance, 0.0f, 1.0f);
+}
+
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeRandomStartSegment(FRandomStream& RandomStream) const
+{
+	// 현재 생성 구역의 격자 크기를 가져온다.
+	const FIntPoint GridSize = GetGridCellCount();
+	
+	// 새로운 시작 셔터 데이터를 준비한다.
+	FProjectShutterGridSegment Segment;
+	
+	// 가로 또는 세로 방향을 무작위로 선택한다.
+	Segment.Direction = 
+		RandomStream.RandRange(0, 1) == 0
+			? EProjectShutterGridDirection::Horizontal
+			: EProjectShutterGridDirection::Vertical;
+	
+	// 가로 셔터가 들어갈 수 있는 좌표를 무작위로 선택한다.
+	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
+	{
+		Segment.Start = FIntPoint(
+			RandomStream.RandRange(0, GridSize.X - 1),
+			RandomStream.RandRange(0, GridSize.Y));
+		
+		return Segment;
+	}
+	
+	// 세로 셔터가 들어갈 수 있는 좌표를 무작위로 선택한다.
+	Segment.Start = FIntPoint(
+		RandomStream.RandRange(0, GridSize.X),
+		RandomStream.RandRange(0, GridSize.Y - 1));
+	
+	return Segment;
+}
+
+bool AProjectShutterAreaGenerator::SpawnPreviewSegment(const FProjectShutterGridSegment& Segment, int32 SegmentIndex)
+{
+	// 현재 생성기 액터가 속한 월드를 가져온다.
+	UWorld* World = GetWorld();
+	
+	// 월드와 생성할 셔터 클래스가 없으면 실패한다.
+	if (!IsValid(World) || !ShutterClass)
+	{
+		return false;
+	}
+	
+	// 격자 선분을 실제 월드 위치와 회전으로 변환한다.
+	const FTransform SpawnTransform = MakeSegmentWorldTransform(Segment);
+	
+	// 생성할 셔터 액터의 기본 설정을 준비한다.
+	FActorSpawnParameters SpawnParameters;
+	
+	// 생성된 셔터가 이 생성기 소유임을 기록한다.
+	SpawnParameters.Owner = this;
+	
+	// 미리보기에서는 기존 충돌 여부와 관계없이 생성한다.
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	
+#if WITH_EDITOR
+	// 에디터 실행 취소 시스템에서 생성을 추적하도록 설정한다.
+	SpawnParameters.ObjectFlags |= RF_Transactional;
+#endif
+	// 지정된 셔터 BP 클래스로 실제 액터를 생성한다.
+	AFireShutterActor* SpawnedShutter = World->SpawnActor<AFireShutterActor>(ShutterClass, SpawnTransform, SpawnParameters);
+	
+	// 액터 생성에 실패하면 false 를 반환한다.
+	if (!IsValid(SpawnedShutter))
+	{
+		return false;
+	}
+	
+	// 생성기에서 만든 셔터임을 나타내는 태그를 추가한다.
+	SpawnedShutter->Tags.AddUnique(GeneratedShutterTag);
+	
+#if WITH_EDITOR
+	// 월드 아웃라이너에서 확인할 수 있는 이름을 지정한다.
+	SpawnedShutter->SetActorLabel(FString::Printf(TEXT("GeneratedShutter_%03d"), SegmentIndex));
+#endif
+	// 셔터 액터가 정상적으로 생성되었다.
+	return true;
+}
+
+// ===================================================== 디버깅 관련 =====================================================
+
 // 현재 구역 설정을 기준으로 미리보기 셔터를 생성한다.
 void AProjectShutterAreaGenerator::GeneratePreview()
 {
@@ -191,80 +450,162 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 	// 다시 생성하기 전에 기존 미리보기 셔터를 제거한다.
 	ClearGeneratedShutters();
 
-	// 현재 구역에 들어가는 가로와 세로 격자 칸 수를 가져온다.
-	const FIntPoint GridSize = GetGridCellCount();
-
-	// 실제로 생성된 셔터 개수를 기록한다.
-	int32 SpawnedCount = 0;
-
-	// 격자의 세로 좌표를 순서대로 확인한다.
-	for (int32 GridY = 0; GridY <= GridSize.Y && SpawnedCount < PreviewShutterCount; ++GridY)
+	// 설정된 시드로 재현 가능한 랜덤 스트림을 만든다.
+	FRandomStream RandomStream(RandomSeed);
+	
+	// 규칙 검사를 통과한 셔터 선분 데이터를 보관한다.
+	TArray<FProjectShutterGridSegment> GeneratedSegments;
+	
+	// 현재 연결을 확장할 끝점이다.
+	FIntPoint CurrentEndpoint = FIntPoint::ZeroValue;
+	
+	// 현재 셔터가 진행 중인 가로 또는 세로 방향이다.
+	EProjectShutterGridDirection CurrentDirection = EProjectShutterGridDirection::Horizontal;
+	
+	// 현재 방향에서 양수 또는 음수 방향으로 진행하는지 나타낸다.
+	int32 CurrentDirectionSign = 1;
+	
+	// 같은 방향으로 연속 배치된 셔터 개수다.
+	int32 StraightRunLength = 1;
+	
+	// 유효한 셔터 위치를 찾기 위해 시도한 총횟수다.
+	int32 PlacementAttempts = 0;
+	
+	// 현재 연결을 계속 확장할 수 있는지 나타낸다.
+	bool bHasActiveChain = false;
+	
+	// 목표 개수 또는 최대 시도 횟수에 도달할 때까지 후보를 만든다.
+	while (GeneratedSegments.Num() < PreviewShutterCount && PlacementAttempts < MaxPlacementAttempts)
 	{
-		// 격자의 가로 좌표를 순서대로 확인한다.
-		for (int32 GridX = 0; GridX <= GridSize.X && SpawnedCount < PreviewShutterCount; ++GridX)
+		// 이번 후보 생성 시도를 기록한다.
+		++PlacementAttempts;
+		
+		// 현재 확장 중인 연결이 없으면 새로운 시작 셔터를 찾는다.
+		if (!bHasActiveChain)
 		{
-			// 현재 위치에서 생성할 셔터 선분 데이터를 만든다.
-			FProjectShutterGridSegment Segment;
-
-			// 현재 반복 중인 격자 위치를 시작점으로 사용한다.
-			Segment.Start = FIntPoint(GridX, GridY);
-
-			// 행마다 가로와 세로 방향을 번갈아 사용한다.
-			Segment.Direction = GridY % 2 == 0
-				? EProjectShutterGridDirection::Horizontal
-				: EProjectShutterGridDirection::Vertical;
-
-			// 구역 경계를 벗어나는 선분은 생성하지 않는다.
-			if (!IsSegmentInsideArea(Segment))
+			// 구역 안에서 무작위 셔터 후보를 만든다.
+			const FProjectShutterGridSegment StartCandidate = MakeRandomStartSegment(RandomStream);
+			
+			// 시작 후보가 배치 규칙을 만족하지 않으면 다시 시도한다.
+			if (!CanPlaceSegment(StartCandidate, GeneratedSegments))
 			{
 				continue;
 			}
-
-			// 격자 좌표를 실제 월드 위치와 회전으로 변환한다.
-			const FTransform SpawnTransform = MakeSegmentWorldTransform(Segment);
-
-			// 생성할 액터의 소유자와 충돌 처리 방법을 설정한다.
-			FActorSpawnParameters SpawnParameters;
-
-			// 삭제할 때 생성자를 구분할 수 있도록 소유자를 지정한다.
-			SpawnParameters.Owner = this;
-
-			// 미리보기 배치에서는 기존 충돌과 관계없이 생성한다.
-			SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-#if WITH_EDITOR
-			// 에디터 실행 취소 시스템이 생성 작업을 기록하도록 설정한다.
-			SpawnParameters.ObjectFlags |= RF_Transactional;
-#endif
-
-			// 지정된 셔터 클래스로 실제 셔터 액터를 생성한다.
-			AFireShutterActor* SpawnedShutter = World->SpawnActor<AFireShutterActor>(
-				ShutterClass,
-				SpawnTransform,
-				SpawnParameters);
-
-			// 액터 생성에 실패했다면 다음 위치를 확인한다.
-			if (!IsValid(SpawnedShutter))
-			{
-				UE_LOG(LogTemp, Warning, TEXT("%s: 셔터 생성에 실패했습니다."), *GetName());
-				continue;
-			}
-
-			// 생성기에서 만든 셔터임을 나타내는 태그를 추가한다.
-			SpawnedShutter->Tags.AddUnique(GeneratedShutterTag);
-
-#if WITH_EDITOR
-			// 월드 아웃라이너에서 위치와 방향을 확인하기 쉽게 이름을 지정한다.
-			SpawnedShutter->SetActorLabel(FString::Printf(
-				TEXT("GeneratedShutter_%s_%02d_%02d"),
-				Segment.Direction == EProjectShutterGridDirection::Horizontal ? TEXT("H") : TEXT("V"),
-				Segment.Start.X,
-				Segment.Start.Y));
-#endif
-
-			// 정상적으로 생성된 셔터 개수를 증가시킨다.
-			++SpawnedCount;
+			
+			// 검사를 통과한 시작 셔터를 결과 배열에 추가한다.
+			GeneratedSegments.Add(StartCandidate);
+			
+			// 시작 셔터의 양쪽 끝점을 가져온다.
+			FIntPoint SegmentStart;
+			FIntPoint SegmentEnd;
+			GetSegmentEndpoints(StartCandidate, SegmentStart, SegmentEnd);
+			
+			// 시작 셔터를 어느 쪽 끝으로 확장할지 무작위로 선택한다.
+			const bool bGrowFromEnd = RandomStream.RandRange(0, 1) == 1;
+			
+			// 선택한 성장 방향에 맞춰 현재 끝점을 저장한다.
+			CurrentEndpoint = bGrowFromEnd ? SegmentEnd : SegmentStart;
+			
+			// 시작 셔터의 방향을 현재 진행 방향으로 사용한다.
+			CurrentDirection = StartCandidate.Direction;
+			
+			// 끝점 쪽이면 양수, 시작점 쪽이면 음수 방향으로 진행한다.
+			CurrentDirectionSign = bGrowFromEnd ? 1 : -1;
+			
+			// 새로운 직선 연결이 시작됐으므로 연속 개수는 1 이다.
+			StraightRunLength = 1;
+			
+			// 다음 반복부터 현재 연결을 계속 확장한다.
+			bHasActiveChain = true;
+			
+			continue;
 		}
+		
+		// 현재 연속 개수에 맞는 직선 생성 확률을 가져온다.
+		const float ContinuationChance = GetContinuationChance(StraightRunLength);
+		
+		// 확률 판정으로 직진할지 90 도 회전할지 결정한다.
+		const bool bContinueStraight = RandomStream.FRand() < ContinuationChance;
+		
+		// 다음 셔터가 배치될 방향을 저장한다.
+		EProjectShutterGridDirection NextDirection = CurrentDirection;
+		
+		// 다음 셔터가 진행할 양수 또는 음수 방향을 지정한다.
+		int32 NextDirectionSign = CurrentDirectionSign;
+		
+		// 직진 확률에 실패하면 현재 끝점에서 90 도 회전한다.
+		if (!bContinueStraight)
+		{
+			// 가로 진행 중이면 세로, 세로 진행 중이면 가로로 전환한다.
+			NextDirection = CurrentDirection == 
+				EProjectShutterGridDirection::Horizontal
+					? EProjectShutterGridDirection::Vertical
+					: EProjectShutterGridDirection::Horizontal;
+			
+			// 회전 후 어느 쪽으로 진행할지 무작위로 선택한다.
+			NextDirectionSign = 
+				RandomStream.RandRange(0, 1) == 0 
+					? -1 
+					: 1;
+		}
+		
+		// 현재 끝점에서 선택한 방향으로 이어지는 후보를 만든다.
+		const FProjectShutterGridSegment Candidate = MakeSegmentFromEndpoint(CurrentEndpoint, NextDirection, NextDirectionSign);
+		
+		// 후보가 배치 규칙을 만족하지 않으면 현재 연결을 끝낸다.
+		if (!CanPlaceSegment(Candidate, GeneratedSegments))
+		{
+			bHasActiveChain = false;
+			continue;
+		}
+		
+		// 배치 규칙을 통과한 후보를 결과 배열에 추가한다.
+		GeneratedSegments.Add(Candidate);
+		
+		// 새로 추가한 셔터의 양쪽 끝점을 가져온다.
+		FIntPoint CandidateStart;
+		FIntPoint CandidateEnd;
+		GetSegmentEndpoints(Candidate, CandidateStart, CandidateEnd);
+		
+		// 진행 방향 반대편에 있는 끝점을 다음 성장 지점으로 사용한다.
+		CurrentEndpoint = 
+			NextDirectionSign >= 0 
+				? CandidateEnd 
+				: CandidateStart;
+		
+		// 새 셔터의 방향을 현재 진행 방향으로 저장한다.
+		CurrentDirection = NextDirection;
+		
+		// 새 셔터가 진행한 양수 또는 음수 방향을 저장한다.
+		CurrentDirectionSign = NextDirectionSign;
+		
+		// 직진했다면 연속 개수를 늘리고 회전했다면 1 로 초기화한다.
+		StraightRunLength = 
+			bContinueStraight 
+				? StraightRunLength + 1 
+				: 1;
+	}
+	
+	// 규칙 검사가 완료된 선분만 실제 셔터 액터로 생성한다.
+	for (int32 SegmentIndex = 0; SegmentIndex < GeneratedSegments.Num(); ++SegmentIndex)
+	{
+		// 현재 선분을 실제 셔터 액터로 생성한다.
+		const bool bSpawnSucceeded = SpawnPreviewSegment(GeneratedSegments[SegmentIndex], SegmentIndex);
+		
+		// 액터 생성에 실패하면 로그에 남기고 다음 선분을 처리한다.
+		if (!bSpawnSucceeded)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s: %d 번 셔터 액터 생성에 실패했습니다."), *GetName(), SegmentIndex);
+		}
+	}
+	
+	// 생성 결과와 사용한 랜덤 시드를 로그에 기록한다.
+	UE_LOG(LogTemp, Log, TEXT("%s: 셔터 %d 개 생성, 시도 %d 회, 시드 %d"), *GetName(), GeneratedSegments.Num(), PlacementAttempts, RandomSeed);
+	
+	// 목표 개수에 도달하지 못했다면 배치 규칙 제한을 알린다.
+	if (GeneratedSegments.Num() < PreviewShutterCount)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: 목표 %d 개 중 %d 개만 배치했습니다."), *GetName(), PreviewShutterCount, GeneratedSegments.Num());
 	}
 }
 
