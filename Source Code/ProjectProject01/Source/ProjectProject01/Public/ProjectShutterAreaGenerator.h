@@ -83,6 +83,9 @@ private:
 	// 단축 방향에 배치할 시작 후보 개수를 반환한다.
 	int32 GetShortAxisCandidateCount() const;
 	
+	// 단축 폭을 기준으로 긴 구간 후보 하나의 생성 확률을 반환한다.
+	float GetLongSectionGenerationChance() const;
+	
 	// 단축 후보 위치에서 장축 방향의 1 번째 셔터를 만든다.
 	FProjectShutterGridSegment MakeLongStartSegment(
 		int32 ShortAxisCandidateIndex) const;
@@ -163,7 +166,15 @@ private:
 	// 방화셔터 1 개가 차지하는 격자 길이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Grid", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
 	float ShutterLength = 300.0f;
-
+	
+	// 긴 구간 생성 확률을 계산할 때 사용하는 기준 단축 폭이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
+	float ReferenceShortAxisWidth = 1000.0f;
+	
+	// 기준 단축 폭에서 생성할 긴 구간의 평균 개수다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float ReferenceAverageLongSectionCount = 1.5f;
+	
 	// 생성기가 실제로 생성할 방화셔터 액터 또는 BP 클래스다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<AFireShutterActor> ShutterClass;

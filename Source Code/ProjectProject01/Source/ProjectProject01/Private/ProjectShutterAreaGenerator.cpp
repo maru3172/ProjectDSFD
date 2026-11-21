@@ -126,6 +126,24 @@ float AProjectShutterAreaGenerator::GetShortAxisLength() const
 		FMath::Abs(AreaEndOffset.Y));
 }
 
+float AProjectShutterAreaGenerator::GetLongSectionGenerationChance() const
+{
+	// 0 으로 나누는 상황을 막기 위해 안전한 기준 폭을 사용한다.
+	const float SafeReferenceWidth = FMath::Max(ReferenceShortAxisWidth, 1.0f);
+	
+	// 확률 계산에 사용할 안전한 후보 개수를 가져온다.
+	const int32 CandidateCount = FMath::Max(GetShortAxisCandidateCount(), 1);
+	
+	// 현재 단축 폭에서 기대하는 평균 긴 구간 개수를 계산한다.
+	const float TargetAverageCount = ReferenceAverageLongSectionCount * (GetShortAxisLength() / SafeReferenceWidth);
+	
+	// 목표 평균을 후보 수로 나눠 후보 하나의 확률을 계산한다.
+	return FMath::Clamp(	
+		TargetAverageCount / static_cast<float>(CandidateCount),
+		0.0f,
+		1.0f);
+}
+
 int32 AProjectShutterAreaGenerator::GetShortAxisCandidateCount() const
 {
 	// 0 으로 나누는 상황을 막기 위해 안전한 셔터 길이를 사용한다.
