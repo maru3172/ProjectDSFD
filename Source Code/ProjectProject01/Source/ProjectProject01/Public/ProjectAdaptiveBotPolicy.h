@@ -68,8 +68,8 @@ struct Difficulty
     // MannequinVsSolo = against one human with a bot partner. Every curve stays strictly increasing.
     static float SideSkill(int Level,BotTeam Team)
     {
-        static constexpr float S[]={0.f,.1f,.17f,.8f,1.f},H[]={0.f,.0625f,.15f,.68f,1.f};
-        static constexpr float M2[]={.05f,.07f,.12f,.28f,.62f},M1[]={.08f,.12f,.3f,.34f,.6f};
+        static constexpr float S[]={0.f,.05f,.17f,.8f,1.f},H[]={0.f,.03f,.15f,.68f,1.f};
+        static constexpr float M2[]={.08f,.1f,.12f,.28f,.62f},M1[]={.08f,.18f,.3f,.34f,.6f};
         static constexpr float RS[]={0.f,.0625f,.25f,.68f,1.f},RM[]={.02f,.07f,.2f,.32f,.55f};
         const int I=std::max(1,std::min(5,Level))-1;
         switch(Team){case BotTeam::ReferenceSurvivor:return RS[I];case BotTeam::ReferenceMannequin:return RM[I];case BotTeam::SurvivorHelper:return H[I];case BotTeam::MannequinVsTwo:return M2[I];case BotTeam::MannequinVsSolo:return M1[I];default:return S[I];}
@@ -85,6 +85,10 @@ struct Difficulty
         Difficulty D=For(Level);D.Team=Team;const float S=ConditionSkill(D.Level,Condition,Team);
         D.Reaction=1.65f-1.25f*S;D.Memory=2.5f+8.5f*S;D.Sharing=.15f+.75f*S;D.Adaptation=.04f+.48f*S;
         D.Coordination=.12f+.78f*S;D.TurnRate=85.f+125.f*S;D.Skill=S;
+        // Bot-only survivor team, levels 1-2 only (user, 2026-11-21; see BeginnerWeight): a beginner reacts a beat late and turns slowly.
+        // This table is not read by ConditionSkill, so no other level shifts.
+        if(Team==BotTeam::Survivor){static constexpr float Slow[]={1.35f,1.175f,1.f,1.f,1.f},Turn[]={.8f,.9f,1.f,1.f,1.f};
+            D.Reaction*=Slow[D.Level-1];D.TurnRate*=Turn[D.Level-1];}
         // Balance runs only: give a master one value of the expert curve to find what weakens it.
         if(D.Level==5&&Probe()>0)
         {
@@ -131,7 +135,9 @@ inline int ProbeIndex(const Difficulty& D,int ProbeId){const int I=std::max(1,st
 // How long a survivor keeps one mannequin frozen with a stare before looking away (bot team: 1.45..3.05 s, kept
 // short at the top because a long stare lets the other bodies close in from behind;
 // beside a human the helper's cover stays short), and how long the look-away lasts: the mannequin's window.
-inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:1.45+1.6*D.Skill;}
+// Bot-only survivor team beginner weakness (user, 2026-11-21): full at level 1, half at level 2, none above.
+inline float BeginnerWeight(const Difficulty& D){static constexpr float W[]={1.f,.5f,0.f,0.f,0.f};return D.Team==BotTeam::Survivor?W[std::max(1,std::min(5,D.Level))-1]:0.f;}
+inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:(1.45+1.6*D.Skill)*(1.-.25*BeginnerWeight(D));}
 inline float LookAwaySeconds(const Difficulty& D){return std::max(.9f,D.Reaction*1.7f);}
 
 // How human the mistakes are: frequent and large at easy, rare micro-imperfections at master (never zero).
@@ -729,7 +735,7 @@ inline float PlayAffinity(uint8_t PlayStyle,Play P)
 // and split the watching with a partner. These scale with level the same way the mannequin does.
 // ---------------------------------------------------------------------------------------------
 // Chance to keep discipline (watch while moving, retreat instead of blundering) per decision window.
-inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.02f,.5f,.65f,.9f,.97f},H[]={.2f,.42f,.68f,.85f,.94f},R[]={.2f,.42f,.68f,.85f,.94f};return (D.Team==BotTeam::SurvivorHelper?H:D.Team==BotTeam::ReferenceSurvivor?R:L)[ProbeIndex(D,5)];}
+inline float WatchDiscipline(const Difficulty& D){static constexpr float L[]={.02f,.35f,.65f,.9f,.97f},H[]={.2f,.42f,.68f,.85f,.94f},R[]={.2f,.42f,.68f,.85f,.94f};return (D.Team==BotTeam::SurvivorHelper?H:D.Team==BotTeam::ReferenceSurvivor?R:L)[ProbeIndex(D,5)];}
 // Deliberate lapses even when disciplined: a look-away the mannequin can punish. Rare and short at master.
 inline float LapsePeriod(const Difficulty& D){return 2.f+6.f*D.Skill;}
 inline float LapseLength(const Difficulty& D){return .5f-.3f*D.Skill;}
@@ -898,7 +904,7 @@ struct PlayTuning
 // ---------------------------------------------------------------------------------------------
 // Map familiarity: chance a bot already knows an exit when a floor begins. The rest it finds by
 // seeing it, a teammate's word or a ping. Masters know the building; beginners explore.
-inline float MapFamiliarity(const Difficulty& D){static constexpr float F[]={.1f,.25f,.45f,.7f,.9f};return F[ProbeIndex(D,8)];}
+inline float MapFamiliarity(const Difficulty& D){static constexpr float F[]={.1f,.25f,.45f,.7f,.9f};return F[ProbeIndex(D,8)]*(1.f-BeginnerWeight(D));}
 inline bool KnowsExitAtStart(const Difficulty& D,uint32_t Hash){return static_cast<float>(Hash%1000u)/1000.f<MapFamiliarity(D);}
 
 // Emotions. Fear jumps on a near miss and fades in seconds; frustration builds on lost or frozen
@@ -927,7 +933,7 @@ inline float PingHabit(const Difficulty& D,const Persona& P)
 inline float PingDelay(const Difficulty& D,float U){return D.Reaction*(1.f+Clamp(U,0,1))+.3f;}
 inline float PingError(const Difficulty& D){return 300.f*MistakeScale(D);}
 // Answering a teammate's ping: beginners often miss it.
-inline float PingResponse(const Difficulty& D){return .45f+.5f*D.Skill;}
+inline float PingResponse(const Difficulty& D){return .45f+.5f*D.Skill-.15f*BeginnerWeight(D);}
 
 // Per-match condition from the bot and match identity: most matches are ordinary, a few are good or bad
 // days. Late in a long match concentration drops a little. Always within ConditionSkill's band.
@@ -980,7 +986,9 @@ inline bool& ReferenceStandIns(){static bool Value=false;return Value;}
 // Balance runs only (-BotSimSoloDiag=1): in the solo stand-in the "SimHelper" plays as an ordinary bot partner instead
 // of a helper, to measure how much of the solo gap the deliberately weaker helper accounts for.
 inline int& SoloDiagnostic(){static int Value=0;return Value;}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,9,6,3},E[]={9,8,7,5,2};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+// Seconds of endgame before the endgame parking count applies (against two humans only; user, 2026-11-21).
+inline double EndgameParkDelay(const Difficulty& D,bool SoloHuman){static constexpr double T[]={75,0,0,0,0};return SoloHuman?0.:T[std::max(1,std::min(5,D.Level))-1];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,9,6,3},E[]={8,7,7,5,2};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 // One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
 // values apply only then (two humans and bot-only teams keep the plain tables).
 // Own table against one human with a bot partner, tuned apart from the two-human table above.

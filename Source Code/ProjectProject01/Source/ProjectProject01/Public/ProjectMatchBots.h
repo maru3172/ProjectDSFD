@@ -208,7 +208,7 @@ private:
         double HelperSentAt=-100; // Mannequin: last time a free body was sent in while the viewed one was held frozen.
         // Mannequin: bodies a lower-level player leaves parked (existing Hold command), and when that was last reviewed.
         TArray<TWeakObjectPtr<class AMannequinAICharacter>> Parked;
-        double ParkCheckAt=0;
+        double ParkCheckAt=0,EndgameSince=-1;
         // Last survivor's way out (ProjectBots::LoneApproach) and its working state.
         uint8 Lone=255; // 255 = not chosen yet.
         bool LoneGuarded=false;

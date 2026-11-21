@@ -1677,7 +1677,9 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     if(Now>=Mine.ParkCheckAt)
     {
         Mine.ParkCheckAt=Now+1.5;
-        const int32 ParkCount=ParkedBodies(Level,Urgency>0,SoloHuman);
+        // A beginner notices the last survivor late: parked bodies wake only after the endgame has lasted a while.
+        if(Urgency>0){if(Mine.EndgameSince<0)Mine.EndgameSince=Now;}else Mine.EndgameSince=-1;
+        const int32 ParkCount=ParkedBodies(Level,Urgency>0&&Now-Mine.EndgameSince>=EndgameParkDelay(Level,SoloHuman),SoloHuman);
         FVector Ref=Body->GetActorLocation();double RefAt=-1;
         for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==1&&Entry.Seen.Target&&Entry.Seen.At>RefAt){RefAt=Entry.Seen.At;Ref=U(Entry.Seen.Position);}
         TArray<AMannequinAICharacter*,TInlineAllocator<10>> Order;for(auto* X:Bodies)if(X!=Body)Order.Add(X);
