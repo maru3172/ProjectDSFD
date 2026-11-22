@@ -304,6 +304,9 @@ private:
 	float MultiplayerSearchObserveSeconds = 2.5f;
 	void InitializeRoleSpawnPoints();
 	void InitializeMannequinSpawns();
+	/** Picks this floor's survivor starts once (each survivor in a different area, 25 m or more apart) so mannequins
+	 *  can be placed away from them before anyone spawns (user, 2026-11-22). */
+	void EnsureSurvivorStartPlan();
 	void UpdateMultiplayerMannequinAI();
 	void StopAllMannequinsForMatchEnd();
 	class APlayerCharacter* FindDetectedSurvivor(const class AMannequinAICharacter* Mannequin) const;
@@ -488,6 +491,9 @@ private:
 	TMap<FString, FMultiplayTestServerPlayerRecord> DisconnectedMatchRecords;
 	TMap<FString, FMultiplayTestMatchResult> CompletedResultsByUserId;
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<AActor>> AssignedSurvivorSpawnPoints;
+	/** This floor's survivor starts, in the order survivors take them. */
+	TArray<TWeakObjectPtr<AActor>> PlannedSurvivorStarts;
+	bool bSurvivorStartPlanned = false;
 	/** Where each survivor stood when this floor's match went live (custom game infinite lives returns them here). */
 	TMap<TWeakObjectPtr<AController>, FTransform> PlaygroundFloorStarts;
 	/** Custom game "hiding too long reveals you": per survivor, and the second light of each 5 s reveal. */
@@ -605,9 +611,9 @@ private:
     float StandardTimeLimit=1800;
     bool bCustomDefaultsCaptured=false;
 
-	/** 생존자 시작 지점에서 이 거리(cm) 안의 마네킹 후보는 먼 후보가 모자랄 때만 씁니다. */
+	/** 이번 층 생존자 시작 위치에서 이 거리(cm) 안이거나 보이는 마네킹 후보는 먼 후보가 모자랄 때만 씁니다. (2026-11-22: 15 m) */
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning", meta = (ClampMin = "0.0", UIMin = "0.0", Units = "cm"))
-	float MannequinSurvivorSpawnClearance = 2000.f;
+	float MannequinSurvivorSpawnClearance = 1500.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Multiplayer|Spawning")
 	TSubclassOf<class AMannequinAICharacter> MannequinPawnClass;

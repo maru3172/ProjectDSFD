@@ -439,6 +439,47 @@ TArray<AProjectProject01RoleSpawnPoint*> AMultiplayTestGameMode::GetRoleSpawnPoi
 	return Result;
 }
 
+void AMultiplayTestGameMode::EnsureSurvivorStartPlan()
+{
+	UWorld* World = GetWorld();
+	if (bSurvivorStartPlanned || !HasAuthority() || !IsValid(World)) return;
+	bSurvivorStartPlanned = true;
+	TArray<AProjectProject01RoleSpawnPoint*> Spots = GetRoleSpawnPoints(EProjectProject01SpawnRole::Survivor);
+	// A spot off the walkable area would start a survivor stranded: such spots are only used when no other is left.
+	if (UNavigationSystemV1* Nav = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
+	{
+		TArray<AProjectProject01RoleSpawnPoint*> OnNav;
+		for (AProjectProject01RoleSpawnPoint* Spot : Spots)
+			if (FNavLocation On; Nav->ProjectPointToNavigation(Spot->GetActorLocation(), On, FVector(60, 60, 200))) OnNav.Add(Spot);
+		if (OnNav.Num() < Spots.Num())
+			UE_LOG(LogProjectProject01Multiplayer, Warning, TEXT("Survivor start plan: %d of %d survivor spots are off the navmesh."), Spots.Num() - OnNav.Num(), Spots.Num());
+		if (!OnNav.IsEmpty()) Spots = MoveTemp(OnNav);
+	}
+	// Each survivor starts in a different area of the floor (user, 2026-11-22): every further start is a random spot at
+	// least 25 m from the starts already chosen, or the farthest one when none is that far.
+	constexpr float Apart = 2500.f;
+	for (int32 Survivor = 0; Survivor < FMath::Max(SurvivorSpawnCount, 2) + 1 && !Spots.IsEmpty(); ++Survivor)
+	{
+		TArray<int32> Far;
+		int32 Farthest = 0;
+		float FarthestGap = -1.f;
+		for (int32 I = 0; I < Spots.Num(); ++I)
+		{
+			float Gap = TNumericLimits<float>::Max();
+			for (const TWeakObjectPtr<AActor>& Chosen : PlannedSurvivorStarts)
+				if (Chosen.IsValid()) Gap = FMath::Min(Gap, static_cast<float>(FVector::Dist2D(Chosen->GetActorLocation(), Spots[I]->GetActorLocation())));
+			if (Gap >= Apart) Far.Add(I);
+			if (Gap > FarthestGap) { FarthestGap = Gap; Farthest = I; }
+		}
+		const int32 Pick = Far.IsEmpty() ? Farthest : Far[FMath::RandHelper(Far.Num())];
+		PlannedSurvivorStarts.Add(Spots[Pick]);
+		Spots.RemoveAt(Pick);
+	}
+	FString Plan;
+	for (const TWeakObjectPtr<AActor>& Start : PlannedSurvivorStarts) if (Start.IsValid()) Plan += GetNameSafe(Start.Get()) + TEXT("@") + Start->GetActorLocation().ToCompactString() + TEXT(" ");
+	UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("Survivor start plan: %s"), *Plan);
+}
+
 void AMultiplayTestGameMode::InitializeMannequinSpawns()
 {
 	UWorld* World = GetWorld();
@@ -464,13 +505,25 @@ void AMultiplayTestGameMode::InitializeMannequinSpawns()
 		}
 		// 생존자 시작 지점 바로 옆 마네킹은 시작 몇 초 만에 잡는 판을 만든다. 먼 후보를 먼저 쓰고
 		// 가까운 후보는 먼 후보가 모자랄 때만 쓴다. 먼 후보끼리의 무작위 순서는 그대로 둔다.
+		// This floor's survivor start is chosen first (EnsureSurvivorStartPlan), so only it counts, not every survivor spot.
+		// A candidate within the clearance or in plain sight of it (user, 2026-11-22: 15 m and out of sight) is kept last.
+		EnsureSurvivorStartPlan();
 		TArray<FVector> SurvivorStarts;
-		for (const AProjectProject01RoleSpawnPoint* Start : GetRoleSpawnPoints(EProjectProject01SpawnRole::Survivor)) SurvivorStarts.Add(Start->GetActorLocation());
+		for (const TWeakObjectPtr<AActor>& Start : PlannedSurvivorStarts) if (Start.IsValid()) SurvivorStarts.Add(Start->GetActorLocation());
+		if (SurvivorStarts.IsEmpty())
+			for (const AProjectProject01RoleSpawnPoint* Start : GetRoleSpawnPoints(EProjectProject01SpawnRole::Survivor)) SurvivorStarts.Add(Start->GetActorLocation());
 		if (const AActor* Arrival = AProjectProject01Elevator::FindArrivalStart(World, OptionsString)) SurvivorStarts.Add(Arrival->GetActorLocation());
+		FCollisionQueryParams Sight(SCENE_QUERY_STAT(MannequinSpawnSight), false);
+		for (TActorIterator<APawn> It(World); It; ++It) Sight.AddIgnoredActor(*It);
 		const auto IsNearSurvivorStart = [&](const AProjectProject01RoleSpawnPoint* Point)
 		{
+			const FVector At = Point->GetActorLocation();
 			for (const FVector& Start : SurvivorStarts)
-				if (FVector::DistSquared(Start, Point->GetActorLocation()) < FMath::Square(MannequinSurvivorSpawnClearance)) return true;
+			{
+				if (FVector::DistSquared(Start, At) < FMath::Square(MannequinSurvivorSpawnClearance)) return true;
+				if (FMath::Abs(Start.Z - At.Z) < 300.f &&
+					!World->LineTraceTestByChannel(Start + FVector(0,0,64), At + FVector(0,0,40), ECC_Visibility, Sight)) return true;
+			}
 			return false;
 		};
 		TArray<AProjectProject01RoleSpawnPoint*> Near;
@@ -1769,6 +1822,19 @@ AActor* AMultiplayTestGameMode::ChoosePlayerStart_Implementation(AController* Pl
 		if (Pair.Value.IsValid())
 		{
 			AlreadyAssigned.Add(Pair.Value.Get());
+		}
+	}
+
+	// The planned starts in order (each in a different area); any further survivor falls back to a free spot.
+	EnsureSurvivorStartPlan();
+	for (const TWeakObjectPtr<AActor>& Planned : PlannedSurvivorStarts)
+	{
+		if (AActor* Start = Planned.Get(); Start && !AlreadyAssigned.Contains(Start))
+		{
+			AssignedSurvivorSpawnPoints.Add(Player, Start);
+			UE_LOG(LogProjectProject01Multiplayer, Log, TEXT("Assigned survivor %s to planned start %s at %s."),
+				*GetNameSafe(Player), *GetNameSafe(Start), *Start->GetActorLocation().ToCompactString());
+			return Start;
 		}
 	}
 

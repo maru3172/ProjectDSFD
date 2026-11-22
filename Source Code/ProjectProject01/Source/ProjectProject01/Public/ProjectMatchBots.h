@@ -90,6 +90,8 @@ struct FProjectMatchBotBrain
     double NoPathSince=-1; // Has a goal, is not holding, yet cannot move toward it.
     // Stranded walk-out: every path has failed this long (not reset by goal re-picks); where it walks meanwhile.
     double StrandedSince=-1,StrandedPlanAt=0;FVector StrandedTo=FVector::ZeroVector;
+    // Off the walkable area (checked once a second): there no goal can be picked at all, which also counts as stranded.
+    double OffNavCheckAt=0;bool OffNav=false;
     // Stuck watchdog: barely moved for a while outside a deliberate hold -> go somewhere else.
     FVector AnchorAt=FVector::ZeroVector;
     double AnchorTime=-1,UnstickUntil=0;

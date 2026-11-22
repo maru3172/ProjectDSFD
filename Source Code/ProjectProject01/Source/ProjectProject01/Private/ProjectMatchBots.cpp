@@ -1379,18 +1379,26 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // follow the partial path toward the goal and press on in a straight line from its end.
     // Any hold, pause, missing goal or working path clears it: deliberate stops never turn into a walk-out.
     // Arriving also ends a path (Move returns false at the goal), so only a goal still more than 3 m off counts.
-    if(HasGoal&&!Moving&&!Holding&&Now>=B.PauseUntil&&FVector::DistSquared2D(Here,Goal)>FMath::Square(300.f)){if(B.StrandedSince<0)B.StrandedSince=Now;}
+    // Off the walkable area no goal can be picked at all, so standing there without one counts too (2026-11-22: three
+    // level-1 survivors sat a whole match off the navmesh with no goal and were never walked out).
+    if(Now>=B.OffNavCheckAt)
+    {
+        B.OffNavCheckAt=Now+1.;FNavLocation On;
+        auto* OnNav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);B.OffNav=OnNav&&!OnNav->ProjectPointToNavigation(Here,On,FVector(50,50,150));
+    }
+    const bool Idle=!Moving&&!Holding&&Now>=B.PauseUntil;
+    if(Idle&&(HasGoal?FVector::DistSquared2D(Here,Goal)>FMath::Square(300.f):B.OffNav)){if(B.StrandedSince<0)B.StrandedSince=Now;}
     else B.StrandedSince=-1;
     if(B.StrandedSince>=0&&Now-B.StrandedSince>6.)
     {
         if(Now>=B.StrandedPlanAt)
         {
-            B.StrandedPlanAt=Now+1.;B.StrandedTo=Goal;
+            B.StrandedPlanAt=Now+1.;B.StrandedTo=HasGoal?Goal:Here;
             if(auto* Nav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
             {
                 FNavLocation On;
                 if(!Nav->ProjectPointToNavigation(Here,On,FVector(50,50,150))){if(Nav->ProjectPointToNavigation(Here,On,FVector(800,800,400)))B.StrandedTo=On.Location;}
-                else if(auto* Path=UNavigationSystemV1::FindPathToLocationSynchronously(World,Here,Goal,Pawn);
+                else if(auto* Path=HasGoal?UNavigationSystemV1::FindPathToLocationSynchronously(World,Here,Goal,Pawn):nullptr;
                     Path&&Path->IsValid()&&Path->PathPoints.Num()>1&&FVector::DistSquared2D(Path->PathPoints.Last(),Here)>FMath::Square(150.f))B.StrandedTo=Path->PathPoints.Last();
             }
             UE_LOG(LogTemp,Display,TEXT("[BotStranded] Survivor=%s At=%s To=%s"),*Spec.BotId.Left(8),*Here.ToCompactString(),*B.StrandedTo.ToCompactString());

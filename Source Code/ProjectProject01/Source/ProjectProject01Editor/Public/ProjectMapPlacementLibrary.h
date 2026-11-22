@@ -31,4 +31,22 @@ public:
 	 *  Modifiers Only maps need this after any change, or tiles around runtime shutters come back empty. */
 	UFUNCTION(BlueprintCallable, Category = "Project|Placement", meta = (WorldContext = "WorldContext"))
 	static FString RebuildNavigation(UObject* WorldContext);
+
+	/**
+	 * Picks extra role spawn spots for the loaded match floor (user, 2026-11-22: 20 mannequin + 10 survivor spots per floor).
+	 * Candidates are navmesh points reachable from a survivor start with a complete path to an exit (no sealed rooms), inside
+	 * the box of the existing spawns and exits plus a small margin (no outskirts), on this storey, with floor support and
+	 * capsule room, and clear of exits, shutters and every other start. The farthest-apart candidates win, so the new spots
+	 * fill the gaps. Places nothing: returns "M x y z yaw;S x y z yaw;..." (the script spawns and tags them), or "error:...".
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Project|Placement", meta = (WorldContext = "WorldContext"))
+	static FString PickRoleSpawnSpots(UObject* WorldContext, int32 MannequinTotal = 20, int32 SurvivorTotal = 10, int32 Seed = 1);
+
+	/**
+	 * Checks every role spawn spot already on the map against the trap rules of PickRoleSpawnSpots (on the navmesh, floor
+	 * support, capsule room, a complete path to an exit). Nothing is moved here: returns one "name ok", "name move x y z" (the
+	 * nearest passing spot within 5 m) or "name fail <reason>" entry per spot, separated by ';'.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Project|Placement", meta = (WorldContext = "WorldContext"))
+	static FString CheckRoleSpawnSpots(UObject* WorldContext);
 };
