@@ -1387,7 +1387,11 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         auto* OnNav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);B.OffNav=OnNav&&!OnNav->ProjectPointToNavigation(Here,On,FVector(50,50,150));
     }
     const bool Idle=!Moving&&!Holding&&Now>=B.PauseUntil;
-    if(Idle&&(HasGoal?FVector::DistSquared2D(Here,Goal)>FMath::Square(300.f):B.OffNav)){if(B.StrandedSince<0)B.StrandedSince=Now;}
+    // An exit goal is reached only by passing through its volume, so standing idle near one is never an arrival
+    // (2026-11-22: two survivors stood 2-3 m from an escalator exit for minutes, one off the navmesh, one on it).
+    const AActor* ExitObjective=Mine.Objective.Get();
+    const bool ExitGoal=HasGoal&&!SelectedElevator&&ExitObjective&&FVector::DistSquared2D(Goal,InsideGoal(ExitObjective))<FMath::Square(50.f);
+    if(Idle&&(HasGoal?(ExitGoal||B.OffNav||FVector::DistSquared2D(Here,Goal)>FMath::Square(300.f)):B.OffNav)){if(B.StrandedSince<0)B.StrandedSince=Now;}
     else B.StrandedSince=-1;
     if(B.StrandedSince>=0&&Now-B.StrandedSince>6.)
     {
@@ -1407,9 +1411,11 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         if(!Out.IsNearlyZero())Pawn->AddMovementInput(Out,1.f);
     }
     // At an exit volume's goal but not through yet: step straight into the box (it triggers on overlap).
-    if(HasGoal&&!SelectedElevator&&!Holding&&FVector::DistSquared2D(Here,Goal)<FMath::Square(200.f))
-        if(const AActor* Exit=Mine.Objective.Get();Exit&&FVector::DistSquared2D(Goal,InsideGoal(Exit))<FMath::Square(50.f))
-            Pawn->AddMovementInput((Exit->GetComponentsBoundingBox(true).GetCenter()-Here).GetSafeNormal2D(),1.f);
+    // Covers the whole 3 m arrival radius (a 2-3 m gap used to get neither this push nor a walk-out); an off-navmesh
+    // walk-out goes first, since pushing at the box is what left it stuck there.
+    const bool WalkingOut=B.StrandedSince>=0&&Now-B.StrandedSince>6.&&B.OffNav;
+    if(ExitGoal&&!Holding&&!WalkingOut&&FVector::DistSquared2D(Here,Goal)<FMath::Square(320.f))
+        Pawn->AddMovementInput((ExitObjective->GetComponentsBoundingBox(true).GetCenter()-Here).GetSafeNormal2D(),1.f);
     // Fidgets while waiting with nothing in sight (never during a silent hide, a stare or a play hold).
     const bool AtElevator=SelectedElevator&&FVector::DistSquared2D(Here,Goal)<FMath::Square(160.f);
     // Only a real wait (the elevator after pressing) gets fidgets; anything else keeps moving.

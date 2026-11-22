@@ -125,6 +125,9 @@ private:
     void RefreshNavCut();
     UPROPERTY(Transient) TObjectPtr<UNavModifierComponent> SealNavModifier;
     UPROPERTY(Transient) TObjectPtr<UStaticMesh> NormalMesh;
+    FVector NormalScale=FVector::OneVector;
+    /** Added to the closed/open spots so a tilted panel turns about its middle, whatever the model's pivot. */
+    FVector TiltPivotFix=FVector::ZeroVector;
     double ServerNow()const;
     bool bMotionReady=false;
 	// 셔터가 완전히 내려가 있을 때의 상대 위치

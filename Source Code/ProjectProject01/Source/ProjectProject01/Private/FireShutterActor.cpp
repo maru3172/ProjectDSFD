@@ -238,12 +238,32 @@ void AFireShutterActor::ShowLayoutState()
     // Tucked away this match: not drawn, no collision (it sits above the ceiling, out of play). Server and clients alike.
     const bool bAway=LayoutState==EProjectShutterLayoutState::Raised;
     SetActorHiddenInGame(bAway);SetActorEnableCollision(!bAway);
-    if(bMotionReady)ItemMesh->SetRelativeRotation(ClosedRotation+FRotator(0.f,0.f,BrokenTilt));
     const bool bSealed=LayoutState==EProjectShutterLayoutState::Sealed||LayoutState==EProjectShutterLayoutState::Hanging; // broken look
     if(BrokenMesh)
     {
-        if(!NormalMesh)NormalMesh=ItemMesh->GetStaticMesh();
+        if(!NormalMesh){NormalMesh=ItemMesh->GetStaticMesh();NormalScale=ItemMesh->GetRelativeScale3D();}
         ItemMesh->SetStaticMesh(bSealed?BrokenMesh.Get():NormalMesh.Get());
+        // The broken model need not share the normal one's size: scale it to fill the same box.
+        FVector Scale=NormalScale;
+        if(bSealed&&NormalMesh)
+        {
+            const FVector A=NormalMesh->GetBoundingBox().GetSize(),B=BrokenMesh->GetBoundingBox().GetSize();
+            for(int32 I=0;I<3;++I)if(A[I]>1.f&&B[I]>1.f)Scale[I]*=A[I]/B[I];
+        }
+        ItemMesh->SetRelativeScale3D(Scale);
+    }
+    if(bMotionReady)
+    {
+        // Tilt in the panel's own plane, about its thinnest axis (the placeholder cube is thin along X, the imported
+        // shutter models along Y) and about its middle (the models' pivot is at the bottom edge).
+        const UStaticMesh* Shown=ItemMesh->GetStaticMesh();
+        const FBox Local=Shown?Shown->GetBoundingBox():FBox(FVector(-1),FVector(1));
+        const FVector Scale=ItemMesh->GetRelativeScale3D(),Size=Local.GetSize()*Scale.GetAbs(),Middle=Local.GetCenter()*Scale;
+        const FRotator Tilted=ClosedRotation+(Size.X<=Size.Y?FRotator(0.f,0.f,BrokenTilt):FRotator(BrokenTilt,0.f,0.f));
+        const FVector Fix=ClosedRotation.RotateVector(Middle)-Tilted.RotateVector(Middle),Step=Fix-TiltPivotFix;
+        TiltPivotFix=Fix;ClosedLocation+=Step;OpenLocation+=Step;
+        ItemMesh->SetRelativeLocation(ItemMesh->GetRelativeLocation()+Step);
+        ItemMesh->SetRelativeRotation(Tilted);
     }
     RefreshNavCut();
 }
