@@ -175,6 +175,35 @@ FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeLongStartSegment(in
 	return Segment;
 }
 
+void AProjectShutterAreaGenerator::TryAddShortEndSegment(const FIntPoint& LongSectionEndpoint, EProjectShutterGridDirection LongDirection, FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 긴 구간과 직각인 짧은 셔터 방향을 선택한다.
+	const EProjectShutterGridDirection ShortDirection = 
+		LongDirection == 
+			EProjectShutterGridDirection::Horizontal
+				? EProjectShutterGridDirection::Vertical
+				: EProjectShutterGridDirection::Horizontal;
+	
+	// 끝점에서 양쪽 중 어느 방향으로 뻗을지 무작위로 선택한다.
+	const int32 ShortDirectionSign = 
+		RandomStream.RandRange(0, 1) == 0
+			? -1
+			: 1;
+	
+	// 선태한 방향으로 길이 1 칸의 짧은 셔터를 만든다.
+	const FProjectShutterGridSegment Candidate = 
+		MakeSegmentFromEndpoint(LongSectionEndpoint, ShortDirection, ShortDirectionSign);
+	
+	// 구역 밖이거나 배치 규칙을 위반하면 추가하지 않는다.
+	if (!CanPlaceSegment(Candidate, Segments))
+	{
+		return;
+	}
+	
+	// 검사를 통과한 짧은 셔터를 결과 배열에 추가한다.
+	Segments.Add(Candidate);
+}
+
 // 셔터 선분이 생성 구역 내부에 있는지 검사한다.
 bool AProjectShutterAreaGenerator::IsSegmentInsideArea(const FProjectShutterGridSegment& Segment) const
 {

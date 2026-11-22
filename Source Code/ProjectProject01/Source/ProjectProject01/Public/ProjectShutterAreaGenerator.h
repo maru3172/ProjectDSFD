@@ -90,6 +90,13 @@ private:
 	FProjectShutterGridSegment MakeLongStartSegment(
 		int32 ShortAxisCandidateIndex) const;
 	
+	// 긴 구간 끝점에서 직각 방향의 짧은 셔터 1 개를 추가한다.
+	void TryAddShortEndSegment(
+		const FIntPoint& LongSectionEndpoint,
+		EProjectShutterGridDirection LongDirection,
+		FRandomStream& RandomStream,
+		TArray<FProjectShutterGridSegment>& Segments) const;
+	
 	// 셔터 선분이 생성 구역 내부에 있는지 검사한다.
 	bool IsSegmentInsideArea(
 		const FProjectShutterGridSegment& Segment) const;
