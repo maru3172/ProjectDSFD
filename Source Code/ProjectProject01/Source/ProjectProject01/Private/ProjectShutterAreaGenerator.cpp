@@ -632,7 +632,7 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 			GetSegmentEndpoints(NextSegment, NextStart, NextEnd);
 			
 			// 다음 여장은 새 셔터의 끝점에서 시작한다.
-			CurrentEndpoint = NextStart;
+			CurrentEndpoint = NextEnd;
 			
 			// 긴 구간의 장축 셔터 개수를 증가시킨다.
 			++LongSegmentCount;
