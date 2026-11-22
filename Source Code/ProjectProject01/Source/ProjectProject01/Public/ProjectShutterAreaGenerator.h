@@ -137,17 +137,9 @@ private:
 		EProjectShutterGridDirection Direction,
 		int32 DirectionSign) const;
 	
-	// 현재 연속 개수에 맞는 직선 연속 확률을 반환한다.
-	float GetContinuationChance(
-		int32 StraightRunLength) const;
-	
 	// 현재 긴 구간 길이에 맞는 다음 셔터 연장 확률을 반환한다.
 	float GetLengthBasedContinuationChance(
 		float CurrentLength) const;
-	
-	// 현재 배치와 연결되지 않은 새로운 시작 셔터 후보를 만든다.
-	FProjectShutterGridSegment MakeRandomStartSegment(
-		FRandomStream& RandomStream) const;
 	
 	// 검증이 끝난 셔터 선분 하나를 실제 셔터 액터로 생성한다.
 	bool SpawnPreviewSegment(
@@ -189,16 +181,8 @@ private:
 	// 생성기가 실제로 생성할 방화셔터 액터 또는 BP 클래스다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<AFireShutterActor> ShutterClass;
-
-	// 1 일 차 미리보기에서 생성할 최대 셔터 개수다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
-	int32 PreviewShutterCount = 12;
 	
-	// 높은 연속 생성 확률을 적용할 최대 직선 셔터 개수다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1"))
-	int32 ContinuationThreshold = 4;
-	
-	// 기준 개수에 도달하기 전에 직선 생성을 계속할 확률이다.
+	// 감소 시작 길이 이전에 다음 셔터를 연장할 확률이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
 	float EarlyContinuationChance = 0.75f;
 	
@@ -206,15 +190,11 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
 	float ContinuationReductionStartLength = 600.0f;
 	
-	// 기준 개수에 도달한 뒤 직선 생성을 계속할 확률이다.
+	// 감소 시작 길이 이후에 다음 셔터를 연장할 확률이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
 	float LateContinuationChance = 0.25f;
 	
 	// 같은 값에서 같은 배치 결과를 만들기 위한 랜덤 시드다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true"))
 	int32 RandomSeed = 12345;
-	
-	// 유효한 위치를 찾지 못할 때 무한 반복을 막는 최대 시도 횟수다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1"))
-	int32 MaxPlacementAttempts = 1000;
 };
