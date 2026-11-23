@@ -68,7 +68,7 @@ struct Difficulty
     // MannequinVsSolo = against one human with a bot partner. Every curve stays strictly increasing.
     static float SideSkill(int Level,BotTeam Team)
     {
-        static constexpr float S[]={0.f,.05f,.06f,.95f,1.f},H[]={0.f,.03f,.15f,.8f,1.f};
+        static constexpr float S[]={0.f,.04f,.05f,.95f,1.f},H[]={0.f,.03f,.15f,.8f,1.f};
         static constexpr float M2[]={.08f,.1f,.36f,.42f,.62f},M1[]={.08f,.18f,.3f,.34f,.6f};
         static constexpr float RS[]={0.f,.0625f,.25f,.68f,1.f},RM[]={.02f,.07f,.2f,.32f,.55f};
         const int I=std::max(1,std::min(5,Level))-1;
@@ -988,7 +988,7 @@ inline bool& ReferenceStandIns(){static bool Value=false;return Value;}
 inline int& SoloDiagnostic(){static int Value=0;return Value;}
 // Seconds of endgame before the endgame parking count applies (against two humans only; user, 2026-11-21).
 inline double EndgameParkDelay(const Difficulty& D,bool SoloHuman){static constexpr double T[]={75,0,0,0,0};return SoloHuman?0.:T[std::max(1,std::min(5,D.Level))-1];}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,8,6,3},E[]={8,7,7,5,2};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,9,6,3},E[]={8,7,6,5,2};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 // One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
 // values apply only then (two humans and bot-only teams keep the plain tables).
 // Own table against one human with a bot partner, tuned apart from the two-human table above.
