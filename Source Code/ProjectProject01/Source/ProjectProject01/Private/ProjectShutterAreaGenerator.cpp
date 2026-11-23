@@ -110,6 +110,18 @@ EProjectShutterGridDirection AProjectShutterAreaGenerator::GetLongAxisDirection(
 	return EProjectShutterGridDirection::Vertical;
 }
 
+EProjectShutterGridDirection AProjectShutterAreaGenerator::GetShortAxisDirection() const
+{
+	// 장축이 가로면 세로 방향을 단축으로 사용한다.
+	if (GetLongAxisDirection() == EProjectShutterGridDirection::Horizontal)
+	{
+		return EProjectShutterGridDirection::Vertical;
+	}
+
+	// 장축이 세로면 가로 방향을 단축으로 사용한다.
+	return EProjectShutterGridDirection::Horizontal;
+}
+
 float AProjectShutterAreaGenerator::GetLongAxisLength() const
 {
 	// X 와 Y 중 더 긴 영역의 길이를 반환한다.
@@ -126,16 +138,16 @@ float AProjectShutterAreaGenerator::GetShortAxisLength() const
 		FMath::Abs(AreaEndOffset.Y));
 }
 
-float AProjectShutterAreaGenerator::GetLongSectionGenerationChance() const
+float AProjectShutterAreaGenerator::GetSectionGenerationChance() const
 {
 	// 0 으로 나누는 상황을 막기 위해 안전한 기준 폭을 사용한다.
-	const float SafeReferenceWidth = FMath::Max(ReferenceShortAxisWidth, 1.0f);
+	const float SafeReferenceWidth = FMath::Max(ReferenceLongAxisWidth, 1.0f);
 	
 	// 확률 계산에 사용할 안전한 후보 개수를 가져온다.
-	const int32 CandidateCount = FMath::Max(GetShortAxisCandidateCount(), 1);
+	const int32 CandidateCount = FMath::Max(GetLongAxisCandidateCount(), 1);
 	
-	// 현재 단축 폭에서 기대하는 평균 긴 구간 개수를 계산한다.
-	const float TargetAverageCount = ReferenceAverageLongSectionCount * (GetShortAxisLength() / SafeReferenceWidth);
+	// 현재 장축 폭에서 기대하는 평균 주 구간 개수를 계산한다.
+	const float TargetAverageCount = ReferenceAverageSectionCount * (GetLongAxisLength() / SafeReferenceWidth);
 	
 	// 목표 평균을 후보 수로 나눠 후보 하나의 확률을 계산한다.
 	return FMath::Clamp(	
@@ -144,55 +156,55 @@ float AProjectShutterAreaGenerator::GetLongSectionGenerationChance() const
 		1.0f);
 }
 
-int32 AProjectShutterAreaGenerator::GetShortAxisCandidateCount() const
+int32 AProjectShutterAreaGenerator::GetLongAxisCandidateCount() const
 {
 	// 0 으로 나누는 상황을 막기 위해 안전한 셔터 길이를 사용한다.
 	const float SafeShutterLength = FMath::Max(ShutterLength, 1.0f);
 	
-	// 단축의 격자점 개수에 시작점을 포함한다.
-	return FMath::FloorToInt(GetShortAxisLength() / SafeShutterLength) + 1;
+	// 장축의 격자점 개수에 시작점을 포함한다.
+	return FMath::FloorToInt(GetLongAxisLength() / SafeShutterLength) + 1;
 }
 
-FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeLongStartSegment(int32 ShortAxisCandidateIndex) const
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeSectionStartSegment(int32 LongAxisCandidateIndex) const
 {
-	// 첫 장축 셔터 데이터를 준비한다.
+	// 첫 주 구간 셔터 데이터를 준비한다.
 	FProjectShutterGridSegment Segment;
 	
-	// 현재 영역의 장축 방향을 적용한다.
-	Segment.Direction = GetLongAxisDirection();
+	// 현재 영역의 단축 방향을 주 생성 방향으로 적용한다.
+	Segment.Direction = GetShortAxisDirection();
 	
-	// 가로가 장축이면 X 축 시작점에서 Y 후보를 사용한다.
+	// 단축이 가로면 X 축 시작점에서 장축 Y 후보를 사용한다.
 	if (Segment.Direction == EProjectShutterGridDirection::Horizontal)
 	{
-		Segment.Start = FIntPoint(0, ShortAxisCandidateIndex);
+		Segment.Start = FIntPoint(0, LongAxisCandidateIndex);
 		
 		return Segment;
 	}
 	
-	// 세로가 장축이면 Y 축 시작점에서 X 후보를 사용한다.
-	Segment.Start = FIntPoint(ShortAxisCandidateIndex, 0);
+	// 단축이 세로면 Y 축 시작점에서 장축 X 후보를 사용한다.
+	Segment.Start = FIntPoint(LongAxisCandidateIndex, 0);
 	
 	return Segment;
 }
 
-void AProjectShutterAreaGenerator::TryAddShortEndSegment(const FIntPoint& LongSectionEndpoint, EProjectShutterGridDirection LongDirection, FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments) const
+void AProjectShutterAreaGenerator::TryAddPerpendicularEndSegment(const FIntPoint& SectionEndpoint, EProjectShutterGridDirection SectionDirection, FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments) const
 {
-	// 긴 구간과 직각인 짧은 셔터 방향을 선택한다.
-	const EProjectShutterGridDirection ShortDirection = 
-		LongDirection == 
+	// 주 생성 구간과 직각인 끝 셔터 방향을 선택한다.
+	const EProjectShutterGridDirection PerpendicularDirection =
+		SectionDirection ==
 			EProjectShutterGridDirection::Horizontal
 				? EProjectShutterGridDirection::Vertical
 				: EProjectShutterGridDirection::Horizontal;
 	
 	// 끝점에서 양쪽 중 어느 방향으로 뻗을지 무작위로 선택한다.
-	const int32 ShortDirectionSign = 
+	const int32 PerpendicularDirectionSign =
 		RandomStream.RandRange(0, 1) == 0
 			? -1
 			: 1;
 	
-	// 선태한 방향으로 길이 1 칸의 짧은 셔터를 만든다.
-	const FProjectShutterGridSegment Candidate = 
-		MakeSegmentFromEndpoint(LongSectionEndpoint, ShortDirection, ShortDirectionSign);
+	// 선택한 방향으로 길이 한 칸의 직각 셔터를 만든다.
+	const FProjectShutterGridSegment Candidate =
+		MakeSegmentFromEndpoint(SectionEndpoint, PerpendicularDirection, PerpendicularDirectionSign);
 	
 	// 구역 밖이거나 배치 규칙을 위반하면 추가하지 않는다.
 	if (!CanPlaceSegment(Candidate, Segments))
@@ -537,10 +549,10 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 		return;
 	}
 	
-	// 장축 방향에 셔터 1 개가 들어갈 공간이 없으면 종료한다.
-	if (GetLongAxisLength() < ShutterLength)
+	// 단축 방향에 셔터 한 개가 들어갈 공간이 없으면 종료한다.
+	if (GetShortAxisLength() < ShutterLength)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("%s: 장축 길이가 셔터 길이보다 짧습니다."), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("%s: 단축 길이가 셔터 길이보다 짧습니다."), *GetName());
 		
 		ClearGeneratedShutters();
 		return;
@@ -555,22 +567,22 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 	// 규칙 검사를 통과한 셔터 선분 데이터를 보관한다.
 	TArray<FProjectShutterGridSegment> GeneratedSegments;
 	
-	// 생성된 각 긴 구간의 시작점과 끝점을 보관한다.
-	TArray<TPair<FIntPoint, FIntPoint>> LongSectionEndpoints;
+	// 생성된 각 주 구간의 시작점과 끝점을 보관한다.
+	TArray<TPair<FIntPoint, FIntPoint>> SectionEndpoints;
 	
-	// 영역의 장축 방향을 가졍노다.
-	const EProjectShutterGridDirection LongDirection = GetLongAxisDirection();
+	// 영역의 단축 방향을 주 셔터 생성 방향으로 사용한다.
+	const EProjectShutterGridDirection SectionDirection = GetShortAxisDirection();
 	
-	// 단축 방향의 시작 후보 개수를 가져온다.
-	const int32 CandidateCount = GetShortAxisCandidateCount();
+	// 장축 방향의 시작 후보 개수를 가져온다.
+	const int32 CandidateCount = GetLongAxisCandidateCount();
 	
-	// 후보 하나당 긴 구간 생성 확률을 계산한다.
-	const float GenerationChance = GetLongSectionGenerationChance();
+	// 후보 하나당 주 구간 생성 확률을 계산한다.
+	const float GenerationChance = GetSectionGenerationChance();
 	
-	// 실제로 생성된 긴 구간 개수를 기록한다.
-	int32 GeneratedLongSectionCount = 0;
+	// 실제로 생성된 주 구간 개수를 기록한다.
+	int32 GeneratedSectionCount = 0;
 	
-	// 단축 방향의 모든 시작 후보를 순서대로 확인한다.
+	// 장축 방향의 모든 시작 후보를 순서대로 확인한다.
 	for (int32 CandidateIndex = 0; CandidateIndex < CandidateCount; ++CandidateIndex)
 	{
 		// 후보별 독립 확률 판정에 실패하면 건너뛴다.
@@ -579,43 +591,43 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 			continue;
 		}
 		
-		// 현재 단축 후보에서 첫 장축 셔터를 만든다.
-		const FProjectShutterGridSegment StartSegment = MakeLongStartSegment(CandidateIndex);
+		// 현재 장축 후보에서 단축 방향의 첫 셔터를 만든다.
+		const FProjectShutterGridSegment StartSegment = MakeSectionStartSegment(CandidateIndex);
 		
-		// 첫 셔터가 배치됤 수 없으면 해당 후보를 건너뛴다.
+		// 첫 셔터를 배치할 수 없으면 해당 후보를 건너뛴다.
 		if (!CanPlaceSegment(StartSegment, GeneratedSegments))
 		{
 			continue;
 		}
 		
-		// 첫 장축 셔터를 결과에 추가한다.
+		// 첫 주 구간 셔터를 결과에 추가한다.
 		GeneratedSegments.Add(StartSegment);
 		
 		// 첫 셔터의 시작점과 끝점을 가져온다.
-		FIntPoint LongSectionStart;
+		FIntPoint SectionStart;
 		FIntPoint CurrentEndpoint;
-		GetSegmentEndpoints(StartSegment, LongSectionStart, CurrentEndpoint);
+		GetSegmentEndpoints(StartSegment, SectionStart, CurrentEndpoint);
 		
-		// 현재 긴 구간을 구서아는 장축 셔터 개수다.
-		int32 LongSegmentCount = 1;
+		// 현재 주 구간을 구성하는 셔터 개수다.
+		int32 SectionSegmentCount = 1;
 		
-		// 확률과 영역 조건이 허용하는 동안 장축으로 연장한다.
+		// 확률과 영역 조건이 허용하는 동안 단축 방향으로 연장한다.
 		while (true)
 		{
-			// 현재 긴 구간의 실제 길이를 계산한다.
-			const float CurrentLength = LongSegmentCount * ShutterLength;
+			// 현재 주 구간의 실제 길이를 계산한다.
+			const float CurrentLength = SectionSegmentCount * ShutterLength;
 			
-			// 현재 길이에 맞는 다음 셔터 연장 확률을 가졍노다.
+			// 현재 길이에 맞는 다음 셔터 연장 확률을 가져온다.
 			const float ContinuationChance = GetLengthBasedContinuationChance(CurrentLength);
 			
-			// 연장 확률 판정에 실패하면 긴 구간을 종료한다.
+			// 연장 확률 판정에 실패하면 현재 주 구간을 종료한다.
 			if (RandomStream.FRand() >= ContinuationChance)
 			{
 				break;
 			}
 			
-			// 현재 끝점에서 장축 방향으로 다음 셔터를 만든다.
-			const FProjectShutterGridSegment NextSegment = MakeSegmentFromEndpoint(CurrentEndpoint, LongDirection, 1);
+			// 현재 끝점에서 단축 방향으로 다음 셔터를 만든다.
+			const FProjectShutterGridSegment NextSegment = MakeSegmentFromEndpoint(CurrentEndpoint, SectionDirection, 1);
 			
 			// 영역 밖이거나 기존 셔터와 충돌하면 연장을 종료한다.
 			if (!CanPlaceSegment(NextSegment, GeneratedSegments))
@@ -631,28 +643,28 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 			FIntPoint NextEnd;
 			GetSegmentEndpoints(NextSegment, NextStart, NextEnd);
 			
-			// 다음 여장은 새 셔터의 끝점에서 시작한다.
+			// 다음 연장은 새 셔터의 끝점에서 시작한다.
 			CurrentEndpoint = NextEnd;
 			
-			// 긴 구간의 장축 셔터 개수를 증가시킨다.
-			++LongSegmentCount;
+			// 주 구간의 셔터 개수를 증가시킨다.
+			++SectionSegmentCount;
 		}
 		
-		// 완성된 긴 구간의 양 끝점을 저장한다.
-		LongSectionEndpoints.Add(TPair<FIntPoint, FIntPoint>(LongSectionStart, CurrentEndpoint));
+		// 완성된 주 구간의 양 끝점을 저장한다.
+		SectionEndpoints.Add(TPair<FIntPoint, FIntPoint>(SectionStart, CurrentEndpoint));
 		
-		// 생성된 긴 구간 개수를 증가시킨다.
-		++GeneratedLongSectionCount;
+		// 생성된 주 구간 개수를 증가시킨다.
+		++GeneratedSectionCount;
 	}
 	
-	// 모든 긴 구간이 완성된 뒤 각 구간의 양 끝을 처리한다.
-	for (const TPair<FIntPoint, FIntPoint>& Endpoints : LongSectionEndpoints)
+	// 모든 주 구간이 완성된 뒤 각 구간의 양 끝을 처리한다.
+	for (const TPair<FIntPoint, FIntPoint>& Endpoints : SectionEndpoints)
 	{
-		// 긴 구간 시작점에 직각 셔터 1 개를 시도한다.
-		TryAddShortEndSegment(Endpoints.Key, LongDirection, RandomStream, GeneratedSegments);
+		// 주 구간 시작점에 직각 셔터 한 개를 시도한다.
+		TryAddPerpendicularEndSegment(Endpoints.Key, SectionDirection, RandomStream, GeneratedSegments);
 		
-		// 긴 구간 끝점에 직각 셔터 1 개를 시도한다.
-		TryAddShortEndSegment(Endpoints.Key, LongDirection, RandomStream, GeneratedSegments);
+		// 주 구간 끝점에 직각 셔터 한 개를 시도한다.
+		TryAddPerpendicularEndSegment(Endpoints.Value, SectionDirection, RandomStream, GeneratedSegments);
 	}
 	
 	// 검증이 끝난 선분만 실제 셔터 액터로 생성한다.
@@ -662,7 +674,7 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 		const bool bSpawnSucceed = 
 			SpawnPreviewSegment(GeneratedSegments[SegmentIndex], SegmentIndex);
 		
-		// 액터 생성에 실해파면 로그에 남긴다.
+		// 액터 생성에 실패하면 로그에 남긴다.
 		if (!bSpawnSucceed)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("%s: %d 번 셔터 생성에 실패했습니다."), *GetName(), SegmentIndex);
@@ -673,8 +685,8 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 	UE_LOG(
 		LogTemp,
 		Log,
-		TEXT("%s: 후보 %d 개, 확률 %.3f, 긴 구간 %d 개 , 셔터 %d 개 , 시드 %d"),
-		*GetName(), CandidateCount, GenerationChance, GeneratedLongSectionCount, GeneratedSegments.Num(), RandomSeed);
+		TEXT("%s: 장축 후보 %d 개, 확률 %.3f, 주 구간 %d 개, 셔터 %d 개, 시드 %d"),
+		*GetName(), CandidateCount, GenerationChance, GeneratedSectionCount, GeneratedSegments.Num(), RandomSeed);
 }
 
 // 이 생성기가 만든 미리보기 셔터를 모두 제거한다.

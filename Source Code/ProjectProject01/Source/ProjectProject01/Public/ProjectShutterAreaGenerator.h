@@ -73,6 +73,9 @@ private:
 	
 	// 생성 영역에서 더 긴 축의 셔터 방향을 반환한다.
 	EProjectShutterGridDirection GetLongAxisDirection() const;
+
+	// 생성 영역에서 더 짧은 축의 셔터 방향을 반환한다.
+	EProjectShutterGridDirection GetShortAxisDirection() const;
 	
 	// 생성 영역의 장축 길이를 cm 단위로 반환한다.
 	float GetLongAxisLength() const;
@@ -80,20 +83,20 @@ private:
 	// 생성 영역의 단축 길이를 cm 단위로 반환한다.
 	float GetShortAxisLength() const;
 	
-	// 단축 방향에 배치할 시작 후보 개수를 반환한다.
-	int32 GetShortAxisCandidateCount() const;
+	// 장축 방향에 배치할 시작 후보 개수를 반환한다.
+	int32 GetLongAxisCandidateCount() const;
 	
-	// 단축 폭을 기준으로 긴 구간 후보 하나의 생성 확률을 반환한다.
-	float GetLongSectionGenerationChance() const;
+	// 장축 폭을 기준으로 주 생성 구간 후보 하나의 생성 확률을 반환한다.
+	float GetSectionGenerationChance() const;
 	
-	// 단축 후보 위치에서 장축 방향의 1 번째 셔터를 만든다.
-	FProjectShutterGridSegment MakeLongStartSegment(
-		int32 ShortAxisCandidateIndex) const;
+	// 장축 후보 위치에서 단축 방향의 첫 번째 셔터를 만든다.
+	FProjectShutterGridSegment MakeSectionStartSegment(
+		int32 LongAxisCandidateIndex) const;
 	
-	// 긴 구간 끝점에서 직각 방향의 짧은 셔터 1 개를 추가한다.
-	void TryAddShortEndSegment(
-		const FIntPoint& LongSectionEndpoint,
-		EProjectShutterGridDirection LongDirection,
+	// 주 생성 구간 끝점에서 직각 방향의 셔터 한 개를 추가한다.
+	void TryAddPerpendicularEndSegment(
+		const FIntPoint& SectionEndpoint,
+		EProjectShutterGridDirection SectionDirection,
 		FRandomStream& RandomStream,
 		TArray<FProjectShutterGridSegment>& Segments) const;
 	
@@ -170,13 +173,13 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Grid", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
 	float ShutterLength = 300.0f;
 	
-	// 긴 구간 생성 확률을 계산할 때 사용하는 기준 단축 폭이다.
+	// 주 생성 구간 확률을 계산할 때 사용하는 기준 장축 폭이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
-	float ReferenceShortAxisWidth = 1000.0f;
+	float ReferenceLongAxisWidth = 1000.0f;
 	
-	// 기준 단축 폭에서 생성할 긴 구간의 평균 개수다.
+	// 기준 장축 폭에서 생성할 주 구간의 평균 개수다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float ReferenceAverageLongSectionCount = 1.5f;
+	float ReferenceAverageSectionCount = 1.5f;
 	
 	// 생성기가 실제로 생성할 방화셔터 액터 또는 BP 클래스다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Spawn", meta = (AllowPrivateAccess = "true"))
