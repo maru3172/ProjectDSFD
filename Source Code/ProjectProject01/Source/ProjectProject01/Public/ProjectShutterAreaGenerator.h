@@ -128,6 +128,11 @@ private:
 	bool DoesSegmentCrossExistingSegment(
 		const FProjectShutterGridSegment& Candidate,
 		const TArray<FProjectShutterGridSegment>& Segments) const;
+
+	// 후보 셔터를 추가했을 때 닫힌 경로가 만들어지는지 검사한다.
+	bool WouldCreateClosedCycle(
+		const FProjectShutterGridSegment& Candidate,
+		const TArray<FProjectShutterGridSegment>& Segments) const;
 	
 	// 후보 셔터가 현재 배치 규칙을 모두 만족하는지 검사한다.
 	bool CanPlaceSegment(

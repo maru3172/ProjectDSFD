@@ -392,6 +392,69 @@ bool AProjectShutterAreaGenerator::DoesSegmentCrossExistingSegment(const FProjec
 	return false;
 }
 
+bool AProjectShutterAreaGenerator::WouldCreateClosedCycle(const FProjectShutterGridSegment& Candidate, const TArray<FProjectShutterGridSegment>& Segments) const
+{
+	// 후보 셔터의 양 끝점을 가져온다.
+	FIntPoint CandidateStart;
+	FIntPoint CandidateEnd;
+	GetSegmentEndpoints(Candidate, CandidateStart, CandidateEnd);
+
+	// 시작점에서 기존 셔터 경로를 따라 탐색할 격자점을 보관한다.
+	TArray<FIntPoint> PendingPoints;
+	PendingPoints.Add(CandidateStart);
+
+	// 같은 격자점을 반복해서 탐색하지 않도록 방문한 점을 기록한다.
+	TSet<FIntPoint> VisitedPoints;
+	VisitedPoints.Add(CandidateStart);
+
+	// 기존 셔터만 이용해 후보의 반대쪽 끝점에 도달할 수 있는지 확인한다.
+	for (int32 PendingIndex = 0; PendingIndex < PendingPoints.Num(); ++PendingIndex)
+	{
+		// 현재 탐색 중인 격자점을 가져온다.
+		const FIntPoint CurrentPoint = PendingPoints[PendingIndex];
+
+		// 현재 격자점과 연결된 모든 기존 셔터를 확인한다.
+		for (const FProjectShutterGridSegment& Existing : Segments)
+		{
+			// 기존 셔터의 양 끝점을 가져온다.
+			FIntPoint ExistingStart;
+			FIntPoint ExistingEnd;
+			GetSegmentEndpoints(Existing, ExistingStart, ExistingEnd);
+
+			// 현재 점과 연결되지 않은 셔터는 건너뛴다.
+			if (CurrentPoint != ExistingStart && CurrentPoint != ExistingEnd)
+			{
+				continue;
+			}
+
+			// 현재 점의 반대편에 있는 이웃 격자점을 가져온다.
+			const FIntPoint NeighborPoint =
+				CurrentPoint == ExistingStart
+					? ExistingEnd
+					: ExistingStart;
+
+			// 기존 경로로 후보 끝점에 도달하면 후보가 닫힌 고리를 만든다.
+			if (NeighborPoint == CandidateEnd)
+			{
+				return true;
+			}
+
+			// 이미 확인한 격자점은 다시 탐색하지 않는다.
+			if (VisitedPoints.Contains(NeighborPoint))
+			{
+				continue;
+			}
+
+			// 새로 발견한 격자점을 다음 탐색 대상으로 등록한다.
+			VisitedPoints.Add(NeighborPoint);
+			PendingPoints.Add(NeighborPoint);
+		}
+	}
+
+	// 후보 양 끝점 사이에 기존 경로가 없으므로 닫힌 고리가 생기지 않는다.
+	return false;
+}
+
 bool AProjectShutterAreaGenerator::CanPlaceSegment(const FProjectShutterGridSegment& Candidate, const TArray<FProjectShutterGridSegment>& Segments) const
 {
 	// 생성 구역 밖으로 나가는 셔터는 배치하지 않는다.
@@ -411,6 +474,12 @@ bool AProjectShutterAreaGenerator::CanPlaceSegment(const FProjectShutterGridSegm
 	
 	// 기존 셔터의 중심을 통과하는 후보는 배치하지 않는다.
 	if (DoesSegmentCrossExistingSegment(Candidate, Segments))
+	{
+		return false;
+	}
+
+	// 기존 경로의 두 점을 다시 연결해 닫힌 공간을 만드는 후보는 배치하지 않는다.
+	if (WouldCreateClosedCycle(Candidate, Segments))
 	{
 		return false;
 	}
