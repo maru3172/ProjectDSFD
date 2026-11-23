@@ -69,7 +69,7 @@ struct Difficulty
     static float SideSkill(int Level,BotTeam Team)
     {
         static constexpr float S[]={0.f,.04f,.05f,.95f,1.f},H[]={0.f,.03f,.15f,.8f,1.f};
-        static constexpr float M2[]={.08f,.1f,.36f,.42f,.62f},M1[]={.08f,.18f,.3f,.34f,.6f};
+        static constexpr float M2[]={.06f,.1f,.36f,.42f,.62f},M1[]={.04f,.18f,.3f,.34f,.6f};
         static constexpr float RS[]={0.f,.0625f,.25f,.68f,1.f},RM[]={.02f,.07f,.2f,.32f,.55f};
         const int I=std::max(1,std::min(5,Level))-1;
         switch(Team){case BotTeam::ReferenceSurvivor:return RS[I];case BotTeam::ReferenceMannequin:return RM[I];case BotTeam::SurvivorHelper:return H[I];case BotTeam::MannequinVsTwo:return M2[I];case BotTeam::MannequinVsSolo:return M1[I];default:return S[I];}
@@ -992,7 +992,7 @@ inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P
 // One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
 // values apply only then (two humans and bot-only teams keep the plain tables).
 // Own table against one human with a bot partner, tuned apart from the two-human table above.
-inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int P[]={9,9,9,8,4},E[]={8,8,7,7,3};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return (Endgame?E:P)[std::max(1,std::min(5,D.Level))-1];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int P[]={9,9,9,8,4},E[]={9,8,7,7,3};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return (Endgame?E:P)[std::max(1,std::min(5,D.Level))-1];}
 inline float SoloAttackScale(const Difficulty& D,bool SoloHuman){static constexpr float S[]={1,1,1,1,1};return SoloHuman?S[std::max(1,std::min(5,D.Level))-1]:1.f;}
 // With a lone human, the helper falling must not turn the whole mannequin on that human: lower levels keep their
 // ordinary hunt (no endgame push, no extra bodies woken), higher levels still close the match.
