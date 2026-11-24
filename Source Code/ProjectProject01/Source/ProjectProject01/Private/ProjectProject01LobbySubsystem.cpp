@@ -373,6 +373,21 @@ void UProjectProject01LobbySubsystem::SetRoomPublic(bool bPublic)
     SendRequest(EProjectProject01LobbyOperation::SetRoomVisibility,TEXT("PUT"),TEXT("/api/rooms/current/visibility"),Body);
 }
 
+void UProjectProject01LobbySubsystem::SetRoomPassword(const FString& Password)
+{
+    if(!HasCurrentRoom()||!CurrentRoom.bIsHost||CurrentRoom.bBotMatch||CurrentRoom.bRandomMatch||CurrentRoom.bRandomParty||
+        CurrentRoom.bStarted||CurrentRoom.bStarting||CurrentRoom.bServerPreparing)return;
+    const FString Clean=Password.TrimStartAndEnd();
+    if(!Clean.IsEmpty()&&(Clean.Len()<4||Clean.Len()>64))
+    {
+        Complete(EProjectProject01LobbyOperation::SetRoomPassword,false,TEXT("방 비밀번호는 사용하지 않거나 4~64자로 입력해야 합니다."));
+        return;
+    }
+    auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("password"),Clean);
+    FString Body;FJsonSerializer::Serialize(Json,TJsonWriterFactory<>::Create(&Body));
+    SendRequest(EProjectProject01LobbyOperation::SetRoomPassword,TEXT("PUT"),TEXT("/api/rooms/current/password"),Body);
+}
+
 void UProjectProject01LobbySubsystem::RequestGameJoinTicket()
 {
 	ClearGameJoinTicket();
@@ -906,6 +921,7 @@ bool UProjectProject01LobbySubsystem::ParseRoomState(const TSharedPtr<FJsonObjec
     StateJson->TryGetStringField(TEXT("matchSearchId"),Parsed.MatchSearchId);
     StateJson->TryGetBoolField(TEXT("botMatch"),Parsed.bBotMatch);
     StateJson->TryGetBoolField(TEXT("isPublic"),Parsed.bIsPublic);
+    StateJson->TryGetBoolField(TEXT("hasPassword"),Parsed.bHasPassword);
     StateJson->TryGetBoolField(TEXT("isObserver"),Parsed.bIsObserver);
     const TArray<TSharedPtr<FJsonValue>>* BotValues=nullptr;
     if(StateJson->TryGetArrayField(TEXT("bots"),BotValues)&&BotValues)

@@ -1190,6 +1190,12 @@ private:
     UFUNCTION() void HandleRoomVisibilityClicked();
     UPROPERTY(Transient) TObjectPtr<class UButton> RoomVisibilityButton;
     UPROPERTY(Transient) TObjectPtr<class UTextBlock> RoomVisibilityLabel;
+    UFUNCTION() void HandleRoomPasswordSetClicked();
+    UFUNCTION() void HandleRoomPasswordClearClicked();
+    UPROPERTY(Transient) TObjectPtr<class UHorizontalBox> RoomPasswordRow;
+    UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> RoomPasswordInput;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomPasswordSetButton;
+    UPROPERTY(Transient) TObjectPtr<class UButton> RoomPasswordClearButton;
     UFUNCTION() void HandleRoomBotsTabClicked();
     UFUNCTION() void HandleRoomMembersTabClicked();
     UFUNCTION() void HandleRoomSessionTabClicked();

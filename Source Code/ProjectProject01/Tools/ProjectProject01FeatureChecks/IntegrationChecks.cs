@@ -112,6 +112,7 @@ internal static class IntegrationChecks
                 await CaseLoreChecks.RunAsync(database,admin);
                 await MatchModeChecks.RunAsync(database,admin,app.Configuration); // Item roguelike mode selection and queues.
                 await RoomVisibilityChecks.RunAsync(database,admin,app.Configuration); // Host switches public/private after creation.
+                await RoomPasswordChecks.RunAsync(database,admin,app.Configuration); // Host sets, changes or removes the room password.
                 await ChatFilterChecks.RunAsync(database,admin); // Banned words: masked chat, refused names and profile text.
                 await MailCouponChecks.RunAsync(database,admin); // Mailbox and coupon codes.
                 Console.WriteLine("PASS: frontend-only checks (no bot simulation or AI checks)");
@@ -253,6 +254,7 @@ internal static class IntegrationChecks
             await CustomRoomRulesChecks.RunAsync(database,admin,demand,demandFactory,output,app.Configuration);
             await MatchModeChecks.RunAsync(database,admin,app.Configuration);
             await RoomVisibilityChecks.RunAsync(database,admin,app.Configuration);
+            await RoomPasswordChecks.RunAsync(database,admin,app.Configuration);
             await StartupRecoveryChecks.RunAsync(database,demand,Check);
             await ResultDeliveryChecks.RunAsync(database,admin,output,Check);
             if(!string.IsNullOrWhiteSpace(editorExecutable))await EditorSessionSmokeChecks.RunAsync(database,projectRoot,editorExecutable);

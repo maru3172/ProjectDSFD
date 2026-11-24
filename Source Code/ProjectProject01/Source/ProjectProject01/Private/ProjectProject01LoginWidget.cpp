@@ -7348,6 +7348,15 @@ void UProjectProject01LobbyWidget::RefreshCurrentRoomView()
         RoomVisibilityButton->SetIsEnabled(OpenWaiting&&Room.bIsHost&&!Lobby->IsRequestInFlight());
         if(RoomVisibilityLabel)RoomVisibilityLabel->SetText(FText::FromString(Room.bIsPublic?TEXT("비공개방으로 바꾸기"):TEXT("공개방으로 바꾸기")));
     }
+    // Room password after creation: same rule as public/private (host, open waiting room, not server-made).
+    if(RoomPasswordRow)
+    {
+        const bool CanEdit=OpenWaiting&&Room.bIsHost&&!Lobby->IsRequestInFlight();
+        RoomPasswordRow->SetVisibility(!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+        if(RoomPasswordInput){RoomPasswordInput->SetIsEnabled(CanEdit);RoomPasswordInput->SetHintText(FProjectProject01Localization::Text(Room.bHasPassword?TEXT("새 비밀번호 (현재 설정됨, 4~64자)"):TEXT("방 비밀번호 (현재 없음, 4~64자)")));}
+        if(RoomPasswordSetButton)RoomPasswordSetButton->SetIsEnabled(CanEdit);
+        if(RoomPasswordClearButton)RoomPasswordClearButton->SetIsEnabled(CanEdit&&Room.bHasPassword);
+    }
     if(CustomRulesButton){CustomRulesButton->SetVisibility(!Room.bBotMatch&&!Room.bRandomMatch&&!Room.bRandomParty?ESlateVisibility::Visible:ESlateVisibility::Collapsed);CustomRulesButton->SetIsEnabled(OpenWaiting&&Room.bIsHost&&!Lobby->IsRequestInFlight());}
     if(SwitchObserverButton)
     {
@@ -7862,6 +7871,19 @@ void UProjectProject01LobbyWidget::HandleRoomVisibilityClicked()
 {
     if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())Lobby->SetRoomPublic(!Lobby->GetCurrentRoom().bIsPublic);
 }
+void UProjectProject01LobbyWidget::HandleRoomPasswordSetClicked()
+{
+    if(!RoomPasswordInput)return;
+    const FString Password=RoomPasswordInput->GetText().ToString().TrimStartAndEnd();
+    if(Password.IsEmpty())return; // Removing goes through its own button so an empty box never clears it by accident.
+    RoomPasswordInput->SetText(FText::GetEmpty());
+    if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())Lobby->SetRoomPassword(Password);
+}
+void UProjectProject01LobbyWidget::HandleRoomPasswordClearClicked()
+{
+    if(RoomPasswordInput)RoomPasswordInput->SetText(FText::GetEmpty());
+    if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())Lobby->SetRoomPassword(FString());
+}
 void UProjectProject01LobbyWidget::HandleCustomRulesClicked()
 {
     if(auto* Lobby=GetGameInstance()->GetSubsystem<UProjectProject01LobbySubsystem>())
@@ -8083,6 +8105,15 @@ void UProjectProject01LobbyWidget::BuildWidgetTree()
     RoomVisibilityButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("공개방으로 바꾸기"));
     RoomVisibilityLabel=Cast<UTextBlock>(RoomVisibilityButton->GetChildAt(0));
     RoomVisibilityButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRoomVisibilityClicked);
+    RoomPasswordRow=WidgetTree->ConstructWidget<UHorizontalBox>();SessionTools->AddChildToVerticalBox(RoomPasswordRow)->SetPadding(FMargin(2,4));
+    RoomPasswordInput=WidgetTree->ConstructWidget<UEditableTextBox>();
+    RoomPasswordInput->SetHintText(FProjectProject01Localization::Text(TEXT("방 비밀번호 (4~64자)")));
+    ProjectProject01LoginUI::StyleTextBox(RoomPasswordInput);RoomPasswordInput->SetIsPassword(true);
+    {FSlateChildSize Wide(ESlateSizeRule::Fill);Wide.Value=2.f;RoomPasswordRow->AddChildToHorizontalBox(RoomPasswordInput)->SetSize(Wide);}
+    RoomPasswordSetButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomPasswordRow,TEXT("비밀번호 설정"));
+    RoomPasswordSetButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRoomPasswordSetClicked);
+    RoomPasswordClearButton=ProjectProject01LoginUI::AddTabButton(WidgetTree,RoomPasswordRow,TEXT("해제"));
+    RoomPasswordClearButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleRoomPasswordClearClicked);
     CustomRulesButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("커스텀 규칙"));
     CustomRulesButton->OnClicked.AddUniqueDynamic(this,&ThisClass::HandleCustomRulesClicked);
 	DeleteRoomButton=ProjectProject01LoginUI::AddButton(WidgetTree,SessionTools,TEXT("방 삭제 · 모두 로비로"));
