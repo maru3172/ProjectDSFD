@@ -83,15 +83,15 @@ private:
 	// 생성 영역의 단축 길이를 cm 단위로 반환한다.
 	float GetShortAxisLength() const;
 	
-	// 장축 방향에 배치할 시작 후보 개수를 반환한다.
-	int32 GetLongAxisCandidateCount() const;
+	// 단축 방향에 나열할 시작 후보 수를 반환한다.
+	int32 GetShortAxisCandidateCount() const;
 	
-	// 장축 폭을 기준으로 주 생성 구간 후보 하나의 생성 확률을 반환한다.
+	// 단축 폭에 비례하는 후보별 생성 확률을 반환한다.
 	float GetSectionGenerationChance() const;
 	
-	// 장축 후보 위치에서 단축 방향의 첫 번째 셔터를 만든다.
+	// 단축 후보 위치에서 장축 방향의 첫 번째 셔터를 만든다.
 	FProjectShutterGridSegment MakeSectionStartSegment(
-		int32 LongAxisCandidateIndex) const;
+		int32 ShortAxisCandidateIndex) const;
 	
 	// 주 생성 구간 끝점에서 직각 방향의 셔터 한 개를 추가한다.
 	void TryAddPerpendicularEndSegment(
