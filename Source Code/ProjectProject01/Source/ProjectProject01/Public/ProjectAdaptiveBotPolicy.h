@@ -68,7 +68,7 @@ struct Difficulty
     // MannequinVsSolo = against one human with a bot partner. Every curve stays strictly increasing.
     static float SideSkill(int Level,BotTeam Team)
     {
-        static constexpr float S[]={0.f,.04f,.05f,.95f,1.f},H[]={0.f,.03f,.15f,.8f,1.f};
+        static constexpr float S[]={.02f,.04f,.05f,.95f,1.f},H[]={0.f,.03f,.15f,.8f,1.f};
         static constexpr float M2[]={.07f,.1f,.36f,.42f,.62f},M1[]={.02f,.18f,.3f,.34f,.6f};
         static constexpr float RS[]={0.f,.0625f,.25f,.68f,1.f},RM[]={.02f,.07f,.2f,.32f,.55f};
         const int I=std::max(1,std::min(5,Level))-1;
