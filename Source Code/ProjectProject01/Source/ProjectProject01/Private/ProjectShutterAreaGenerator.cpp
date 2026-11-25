@@ -110,18 +110,6 @@ EProjectShutterGridDirection AProjectShutterAreaGenerator::GetLongAxisDirection(
 	return EProjectShutterGridDirection::Vertical;
 }
 
-EProjectShutterGridDirection AProjectShutterAreaGenerator::GetShortAxisDirection() const
-{
-	// 장축이 가로면 세로 방향을 단축으로 사용한다.
-	if (GetLongAxisDirection() == EProjectShutterGridDirection::Horizontal)
-	{
-		return EProjectShutterGridDirection::Vertical;
-	}
-
-	// 장축이 세로면 가로 방향을 단축으로 사용한다.
-	return EProjectShutterGridDirection::Horizontal;
-}
-
 float AProjectShutterAreaGenerator::GetLongAxisLength() const
 {
 	// X 와 Y 중 더 긴 영역의 길이를 반환한다.
@@ -612,7 +600,7 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 	// 장축 방향에 셔터 한 개가 들어갈 공간이 없으면 종료한다.
 	if (GetLongAxisLength() < ShutterLength)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("%s: 단축 길이가 셔터 길이보다 짧습니다."), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("%s: 장축 길이가 셔터 길이보다 짧습니다."), *GetName());
 		
 		ClearGeneratedShutters();
 		return;

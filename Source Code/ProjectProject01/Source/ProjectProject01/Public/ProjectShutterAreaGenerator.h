@@ -73,9 +73,6 @@ private:
 	
 	// 생성 영역에서 더 긴 축의 셔터 방향을 반환한다.
 	EProjectShutterGridDirection GetLongAxisDirection() const;
-
-	// 생성 영역에서 더 짧은 축의 셔터 방향을 반환한다.
-	EProjectShutterGridDirection GetShortAxisDirection() const;
 	
 	// 생성 영역의 장축 길이를 cm 단위로 반환한다.
 	float GetLongAxisLength() const;
@@ -178,11 +175,11 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Grid", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
 	float ShutterLength = 300.0f;
 	
-	// 주 생성 구간 확률을 계산할 때 사용하는 기준 장축 폭이다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm"))
+	// 후보를 나열하는 기준 폭이다. 기존 BP 설정을 보존하기 위해 변수명을 유지한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "1.0", Units = "cm", DisplayName = "Reference Short Axis Width"))
 	float ReferenceLongAxisWidth = 1000.0f;
 	
-	// 기준 장축 폭에서 생성할 주 구간의 평균 개수다.
+	// 기준 단축 폭에서 기대하는 주 구간 개수다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shutter Generator|Generation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float ReferenceAverageSectionCount = 1.5f;
 	
