@@ -565,6 +565,14 @@ bool AProjectShutterAreaGenerator::SpawnPreviewSegment(const FProjectShutterGrid
 		return false;
 	}
 	
+	// 생성 위치와 회전을 유지한 채 셔터를 생성기 루트에 연결한다.
+	if (!SpawnedShutter->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform))
+	{
+		// 연결에 실패한 셔터는 제거하고 호출자에 실패를 알린다.
+		SpawnedShutter->Destroy();
+		return false;
+	}
+	
 	// 생성기에서 만든 셔터임을 나타내는 태그를 추가한다.
 	SpawnedShutter->Tags.AddUnique(GeneratedShutterTag);
 	
