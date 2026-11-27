@@ -152,18 +152,79 @@ float AProjectShutterAreaGenerator::GetSectionGenerationChance() const
 		1.0f);
 }
 
-FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeSectionStartSegment(int32 ShortAxisCandidateIndex) const
+FProjectShutterGridSegment AProjectShutterAreaGenerator::MakeSectionStartSegment(int32 ShortAxisCandidateIndex, int32 LongAxisStartIndex) const
 {
 	// 첫 셔터의 방향과 격자 좌표를 담는다.
 	FProjectShutterGridSegment Segment;
 	Segment.Direction = GetLongAxisDirection();
 	
-	// 장축 좌표는 0 에서 시작하고 단축 좌표만 후보마다 바꾼다.
+	// 장축이 X 이면 X 에 시작 위치를, 장축이 Y 이면 Y 에 시작 위치를 넣는다.
 	Segment.Start = Segment.Direction == EProjectShutterGridDirection::Horizontal
-		? FIntPoint(0, ShortAxisCandidateIndex)
-		: FIntPoint(ShortAxisCandidateIndex, 0);
+		? FIntPoint(LongAxisStartIndex, ShortAxisCandidateIndex)
+		: FIntPoint(ShortAxisCandidateIndex, LongAxisStartIndex);
 	
 	return Segment;
+}
+
+bool AProjectShutterAreaGenerator::TryAddSection(const FProjectShutterGridSegment& StartSegment, FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments, TArray<TPair<FIntPoint, FIntPoint>>& SectionEndpoints) const
+{
+	// 첫 셔터를 배치할 수 없으면 구간 생성에 실패한 것으로 처리한다.
+	if (!CanPlaceSegment(StartSegment, Segments))
+	{
+		return false;
+	}
+	
+	Segments.Add(StartSegment);
+	
+	// 완성된 구간에 기록할 시작점이다.
+	FIntPoint SectionStart;
+	
+	// 다음 셔터를 이어 붙일 현재 끝점이다.
+	FIntPoint CurrentEndpoint;
+	GetSegmentEndpoints(StartSegment, SectionStart, CurrentEndpoint);
+	
+	// 현재 구간에 배치된 셔터 개수다.
+	int32 SectionSegmentCount = 1;
+	
+	while (true)
+	{
+		// 현재 구간의 길이를 cm 단위로 계산한다.
+		const float CurrentLength = SectionSegmentCount * ShutterLength;
+		
+		// 현재 길이에 적용할 다음 셔터의 연장 확률이다.
+		const float ContinuationChance = GetLengthBasedContinuationChance(CurrentLength);
+		
+		// 연장 확률 판정에 실패하면 현재 길이에서 구간을 마친다.
+		if (RandomStream.FRand() >= ContinuationChance)
+		{
+			break;
+		}
+		
+		// 현재 끝점에서 첫 셔터와 같은 방향으로 다음 후보를 만든다.
+		const FProjectShutterGridSegment NextSegment = MakeSegmentFromEndpoint(CurrentEndpoint, StartSegment.Direction, 1);
+		
+		// 후보가 배치 규칙을 위반하면 연장을 종료한다.
+		if (!CanPlaceSegment(NextSegment, Segments))
+		{
+			break;
+		}
+		
+		Segments.Add(NextSegment);
+		
+		// 새로 추가한 셔터의 시작점과 끝점을 구한다.
+		FIntPoint NextStart;
+		
+		// 다음 연장의 출발점으로 사용할 새 셔터의 끝점이다.
+		FIntPoint NextEnd;
+		GetSegmentEndpoints(NextSegment, NextStart, NextEnd);
+		
+		CurrentEndpoint = NextEnd;
+		++SectionSegmentCount;
+	}
+	
+	// 나중에 양 끝의 직각 셔터를 배치할 수 있도록 끝점을 기록한다.
+	SectionEndpoints.Emplace(SectionStart, CurrentEndpoint);
+	return true;
 }
 
 void AProjectShutterAreaGenerator::TryAddPerpendicularEndSegment(const FIntPoint& SectionEndpoint, EProjectShutterGridDirection SectionDirection, FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments) const
@@ -641,76 +702,20 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 	// 단축에 따라 나열된 시작 후보를 순서대로 확인한다.
 	for (int32 CandidateIndex = 0; CandidateIndex < CandidateCount; ++CandidateIndex)
 	{
-		// 후보별 독립 확률 판정에 실패하면 건너뛴다.
+		// 후보별 최초 생성 확률 판정에 실패하면 다음 후보로 넘어간다.
 		if (RandomStream.FRand() >= GenerationChance)
 		{
 			continue;
 		}
 		
-		// 현재 단축 후보에서 장축 방향으로 첫 셔터를 만든다.
-		const FProjectShutterGridSegment StartSegment = MakeSectionStartSegment(CandidateIndex);
+		// 기존 시작 변 배치를 유지하도록 장축 시작 좌표를 0 으로 지정한다.
+		const FProjectShutterGridSegment StartSegment = MakeSectionStartSegment(CandidateIndex, 0);
 		
-		// 첫 셔터를 배치할 수 없으면 해당 후보를 건너뛴다.
-		if (!CanPlaceSegment(StartSegment, GeneratedSegments))
+		// 첫 셔터가 배치된 구간만 생성 개수에 포함한다.
+		if (TryAddSection(StartSegment, RandomStream, GeneratedSegments, SectionEndpoints))
 		{
-			continue;
+			++GeneratedSectionCount;
 		}
-		
-		// 첫 주 구간 셔터를 결과에 추가한다.
-		GeneratedSegments.Add(StartSegment);
-		
-		// 첫 셔터의 시작점과 끝점을 가져온다.
-		FIntPoint SectionStart;
-		FIntPoint CurrentEndpoint;
-		GetSegmentEndpoints(StartSegment, SectionStart, CurrentEndpoint);
-		
-		// 현재 주 구간을 구성하는 셔터 개수다.
-		int32 SectionSegmentCount = 1;
-		
-		// 연장 확률과 배치 규칙이 허용하는 동안 장축 방향으로 연장한다.
-		while (true)
-		{
-			// 현재 주 구간의 실제 길이를 계산한다.
-			const float CurrentLength = SectionSegmentCount * ShutterLength;
-			
-			// 현재 길이에 맞는 다음 셔터 연장 확률을 가져온다.
-			const float ContinuationChance = GetLengthBasedContinuationChance(CurrentLength);
-			
-			// 연장 확률 판정에 실패하면 현재 주 구간을 종료한다.
-			if (RandomStream.FRand() >= ContinuationChance)
-			{
-				break;
-			}
-			
-			// 현재 끝점에서 장축 방향으로 다음 셔터를 만든다.
-			const FProjectShutterGridSegment NextSegment = MakeSegmentFromEndpoint(CurrentEndpoint, SectionDirection, 1);
-			
-			// 영역 밖이거나 기존 셔터와 충돌하면 연장을 종료한다.
-			if (!CanPlaceSegment(NextSegment, GeneratedSegments))
-			{
-				break;
-			}
-			
-			// 검사를 통과한 장축 셔터를 결과에 추가한다.
-			GeneratedSegments.Add(NextSegment);
-			
-			// 새로 추가한 셔터의 시작점과 끝점을 가져온다.
-			FIntPoint NextStart;
-			FIntPoint NextEnd;
-			GetSegmentEndpoints(NextSegment, NextStart, NextEnd);
-			
-			// 다음 연장은 새 셔터의 끝점에서 시작한다.
-			CurrentEndpoint = NextEnd;
-			
-			// 주 구간의 셔터 개수를 증가시킨다.
-			++SectionSegmentCount;
-		}
-		
-		// 완성된 주 구간의 양 끝점을 저장한다.
-		SectionEndpoints.Add(TPair<FIntPoint, FIntPoint>(SectionStart, CurrentEndpoint));
-		
-		// 생성된 주 구간 개수를 증가시킨다.
-		++GeneratedSectionCount;
 	}
 	
 	// 모든 주 구간이 완성된 뒤 각 구간의 양 끝을 처리한다.
