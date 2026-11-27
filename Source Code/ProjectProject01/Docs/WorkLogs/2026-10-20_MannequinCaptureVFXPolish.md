@@ -1,0 +1,78 @@
+# 마네킹 타격 성공 화면 개선 (2026-10-20) — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`MannequinCaptureVFXPolish.md`](../MannequinCaptureVFXPolish.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 자동 검사: `ProjectProject01.Player.MannequinCaptureFeedbackRender`. 16:9, 4:3, 와이드 화면에서 실제 Slate 렌더의 진입/해제·중앙 투명·난수 안정성·강도 감소/0·탈락 구분을 확인한다. 이미지 출력은 `Saved/MannequinCaptureFeedbackRefresh`다.
+- 기간: 2026-10-20 ~ 2026-10-20 (문서 변경 커밋 1개 기준)
+- 결과·검증: 기존 VFX/화면 번쩍임 감소 배수를 적용하고 0이면 완전히 숨긴다. 기존 성공 SFX와 짧은 카메라 진동은 수정하지 않는다. 새 텍스처·머티리얼·외부 파일 의존성이 없는 Slate 메시이므로 VFX 생성/복구 버튼을 누를 필요는 없다.
+- 현재 상태: 원 문서상 남은 항목 기재 없음(미확인)
+
+## 요청·목표·범위 (9-2)
+
+- 자동 검사: `ProjectProject01.Player.MannequinCaptureFeedbackRender`. 16:9, 4:3, 와이드 화면에서 실제 Slate 렌더의 진입/해제·중앙 투명·난수 안정성·강도 감소/0·탈락 구분을 확인한다. 이미지 출력은 `Saved/MannequinCaptureFeedbackRefresh`다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`MannequinCaptureVFXPolish.md`](../MannequinCaptureVFXPolish.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerFeedbackWidgets.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01DamageFeedbackTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01LocomotionFeedbackTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Public/PlayerFeedbackWidgets.h` (1)
+- `ProjectProject01/Source/ProjectProject01/Public/ProjectProject01LocomotionFeedback.h` (1)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 기존 서버 확정 피격/포획 알림 → 마네킹 소유 클라이언트의 `ClientPlayMannequinCaptureFeedback` → `UProjectProject01MannequinCaptureFeedbackWidget` 경로를 그대로 사용한다. 공격 판정·범위·데스카운트·AI와 생존자 피격 화면은 변경하지 않는다.
+- 기존 적색 비산을 유지하되 고정 굵기의 직선 8개 대신, 끝이 가늘고 경계가 부드러운 짧은 곡선 비산과 작은 분리 방울로 그린다. 명중마다 형태가 조금 달라지며 한 연출 안에서는 난수를 고정해 프레임마다 떨리거나 번쩍이지 않는다.
+- 0.025초 진입, 약 0.12초의 빠른 확산 후 완만한 하강·소멸이다. 일반 타격 0.68초/탈락 확정 0.95초의 기존 전체 길이는 유지한다. 탈락 확정은 조금 더 풍부한 비산으로 구분한다. 중앙 조준 영역은 비우고 하얀 플래시·전체 화면 덮개는 추가하지 않는다.
+- 실제 플레이의 연출 선호·걷기 체감과 멀미 여부는 사용자가 최종 확인한다. 패키징/업데이트 게시/운영 DB 작업은 하지 않는다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 기존 VFX/화면 번쩍임 감소 배수를 적용하고 0이면 완전히 숨긴다. 기존 성공 SFX와 짧은 카메라 진동은 수정하지 않는다. 새 텍스처·머티리얼·외부 파일 의존성이 없는 Slate 메시이므로 VFX 생성/복구 버튼을 누를 필요는 없다.
+- Editor Development 빌드 성공. `Saved/ReviewRemediation/WalkingAndCapturePolish-20261020/index.json`: 6건 성공, 경고·실패·미실행 0건. 새 타격 렌더 검사와 기존 걷기 카메라·마네킹 자유 시점·발소리·생존자 피해 VFX 회귀를 통과했다. 출력한 실제 렌더 이미지에서 중앙 투명 영역, 곡선 비산/방울과 해제 잔상을 확인했다. 실전 타격의 주관적 체감은 에디터 플레이로 최종 확인한다.
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+**정량 검증 미완료** — 원 문서에 측정 기준값·측정값이 없다.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 자동 검사: `ProjectProject01.Player.MannequinCaptureFeedbackRender`. 16:9, 4:3, 와이드 화면에서 실제 Slate 렌더의 진입/해제·중앙 투명·난수 안정성·강도  | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 1
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 원 문서에 기재 없음(미확인)
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `8def000b` | 2026-10-20 | maru3172 | Strengthen directing |

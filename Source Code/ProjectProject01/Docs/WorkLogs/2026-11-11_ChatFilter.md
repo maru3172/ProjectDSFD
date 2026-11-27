@@ -1,0 +1,84 @@
+# 금칙어 필터 (2026-11-11) — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`ChatFilter.md`](../ChatFilter.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 대소문자, 띄어쓰기, 기호, 보이지 않는 문자를 사이에 넣어도 찾는다(예: `시 . 발`, `씨-발`, `FuCk`). 가릴 때는 사이에 넣은 기호까지 함께 `*`로 바꾸고 띄어쓰기는 남긴다.
+- 기간: 2026-11-11 ~ 2026-11-11 (문서 변경 커밋 1개 기준)
+- 결과·검증: 원 문서에 검증 기록 없음
+- 현재 상태: 미완료·미검증 항목 있음(아래 9-10)
+
+## 요청·목표·범위 (9-2)
+
+- 대소문자, 띄어쓰기, 기호, 보이지 않는 문자를 사이에 넣어도 찾는다(예: `시 . 발`, `씨-발`, `FuCk`). 가릴 때는 사이에 넣은 기호까지 함께 `*`로 바꾸고 띄어쓰기는 남긴다.
+- **허용 단어** 안에 든 금칙어는 막지 않는다(예: `시발점`). 같은 문장에서 허용 단어 밖에 나온 금칙어는 가린다.
+- 기본 목록은 처음 한 번만 넣는다. 운영자가 지운 단어는 다시 생기지 않는다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`ChatFilter.md`](../ChatFilter.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Source/ProjectProject01/Private/FireShutterActor.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/InteractionPromptWidget.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MannequinAICharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestPlayerController.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerCharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerHeartbeatComponent.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectAchievementToast.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectCaseRecords.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectGamepad.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectGamepadTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectMainQuest.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectMiniGameWidgets.cpp` (1)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 이미 저장된 글에는 적용하지 않는다. 목록을 바꾼 뒤 새로 쓰는 글부터 적용된다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 원 문서에 검증 기록 없음. 실행 여부 미확인 — 통과로 간주하지 않는다.
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+**정량 검증 미완료** — 원 문서에 측정 기준값·측정값이 없다.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 대소문자, 띄어쓰기, 기호, 보이지 않는 문자를 사이에 넣어도 찾는다(예: `시 . 발`, `씨-발`, `FuCk`). 가릴 때는 사이에 넣은 기호까지 함께 `*`로 바꾸고 띄어쓰기는 남긴다. | 원 문서에 수용 기준으로 명시되지 않음 | 검증 기록 없음 | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 1
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 다른 플레이어가 보는 글에 욕설·비하 표현이 그대로 나가지 않게 서버에서 거른다. 클라이언트는 바꾸지 않았다(서버가 돌려준 결과를 그대로 보여 준다).
+- 기본 목록은 흔한 한국어·영어 욕설과 초성 줄임말이다. 일상어와 겹치는 말(`새끼` 고양이, `보지` 마, `자지` 말고, `졸라`)은 일부러 넣지 않았다.
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `9dcab42c` | 2026-11-11 | maru3172 | Quest Tool |

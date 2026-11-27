@@ -1,0 +1,96 @@
+# 멀티 수색·정찰 연결·경기 타임라인 — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`MultiplayerSearchAndMatchTimeline.md`](../MultiplayerSearchAndMatchTimeline.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 대상을 놓치면 마지막 목격 위치까지 완전한 NavMesh/A* 경로로 이동한다. 부분 경로와 도달 불가능한 경로는 거부한다.
+- 기간: 2026-10-16 ~ 2026-10-16 (문서 변경 커밋 1개 기준)
+- 결과·검증: 실제로 감지/시야 확인에 성공한 위치만 기억한다. 보이지 않는 대상의 새 좌표로 기억을 갱신하지 않는다.
+- 현재 상태: 미완료·미검증 항목 있음(아래 9-10)
+
+## 요청·목표·범위 (9-2)
+
+- 대상을 놓치면 마지막 목격 위치까지 완전한 NavMesh/A* 경로로 이동한다. 부분 경로와 도달 불가능한 경로는 거부한다.
+- 도착하면 기본 2.5초간 주변을 둘러본다. 이동/둘러보기를 합한 수색은 기본 최대 10초다. 경로 실패, 타임아웃, 대상 탈락/탈출/연결 해제 시 종료한다.
+- 수색은 플레이어의 영구 명령을 덮어쓰지 않는다. 완료하면 정찰/추종으로 복귀하며, 범위 추격(X)은 기존처럼 유효 대상이 없으면 정찰로 전환한다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`MultiplayerSearchAndMatchTimeline.md`](../MultiplayerSearchAndMatchTimeline.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Config/DefaultGame.ini` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MannequinAICharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestGameMode.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestPlayerController.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerCharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01CheckpointPreview.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01CheckpointPreviewTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01LoginWidget.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01MannequinCameraTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01MatchTimeline.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01MatchTimelineTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01OperationsTests.cpp` (1)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 새 이동 요청은 기존 언리얼의 속도 유지 경로를 사용하고, 같은 이동 요청을 매 틱 재시작하지 않는다. 도달 가능한 완전 경로만 허용한다.
+- 서버가 확정한 경기 시작, 실제 데카 감소, 탈락, 탈출, 연결 끊김, 재접속, 기권, 맵 이동/시작, 경기 종료를 기록한다.
+- 진행 중에는 복제하거나 결과에 포함하지 않는다. 종료 결과 RPC로만 전달한다. 숨은 좌표·계정 ID·토큰·마네킹의 실시간 수색 위치는 넣지 않는다.
+- 표시 이름은 서버가 인증한 닉네임(로컬 PIE는 PlayerState 이름)을 사용한다. 계정 ID를 표시 이름 대신 쓰지 않는다.
+- 같은 MatchId의 확정된 맵 이동에서는 서버 GameInstance로 이어간다. 맵 로딩 시간은 제외하며 각 맵의 실제 진행 시간을 누적한다. 새 경기는 이전 기록을 초기화한다.
+- 최신 소스로 클라이언트와 데디 서버를 모두 재패키징한다. 기존 클라이언트/데디와 혼용하지 않는다.
+- 자동 검사는 시간순/메모리 상한/문자열 길이/직렬화, 종료 전 비공개/종료 후 결과 포함/동일 매치 맵 이동/새 경기 초기화, 결과 UI 토글 및 수색의 기억 좌표/시간 제한/경로 실패/정지 명령을 검사한다. 헤드리스 테스트는 실제 맵의 경로 품질, 보행 연출과 외부 PC 실게임을 대신하지 않는다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 실제로 감지/시야 확인에 성공한 위치만 기억한다. 보이지 않는 대상의 새 좌표로 기억을 갱신하지 않는다.
+- 수색 중 실제 감지에 성공하면 즉시 추격한다. 시야 정지/정지 명령/직접 조작은 기존 우선순위를 유지한다.
+- 결과 화면의 **경기 타임라인** 버튼으로 시간순 기록을 스크롤하여 보고, **결과 요약** 버튼으로 돌아온다. 결과 검증 응답으로 화면이 갱신돼도 행을 중복 추가하지 않는다. 싱글 결과에는 표시하지 않는다.
+- Unreal Editor Development 및 Win64 Shipping 빌드 성공. 패키징/배포는 실행하지 않았다.
+- 네이티브 자동 검사 20건 성공, 경고/실패 0건. 보고서: `Saved/SearchTimelineNative/index.json`.
+- .NET 검사 빌드 경고/오류 0건. 기본 검사 24건(프로토콜 2 허용/구형 1 차단 포함), 이어받기 17건, 실제 파일 잠금/롤백 검사 3건 성공.
+- 격리 HTTP/MySQL 통합 검사: 설문/크래시 33건, 운영 50건, 온디맨드 서버 43건, 종료 대기 14건, 백업/복원 4건 성공. 운영 DB가 아닌 23307 포트의 테스트 인스턴스를 사용했다.
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+**정량 검증 미완료** — 원 문서에 측정 기준값·측정값이 없다.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 대상을 놓치면 마지막 목격 위치까지 완전한 NavMesh/A* 경로로 이동한다. 부분 경로와 도달 불가능한 경로는 거부한다. | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 1
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 싱글 마네킹 AIController/분산 추적 코드는 수정하지 않았다.
+- 영구 DB 저장/과거 경기 조회는 추가하지 않았다. 결과 화면에서 확인하는 이번 경기의 메모리 기록이다. 기존 리더보드 데이터/등록 방식은 유지한다.
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `bd515000` | 2026-10-16 | maru3172 | Mannequin Camera Improvements |

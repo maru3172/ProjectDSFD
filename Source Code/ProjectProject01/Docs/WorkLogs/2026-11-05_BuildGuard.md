@@ -1,0 +1,94 @@
+# 빌드 중 소스 편집 방지 — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`BuildGuard.md`](../BuildGuard.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: UBT(언리얼 빌드 도구)는 파일 내용이 아니라 수정 시각으로 재컴파일 여부를 정한다. 컴파일러가 헤더나 소스를 이미 읽은 뒤 같은 파일을 저장하면, 옛 내용으로 만든 `.obj`가 파일보다 늦은 시각을 갖게 된다. 그 뒤 빌드는 이 `.obj`를 최신으로 보고 건너뛴다.
+- 기간: 2026-11-05 ~ 2026-11-05 (문서 변경 커밋 1개 기준)
+- 결과·검증: 훅: 빌드가 없을 때 소스 편집 통과(종료 코드 0). 이름이 `cl.exe`인 테스트 프로세스가 실행 중일 때 소스 편집 차단(종료 코드 2), 문서 편집 통과. 실제 Claude 세션의 Edit에서도 차단 메시지를 확인했다.
+- 현재 상태: 원 문서상 남은 항목 기재 없음(미확인)
+
+## 요청·목표·범위 (9-2)
+
+- UBT(언리얼 빌드 도구)는 파일 내용이 아니라 수정 시각으로 재컴파일 여부를 정한다. 컴파일러가 헤더나 소스를 이미 읽은 뒤 같은 파일을 저장하면, 옛 내용으로 만든 `.obj`가 파일보다 늦은 시각을 갖게 된다. 그 뒤 빌드는 이 `.obj`를 최신으로 보고 건너뛴다.
+- Claude Code 훅: `Tools/BuildGuard/BlockSourceEditsDuringBuild.ps1`
+- 문서, 설정, 다른 폴더의 파일은 막지 않는다. 스크립트 자체가 실패하면 편집을 막지 않는다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`BuildGuard.md`](../BuildGuard.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Config/DefaultGame.ini` (1)
+- `ProjectProject01/Source/ProjectDFSD.Target.cs` (1)
+- `ProjectProject01/Source/ProjectDFSDEditor.Target.cs` (1)
+- `ProjectProject01/Source/ProjectDFSDServer.Target.cs` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestGameMode.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestPlayerController.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerCharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectCaseRecordWidgets.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectCustomRoomRulesWidget.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectCustomRulesTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectDFSDUITheme.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectDFSDUIThemeTests.cpp` (1)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 이런 문제는 컴파일 오류나 경고 없이 실행 중 크래시로만 나타난다.
+- 저장소 Claude 훅: 저장소 루트 `.claude/settings.json`. git으로 저장소 위치를 찾아 같은 편집 차단 스크립트를 실행하므로, 이 저장소에서 Claude Code를 쓰는 다른 사람에게도 적용된다. 스크립트가 없으면 아무것도 막지 않는다. 이 PC에서는 사용자 설정의 훅과 함께 두 번 실행될 수 있는데, 둘 다 확인만 하므로 문제는 없다.
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 사용자 설정(`%USERPROFILE%\.claude\settings.json`)의 `PreToolUse` 훅으로 등록했다. Claude 세션이 `ProjectProject01/Source` 아래의 `.h/.hpp/.inl/.cpp/.c/.cs`를 수정하기 직전에 `UnrealBuildTool`, `cl`, `link`, `UbaHost`, `UbaCli`, `clang-cl`, `lld-link` 실행 여부를 확인한다. 실행 중이면 편집을 거부하고 이유를 알린
+- 에디터, Live Coding, UBT가 실행 중이면 빌드를 시작하지 않는다.
+- 빌드가 도는 동안 소스 파일을 저장하지 않는다. 저장했다면 2번 스크립트로 빌드하거나, 그 파일을 포함하는 `.obj`를 지운 뒤 다시 빌드한다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 2026-11-04에 실제로 이 일이 일어났다. `MultiplayTestPlayerController.h`가 빌드 도중(19:08:35) 저장되었고, 19:09에 끝난 `ProjectInstantReplay.cpp.obj`와 `ProjectOpenObserver.cpp.obj`는 `AuthenticatedMatchId`를 오프셋 0xc48로 읽었다. 컨트롤러 본체(`MultiplayTestPlayerController.cpp.obj`, 20:09)는 같은 필드
+- 사용: `pwsh -File Tools\BuildGuard\SafeBuild.ps1` (기본 `ProjectDFSDEditor Win64 Development`, 로그는 `Saved/Logs/SafeBuild.log`)
+- 훅: 빌드가 없을 때 소스 편집 통과(종료 코드 0). 이름이 `cl.exe`인 테스트 프로세스가 실행 중일 때 소스 편집 차단(종료 코드 2), 문서 편집 통과. 실제 Claude 세션의 Edit에서도 차단 메시지를 확인했다.
+- 바뀐 파일을 읽은 `.obj`가 하나도 없으면 안내만 하고 빌드는 성공시킨다.
+- 안전장치: 검사 스크립트 안에서 문제가 생기면 `BuildGuard: warning: check skipped ...`를 출력하고 `Saved/Logs/BuildGuard.log`에 남긴 뒤 빌드는 성공시킨다. 이 경고가 보이면 빌드 결과는 믿어도 되고, 검사 스크립트만 고치면 된다. 스크립트 파일이 없으면(저장소를 일부만 받은 경우) 단계 자체를 조용히 건너뛴다. Windows가 아닌 빌드 호스트에서는 단계를 넣지 않는다.
+- 빌드 도중(컴파일러 실행 중) `ProjectRoguePick.cpp`의 수정 시각을 바꾸자, 빌드 후 단계가 `BuildGuard: error: ...`를 출력하고 해당 `.obj` 1개를 지운 뒤 빌드를 실패시켰다(`Result: Failed`). 이어서 보통 빌드를 하자 그 파일만 다시 컴파일되어 성공했다. `.obj`는 소스에서 만들어지는 중간 파일이라 지워도 잃는 것이 없고, 다음 빌드가 현재 소스로 다시 만든다.
+- 매 실행의 판단은 `Saved/Logs/BuildGuard.log`에 한 줄씩 남는다.
+- `Target.cs`가 바뀐 뒤 첫 빌드(이 변경을 처음 받은 PC의 첫 빌드 포함)에서는 UBT가 빌드 전 단계를 건너뛰어 시작 기록이 없다. 이때 빌드 후 검사는 빌드를 실행 중인 UnrealBuildTool 프로세스의 시작 시각을 대신 쓴다(`no start record; using UnrealBuildTool start ...`). 빌드 도중 시작 기록을 지우고 소스를 저장한 시험에서 이 방식으로 감지·실패·`.obj` 삭제가 되었고, 다음 빌드는 그 파
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+**정량 검증 미완료** — 원 문서에 측정 기준값·측정값이 없다.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | UBT(언리얼 빌드 도구)는 파일 내용이 아니라 수정 시각으로 재컴파일 여부를 정한다. 컴파일러가 헤더나 소스를 이미 읽은 뒤 같은 파일을 저장하면, 옛 내용으로 만든 `.obj`가 파일보다 늦은 시각을 갖게 된다. | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 1
+- AI 관여: 원 문서에 Claude/Codex(에이전트) 관련 서술이 있다. 개별 변경의 작성 주체는 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 원 문서에 기재 없음(미확인)
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `03b8b575` | 2026-11-05 | maru3172 | UI Adjustments |

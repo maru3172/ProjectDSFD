@@ -1,0 +1,115 @@
+# 보이스·안전 처리 1~5번 및 추가 코드 점검 — 2026-10-16 — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`VoiceSecurityAndWholeGameReview.md`](../VoiceSecurityAndWholeGameReview.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 백엔드가 인증한 계정 ID ↔ EOS ID 연결을 이용한다. 클라이언트는 거리 게인 × 개인별 동료 음량 × 전체 보이스 수신 음량 × 게임 전체 음량/음소거를 적용한다.
+- 기간: 2026-10-16 ~ 2026-10-21 (문서 변경 커밋 2개 기준)
+- 결과·검증: 최종 에디터 빌드 성공. `Saved/ReviewRemediation/VoiceSmoothPractice-Regression-Verified-20261021/index.json`: 12개 성공(기존 PIE 진단 경고 포함 4개), 실패/미실행 0개, 종료 코드 0. `SmoothDistanceGain`은 가까워짐/멀어짐·중간 목표 변경·프레임률 독립·개인 음량 0·서버 게인 0·갱신 만료·권한 상실·맵 이동 시 보간 정리를 검사했다. 실제 EOS 서비스 통화나 
+- 현재 상태: 미완료·미검증 항목 있음(아래 9-10)
+
+## 요청·목표·범위 (9-2)
+
+- 백엔드가 인증한 계정 ID ↔ EOS ID 연결을 이용한다. 클라이언트는 거리 게인 × 개인별 동료 음량 × 전체 보이스 수신 음량 × 게임 전체 음량/음소거를 적용한다.
+- 기본 설정은 3.5m 이내 100%, 3.5~18m 점진 감쇄, 18m 이상 0%다. 설정 항목은 기존 `FullVolumeDistance`, `MaximumAudibleDistance`, `DistanceRolloff`이며 데디 서버도 Config 기본 객체에서 읽는다. 발소리·비명 등의 30~60m 설정과는 별개다.
+- 개인 음소거/음량은 같은 경기의 맵 이동에서 유지한다. SDK 호출은 게인/송신 상태가 달라질 때만 갱신한다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`VoiceSecurityAndWholeGameReview.md`](../VoiceSecurityAndWholeGameReview.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Config/DefaultGame.ini` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestGameMode.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestPlayerController.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01GameInstance.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01LoginWidget.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01VoiceChatSubsystem.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01VoicePreferences.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01VoiceSecurityTests.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/MultiplayTestGameMode.h` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/MultiplayTestPlayerController.h` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/ProjectProject01VoiceAudibility.h` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/ProjectProject01VoiceChatSubsystem.h` (2)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 도우미 **서버 운영 → 크래시 보관 정책**에서 보관 기간(1~3650일), 첨부 용량(1~65536MiB), 자동 정리, 원본 덤프 수집을 각각 설정한다.
+- 현재 GameInstance는 NetworkFailure는 처리하지만 TravelFailure 연결은 찾지 못했다. 엔진 `UWorld::ServerTravel`은 `CanServerTravel` 거절 시 오류 이벤트 없이 false를 반환하는 경로도 있다. 또한 목적지 이름이 비어 있지 않은지만 검사하고 실제 패키지 존재/쿠킹 포함 여부는 미리 확인하지 않는다.
+- 제안: 목적지 사전 확인, 동기/비동기 이동 실패 수신, 암전·입력·관전/전환 대기·타임라인을 일관되게 복구. 실제 운영에서 멈춤을 재현한 것은 아니며 실패 경로 테스트가 필요하다.
+- 제안: 설치/임시/백업/제거 대상의 각 기존 경로 구성 요소에 reparse point 검사를 적용하고, 링크가 있으면 안전하게 중단. 일반 사용자 PC에 이런 링크가 없으면 평상시 동작에 바로 문제가 있다는 뜻은 아니다.
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- UE5.8 EOSVoiceChat의 비어 있는 `Set3DPosition`에 의존하지 않는다. 권위 게임 서버가 살아 있는 생존자들의 실제 Pawn 거리로 수신 게인을 계산하여 해당 플레이어에게만 0.1초 간격의 RPC로 보낸다. 적 위치/시점은 전달하지 않는다.
+- 현재 매치와 다른 갱신, 알 수 없는 참가자, 탈락/탈출/경기 종료 상태는 수신하지 않는다. 서버 갱신을 1초 넘게 못 받으면 송수신을 차단하고, 새 갱신 후 복구한다. 맵 이동 중에는 이전 거리를 재사용하지 않는다.
+- 서버의 거리 판정은 기존 0.1초 RPC/3.5~18m를 유지한다. 클라이언트에서는 마지막 음량부터 새 거리 음량까지 `DistanceGainInterpolationSeconds=0.15`초 동안 smoothstep 곡선으로 연결하고 매 프레임 EOS 수신 게인에 적용한다. 이동 중 새 거리값이 오면 현재 보간값에서 이어간다. 기존 `PositionUpdateIntervalSeconds`는 이 클라이언트 보간의 갱신을 0.1초로 제한하지 않는다.
+- 새 참가자는 거리 음량 0에서 시작하고, 채널 재참가·맵 전환·로그아웃 시 이전 보간값을 재사용하지 않는다. 전체/개인 음량 설정은 거리 게인과 별도로 유지한다.
+- 이 변경은 보이스 음량에만 해당한다. 발소리·비명·쓰러지는 소리의 기존 거리/벽 차폐 설정은 수정하지 않는다. 실제 EOS 두 PC 청음은 코드 자동 검사와 별도로 필요하다.
+- 강제 로그아웃 및 새 로비 요청에서 세대 번호를 변경한다. 401 응답 후 세션 갱신을 기다리는 동안 로그아웃/새 요청이 시작되면 이전 로비 작업을 다시 실행하지 않는다.
+- 클라이언트는 현재 EOS Connect 사용자의 `CopyIdToken` JWT를 메모리에서 복사하여 토큰 요청에 `productUserIdToken`으로 보낸다. 파일이나 설정에 저장하지 않는다.
+- Device ID 사용자는 외부 계정 정보가 없을 수 있으므로 `bIsAccountInfoPresent=false` 자체로 거부하지 않는다. 현재 게임 계정의 진행 중 매치/생존자 자격도 기존대로 확인한다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 최종 에디터 빌드 성공. `Saved/ReviewRemediation/VoiceSmoothPractice-Regression-Verified-20261021/index.json`: 12개 성공(기존 PIE 진단 경고 포함 4개), 실패/미실행 0개, 종료 코드 0. `SmoothDistanceGain`은 가까워짐/멀어짐·중간 목표 변경·프레임률 독립·개인 음량 0·서버 게인 0·갱신 만료·권한 상실·맵 이동 시 보간 정리를 검사했다. 실제 EOS 서비스 통화나 
+- 백엔드는 EOS SDK `EOS_Connect_VerifyIdToken`으로 서명·유효성을 검증한다. 성공 결과의 ProductUserId가 요청 대상과 같고 Product/Sandbox/Deployment도 서버 설정과 같아야 발급한다. JWT 내용을 읽는 것만으로 인증을 통과시키지 않는다.
+- 선택적으로 서버의 `PROJECTPROJECT01_EOS_GAME_CLIENT_ID` 또는 `EosVoice:GameClientId`를 설정하면 발급 클라이언트 ID도 제한한다. 이 값은 Client ID이며 Secret이 아니다. 비워도 제품·샌드박스·배포 환경 검증은 수행한다.
+- 증명이 없거나 잘못되면 발급하지 않는다. 형식·크기 제한, 검증 대기 시간 제한, 콜백 수명 정리 및 SDK 구조체 레이아웃 검사를 추가했다. 원본 증명은 로그에 기록하지 않는다.
+- 실제 유효한 EOS 사용자 JWT와 서비스 권한을 통한 성공 발급은 실서비스 연결로 추가 확인해야 한다. 자동 검사는 실제 서명 검증 성공을 대체하지 않는다.
+- 자동 정리를 명시적으로 켜면 10분 간격으로 기간 만료 파일을 삭제하고, 총 용량 초과 시 오래된 파일부터 삭제한다. 검증된 GUID 보고서 폴더의 허용된 첨부/업로드 임시 파일만 대상으로 하며 링크 폴더를 거부하고 재귀 삭제를 하지 않는다. DB의 보고서 정보와 클라이언트 원본은 유지한다. 삭제된 서버 첨부는 이 기능으로 복구하지 못한다.
+- Development Editor / Win64 Shipping 빌드 성공. .NET 백엔드·도우미·런처·FeatureChecks 빌드 경고/오류 0개.
+- 네이티브 38개 성공, 실패/미실행 0개: `Saved/VoiceSecurityNative/index.json` (2026.10.16-12.43.30 UTC).
+- FeatureChecks + UI 검사 113개 성공. 별도 다운로드 이어받기 17개와 파일 잠금/설치 롤백 검사도 통과했다. 새 정책 API는 운영 DB 없이 임시 Kestrel 서버로 관리자 접근 제한·정책 적용·실제 ZIP 응답을 확인했다. UI 렌더 결과: `Saved/VoiceSecurityUi`.
+- 검토 범위는 싱글 저장/복원, 멀티 AI·승패/맵 전환, 인증/로비/리더보드, 음성, 크래시/설문, 업데이트, 서버 세션 운영의 주요 소스와 기존 회귀 검사다. 모든 파일·블루프린트·맵·네트워크 조합을 완전 검증한 것은 아니다. 새 기능 아이디어가 아니라 기존 기능의 실패 복구에 초점을 맞췄다.
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+| 지표 | 변경 전 | 변경 후 | 변화량(후-전) | 개선율 | 측정 횟수 |
+| --- | --- | --- | --- | --- | --- |
+| 검사 통과 수 (높을수록 좋음): 12개 성공 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+| 검사 통과 수 (높을수록 좋음): 38개 성공 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+| 검사 통과 수 (높을수록 좋음): 113개 성공 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+| 검사 통과 수 (높을수록 좋음): 17개와 파일 잠금/설치 롤백 검사도 통과 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+
+검사 통과 수는 기능 검증 결과이며 성능 개선 지표가 아니다. 변경 전 기준값이 없으므로 개선율을 계산하지 않는다. 성능·시간 등 개선 지표: **정량 검증 미완료**.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 백엔드가 인증한 계정 ID ↔ EOS ID 연결을 이용한다. 클라이언트는 거리 게인 × 개인별 동료 음량 × 전체 보이스 수신 음량 × 게임 전체 음량/음소거를 적용한다. | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 2
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 마이크를 열지 않았으며 운영 서버·DB 재시작, 패키징, 업데이트 게시는 하지 않았다. 사용자 맵/모델 에셋은 수정하지 않았다. 테스트 전용 파일만 생성/정리했다.
+- 두 PC의 실제 EOS 통화, 세 PC 맵 이동, 원격 업로드는 별도 실전 확인 대상이다. 소스 엔진의 Dedicated Server 타깃 빌드/패키징도 이번 검사에 포함하지 않았다.
+- 제안: 백업 실패·용량 부족·쓰기 중 중단을 강제로 주는 검사, 성공한 마지막 저장을 보존하는 원자적 교체. 이번에 실제 사용자 저장 파일을 손상시키거나 실패를 강제로 발생시키지는 않았다.
+- 격리된 `Saved/FeatureChecks/PathAudit/da5f57ca55f5427d9f11eb713d23f00e`에서 Install/Linked를 Outside로 향하는 Windows 정션으로 만든 뒤, 기존 경로 함수가 `Linked/probe.txt`를 정상 허용함을 재현했다. 운영 파일을 읽거나 덮어쓰지는 않았다.
+- 제안: 적용 전 디스크 저널 작성, 다음 실행 시 미완료 적용 자동 복구, 복구 성공 전 백업 보존. 이 강제 종료 상황은 이번 작업에서 실행하지 않았다.
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `9ea88d02` | 2026-10-21 | maru3172 | Adjust UI Theme |
+| `27b871b5` | 2026-10-16 | maru3172 | Voice enhancement |

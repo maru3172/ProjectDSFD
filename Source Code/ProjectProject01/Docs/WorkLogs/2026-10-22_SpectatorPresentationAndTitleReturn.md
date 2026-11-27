@@ -1,0 +1,107 @@
+# 관전 연출·타이틀 복귀·메모리 진단 (2026-10-22) — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`SpectatorPresentationAndTitleReturn.md`](../SpectatorPresentationAndTitleReturn.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 관전 카메라의 뒤/위 오프셋을 제거했다. 관전 대상의 실제 `CalcCamera` 위치·FOV·후처리를 사용하고, 관전자의 자유 회전에 대상의 피격·사망 회전 연출만 더한다. 관전 입력은 살아 있는 대상의 이동·회전·시야 판정을 바꾸지 않는다.
+- 기간: 2026-10-22 ~ 2026-10-22 (문서 변경 커밋 2개 기준)
+- 결과·검증: 에디터 대상 빌드 성공. 관전 회귀 3개 성공, 경고 포함 성공/실패 0 (`Saved/ReviewRemediation/SpectatorResultAndDiagnostics-20261022/UnrealFinal/index.json`). 고립 월드 검사는 렌더 뷰포트가 없다는 예상 경고만 명시적으로 허용한다. 실제 패키징·외부 PC 시연을 대신하는 검사는 아니다.
+- 현재 상태: 미완료·미검증 항목 있음(아래 9-10)
+
+## 요청·목표·범위 (9-2)
+
+- 관전 카메라의 뒤/위 오프셋을 제거했다. 관전 대상의 실제 `CalcCamera` 위치·FOV·후처리를 사용하고, 관전자의 자유 회전에 대상의 피격·사망 회전 연출만 더한다. 관전 입력은 살아 있는 대상의 이동·회전·시야 판정을 바꾸지 않는다.
+- 한 프로세스에서 여러 PIE 창을 실행하면 엔진의 GameUserSettings 객체가 공유될 수 있다. 실제 분리 실행 클라이언트의 프로세스별 설정과 구분해야 한다. 같은 PC에서 두 실행본이 같은 저장 경로를 쓰는 경우에는 다음 실행 시 저장 파일을 공유할 수 있지만, 다른 PC로 설정 변경이 전파되는 기능은 없다.
+- 멀티 사망 위젯은 쓰러짐·암전이 끝나도 스스로 제거되지 않는다. 다음 유효한 관전 시점이 준비되거나 불투명 결과 위젯이 실제 추가된 뒤 해당 클라이언트 소유 위젯만 해제한다. 싱글의 기존 위젯 종료·결과 흐름은 유지한다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`SpectatorPresentationAndTitleReturn.md`](../SpectatorPresentationAndTitleReturn.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Config/DefaultGame.ini` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestGameMode.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestPlayerController.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerCharacter.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectSurvivorPresentationTests.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/MultiplayTestPlayerController.h` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/PlayerCharacter.h` (2)
+- `ProjectProject01/Source/ProjectProject01/Public/PlayerFeedbackWidgets.h` (2)
+- `ProjectProject01/Source/ProjectProject01Editor/Private/ProjectProject01PlaySessionTests.cpp` (2)
+- `ProjectProject01/Tools/ProjectProject01BuildServerHelper/Program.cs` (2)
+- `ProjectProject01/Tools/ProjectProject01DiagnosticsDashboard/BackendDiagnosticsPanel.cs` (2)
+- `ProjectProject01/Tools/ProjectProject01DiagnosticsDashboard/LongTermDiagnostics.cs` (2)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 추가 원인: 멀티 결과 위젯 자체가 생성 시 배경을 투명하게 초기화한 뒤 1.5초간 다시 암전하고 있었다. 이제 멀티 사망·탈출·마네킹 결과는 뷰포트 추가 전과 `NativeConstruct` 양쪽에서 배경 알파 1/메뉴 표시 상태로 준비한다. 사망 암전을 결과창으로 인계할 때 월드 노출과 두 번째 암전이 없다. 싱글 사망도 불투명 배경이며 싱글 탈출의 기존 페이드는 유지한다.
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 대상 모델은 **관전자 PlayerController의 HiddenActors에서만** 제외한다. `SetActorHiddenInGame`으로 생존자를 전역 숨김하지 않는다. 대상 변경/관전 종료 시 이 코드가 추가한 항목을 정리한다. 이는 위치 불일치를 모델 숨김으로 가리는 해결이 아니며, 위치 자체도 대상의 1인칭 카메라 기준으로 검사한다.
+- 피격·사망은 서버가 기록한 이벤트 번호·방향·강도·시작 시각을 공유한다. 관전 중 대상을 바꿔도 아직 진행 중인 효과는 현재 시점부터 이어 받고, 지난 효과는 재생하지 않는다. 관전 대상이 죽으면 카메라 쓰러짐·암전이 끝날 때까지 대상을 유지한 뒤 기존 결과/관전 전환을 따른다. 이전 대상의 위젯·카메라 변화는 정리한다.
+- 걷기 흔들림과 긴장 상태는 생존자 소유 클라이언트에서 10Hz로 보내는 **표시 전용** 데이터다. 서버가 유한값·범위·빈도를 제한하며 피해/이동/인지/점수 판정에는 사용하지 않는다. 심박·호흡·VFX 상태는 관전자가 자기 시야를 기준으로 다시 계산하지 않고 대상의 상태를 사용한다. 네트워크 전달 지연은 존재하므로 서로 다른 PC의 같은 렌더 프레임까지 일치시키는 영상 스트리밍은 아니다.
+- 복제하는 흔들림·강도는 환경설정으로 축소되기 전 값이다. 수신한 클라이언트에서 자신의 카메라 흔들림 ON/OFF·강도, VFX/번쩍임/왜곡 강도와 SFX 설정을 적용한다. 생존자가 흔들림을 껐더라도 관전자가 켰으면 관전자 화면에서는 표시할 수 있다. 상대 설정이 다른 플레이어의 설정이나 게임 판정을 변경하지 않는다.
+- 지속 증가를 경고할 수 있으나 캐시·스트리밍·할당자 재사용도 메모리를 유지하므로 **메모리 누수 확정이나 할당 지점 특정은 아니다**. 같은 동작/맵 복귀를 반복한 후 장기 추세와 GC 후 기준선을 비교해야 한다.
+- 실제 엔진 GC 전후 이벤트에서 메모리·UObject 수와 `ElapsedMilliseconds`를 기록한다. 이는 PreGC부터 GarbageCollectComplete까지의 경과 시간이며 증분 GC의 순수 일시정지 시간이나 각 스레드 CPU 시간으로 해석하면 안 된다. 진단기는 게임 중 GC를 강제로 실행하지 않는다.
+- 캡처의 `Video memory has been exhausted`는 GPU 메모리 예산 초과 경고다. 이것만으로 RAM 누수나 GC 실패를 뜻하지 않는다. 특히 에디터에서 여러 렌더 창을 동시에 띄우는 조건은 별도로 비교해야 한다.
+- 복제 필드/RPC가 추가되어 통신 버전은 5다. 다음 배포 시 백엔드·클라이언트·데디 서버를 함께 갱신해야 한다. 이 작업은 새 패키징이나 운영 서버 재시작을 수행하지 않는다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 결과 수신은 초기 페이드·관전 전환 타이머보다 우선한다. 로컬 사망 연출이 남았으면 최대 5초의 유한 대기 후 최신 결과를 표시한다. 검증 응답 갱신은 같은 위젯의 내용만 바꾸고 페이드·음량·포커스를 다시 시작하지 않는다. 뒤늦은 관전/맵 도착 요청은 결과를 다시 게임 화면으로 되돌릴 수 없다.
+- `ProjectProject01.Multiplayer.Result.OpaqueHandoff`는 최초 구성·생성 초기화·후속 틱·검증 내용 갱신 때 검은 배경이 유지되는지 검사한다. `UITheme.RenderPages`는 멀티 사망·탈출 결과를 1280×720/800×600으로 렌더링해 `Saved/UIThemeQA/Multiplayer*Result_*.png`에 저장한다. 실제 외부 PC의 모든 타이밍 조합을 대신하는 검사는 아니다.
+- 에디터 대상 빌드 성공. 관전 회귀 3개 성공, 경고 포함 성공/실패 0 (`Saved/ReviewRemediation/SpectatorResultAndDiagnostics-20261022/UnrealFinal/index.json`). 고립 월드 검사는 렌더 뷰포트가 없다는 예상 경고만 명시적으로 허용한다. 실제 패키징·외부 PC 시연을 대신하는 검사는 아니다.
+- ProjectDFSDEditor Development 빌드 성공.
+- `Saved/ReviewRemediation/SpectatorSync-Title-GC-Final-20261022/index.json`: 9개 성공(6개 경고 없음, 3개 PIE/fixture 관련 경고 포함), 실패 0. 실제 3개 네트워크 PIE 클라이언트에서 맵 이동 후 관전 위치는 생존자와 동일하게 X=30/Z=70, FOV=90이었다. 서버 피격 및 사망 효과가 소유자와 기존 관전자 양쪽에 전달되는 것도 확인했다.
+- 실제 LevelTest01에서 TitleLevel로 복귀한 뒤 로딩 오버레이가 비활성화되고 타이틀 컨트롤러가 활성화되는 검사 성공.
+- 관전자 자체 OFF/절반 강도 적용, 원본 연출 값 보존, 피격 회전 유지, 사망 카메라 하강·암전, 대상 변경 정리 검사 성공.
+- 실제 엔진 GC를 테스트 안에서만 실행해 GC 전후 메모리·UObject·경과 시간 필드가 수집되는지 확인했다. 장시간 메모리 누수 재현 검사는 아니다.
+- FeatureChecks 188개 성공, DiagnosticsDashboard `--self-test` 성공. 운영 DB는 변경하지 않았다.
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+| 지표 | 변경 전 | 변경 후 | 변화량(후-전) | 개선율 | 측정 횟수 |
+| --- | --- | --- | --- | --- | --- |
+| 검사 통과 수 (높을수록 좋음): 3개 성공 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+| 검사 통과 수 (높을수록 좋음): 9개 성공 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+| 검사 통과 수 (높을수록 좋음): 188개 성공 | 기준값 없음 | 원 문서 기재값 | 계산 안 함 | 계산 안 함(기준값 없음) | 1회(원 문서 기준) |
+
+검사 통과 수는 기능 검증 결과이며 성능 개선 지표가 아니다. 변경 전 기준값이 없으므로 개선율을 계산하지 않는다. 성능·시간 등 개선 지표: **정량 검증 미완료**.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 관전 카메라의 뒤/위 오프셋을 제거했다. 관전 대상의 실제 `CalcCamera` 위치·FOV·후처리를 사용하고, 관전자의 자유 회전에 대상의 피격·사망 회전 연출만 더한다. 관전 입력은 살아 있는 대상의 이동·회전 | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 2
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 다음 배포 시 클라이언트와 데디 서버 양쪽에 수정 코드를 반영한다. 이 작업에서 게임 패키징은 하지 않았다.
+- TitleLevel이 로딩 코드의 메뉴 목록에서 빠져 있었다. 따라서 타이틀에는 없는 플레이 카메라 준비 알림을 기다리며 90%에서 멈출 수 있었다. TitleLevel·LoginLevel·LobbyLevel·LeaderBoardTest는 게임 로딩 배리어에서 제외하며, PreLoad/PostLoad 양쪽에서 남은 로딩 오버레이를 정리한다. 실제 게임 맵의 전원 준비 대기 규칙은 유지한다.
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `3bb3ea6e` | 2026-10-22 | maru3172 | Performance Improvement |
+| `37df1777` | 2026-10-22 | maru3172 | Watch Mode Sync |

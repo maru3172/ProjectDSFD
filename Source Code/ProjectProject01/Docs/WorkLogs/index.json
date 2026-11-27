@@ -1,0 +1,546 @@
+[
+ {
+  "name": "2026-10-08_AccessibilityAndCrashReports.md",
+  "title": "접근성 설정과 크래시 보고서",
+  "first": "2026-10-08",
+  "last": "2026-10-15",
+  "commits": 2,
+  "open": 5
+ },
+ {
+  "name": "2026-10-16_AudioOcclusionAndPartnerContact.md",
+  "title": "소리 차폐와 파트너 후퇴 접촉 수정",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-11-01_BackendModules.md",
+  "title": "백엔드 모듈 구조 (2026-11-01)",
+  "first": "2026-11-01",
+  "last": "2026-11-01",
+  "commits": 2,
+  "open": 0
+ },
+ {
+  "name": "2026-10-23_BotAndObserverImplementation.md",
+  "title": "5단계 봇·오픈매칭 관전 구현 기록",
+  "first": "2026-10-23",
+  "last": "2026-10-24",
+  "commits": 3,
+  "open": 8
+ },
+ {
+  "name": "2026-10-24_BotHumanLikeness.md",
+  "title": "봇의 사람다운 요소",
+  "first": "2026-10-24",
+  "last": "2026-11-01",
+  "commits": 4,
+  "open": 5
+ },
+ {
+  "name": "2026-11-05_BuildGuard.md",
+  "title": "빌드 중 소스 편집 방지",
+  "first": "2026-11-05",
+  "last": "2026-11-05",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-26_CaseRecordExpansion.md",
+  "title": "사건 기록 UI·계정 성장·소셜 확장",
+  "first": "2026-10-26",
+  "last": "2026-11-04",
+  "commits": 4,
+  "open": 8
+ },
+ {
+  "name": "2026-11-11_ChatFilter.md",
+  "title": "금칙어 필터 (2026-11-11)",
+  "first": "2026-11-11",
+  "last": "2026-11-11",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-19_CodeReviewRemediation.md",
+  "title": "전수 검토 개선 작업 현황",
+  "first": "2026-10-19",
+  "last": "2026-10-19",
+  "commits": 3,
+  "open": 2
+ },
+ {
+  "name": "2026-10-18_CommunityAndLauncher.md",
+  "title": "친구·차단 및 런처 운영",
+  "first": "2026-10-18",
+  "last": "2026-10-18",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-11-05_CustomGamePlayground.md",
+  "title": "사용자 지정 게임 (놀이터) 1단계 설계",
+  "first": "2026-11-05",
+  "last": "2026-11-07",
+  "commits": 4,
+  "open": 8
+ },
+ {
+  "name": "2026-10-26_CustomOpenMatchRules.md",
+  "title": "오픈매칭 커스텀 규칙",
+  "first": "2026-10-26",
+  "last": "2026-11-06",
+  "commits": 2,
+  "open": 0
+ },
+ {
+  "name": "2026-10-21_EditorLocalMatchTesting.md",
+  "title": "127.0.0.1 에디터 실매칭 테스트",
+  "first": "2026-10-21",
+  "last": "2026-10-21",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-20_ElevatorSetup.md",
+  "title": "생존자 비상 엘리베이터",
+  "first": "2026-10-20",
+  "last": "2026-10-20",
+  "commits": 2,
+  "open": 3
+ },
+ {
+  "name": "2026-11-10_FinalFeaturesHandoff.md",
+  "title": "최종 추가 작업 14개",
+  "first": "2026-11-10",
+  "last": "2026-11-10",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-10-16_FinalThreeFeatures.md",
+  "title": "추가 개발 마감 범위: 세 가지",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 1,
+  "open": 3
+ },
+ {
+  "name": "2026-11-15_FireShutterLayout.md",
+  "title": "방화셔터 판마다 배치 (3층·2층·1층)",
+  "first": "2026-11-15",
+  "last": "2026-11-16",
+  "commits": 3,
+  "open": 8
+ },
+ {
+  "name": "2026-10-19_FootContactCameraFeedback.md",
+  "title": "발 디딤 연동 카메라·발소리",
+  "first": "2026-10-19",
+  "last": "2026-10-20",
+  "commits": 2,
+  "open": 7
+ },
+ {
+  "name": "2026-10-17_FullCodeReviewCoverage.md",
+  "title": "전체 코드 검토 파일별 커버리지",
+  "first": "2026-10-17",
+  "last": "2026-10-17",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-17_FullProjectCodeReview.md",
+  "title": "프로젝트 전체 코드 전수 검토 결과",
+  "first": "2026-10-17",
+  "last": "2026-10-17",
+  "commits": 1,
+  "open": 8
+ },
+ {
+  "name": "2026-11-11_Gamepad.md",
+  "title": "게임패드 (설계, 2026-11-11)",
+  "first": "2026-11-11",
+  "last": "2026-11-12",
+  "commits": 2,
+  "open": 1
+ },
+ {
+  "name": "2026-11-04_ItemRoguelikeMode.md",
+  "title": "아이템 로그라이크 모드",
+  "first": "2026-11-04",
+  "last": "2026-11-06",
+  "commits": 2,
+  "open": 2
+ },
+ {
+  "name": "2026-10-22_LightweightDiagnostics.md",
+  "title": "경량 진단과 서킷 브레이커",
+  "first": "2026-10-22",
+  "last": "2026-10-22",
+  "commits": 2,
+  "open": 2
+ },
+ {
+  "name": "2026-10-21_LoadingScreenAndSpectator.md",
+  "title": "로딩 화면·관전·사망 후 음성",
+  "first": "2026-10-21",
+  "last": "2026-10-26",
+  "commits": 3,
+  "open": 2
+ },
+ {
+  "name": "2026-10-09_Localization.md",
+  "title": "ProjectProject01 UI 현지화",
+  "first": "2026-10-09",
+  "last": "2026-10-09",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-19_LoginRegistrationFlow.md",
+  "title": "로그인·회원가입 화면 분리",
+  "first": "2026-10-19",
+  "last": "2026-10-19",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-21_LogReliability.md",
+  "title": "한글 로그·로비 포커스·결과 복구·EOS 틱 보완",
+  "first": "2026-10-21",
+  "last": "2026-10-21",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-11-12_MailAndCoupons.md",
+  "title": "우편함과 쿠폰 코드 (설계, 2026-11-11)",
+  "first": "2026-11-12",
+  "last": "2026-11-12",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-10-30_MainQuestAndPurchaseConfirmation.md",
+  "title": "탐사 메인 퀘스트와 거래 확인",
+  "first": "2026-10-30",
+  "last": "2026-11-01",
+  "commits": 4,
+  "open": 1
+ },
+ {
+  "name": "2026-10-20_MannequinCaptureVFXPolish.md",
+  "title": "마네킹 타격 성공 화면 개선 (2026-10-20)",
+  "first": "2026-10-20",
+  "last": "2026-10-20",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-11-04_MannequinCommandWheel.md",
+  "title": "마네킹 명령 휠",
+  "first": "2026-11-04",
+  "last": "2026-11-04",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-16_MannequinDisguiseAndCheckpointPreviews.md",
+  "title": "멀티 마네킹 위장·싱글 저장소 미리보기",
+  "first": "2026-10-16",
+  "last": "2026-10-19",
+  "commits": 3,
+  "open": 2
+ },
+ {
+  "name": "2026-10-19_MannequinFeedbackAudioRefresh.md",
+  "title": "마네킹 행동·상태 UI·재질 SFX 변경 (2026-10-18)",
+  "first": "2026-10-19",
+  "last": "2026-10-19",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-19_MannequinHorrorAndPainFeedback.md",
+  "title": "마네킹 공포 음향·피격 호흡·피해 화면 (2026-10-18)",
+  "first": "2026-10-19",
+  "last": "2026-10-19",
+  "commits": 2,
+  "open": 8
+ },
+ {
+  "name": "2026-11-08_MannequinReactiveLighting.md",
+  "title": "마네킹 반응 조명",
+  "first": "2026-11-08",
+  "last": "2026-11-09",
+  "commits": 4,
+  "open": 8
+ },
+ {
+  "name": "2026-11-04_MatchWait.md",
+  "title": "매칭 대기 중 다른 것 하기",
+  "first": "2026-11-04",
+  "last": "2026-11-04",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-11-02_MiniGames.md",
+  "title": "미니게임 기획안",
+  "first": "2026-11-02",
+  "last": "2026-11-04",
+  "commits": 3,
+  "open": 1
+ },
+ {
+  "name": "2026-10-16_MultiplayerMannequinFreeCamera.md",
+  "title": "멀티 마네킹 카메라와 HUD 전환",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-16_MultiplayerSearchAndMatchTimeline.md",
+  "title": "멀티 수색·정찰 연결·경기 타임라인",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-20_MultiplayerTutorial.md",
+  "title": "멀티 튜토리얼과 목표 안내",
+  "first": "2026-10-20",
+  "last": "2026-10-21",
+  "commits": 2,
+  "open": 8
+ },
+ {
+  "name": "2026-10-16_OperationsAndVoiceUsability.md",
+  "title": "음성 편의 기능과 서버 운영 보완",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 2,
+  "open": 4
+ },
+ {
+  "name": "2026-10-19_PackagingRuntimeReadiness.md",
+  "title": "시연용 패키징 런타임 점검",
+  "first": "2026-10-19",
+  "last": "2026-10-19",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-26_PartyConsentAndLeadership.md",
+  "title": "파티 입장 확인과 파티장 위임",
+  "first": "2026-10-26",
+  "last": "2026-10-26",
+  "commits": 2,
+  "open": 0
+ },
+ {
+  "name": "2026-10-22_PerformanceAndSecurityCleanup.md",
+  "title": "성능·보안 정리 (2026-10-22)",
+  "first": "2026-10-22",
+  "last": "2026-10-22",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-17_PeripheralVertigoVFX.md",
+  "title": "외곽 중심 현기증 VFX",
+  "first": "2026-10-17",
+  "last": "2026-10-17",
+  "commits": 1,
+  "open": 7
+ },
+ {
+  "name": "2026-10-30_ProfileCollectionsAndDraw.md",
+  "title": "프로필·컬렉션·시즌 뽑기",
+  "first": "2026-10-30",
+  "last": "2026-10-30",
+  "commits": 1,
+  "open": 4
+ },
+ {
+  "name": "2026-11-10_QuestGraph.md",
+  "title": "퀘스트·대화 그래프 (설계, 2026-11-10)",
+  "first": "2026-11-10",
+  "last": "2026-11-11",
+  "commits": 2,
+  "open": 0
+ },
+ {
+  "name": "2026-10-21_RandomMatchReturnAndMannequinNavigation.md",
+  "title": "랜덤 경기 복귀 및 멀티 마네킹 이동 보완 (2026-10-21)",
+  "first": "2026-10-21",
+  "last": "2026-10-21",
+  "commits": 1,
+  "open": 4
+ },
+ {
+  "name": "2026-10-26_ReplayAndDeathCamera.md",
+  "title": "경기 리플레이와 데스캠",
+  "first": "2026-10-26",
+  "last": "2026-10-26",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-10-17_ReviewBackendDraft.md",
+  "title": "Backend whole-source review draft (2026-10-17)",
+  "first": "2026-10-17",
+  "last": "2026-10-17",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-19_ReviewRecoveryPolicies.md",
+  "title": "전수 검토 후 복구·운영 정책",
+  "first": "2026-10-19",
+  "last": "2026-10-19",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-10-17_ReviewRuntimeDraft.md",
+  "title": "Runtime read-only audit draft (2026-10-17)",
+  "first": "2026-10-17",
+  "last": "2026-10-17",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-17_ReviewUiToolsDraft.md",
+  "title": "UI / tools exhaustive read-only review (2026-10-17)",
+  "first": "2026-10-17",
+  "last": "2026-10-17",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-08_SaveBuildVoicePingTestGuide.md",
+  "title": "싱글 저장·빌드 도우미·생존자 통신 테스트 가이드",
+  "first": "2026-10-08",
+  "last": "2026-10-08",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-11-12_Security.md",
+  "title": "보안 (리버스 엔지니어링·치트 대비, 2026-11-12)",
+  "first": "2026-11-12",
+  "last": "2026-11-12",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-27_ServerAdministrationNavigation.md",
+  "title": "서버 운영 화면 분류",
+  "first": "2026-10-27",
+  "last": "2026-10-27",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-10-21_SessionLatencyAndReplicationBudget.md",
+  "title": "세션 준비 지연·Zen·시야 기반 전송 예산",
+  "first": "2026-10-21",
+  "last": "2026-10-21",
+  "commits": 1,
+  "open": 2
+ },
+ {
+  "name": "2026-10-22_SpectatorPresentationAndTitleReturn.md",
+  "title": "관전 연출·타이틀 복귀·메모리 진단 (2026-10-22)",
+  "first": "2026-10-22",
+  "last": "2026-10-22",
+  "commits": 2,
+  "open": 2
+ },
+ {
+  "name": "2026-10-20_StartupIntroAndProjectRename.md",
+  "title": "백화점 화재사건 — ProjectDFSD (2026-10-20)",
+  "first": "2026-10-20",
+  "last": "2026-10-20",
+  "commits": 1,
+  "open": 3
+ },
+ {
+  "name": "2026-10-20_SurvivorSpectatorTravel.md",
+  "title": "멀티 생존자 관전과 맵 이동",
+  "first": "2026-10-20",
+  "last": "2026-10-20",
+  "commits": 2,
+  "open": 3
+ },
+ {
+  "name": "2026-10-08_SurvivorVoiceChatSetup.md",
+  "title": "생존자 근접 보이스 채팅 설정",
+  "first": "2026-10-08",
+  "last": "2026-10-08",
+  "commits": 1,
+  "open": 0
+ },
+ {
+  "name": "2026-10-16_SurvivorVoiceParticipantControls.md",
+  "title": "생존자 동료별 보이스 제어",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 2,
+  "open": 0
+ },
+ {
+  "name": "2026-10-20_TitlePresentation.md",
+  "title": "타이틀 전용 3D 연출",
+  "first": "2026-10-20",
+  "last": "2026-10-20",
+  "commits": 1,
+  "open": 1
+ },
+ {
+  "name": "2026-10-20_UITheme.md",
+  "title": "게임 UI 공통 타이틀 테마",
+  "first": "2026-10-20",
+  "last": "2026-11-05",
+  "commits": 5,
+  "open": 4
+ },
+ {
+  "name": "2026-10-16_VoiceLifecycleAndProjectReview.md",
+  "title": "보이스 네 가지 개선 및 기존 기능 점검 (2026-10-16)",
+  "first": "2026-10-16",
+  "last": "2026-10-16",
+  "commits": 1,
+  "open": 4
+ },
+ {
+  "name": "2026-10-16_VoiceSecurityAndWholeGameReview.md",
+  "title": "보이스·안전 처리 1~5번 및 추가 코드 점검 — 2026-10-16",
+  "first": "2026-10-16",
+  "last": "2026-10-21",
+  "commits": 2,
+  "open": 5
+ },
+ {
+  "name": "2026-10-30_멀티플레이_어픽스와_탐사_퀘스트_기획초안.md",
+  "title": "멀티플레이 어픽스·퀘스트·스토리라인 기획 초안",
+  "first": "2026-10-30",
+  "last": "2026-11-01",
+  "commits": 2,
+  "open": 5
+ },
+ {
+  "name": "2026-10-30_봇_AI_구현_요약.md",
+  "title": "봇 AI 구현 요약 — 성격·성장·플레이 스타일",
+  "first": "2026-10-30",
+  "last": "2026-10-30",
+  "commits": 1,
+  "open": 1
+ }
+]

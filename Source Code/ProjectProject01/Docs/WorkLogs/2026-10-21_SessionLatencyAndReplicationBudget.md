@@ -1,0 +1,90 @@
+# 세션 준비 지연·Zen·시야 기반 전송 예산 — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`SessionLatencyAndReplicationBudget.md`](../SessionLatencyAndReplicationBudget.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 오픈 매칭: 16.04초
+- 기간: 2026-10-21 ~ 2026-10-21 (문서 변경 커밋 1개 기준)
+- 결과·검증: 이전 `IsReadyForServerAllocation()`은 월드 시간이 10초가 지나야 준비 완료를 보냈다. 서버 실행/맵 로딩 이후에 추가되는 고정 대기였다. 이제 GameMode 초기화 완료, BeginPlay/배우 초기화, 실제 서버 수신 소켓 유효성, 내비게이션 초기 빌드/잠금 해제, 빈 경기 상태를 확인한다. 최초 heartbeat는 초기화 다음 틱에 보낸다. 백엔드의 관리 ID·준비 heartbeat·역할 배정·접속 티켓 검증은 우회하지 않는다.
+- 현재 상태: 미완료·미검증 항목 있음(아래 9-10)
+
+## 요청·목표·범위 (9-2)
+
+- 오픈 매칭: 16.04초
+- 랜덤 매칭: 15.28초
+- 새 서버 로그에서 월드 준비 완료 판정: 월드 시작 후 0.03초
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`SessionLatencyAndReplicationBudget.md`](../SessionLatencyAndReplicationBudget.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Config/DefaultGame.ini` (1)
+- `ProjectProject01/Config/Windows/WindowsEngine.ini` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MannequinAICharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestGameMode.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestPlayerController.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerCharacter.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectLoadingGate.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectLoadingScreenState.h` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectLoadingScreenSubsystem.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectLoadingTests.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01GameInstance.cpp` (1)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01LobbySubsystem.cpp` (1)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 클라이언트 표시는 `Queued`(빈 경기 세션 대기, 최대 120초)와 `Preparing`(예약한 서버 실행/준비, 최대 90초)를 구분한다. 각 단계의 서버 기준 경과 초를 표시한다. 이 두 필드는 선택 필드여서 이전 백엔드 응답도 해석할 수 있다. 동시 경기 한도가 찬 경우의 실제 대기를 없앤 것은 아니며, 준비 전 서버를 열거나 유휴 경기 서버를 미리 실행하지 않는다.
+- 위 수치는 엔진 부팅과 맵 로딩을 포함한다. 재부팅/디스크 캐시 상태에 따라 달라지며 패키징 서버나 다중 PC에서 동일한 시간을 보장하지 않는다.
+- Zen은 로컬 캐시 서비스로 백그라운드에 남는다. 경기 서버를 미리 켜 두는 설정이 아니며 Windows 서비스나 부팅 자동 실행을 설치하지 않는다. 필요하면 현재 엔진의 `Engine/Binaries/Win64/zen.exe down`으로 정상 종료할 수 있다. 다른 에디터가 쓰는 동안 강제 종료하거나 캐시 폴더를 지우지 않는다.
+- **데이터를 아예 끄지 않는다.** AI·A*·충돌·접촉 피해·명령·게임 규칙은 그대로 서버 게임 스레드에서 수행한다. 배우를 숨기거나 채널을 끊거나 dormancy로 잠그지 않으며, 마네킹 플레이어가 모든 번호와 상태를 받는 규칙도 유지한다. 음향 감쇄·보이스·거리 규칙은 변경하지 않는다. 벽 가림을 확인하려고 복제마다 추가 raycast를 하지 않는다. 싱글/Standalone 연습과 클라이언트에서는 이 컴포넌트의 주기 처리가 꺼진다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 이전 `IsReadyForServerAllocation()`은 월드 시간이 10초가 지나야 준비 완료를 보냈다. 서버 실행/맵 로딩 이후에 추가되는 고정 대기였다. 이제 GameMode 초기화 완료, BeginPlay/배우 초기화, 실제 서버 수신 소켓 유효성, 내비게이션 초기 빌드/잠금 해제, 빈 경기 상태를 확인한다. 최초 heartbeat는 초기화 다음 틱에 보낸다. 백엔드의 관리 ID·준비 heartbeat·역할 배정·접속 티켓 검증은 우회하지 않는다.
+- 2026-10-21 검증 PC에서 실제 UnrealEditor-Cmd 서버를 실행한 준비 시간(5초 카운트다운 제외):
+- 실제 오픈/랜덤 매칭, 준비 전 티켓 거부, 서버 관리 ID/역할 1:2, 대기 취소/만료 및 동시 경기 한도 검사: `Saved/ReviewRemediation/SessionLatency-Integration-Verified-20261021.log`.
+- 격리 DB는 포트 23307 및 검증용 데이터 디렉터리를 확인한 뒤 사용했고, 검사 서버와 DB는 종료했다. 운영 DB는 변경하지 않았다.
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+**정량 검증 미완료** — 원 문서에 측정 기준값·측정값이 없다.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 오픈 매칭: 16.04초 | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 1
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- `Config/Windows/WindowsEngine.ini`에서 이 Windows 프로젝트의 불필요한 Android 포워더를 제외하고, `LimitProcessLifetime=False`로 에디터/테스트 서버 종료 시 Zen을 매번 닫고 다시 시작하지 않게 했다. 캐시·프로젝트·저장 데이터를 삭제하거나 보안 검사를 해제하지 않았다. 설정 적용 첫 Zen 시작은 1.576초, 이후 실제 경기 서버 실행에서 재사용 초기화는 0.011초/0.009초였다. 느린 첫 
+- 패키징/게시하지 않았다. 배포에 반영하려면 최신 백엔드를 재시작하고 클라이언트와 데디케이티드 서버를 다시 빌드/패키징한다. Zen 설정은 에디터를 다시 실행할 때 적용된다.
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `1705b5f1` | 2026-10-21 | maru3172 | Tutorial revamp |

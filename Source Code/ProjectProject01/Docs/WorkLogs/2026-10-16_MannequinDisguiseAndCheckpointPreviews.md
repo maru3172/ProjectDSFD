@@ -1,0 +1,95 @@
+# 멀티 마네킹 위장·싱글 저장소 미리보기 — 개발 기록
+
+> 소급 작성: 2026-11-27 (KST). 원 문서 [`MannequinDisguiseAndCheckpointPreviews.md`](../MannequinDisguiseAndCheckpointPreviews.md)와 그 문서를 바꾼 커밋으로 재구성했다. 원 문서·커밋에 없는 당시의 가설·시행착오·대화 내용은 **미확인**으로 둔다. 상세 설계·수치는 원 문서가 기준이며 여기서 반복하지 않는다.
+
+## 요약
+
+- 목표: 자동/수동 체크포인트를 저장할 때 현재 카메라 위치/방향/FOV와 후처리를 참고해 게임 장면을 320×180 PNG로 한 번 렌더링한다. 메뉴, 마우스 커서, 확인창 등 UMG는 넣지 않는다.
+- 기간: 2026-10-16 ~ 2026-10-19 (문서 변경 커밋 3개 기준)
+- 결과·검증: Editor Development 및 Win64 Shipping 빌드 성공. 전용 서버 빌드/패키징/업데이트 게시는 실행하지 않았다.
+- 현재 상태: 미완료·미검증 항목 있음(아래 9-10)
+
+## 요청·목표·범위 (9-2)
+
+- 자동/수동 체크포인트를 저장할 때 현재 카메라 위치/방향/FOV와 후처리를 참고해 게임 장면을 320×180 PNG로 한 번 렌더링한다. 메뉴, 마우스 커서, 확인창 등 UMG는 넣지 않는다.
+- 이미지 슬롯은 가로/세로 Fill로 지정하여 기본 브러시 32×32가 왼쪽 위에만 보이지 않게 한다. 이미지가 유효하면 대체 문구를 숨기고, 없으면 12pt 대체 문구만 표시한다. 기존 이미지도 다시 저장하지 않고 올바른 크기로 표시된다.
+- 저장 형식은 v7(2026-10-19 저장 보호·싱글 AI 상태 개선). v1~v6 저장 파일을 유지하며 이관하고, 기존 v5 이상 이미지도 보존한다. 이미지가 없는 기존 저장은 `미리보기 없음`으로 표시하며 다음 정상 저장부터 이미지가 생긴다. 저장소는 교대 세대 파일로 보호하며 상세는 `CodeReviewRemediation.md`의 F07/F08을 참고한다.
+- 원래 요청 원문·사용자 의도: 미확인(원 문서에 요약만 있음). 사용자 발언·해석·합의 구분: 원 문서 서술 기준.
+
+## 기존 구조·흐름 (9-3)
+
+원 문서 [`MannequinDisguiseAndCheckpointPreviews.md`](../MannequinDisguiseAndCheckpointPreviews.md) 참조. 이 작업의 커밋이 바꾼 주요 파일(변경 횟수):
+
+- `ProjectProject01/Source/ProjectProject01/Private/MultiplayTestGameMode.cpp` (3)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01SaveSubsystem.cpp` (3)
+- `ProjectProject01/Source/ProjectProject01/Public/MannequinAICharacter.h` (3)
+- `ProjectProject01/Source/ProjectProject01/Public/ProjectProject01GameInstance.h` (3)
+- `ProjectProject01/Source/ProjectProject01/Public/ProjectProject01LoginWidget.h` (3)
+- `ProjectProject01/Source/ProjectProject01/Public/ProjectProject01SaveSubsystem.h` (3)
+- `ProjectProject01/Tools/ProjectProject01FeatureChecks/Program.cs` (3)
+- `ProjectProject01/Config/DefaultGame.ini` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/PlayerHeartbeatComponent.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01GameInstance.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01LevelTransitionTrigger.cpp` (2)
+- `ProjectProject01/Source/ProjectProject01/Private/ProjectProject01LobbySubsystem.cpp` (2)
+
+문서를 바꾸지 않은 코드 커밋은 이 목록에 들어가지 않는다(미확인 연결).
+
+## 문제·증상 (9-4)
+
+- 이 밖의 발견 계기·재현 절차: 미확인.
+
+## 판단·결정 (9-5)
+
+- 타이틀의 저장소 선택, ESC 수동 저장소 선택, ESC 다른 저장소 불러오기에 160×90 미리보기와 맵 이름·저장 시각(한국 시간)·체크포인트·데스카운트를 표시한다.
+- 이미지는 별도 PNG 파일이 아니라 해당 `.sav` 내부에 담는다. 슬롯 덮어쓰기·백업·복구·삭제·새 게임과 함께 처리되어 예전 이미지가 따로 남지 않는다. 서버 업로드는 하지 않는다.
+- 렌더러 없는 테스트, 데디 서버, 유효 카메라가 없는 경우에는 이미지 없이 처리한다. 촬영 실패만으로 게임 상태 저장을 취소하지 않는다.
+- 매 프레임 캡처하지 않지만 저장 순간에는 작은 장면 렌더와 GPU 읽기 비용이 든다. 해상도/후처리 이력 차이로 화면 원본과 픽셀 단위로 동일한 이미지를 보장하지 않는다.
+- 자동 체크포인트는 현재 플레이 슬롯의 이미지와 상태만 갱신해야 한다. 삭제/새 게임 확인을 취소하면 보존되고, 승인하면 해당 저장소 이미지도 없어져야 한다.
+- 검토했으나 기각한 대안·근거: 원 문서에 적힌 것 외에는 미확인.
+
+## 구현·시행착오 (9-6)
+
+- 구현 내용: 원 문서와 위 변경 파일 목록 참조.
+- 시행착오·되돌린 변경: 원 문서에 적힌 것 외에는 미확인.
+
+## 검사·검증 (9-7)
+
+- 사용자 요청으로 전시물 위장 상태, 위치 탐색, 접근·대기, 확률·시간 설정 및 관련 검사를 삭제했다. 정찰·주변 동향 관찰·감지 추격·시야 정지는 그대로 유지한다. 아래의 과거 위장 검증 기록은 당시 작업 이력이며 현재 기능을 의미하지 않는다. 현재 변경은 `MannequinFeedbackAudioRefresh.md`를 참고한다. 저장소 미리보기는 삭제하지 않았다.
+- Editor Development 및 Win64 Shipping 빌드 성공. 전용 서버 빌드/패키징/업데이트 게시는 실행하지 않았다.
+- `Saved/DisguisePreviewNative/index.json`: 위장 상태/시야 정지/유예 간격/명령 제한/종료 초기화, 저장 이미지 검증/직렬화/손상 대체, 슬롯 UI/메타데이터, v4 저장 이관 및 기존 기능을 포함한 28건 성공, 경고/실패 0건.
+- `Saved/DisguisePreviewRender/index.json`: 실제 오프스크린 장면 캡처 1건 성공, 경고/실패 0건. 빈 검은 프레임이 아닌 장면의 기하가 보이는지 검사했고 생성 이미지도 직접 확인했다. 테스트 카메라는 렌더 전 명시적으로 갱신한다.
+- 미리보기 배치 수정 후 `Saved/PreviewLayoutFix/index.json`의 저장/이미지/UI 검사 3건이 경고·실패 없이 통과했다. 실제 Slate UI를 프로젝트 DPI 설정으로 1280×720 및 800×600에 렌더링하고, 이미지가 160×90 논리 크기를 채우는지와 돌아가기 버튼이 화면 안에 있는지 검사했으며 결과 PNG도 확인했다. Editor/Shipping 빌드 성공. 이미지 데이터와 저장 형식은 이 배치 수정에서 변경하지 않았다.
+- 자동 위장 위치 변경 후 `Saved/AutomaticDisguiseNative/index.json`: 29건 성공, 경고/실패 0건. 벽/모서리 방향·통로 중심·좁은 출입구/무의미한 빈 공간 배제, 정면 후보 배제/벽 차폐/시선 밖 후보, 접근 중 시야 변경 취소/시간 제한 및 NavMesh 부재 시 건너뛰기를 포함한다. 시야 테스트는 명시적인 카메라를 사용하여 원점의 초기 캐시를 잘못 검사하지 않도록 했다. 최신 Editor/Shipping 빌드 성공. 실제
+- 전체 검증 서술은 원 문서 참조.
+
+## 정량 결과 (9-8)
+
+**정량 검증 미완료** — 원 문서에 측정 기준값·측정값이 없다.
+
+## 의도 대비 달성도 (9-9)
+
+| 구분 | 의도한 행동/효과 | 관찰 가능한 목표·수용 기준 | 실제 결과·근거 | 달성 정도 | 남은 격차 |
+| --- | --- | --- | --- | --- | --- |
+| 기능 구현 | 자동/수동 체크포인트를 저장할 때 현재 카메라 위치/방향/FOV와 후처리를 참고해 게임 장면을 320×180 PNG로 한 번 렌더링한다. 메뉴, 마우스 커서, 확인창 등 UMG는 넣지 않는다. | 원 문서에 수용 기준으로 명시되지 않음 | 원 문서 검증 기록 있음(9-7) | 미검증 | 자동 재구성 기록이라 의도·기준·결과를 대조하지 않았다. 대조 후 갱신 |
+| 실제 행동 유도 | 미확인 | 미확인 | 관찰 기록 없음 | 미검증 | 플레이 관찰 필요 |
+| 사용성·재미·효과 | 미확인 | 미확인 | 측정 없음 | 미검증 | 측정·의견 수집 필요 |
+
+## 최종 결과·기여 (9-9)
+
+- 커밋 작성자(이 문서를 바꾼 커밋 수): maru3172 3
+- AI 관여: 커밋 작성자만으로는 AI(Claude/Codex) 관여 범위를 구분할 수 없다. 미확인.
+- 배운 점·재사용 방법: 원 문서에 적힌 것 외에는 미확인.
+
+## 미완료·후속·인계 (9-10)
+
+- 기존 실행 중 서버/운영 DB/배포 폴더는 변경하지 않았다. 실제 반영은 최신 클라이언트와 데디 서버를 재패키징해 배포해야 한다. 앞선 타임라인 작업의 프로토콜 2도 함께 들어 있으므로 해당 작업의 백엔드 갱신 안내도 따른다.
+- 실제 멀티 맵의 연출 빈도/자연스러움, 외부 PC 3인 경기, 실제 저장소 UI의 다양한 화면 해상도에서의 사용성은 별도 플레이 확인이 남아 있다. 자동 검사에서 사용자의 실제 저장 슬롯은 덮어쓰거나 삭제하지 않았다.
+
+## 관련 커밋
+
+| 커밋 | 날짜 | 작성자 | 메시지 |
+| --- | --- | --- | --- |
+| `21fba4d8` | 2026-10-19 | maru3172 | Fix missing improvements |
+| `507e11ce` | 2026-10-19 | maru3172 | Enhanced VFX and SFX direction |
+| `bd515000` | 2026-10-16 | maru3172 | Mannequin Camera Improvements |
