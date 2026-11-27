@@ -98,6 +98,12 @@ private:
 		TArray<FProjectShutterGridSegment>& Segments,
 		TArray<TPair<FIntPoint, FIntPoint>>& SectionEndpoints) const;
 	
+	// 장축의 내부 구간을 순회하며 배치 가능한 위치에 추가 셔터 세트를 만든다.
+	int32 AddInteriorSections(
+		FRandomStream& RandomStream,
+		TArray<FProjectShutterGridSegment>& Segments,
+		TArray<TPair<FIntPoint, FIntPoint>>& SectionEndpoints) const;
+	
 	// 주 생성 구간 끝점에서 직각 방향의 셔터 한 개를 추가한다.
 	void TryAddPerpendicularEndSegment(
 		const FIntPoint& SectionEndpoint,

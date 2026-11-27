@@ -227,6 +227,74 @@ bool AProjectShutterAreaGenerator::TryAddSection(const FProjectShutterGridSegmen
 	return true;
 }
 
+int32 AProjectShutterAreaGenerator::AddInteriorSections(FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments, TArray<TPair<FIntPoint, FIntPoint>>& SectionEndpoints) const
+{
+	// 영역에 셔터가 들어갈 수 있는 X,Y 격자 칸 수다.
+	const FIntPoint GridSize = GetGridCellCount();
+	
+	// 장축 방향에 들어가는 셔터 칸 수다.
+	const int32 LongAxisCellCount = GetLongAxisDirection() == EProjectShutterGridDirection::Horizontal
+		? GridSize.X
+		: GridSize.Y;
+	
+	// 시작 변을 제외하고 내부에 첫 셔터를 놓을 칸이 있는지 확인한다.
+	if (LongAxisCellCount <= 1)
+	{
+		return 0;
+	}
+	
+	// 내부 시작 후보를 묶는 장축 칸 수다.
+	constexpr int32 CellsPerBand = 3;
+	
+	// 단축을 따라 검사할 줄의 개수다.
+	const int32 ShortAxisCandidateCount = GetShortAxisCandidateCount();
+	
+	// 내부 구간과 단축 줄의 조합마다 한 번 적용할 생성 확률이다.
+	const float GenerationChance = GetSectionGenerationChance();
+	
+	// 내부에서 추가도니 셔터 구간의 개수다.
+	int32 AddedSectionCount = 0;
+	
+	// 장축 좌표 1 부터 시작해 내부 후보를 3 칸씩 확인한다.
+	for (int32 BandStart = 1; BandStart <= LongAxisCellCount; BandStart += CellsPerBand)
+	{
+		// 마지막 구간은 영역에 실제로 남아 있는 칸까지만 검사한다.
+		const int32 BandCellCount = FMath::Min(CellsPerBand, LongAxisCellCount - BandStart);
+		
+		// 현재 장축 구간에서 단축 방향의 각 줄을 확인한다.
+		for (int32 ShortIndex = 0; ShortIndex < ShortAxisCandidateCount; ++ShortIndex)
+		{
+			// 현재 구간과 줄의 생성 확률 판정에 실패하면 다음 줄로 넘어간다.
+			if (RandomStream.FRand() >= GenerationChance)
+			{
+				continue;
+			}
+			
+			// 구간 안에서 처음 검사할 칸을 무작위로 선택한다.
+			const int32 FirstOffset = RandomStream.RandRange(0, BandCellCount - 1);
+			
+			// 처음 선택한 칸부터 구간을 한 바퀴 돌며 각 후보를 한 번씩 검사한다.
+			for (int32 AttemptIndex = 0; AttemptIndex < BandCellCount; ++AttemptIndex)
+			{
+				// 구간 끝에 도달하면 구간의 첫 칸으로 돌아간다.
+				const int32 LongIndex = BandStart + (FirstOffset + AttemptIndex) % BandCellCount;
+				
+				// 현재 격자 위치에서 장축 방향의 첫 셔터 후보를 만든다.
+				const FProjectShutterGridSegment StartSegment = MakeSectionStartSegment(ShortIndex, LongIndex);
+				
+				// 배치에 성공하면 이 구간의 현재 줄에서 후보 검사를 마친다.
+				if (TryAddSection(StartSegment, RandomStream, Segments, SectionEndpoints))
+				{
+					++AddedSectionCount;
+					break;
+				}
+			}
+		}
+	}
+	
+	return AddedSectionCount;
+}
+
 void AProjectShutterAreaGenerator::TryAddPerpendicularEndSegment(const FIntPoint& SectionEndpoint, EProjectShutterGridDirection SectionDirection, FRandomStream& RandomStream, TArray<FProjectShutterGridSegment>& Segments) const
 {
 	// 주 생성 구간과 직각인 끝 셔터 방향을 선택한다.
@@ -717,6 +785,9 @@ void AProjectShutterAreaGenerator::GeneratePreview()
 			++GeneratedSectionCount;
 		}
 	}
+	
+	// 시작 변의 세트를 배치한 뒤 영역 내부에 추가 세트를 만든다.
+	GeneratedSectionCount += AddInteriorSections(RandomStream, GeneratedSegments, SectionEndpoints);
 	
 	// 모든 주 구간이 완성된 뒤 각 구간의 양 끝을 처리한다.
 	for (const TPair<FIntPoint, FIntPoint>& Endpoints : SectionEndpoints)
