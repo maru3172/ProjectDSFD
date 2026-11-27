@@ -101,3 +101,40 @@
 | --- | --- | --- | --- |
 | `acf11f76` | 2026-10-15 | maru3172 | Crash report collection |
 | `46cc6949` | 2026-10-08 | maru3172 | CrashReport Upload |
+
+## 대화 기록 확인 (예전 세션 대화에서 소급, 2026-11-27)
+
+- 출처: 이 문서를 쓰거나 고친 세션 1개(Claude 0, Codex 1). 아래는 그 구간의 **사용자 발언 원문 발췌**와 **작업 세션이 당시 보고한 원인·실패·결정 발췌**다. 작업 세션의 보고는 그 세션의 주장이며, 이 기록을 쓰며 다시 검증하지 않았다.
+- 이 절이 위 표의 "미확인"을 보충한다. 요청·의도는 사용자 발언, 시행착오·원인은 작업 세션 보고 칸을 본다.
+
+### Codex 세션 `01a0acb2` (2026-10-08 13:41 ~ 2026-10-15 18:39 KST, 문서 편집 10회)
+
+| 시각 (KST) | 사용자 발언 (원문 발췌) |
+|---|---|
+| 2026-10-08 13:41 | 패키징 했는데 싱글 멀티가 각각 자기가 넘어가야할 레벨로 안 넘어간다 |
+| 2026-10-08 13:46 | 그럼 login level -> lobby level -> 멀티겜 -> 다시 전환 혹은 타이틀, 싱글도 마찬가지 이런것들도 제대로...해주는거지? |
+| 2026-10-08 13:51 | 그 인게임에서 환경설정 변경하고 적용 누르면 왜 마우스가 사라지는거임? |
+| 2026-10-08 14:01 | [14:00:28] > powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01Backend\ProjectProject01MySql.ps1" -Action Initialize [14:00:28] [BUILD:ERR] The isolated instance is already provisioned at C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01 [14:00:28] [BUILD:ERR] |
+| 2026-10-08 14:07 | > powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01Backend\ProjectProject01MySql.ps1" -Action Initialize [14:06:54] [BUILD] The isolated instance is already provisioned at C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01Backend\LocalMySql\Data. Starting it w |
+| 2026-10-08 19:15 | 20. 접근성 설정 보완 - 자막 - 색상 외에도 형태·문구로 정보 표시 - 색약 대응 - 화면 번쩍임 감소 - 화면 일렁임 감소 - 화면 흔들림 감소 - UI 가독성 보완 - 기존 설정 저장·적용 시스템과 연결 G. 안정성 및 운영 21. 크래시 보고서 수집 - 클라이언트 비정상 종료 기록 - 데디케이티드 서버 비정상 종료 기록 - 빌드 버전 - 맵과 게임 모드 - 서버·클라이언트 역할 - 마지막 로그 경로 - 진단 TestRunId 또는 실행 식별자 연결 - 인증 토큰·비밀번호 등 민감정보 제거 이제 이걸 해볼까 |
+| 2026-10-08 19:49 | 혹시 테스트는 어떻게 하지? |
+| 2026-10-08 19:59 | [19:57:02] > C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\RunUAT.bat BuildCookRun -project="C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\ProjectProject01.uproject" -noP4 -platform=Win64 -clientconfig=Shipping -build -cook -stage -pak -archive -archivedirectory="C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Builds\Client" -utf8output [19: |
+| 2026-10-08 20:04 | # Files mentioned by the user: ## Active-19336-a1c453e7-4a73-103a-eb52-49a920dc1461.json: C:/DSFD/ProjectDSFD/Source Code/ProjectProject01/Saved/CrashReports/Active-19336-a1c453e7-4a73-103a-eb52-49a920dc1461.json ## Active-19336-98502bd3-4f70-0f36-90a8-9bb3c2b49171.json: C:/DSFD/ProjectDSFD/Source Code/ProjectProject01/Saved/CrashReports/Active-19336-98502bd |
+| 2026-10-08 20:13 | 내가 패키징해서 게임 플레이를 켰는데 그 크래시 리포트는 어디서 뜨는거야? C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Saved\CrashReports 여기 안뜨던데 |
+| 2026-10-08 20:16 | 22. 전체 게임 흐름 스모크 테스트 검사 흐름: 로그인 → 방 생성 → 3명 참가 → 준비 → 경기 시작 → 역할 배정 → 붙잡힘·구출 또는 탈출 → 승패 결정 → 경기 종료 → 결과 등록 → 기존 방 복귀 추가 사항: - 단계별 제한 시간 - 실패 단계 기록 - 원본 로그 연결 - 기존 진단 프로그램과 연동 - 정상 흐름이 최소한 동작하는지 빠르게 확인 23. 클라이언트 버전 불일치 차단 검사 대상: - 클라이언트 빌드 버전 - 데디케이티드 서버 버전 - 백엔드 API 버전 - 게임 데이터 버전 - 네트워크 프로토콜 버전 처리: - 호환되지 않는 클라이언트 접속 차단 - 필요한 업데이트 안내 - 서로 다른 버전이 같은 방에 들어가는  |
+| 2026-10-08 21:02 | 멈췄던 부분부터 계속 진행하자 끝까지 |
+| 2026-10-08 21:36 | [21:35:39] [BACKEND] Content root path: C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01Backend [21:35:40] > dotnet run --project "C:\DSFD\ProjectDSFD\Source Code\ProjectProject01\Tools\ProjectProject01SmokeTest\ProjectProject01SmokeTest.csproj" -- --project-root "C:\DSFD\ProjectDSFD\Source Code\ProjectProject01" [21:35:42] [BUILD] C:\ |
+| 2026-10-08 21:37 | 클라이언트 버전 불일치 할때 차단은 음...있긴 한데 확인할순 없겠네 |
+
+| 시각 (KST) | 작업 세션 보고 (원인·실패·결정, 발췌) |
+|---|---|
+| 2026-10-08 13:41 | 패키징판에서만 두 버튼 모두 맵 전환이 안 된다면 가장 가능성이 큰 원인은 목적 맵이 쿠킹 목록에 포함되지 않았거나, 에디터에서만 통하는 짧은 맵 이름을 사용한 경우입니다. 타이틀 버튼의 실제 경로와 패키징 맵 목록을 함께 확인해서 원인을 잡겠습니다. |
+| 2026-10-08 13:43 | 원인을 찾았습니다. 필수 화면·게임 맵을 패키징 목록에 명시하고 다시 쿠킹해 검증하겠습니다. |
+| 2026-10-08 13:47 | ```text 싱글: TitleLevel → LevelTest01 → TitleLevel ↘ 체크포인트 저장·불러오기 멀티: TitleLevel → LoginLevel → LobbyLevel → MultiplayTest → LobbyLevel / LeaderBoardTest / TitleLevel ``` 검증 결과: - 재쿠킹: 성공 - 클라이언트 Shipping 패키징: 성공 - 오류: 0 - Cooked Asset Registry에서 위 여섯 맵 모두 존재 확인 - 최종 결과: `BUILD SUCCESSFUL` 수정 사항은 [DefaultGame.ini](</C: |
+| 2026-10-08 13:52 | 원인은 설정값 저장 자체보다, `ApplySettings`가 화면 모드/해상도와 입력 설정을 갱신한 뒤 현재 UI의 마우스 표시·포커스를 다시 잡아주지 않는 데 있습니다. |
+| 2026-10-08 13:53 | 확인 결과 정확한 원인은 키 재설정을 반영하는 함수가 플레이어 입력을 다시 초기화하면서 `GameOnly + 마우스 숨김`까지 함께 실행한 것이었습니다. 키 설정 갱신은 유지하되, 설정 창이 열려 있으면 즉시 `GameAndUI + 커서 표시`로 되돌리는 수정까지 넣었고 지금 빌드로 검증하겠습니다. |
+| 2026-10-08 13:55 | 원인은 키 설정 적용 과정에서 플레이어 입력을 다시 초기화하며 `GameOnly` 모드로 전환하고 마우스를 숨겼기 때문입니다. |
+| 2026-10-08 14:01 | 도우미 버튼이 `Initialize`만 호출하고 종료했는지 확인해 바로 원인을 잡겠습니다. |
+| 2026-10-08 14:04 | 실제로 `127.0.0.1:3307` 시작 성공도 확인했습니다. |
+| 2026-10-08 19:15 | 이번에는 기존 환경설정 저장 구조를 확장해 접근성 옵션을 실제 효과에 연결하고, 크래시 보고서는 클라이언트·서버 공통 메타데이터와 민감정보 제거, 로컬 보존 및 백엔드 수집 경로까지 이어지도록 구현하겠습니다. |
+| 2026-10-08 19:19 | 이번에는 기존 설정 화면과 저장 구조에 접근성 항목을 붙이고, 크래시는 “종료 순간에 억지로 전송”하지 않고 안전하게 로컬 표식을 남긴 뒤 다음 실행 때 백엔드로 수집하는 방식으로 구현하겠습니다. |
