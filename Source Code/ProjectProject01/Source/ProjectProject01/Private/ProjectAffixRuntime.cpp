@@ -36,6 +36,9 @@ void UProjectAffixRuntime::Notify(const FString& Message,float Hold)const
 
 void UProjectAffixRuntime::Pulse(const FVector& Location,const FLinearColor& Color,float Seconds,float Radius)const
 {
+    // Bots see the same world pulses players do (user, 2026-11-27); kept briefly for them to read.
+    RecentPulses.RemoveAll([&](const FBotPulse& P){return Now-P.At>2.0;});
+    if(RecentPulses.Num()<32)RecentPulses.Add({Location,Now,Radius});
     if(const auto* Mode=Owner.Get())for(const auto& Pair:Mode->MatchPlayerRecords)
         if(auto* Controller=Pair.Key.Get();Controller&&!Controller->IsServerControlledBot())Controller->ClientAffixPulse(Location,Color.ToFColor(true),Seconds,Radius);
 }

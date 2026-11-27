@@ -40,6 +40,13 @@ public:
     /** C02: bot attack intervals stretch by this. */
     float BotAttackIntervalScale()const;
     bool IsRushActive()const{return bRush;}
+    // What bots may read the way players see or hear it (user, 2026-11-27): recent world pulses (dust, exit alarm),
+    // the B10 hunt after a catch and the C06 closing stage, which players get as on-screen notices.
+    struct FBotPulse{FVector Location=FVector::ZeroVector;double At=-1;float Radius=0;};
+    const TArray<FBotPulse>& GetRecentPulses()const{return RecentPulses;}
+    double GetNow()const{return Now;}
+    bool IsHuntActive()const{return Now<HuntUntil;}
+    int32 GetClosingStage()const{return FMath::Max(0,ClosingStageShown);}
 
     // Item roguelike items (ProjectItemRoguelike.h, Docs/ItemRoguelikeMode.md). All 1 / false outside that mode.
     /** S13 narrows (-10%), S15 widens (+10%) this survivor's freezing gaze. */
@@ -130,6 +137,7 @@ private:
     void PulseRole(bool bMannequins,const FVector& Location,const FLinearColor& Color,float Seconds,float Radius)const;
     TMap<TWeakObjectPtr<AMannequinAICharacter>,FBody> Bodies;
     TMap<TWeakObjectPtr<APlayerCharacter>,FSurvivor> Survivors;
+    mutable TArray<FBotPulse> RecentPulses; // Filled by Pulse() (const) for bots.
     TMap<TPair<TWeakObjectPtr<APlayerCharacter>,TWeakObjectPtr<AMannequinAICharacter>>,double> LastMet; // C01
     TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>,TWeakObjectPtr<AMannequinAICharacter>> Viewed; // A01
     TWeakObjectPtr<AMultiplayTestGameMode> Owner;

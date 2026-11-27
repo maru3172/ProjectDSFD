@@ -93,6 +93,8 @@ public:
 	bool IsPlaygroundPairGaze() const { return bPlaygroundPairGaze; }
 	float GetBaseWalkSpeed() const { return MannequinWalkSpeed; }
 	void SetAffixCue(const FLinearColor& Color, float Strength);
+	/** The visible affix/item cue (spark, heat, frost, red glow) on this body; alpha is the strength (0 = none). */
+	FColor GetAffixCue() const { return AffixCue; }
 	void SetAffixHeat(float Heat) { AffixHeat = FMath::Clamp(Heat, 0.0f, 1.0f); }
 	float GetAffixHeat() const { return AffixHeat; }
 	/** A08: a floor beam the length of this body's detection reach, pointing where it faces. */

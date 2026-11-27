@@ -69,7 +69,9 @@ struct FProjectMatchBotBrain
     double ShutterAt=0,ShutterSince=-1;
     // Lowering a shutter (survivor: behind itself; mannequin: in front of a runner). The pass it rolled for, the shutter
     // it chose to lower, and since when it has been turning to it.
-    TWeakObjectPtr<AActor> ShutterRolled,ShutterToClose;double ShutterCloseSince=-1,ShutterScanAt=0;
+    TWeakObjectPtr<AActor> ShutterRolled,ShutterToClose,ShutterLogged;double ShutterCloseSince=-1,ShutterScanAt=0;
+    // Flickering reactive lights this bot can see (a crowd of bodies nearby), refreshed twice a second.
+    TArray<FVector,TInlineAllocator<4>> FlickerSpots;double LightScanAt=0,TellLogAt=0;
     // Cached environment-based tactic point and rest-spot hunt state.
     FVector TacticGoal=FVector::ZeroVector,TacticKnown=FVector::ZeroVector;
     double TacticAt=-100,SpotIgnoreUntil=0;

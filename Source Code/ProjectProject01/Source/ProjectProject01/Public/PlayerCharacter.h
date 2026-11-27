@@ -116,6 +116,8 @@ public:
 	void SetAffixSprintBlocked(bool bBlocked);
 	/** A glow on this survivor (A10 breath, B03 alarm, B07 face light, ...); zero strength removes it. */
 	void SetAffixCue(const FLinearColor& Color, float Strength);
+	/** The visible affix/item cue (glow, breath, light) on this survivor; alpha is the strength (0 = none). Bots read it like a player sees it. */
+	FColor GetAffixCue() const { return AffixCue; }
 	/** Item roguelike (ProjectAffixRuntime): footstep loudness for everyone, and the extra the mannequin hears (M06). */
 	void SetRogueFootstepScale(float Everyone, float ForMannequin);
 	float GetRogueFootstepScale() const { return RogueFootstepScale; }

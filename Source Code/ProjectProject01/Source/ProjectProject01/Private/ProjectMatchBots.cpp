@@ -46,6 +46,30 @@ namespace
         if(Offset.SizeSquared()>=FMath::Square(BotSightRange))return false;
         return Offset.SizeSquared()<FMath::Square(SightRangeTo(Observer->GetWorld(),Target))&&FVector::DotProduct(Facing.Vector(),Offset.GetSafeNormal())>.573576f&&Observer->GetController()->LineOfSightTo(Target);
     }
+    // A glowing affix/item cue (spark, red glow, lit face, breath) catches the eye: a player notices it out of the
+    // corner of the eye (about 100 degrees each side) and in the dark, as far as a lit target (user, 2026-11-27:
+    // bots read every tell a player can). Alpha is the cue strength; faint cues (under 0.4) are not noticed.
+    bool NoticesGlow(APawn* Observer,AActor* Target,const FColor& Cue)
+    {
+        if(Cue.A<100||!Observer||!Target||Target->IsHidden()||!Observer->GetController())return false;
+        FVector Eye;FRotator Facing;Observer->GetActorEyesViewPoint(Eye,Facing);
+        const FVector Offset=Target->GetActorLocation()-Eye;
+        return Offset.SizeSquared()<FMath::Square(BotSightRange)&&FVector::DotProduct(Facing.Vector(),Offset.GetSafeNormal())>-.17f&&Observer->GetController()->LineOfSightTo(Target);
+    }
+    // A world pulse (falling dust, kicked-up dust, flashing exit sign) in the last second within 6 m of the survivor,
+    // in this observer's line of sight and lit range: the player watching sees where it came from.
+    bool PulseGivesAway(const AMultiplayTestGameMode* GM,APawn* Observer,const AActor* Survivor)
+    {
+        const auto* Affix=GM?GM->GetAffixRuntime():nullptr;if(!Affix||!Observer||!Survivor||!Observer->GetController())return false;
+        FVector Eye;FRotator Facing;Observer->GetActorEyesViewPoint(Eye,Facing);
+        for(const auto& Pulse:Affix->GetRecentPulses())
+        {
+            if(Affix->GetNow()-Pulse.At>1.0||FVector::Dist2D(Pulse.Location,Survivor->GetActorLocation())>600.f||FVector::DistSquared(Pulse.Location,Eye)>FMath::Square(BotSightRange))continue;
+            FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(BotPulseSight),false,Observer);
+            if(!Observer->GetWorld()->LineTraceSingleByChannel(Hit,Eye,Pulse.Location,ECC_Visibility,Query))return true;
+        }
+        return false;
+    }
 }
 void UProjectMatchBotMovement::TickComponent(float Delta,ELevelTick Kind,FActorComponentTickFunction* TickFunction)
 {ServerInput=GetPendingInputVector();Super::TickComponent(Delta,Kind,TickFunction);}
@@ -951,8 +975,10 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(Now>=B.SenseAt)
     {
         B.SenseAt=Now+.2;AMannequinAICharacter* Target=nullptr;float Best=MAX_flt;
-        for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(Sees(Pawn,*It))
+        for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(Sees(Pawn,*It)||NoticesGlow(Pawn,*It,It->GetAffixCue()))
         {
+            // Diagnostics (grep "[BotTell]"): a body noticed only by its glow, at most every 5 s per bot.
+            if(Now>=B.TellLogAt&&!Sees(Pawn,*It)){B.TellLogAt=Now+5;UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s glow body=%s"),*Spec.BotId.Left(8),*GetNameSafe(*It));}
             float D=FVector::DistSquared(Pawn->GetActorLocation(),It->GetActorLocation());if(D<Best){Best=D;Target=*It;}
             // Remember every mannequin in sight, not only the nearest.
             auto* Slot=B.Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==*It;});
@@ -1108,7 +1134,8 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     }
     const bool LookingAway=Now<B.LookAwayUntil;
     const FVector ObjectiveAt=Mine.Objective.IsValid()?Mine.Objective->GetActorLocation():Pawn->GetActorLocation();
-    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+50.f*Level.Skill;
+    // B10 hunt (players get "사냥의 열기" on screen): every body is faster for 10 s, so keep more room.
+    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+50.f*Level.Skill+(GM->GetAffixRuntime()&&GM->GetAffixRuntime()->IsHuntActive()?200.f:0.f);
     // Experts (4+) know a frozen mannequin cannot chase: it only counts as danger within touching distance, so they
     // walk past one they keep in view (an exit guard included) instead of backing off until cornered. Weak spot: the
     // moment the stare breaks, that mannequin is already close.
@@ -1117,6 +1144,28 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         for(int32 I=0;I<DangerViews.Num()&&I<B.Threats.Num();++I)
             if(const auto* Body=Cast<AMannequinAICharacter>(B.Threats[I].Actor.Get());Body&&Body->IsFrozenBySurvivorVision())
                 DangerViews[I].Distance+=FMath::Max(0.f,DangerRadius-350.f);
+    // Affix/item speed tells (hot, sparking, red, frosted bodies; user, 2026-11-27): a body seen this second that is
+    // visibly sped up counts as nearer, a slowed one as farther. Players read the same glow and gait.
+    for(int32 I=0;I<DangerViews.Num()&&I<B.Threats.Num();++I)
+        if(const auto* Body=Cast<AMannequinAICharacter>(B.Threats[I].Actor.Get());Body&&Now-B.Threats[I].At<1.)
+            DangerViews[I].Distance=FMath::Max(0.f,DangerViews[I].Distance-600.f*(Body->GetAffixSpeedScale()-1.f));
+    // Flickering lights (Docs/MannequinReactiveLight.md: three or more bodies within 15 m of a fixture): a player who
+    // sees one flicker knows a crowd is near it. Lights in sight and lit range count as danger at the floor below them
+    // (route and retreat only; there is nothing there to watch). Re-read twice a second.
+    if(Now>=B.LightScanAt)
+    {
+        B.LightScanAt=Now+.5;B.FlickerSpots.Reset();
+        FVector Eye;FRotator Facing;Pawn->GetActorEyesViewPoint(Eye,Facing);
+        for(TActorIterator<AMannequinReactiveLight> It(World);It&&B.FlickerSpots.Num()<4;++It)
+        {
+            if(It->GetThreatTier()<=0||FVector::DistSquared(It->GetActorLocation(),Eye)>FMath::Square(BotSightRange))continue;
+            FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(BotFlickerSight),false,Pawn);Query.AddIgnoredActor(*It);
+            if(!World->LineTraceSingleByChannel(Hit,Eye,It->GetActorLocation(),ECC_Visibility,Query))
+                B.FlickerSpots.Add(FVector(It->GetActorLocation().X,It->GetActorLocation().Y,Pawn->GetActorLocation().Z));
+        }
+        if(!B.FlickerSpots.IsEmpty()&&Now>=B.TellLogAt){B.TellLogAt=Now+5;UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s flicker spots=%d"),*Spec.BotId.Left(8),B.FlickerSpots.Num());}
+    }
+    for(const FVector& Spot:B.FlickerSpots)DangerViews.Add({V(Spot),static_cast<float>(FVector::Dist2D(Pawn->GetActorLocation(),Spot)),false});
     const Vec Retreat=B.Disciplined?RetreatDirection(V(Pawn->GetActorLocation()),DangerViews.GetData(),DangerViews.Num(),DangerRadius,V(ObjectiveAt)):Vec{};
     const bool Danger=Retreat.Length()>.5f;
     // Partner relay: every nearby threat is being frozen by the teammate, so this one makes ground.
@@ -1529,17 +1578,21 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             if(!It->IsOperableShutter()||It->IsHeadingDown()||FMath::Abs(It->GetActorLocation().Z-Here.Z)>250.f)continue;
             const float D=FVector::Dist2D(It->GetActorLocation(),Here);if(D<NearD){Near=*It;NearD=D;}
         }
-        if(!Near){B.ShutterRolled=nullptr;B.ShutterToClose=nullptr;}
+        if(!Near)B.ShutterRolled=nullptr; // A chosen shutter is kept below while it is still within reach.
         else
         {
             const FVector At=Near->GetActorLocation(),Normal=Near->GetActorForwardVector();const float Side=FVector::DotProduct(Here-At,Normal);
             bool Chaser=false;
             for(const auto& Threat:B.Threats)
-                if(Now-Threat.At<=Level.Memory&&FVector::DotProduct(Threat.Position-At,Normal)*Side<0&&FVector::Dist2D(Threat.Position,At)<2000.f){Chaser=true;break;}
+                // A person remembers being chased for a while, even past the short threat memory (at least 8 s).
+                if(Now-Threat.At<=FMath::Max(8.f,Level.Memory)&&FVector::DotProduct(Threat.Position-At,Normal)*Side<0&&FVector::Dist2D(Threat.Position,At)<2000.f){Chaser=true;break;}
             bool Stranded=false; // Never shut a partner (bot or human) out.
             for(const auto& Pair:GM->MatchPlayerRecords)
                 if(const auto* Other=Pair.Value.SurvivorPawn.Get();Other&&Other!=Pawn&&!Other->IsGameOver()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active&&
                     FVector::DotProduct(Other->GetActorLocation()-At,Normal)*Side<0&&FVector::Dist2D(Other->GetActorLocation(),At)<2500.f){Stranded=true;break;}
+            // Diagnostics (grep "[BotShutterPass]"): once per shutter passed, what decided it.
+            if(FMath::Abs(Side)>60.f&&B.ShutterLogged.Get()!=Near)
+            {B.ShutterLogged=Near;UE_LOG(LogTemp,Display,TEXT("[BotShutterPass] Survivor=%s Chaser=%d Stranded=%d Threats=%d"),*Spec.BotId.Left(8),Chaser,Stranded,B.Threats.Num());}
             if(!Chaser||Stranded)B.ShutterToClose=nullptr;
             else if(FMath::Abs(Side)>60.f&&B.ShutterRolled.Get()!=Near)
             {
@@ -1550,7 +1603,8 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     }
     if(auto* Closing=Cast<AFireShutterActor>(B.ShutterToClose.Get()))
     {
-        if(Closing->IsHeadingDown()||!Closing->IsOperableShutter())B.ShutterToClose=nullptr;
+        // Out of arm's reach (a player has to be close to press F) or already coming down: let it go.
+        if(Closing->IsHeadingDown()||!Closing->IsOperableShutter()||FVector::Dist2D(Closing->GetActorLocation(),Here)>400.f)B.ShutterToClose=nullptr;
         else
         {
             Look=Closing->GetActorLocation()-Pawn->GetPawnViewLocation();
@@ -1633,8 +1687,15 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
         // Several survivors detected: who to go for depends on level (ChooseTarget). Retargeting is
         // re-judged about once a second, so even an indecisive beginner does not jitter every frame.
         TargetCandidate Candidates[4];APlayerCharacter* Pawns[4]={};int32 Count=0,Kept=-1;
-        for(const auto& S:Survivors)if(Count<4&&GM->CanMannequinDetectSurvivor(Body,S.Pawn)&&
+        for(const auto& S:Survivors)if(Count<4&&((GM->CanMannequinDetectSurvivor(Body,S.Pawn)&&
             FVector::DistSquared(Body->GetActorLocation(),S.Pawn->GetActorLocation())<FMath::Square(SightRangeTo(World,S.Pawn))) // dark: closer
+            // Affix/item tells a mannequin player sees (user, 2026-11-27): a survivor's glow (lit face, red light,
+            // grey breath) or a world pulse at its feet (dust, exit alarm) seen by this body gives it away.
+            ||[&]{const bool Glow=NoticesGlow(Body,S.Pawn,S.Pawn->GetAffixCue()),Puff=!Glow&&PulseGivesAway(GM,Body,S.Pawn);
+                // Diagnostics (grep "[BotTell]"): a survivor given away only by a tell, at most every 5 s per body.
+                if((Glow||Puff)&&Now>=B.TellLogAt&&!GM->CanMannequinDetectSurvivor(Body,S.Pawn))
+                {B.TellLogAt=Now+5;UE_LOG(LogTemp,Display,TEXT("[BotTell] Mannequin %s body=%s"),Glow?TEXT("glow"):TEXT("pulse"),*GetNameSafe(Body));}
+                return Glow||Puff;}()))
         {
             auto& Candidate=Candidates[Count];
             Candidate.Distance=FVector::Dist(Body->GetActorLocation(),S.Pawn->GetActorLocation());
@@ -1676,20 +1737,30 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             const AFireShutterActor* Shutter=GM->FindMannequinShutter(Body);
             const auto* Runner=Cast<APlayerCharacter>(B.Target.Get());
             bool Cut=false;
+            // Diagnostics (grep "[BotShutterReach]"): once per shutter in reach of the viewed body while it hunts.
+            if(Shutter&&B.ShutterLogged.Get()!=Shutter)
+            {
+                B.ShutterLogged=const_cast<AFireShutterActor*>(Shutter);
+                UE_LOG(LogTemp,Display,TEXT("[BotShutterReach] Body=%s Down=%d RunnerDist=%.0f Toward=%.2f"),*GetNameSafe(Body),Shutter->IsHeadingDown(),
+                    FVector::Dist2D(B.Known,Shutter->GetActorLocation()),Runner?FVector::DotProduct(Runner->GetVelocity().GetSafeNormal2D(),(Shutter->GetActorLocation()-B.Known).GetSafeNormal2D()):-9.f);
+            }
             if(Shutter&&!Shutter->IsHeadingDown()&&Shutter->IsOperableShutter()&&Runner)
             {
-                const FVector At=Shutter->GetActorLocation(),Normal=Shutter->GetActorForwardVector();
-                const bool SameSide=FVector::DotProduct(Body->GetActorLocation()-At,Normal)*FVector::DotProduct(B.Known-At,Normal)>0;
+                // The runner heads for this shutter from either side: lowered, it has to stop and raise it (or go round).
+                const FVector At=Shutter->GetActorLocation();
                 const FVector ToShutter=(At-B.Known).GetSafeNormal2D();
-                Cut=SameSide&&FVector::Dist2D(B.Known,At)<800.f&&FVector::DotProduct(Runner->GetVelocity().GetSafeNormal2D(),ToShutter)>.5f;
+                Cut=FVector::Dist2D(B.Known,At)<800.f&&FVector::DotProduct(Runner->GetVelocity().GetSafeNormal2D(),ToShutter)>.5f;
             }
-            if(!Cut)B.ShutterCloseSince=-1;
-            else
+            // Roll once per shutter the first time the runner heads for it; a yes is kept while that shutter stays in
+            // reach (a one-tick wobble in the runner's heading must not cancel it), and fires after the reaction time.
+            if(!Shutter||Shutter->IsHeadingDown()){B.ShutterToClose=nullptr;}
+            else if(Cut&&B.ShutterRolled.Get()!=Shutter)
             {
-                if(B.ShutterRolled.Get()!=Shutter){B.ShutterRolled=const_cast<AFireShutterActor*>(Shutter);B.ShutterCloseSince=B.Policy.Random()<ProjectBots::MannequinShutterCloseChance(Level)?Now:-2;}
-                if(B.ShutterCloseSince>=0&&Now-B.ShutterCloseSince>=B.Policy.Profile.Reaction&&GM->TryMannequinShutter(PC))
-                {UE_LOG(LogTemp,Display,TEXT("[BotShutter] %s lowered %s"),*GetNameSafe(Body),*GetNameSafe(Shutter));B.ShutterAt=Now+2.;B.ShutterCloseSince=-1;}
+                B.ShutterRolled=const_cast<AFireShutterActor*>(Shutter);
+                if(B.Policy.Random()<ProjectBots::MannequinShutterCloseChance(Level)){B.ShutterToClose=B.ShutterRolled;B.ShutterCloseSince=Now;}
             }
+            if(B.ShutterToClose.Get()==Shutter&&Shutter&&Now-B.ShutterCloseSince>=B.Policy.Profile.Reaction&&GM->TryMannequinShutter(PC))
+            {UE_LOG(LogTemp,Display,TEXT("[BotShutter] %s lowered %s"),*GetNameSafe(Body),*GetNameSafe(Shutter));B.ShutterAt=Now+2.;B.ShutterToClose=nullptr;}
         }
         if(!B.Visible&&B.Policy.Random()<B.Policy.Profile.Sharing)
             for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==1&&Entry.Seen.Target&&Entry.Seen.At>=0&&Now-Entry.Seen.At<=B.Policy.Profile.Memory)
