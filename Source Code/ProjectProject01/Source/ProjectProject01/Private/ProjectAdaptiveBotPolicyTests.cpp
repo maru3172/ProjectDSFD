@@ -314,6 +314,14 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         }
         Check(Rising,"Map familiarity, ping habits, composure and condition bands all rise with level without overlap");
         Check(Difficulty::For(1,-1).Skill==Difficulty::For(1,0.f).Skill&&Difficulty::For(5,1).Skill==Difficulty::For(5,0.f).Skill,"Condition never pushes past the ends of the scale");
+        // Fire shutters (user, 2026-11-27): every bot but the human's helper can lower one, more readily at higher levels.
+        bool ShutterRise=true;
+        for(int L=1;L<5;++L)ShutterRise&=SurvivorShutterCloseChance(Difficulty::For(L))<SurvivorShutterCloseChance(Difficulty::For(L+1))&&
+            MannequinShutterCloseChance(Difficulty::For(L))<MannequinShutterCloseChance(Difficulty::For(L+1));
+        Check(ShutterRise,"Higher levels lower fire shutters more readily");
+        Check(!CanOperateShutters(Difficulty::For(3,0.f,BotTeam::SurvivorHelper))&&SurvivorShutterCloseChance(Difficulty::For(5,0.f,BotTeam::SurvivorHelper))==0.f&&
+            CanOperateShutters(Difficulty::For(3,0.f,BotTeam::ReferenceSurvivor))&&CanOperateShutters(Difficulty::For(3,0.f,BotTeam::ReferenceMannequin)),
+            "The helper beside a human never operates shutters; every other bot can");
         Check(Difficulty::For(3,.7f).Level==3&&Difficulty::For(3,.7f).TraitBudget()==Difficulty::For(3).TraitBudget(),"Condition keeps the level and its tables");
         Check(Difficulty::For(3,std::numeric_limits<float>::quiet_NaN()).Skill==Difficulty::For(3,0.f).Skill,"Invalid condition is neutral");
         int KnownExits=0;for(uint32_t H=0;H<1000;++H)KnownExits+=KnowsExitAtStart(Difficulty::For(5),H*2654435761u);

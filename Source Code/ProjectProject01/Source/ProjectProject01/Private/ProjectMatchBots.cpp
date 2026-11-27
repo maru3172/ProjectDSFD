@@ -544,7 +544,9 @@ bool UProjectMatchBots::Move(APawn* Pawn,FProjectMatchBotBrain& B,const FVector&
         // does - working panel, right in front, after a human beat - and waits while it rises (Docs/FireShutterLayout.md).
         // Broken panels never open; mannequin bodies never get here (only survivors are APlayerCharacter).
         auto* Shutter=Cast<AFireShutterActor>(Hit.GetActor());const auto* Survivor=Cast<APlayerCharacter>(Pawn);auto* GM=Mode();
-        if(Shutter&&Shutter->IsOperableShutter()&&Survivor&&!Survivor->IsGameOver()&&GM&&GM->IsAuthoritativeMatchInProgress()&&GM->IsRegisteredActiveSurvivor(Survivor))
+        // The helper beside a human never operates shutters (user, 2026-11-27): it waits for the human.
+        if(Shutter&&Shutter->IsOperableShutter()&&Survivor&&!Survivor->IsGameOver()&&GM&&GM->IsAuthoritativeMatchInProgress()&&GM->IsRegisteredActiveSurvivor(Survivor)&&
+            ProjectBots::CanOperateShutters(B.Policy.Profile))
         {
             if(Shutter->IsHeadingDown())
             {
@@ -1494,6 +1496,70 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(!Watching&&SelectedElevator&&FVector::DistSquared2D(Pawn->GetActorLocation(),Goal)<FMath::Square(160.f))Look=ObjectiveLook-Pawn->GetPawnViewLocation();
     // Looking around while waiting: the first part of each fidget beat, then back to the default.
     if(Fidgeting&&!Watching&&B.FidgetAt-Now>.45*FidgetInterval(Quirks,.5f))Look=B.FidgetLook;
+    // Rear guard (bot-only survivor team, level 5; user, 2026-11-27 "동료 협업 강화"): the partner is freezing every
+    // mannequin in view, so this one walks along facing the other way and covers the partner's back. Tell: the pair
+    // moves back to back with a mannequin in view. Weak spot: nobody here watches the frozen one; if the partner
+    // looks away it is free.
+    bool RearOn=false;
+    if(RearGuardRule(Level)&&Relay&&BotBuddy&&ToBuddy<900.f)
+    {
+        int32 Near=-1;for(int32 I=0;I<Views.Num();++I)if(Views[I].CoveredByPartner&&(Near<0||Views[I].Distance<Views[Near].Distance))Near=I;
+        if(Near>=0){Look=Here-U(Views[Near].Position);RearOn=true;}
+    }
+    // Diagnostics (grep "[BotRelay]" / "[BotRearGuard]"): when the relay starts and why the rear guard does or does not.
+    if(RearGuardRule(Level))
+    {
+        if(Relay!=B.RelayLogged)
+        {
+            B.RelayLogged=Relay;int32 CoveredViews=0;for(const auto& View:Views)CoveredViews+=View.CoveredByPartner;
+            if(Relay)UE_LOG(LogTemp,Display,TEXT("[BotRelay] Survivor=%s Second=%.0f BotBuddy=%d ToBuddy=%.0f Views=%d Covered=%d"),*Spec.BotId.Left(8),Now,BotBuddy,ToBuddy,Views.Num(),CoveredViews);
+        }
+        if(RearOn!=B.RearGuardOn){B.RearGuardOn=RearOn;UE_LOG(LogTemp,Display,TEXT("[BotRearGuard] Survivor=%s %s Second=%.1f"),*Spec.BotId.Left(8),RearOn?TEXT("on"):TEXT("off"),Now);}
+    }
+    // Lower a working shutter behind it (user, 2026-11-27: bots use every player action). Just through an open one
+    // with a mannequin it knows on the far side and no partner over there: once per pass, by level, it turns to the
+    // shutter and after its reaction time lowers it like a player's F. Tell: the shutter noise. Weak spot: the beat
+    // spent facing back. The helper beside a human never does (CanOperateShutters).
+    if(ProjectBots::CanOperateShutters(Level)&&Now>=B.ShutterScanAt)
+    {
+        B.ShutterScanAt=Now+.3;
+        AFireShutterActor* Near=nullptr;float NearD=300.f;
+        for(TActorIterator<AFireShutterActor> It(World);It;++It)
+        {
+            if(!It->IsOperableShutter()||It->IsHeadingDown()||FMath::Abs(It->GetActorLocation().Z-Here.Z)>250.f)continue;
+            const float D=FVector::Dist2D(It->GetActorLocation(),Here);if(D<NearD){Near=*It;NearD=D;}
+        }
+        if(!Near){B.ShutterRolled=nullptr;B.ShutterToClose=nullptr;}
+        else
+        {
+            const FVector At=Near->GetActorLocation(),Normal=Near->GetActorForwardVector();const float Side=FVector::DotProduct(Here-At,Normal);
+            bool Chaser=false;
+            for(const auto& Threat:B.Threats)
+                if(Now-Threat.At<=Level.Memory&&FVector::DotProduct(Threat.Position-At,Normal)*Side<0&&FVector::Dist2D(Threat.Position,At)<2000.f){Chaser=true;break;}
+            bool Stranded=false; // Never shut a partner (bot or human) out.
+            for(const auto& Pair:GM->MatchPlayerRecords)
+                if(const auto* Other=Pair.Value.SurvivorPawn.Get();Other&&Other!=Pawn&&!Other->IsGameOver()&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active&&
+                    FVector::DotProduct(Other->GetActorLocation()-At,Normal)*Side<0&&FVector::Dist2D(Other->GetActorLocation(),At)<2500.f){Stranded=true;break;}
+            if(!Chaser||Stranded)B.ShutterToClose=nullptr;
+            else if(FMath::Abs(Side)>60.f&&B.ShutterRolled.Get()!=Near)
+            {
+                B.ShutterRolled=Near;B.ShutterCloseSince=Now;
+                B.ShutterToClose=B.Policy.Random()<ProjectBots::SurvivorShutterCloseChance(Level)?Near:nullptr;
+            }
+        }
+    }
+    if(auto* Closing=Cast<AFireShutterActor>(B.ShutterToClose.Get()))
+    {
+        if(Closing->IsHeadingDown()||!Closing->IsOperableShutter())B.ShutterToClose=nullptr;
+        else
+        {
+            Look=Closing->GetActorLocation()-Pawn->GetPawnViewLocation();
+            if(Now-B.ShutterCloseSince>=FMath::Max(.25f,Level.Reaction)&&Closing->ToggleByServer())
+            {
+                UE_LOG(LogTemp,Display,TEXT("[BotShutter] %s closed %s"),*GetNameSafe(Pawn),*GetNameSafe(Closing));B.ShutterToClose=nullptr;
+            }
+        }
+    }
     if(!Look.IsNearlyZero()){const FRotator Facing=HumanLook(B,PC->GetControlRotation(),Look.Rotation(),Delta);PC->SetControlRotation(Facing);Pawn->SetActorRotation(FRotator(0,Facing.Yaw,0));}
     if(SelectedElevator&&Now>=B.CommandAt){B.CommandAt=Now+FMath::Max(.5f,B.Policy.Profile.Reaction);if(SelectedElevator->TryBotInteraction(Pawn))B.PressedAt=Now;}
 }
@@ -1600,6 +1666,30 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             if(!Across)B.ShutterSince=-1;
             else if(B.ShutterSince<0)B.ShutterSince=Now;
             else if(Now-B.ShutterSince>=B.Policy.Profile.Reaction&&GM->TryMannequinShutter(PC)){B.ShutterAt=Now+2.;B.ShutterSince=-1;}
+        }
+        // Lowering one (user, 2026-11-27: bots use every player action; the same F rule as the open above): the viewed
+        // body faces an open working shutter and the survivor it is after runs for it on this side -> once per pass,
+        // by level, it shuts the way after its reaction time. Tell: the shutter noise. Weak spot: its own bodies
+        // cannot path through a lowered shutter either.
+        if(Body==PC->GetViewedMannequin()&&B.Target.IsValid()&&Now-B.SeenAt<=B.Policy.Profile.Memory&&Now>=B.ShutterAt)
+        {
+            const AFireShutterActor* Shutter=GM->FindMannequinShutter(Body);
+            const auto* Runner=Cast<APlayerCharacter>(B.Target.Get());
+            bool Cut=false;
+            if(Shutter&&!Shutter->IsHeadingDown()&&Shutter->IsOperableShutter()&&Runner)
+            {
+                const FVector At=Shutter->GetActorLocation(),Normal=Shutter->GetActorForwardVector();
+                const bool SameSide=FVector::DotProduct(Body->GetActorLocation()-At,Normal)*FVector::DotProduct(B.Known-At,Normal)>0;
+                const FVector ToShutter=(At-B.Known).GetSafeNormal2D();
+                Cut=SameSide&&FVector::Dist2D(B.Known,At)<800.f&&FVector::DotProduct(Runner->GetVelocity().GetSafeNormal2D(),ToShutter)>.5f;
+            }
+            if(!Cut)B.ShutterCloseSince=-1;
+            else
+            {
+                if(B.ShutterRolled.Get()!=Shutter){B.ShutterRolled=const_cast<AFireShutterActor*>(Shutter);B.ShutterCloseSince=B.Policy.Random()<ProjectBots::MannequinShutterCloseChance(Level)?Now:-2;}
+                if(B.ShutterCloseSince>=0&&Now-B.ShutterCloseSince>=B.Policy.Profile.Reaction&&GM->TryMannequinShutter(PC))
+                {UE_LOG(LogTemp,Display,TEXT("[BotShutter] %s lowered %s"),*GetNameSafe(Body),*GetNameSafe(Shutter));B.ShutterAt=Now+2.;B.ShutterCloseSince=-1;}
+            }
         }
         if(!B.Visible&&B.Policy.Random()<B.Policy.Profile.Sharing)
             for(const auto& Entry:Shared.Entries)if(Entry.Seen.Team==1&&Entry.Seen.Target&&Entry.Seen.At>=0&&Now-Entry.Seen.At<=B.Policy.Profile.Memory)
@@ -2025,10 +2115,16 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
             if(const auto* Victim=Brains.Find(Target))
             {
                 const FVector Facing=Target->GetActorForwardVector().GetSafeNormal2D(),FromVictim=(Body->GetActorLocation()-Target->GetActorLocation()).GetSafeNormal2D();
-                UE_LOG(LogTemp,Display,TEXT("[BotCatch] Plan=%s Play=%s Floor=%d Seconds=%.0f VictimKnows=%d Visible=%d Disciplined=%d LookingAway=%d Threats=%d CatcherInFront=%.2f Speed=%.0f"),
+                // CatcherIsTarget: the catcher is the body the victim was tracking. TargetFrozen: the tracked body is a
+                // different, frozen one (held by a stare while another body came in). Diagnostics only.
+                const AActor* Tracked=Victim->Target.Get();const auto* TrackedBody=Cast<AMannequinAICharacter>(Tracked);
+                // CatcherSeenAgo: seconds since the victim last saw the catcher (-1 = never in its threat memory).
+                const auto* KnownCatcher=Victim->Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==Body;});
+                UE_LOG(LogTemp,Display,TEXT("[BotCatch] Plan=%s Play=%s Floor=%d Seconds=%.0f VictimKnows=%d Visible=%d Disciplined=%d LookingAway=%d Threats=%d CatcherInFront=%.2f Speed=%.0f CatcherIsTarget=%d TargetFrozen=%d CatcherSeenAgo=%.1f"),
                     ANSI_TO_TCHAR(MatchScript::Name(Script.Mannequin)),Dir.ActiveCount()>0?TEXT("yes"):TEXT("no"),FloorDepth,Now,
                     Victim->Target.IsValid()&&Now-Victim->SeenAt<=Victim->Policy.Profile.Memory,Victim->Visible,Victim->Disciplined,Now<Victim->LookAwayUntil,
-                    Victim->Threats.Num(),FVector::DotProduct(Facing,FromVictim),Target->GetVelocity().Size2D());
+                    Victim->Threats.Num(),FVector::DotProduct(Facing,FromVictim),Target->GetVelocity().Size2D(),
+                    Tracked==Body,TrackedBody&&TrackedBody!=Body&&TrackedBody->IsFrozenBySurvivorVision(),KnownCatcher?Now-KnownCatcher->At:-1.);
             }
         }
     }

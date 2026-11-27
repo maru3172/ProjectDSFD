@@ -185,9 +185,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout")
 	bool bWorkingShuttersStartClosed = true;
 
-	/** Bot survivors open a working shutter by walking up to it (they cannot press F). */
+	/** Retired (2026-11-27): bots now raise and lower shutters themselves with the player's rules (ProjectMatchBots),
+	 *  so the server no longer opens shutters near them. Kept only so saved maps still load; it has no effect. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout")
-	bool bBotsOpenWorkingShutters = true;
+	bool bBotsOpenWorkingShutters = false;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Shutter Layout", meta = (ClampMin = "50.0", Units = "cm"))
 	float BotOpenDistance = 220.f;
 

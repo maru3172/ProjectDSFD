@@ -67,6 +67,9 @@ struct FProjectMatchBotBrain
     // Mannequin player bot: when it may next raise a working fire shutter in front of the body it views, and since when the
     // chase has been stuck at one (it reacts like a person: a moment later, not on the frame it arrives).
     double ShutterAt=0,ShutterSince=-1;
+    // Lowering a shutter (survivor: behind itself; mannequin: in front of a runner). The pass it rolled for, the shutter
+    // it chose to lower, and since when it has been turning to it.
+    TWeakObjectPtr<AActor> ShutterRolled,ShutterToClose;double ShutterCloseSince=-1,ShutterScanAt=0;
     // Cached environment-based tactic point and rest-spot hunt state.
     FVector TacticGoal=FVector::ZeroVector,TacticKnown=FVector::ZeroVector;
     double TacticAt=-100,SpotIgnoreUntil=0;
@@ -84,6 +87,7 @@ struct FProjectMatchBotBrain
     bool Disciplined=false;
     // Emotion edges (near miss -> shaken -> "phew"), fidgeting while waiting, per-match condition refresh.
     bool WasNear=false,Shaken=false;
+    bool RelayLogged=false,RearGuardOn=false; // Level-5 rear-guard diagnostics (edges only).
     double IdleSince=-1,FidgetAt=0,ShuffleUntil=0,ConditionAt=-100,BreatheUntil=0,PressedAt=-100;
     // Gaze budget: a stare is held only so long, then the eyes leave it for a beat (the mannequin's window).
     double WatchSince=-1,LookAwayUntil=0;

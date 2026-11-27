@@ -110,8 +110,8 @@ void AProjectShutterLayout::BeginPlay()
 				Seed = ProjectShutterLayout::SeedFromOptions(Mode->OptionsString, ProjectShutterLayout::MapKey(GetWorld()));
 		if (Seed == 0) Seed = FMath::Max(1, FMath::Rand32()); // never 0 (clients learn the seed through a replicated change); full 31 bits, Rand() is only 15
 		Generate(Seed);
-		if (bBotsOpenWorkingShutters && !WorkingShutters.IsEmpty())
-			GetWorldTimerManager().SetTimer(BotTimer, FTimerDelegate::CreateUObject(this, &AProjectShutterLayout::CheckBots), .5f, true);
+		// No server-side opening for bots any more (user, 2026-11-27: bots use every player action themselves).
+		// CheckBots / OpenWorkingShuttersNear stay for the layout tests; nothing schedules them in a match.
 	}));
 }
 

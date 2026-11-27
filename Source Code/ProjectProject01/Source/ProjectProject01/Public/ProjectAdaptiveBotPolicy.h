@@ -137,6 +137,16 @@ inline int ProbeIndex(const Difficulty& D,int ProbeId){const int I=std::max(1,st
 // beside a human the helper's cover stays short), and how long the look-away lasts: the mannequin's window.
 // Bot-only survivor team beginner weakness (user, 2026-11-21): full at level 1, half at level 2, none above.
 inline float BeginnerWeight(const Difficulty& D){static constexpr float W[]={1.f,.5f,0.f,0.f,0.f};return D.Team==BotTeam::Survivor?W[std::max(1,std::min(5,D.Level))-1]:0.f;}
+// Bot-only survivor team, level 5 only (user, 2026-11-27): while the partner freezes every mannequin in view, this
+// bot covers the partner's back (see "Rear guard" in ProjectMatchBots.cpp). 46% of level-5 catches came from a body
+// the victim had never seen.
+inline bool RearGuardRule(const Difficulty& D){return D.Team==BotTeam::Survivor&&D.Level>=5;}
+// Fire shutters (user, 2026-11-27): bots get every player action, and in multiplayer anyone may raise or lower a
+// working shutter. The helper bot beside a human never operates shutters (user). Chance per shutter pass that a bot
+// lowers one: a survivor behind itself with a mannequin coming, a mannequin in front of a survivor running for it.
+inline bool CanOperateShutters(const Difficulty& D){return D.Team!=BotTeam::SurvivorHelper;}
+inline float SurvivorShutterCloseChance(const Difficulty& D){static constexpr float S[]={.15f,.3f,.5f,.7f,.85f};return CanOperateShutters(D)?S[std::max(1,std::min(5,D.Level))-1]:0.f;}
+inline float MannequinShutterCloseChance(const Difficulty& D){static constexpr float S[]={.1f,.2f,.35f,.5f,.65f};return S[std::max(1,std::min(5,D.Level))-1];}
 inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:(1.45+1.6*D.Skill)*(1.-.25*BeginnerWeight(D));}
 inline float LookAwaySeconds(const Difficulty& D){return std::max(.9f,D.Reaction*1.7f);}
 
@@ -988,11 +998,11 @@ inline bool& ReferenceStandIns(){static bool Value=false;return Value;}
 inline int& SoloDiagnostic(){static int Value=0;return Value;}
 // Seconds of endgame before the endgame parking count applies (against two humans only; user, 2026-11-21).
 inline double EndgameParkDelay(const Difficulty& D,bool SoloHuman){static constexpr double T[]={75,30,0,0,0};return SoloHuman?0.:T[std::max(1,std::min(5,D.Level))-1];}
-inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,9,7,5},E[]={9,7,6,6,3};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame){static constexpr int P[]={9,9,9,7,3},E[]={9,7,6,6,3};if(ParkOverride()>=0)return ParkOverride();const int I=std::max(1,std::min(5,D.Level))-1;return Endgame?E[I]:P[I];}
 // One human with a bot partner: the partner stays a helper, so that team is weaker than two humans. These per-level
 // values apply only then (two humans and bot-only teams keep the plain tables).
 // Own table against one human with a bot partner, tuned apart from the two-human table above.
-inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int P[]={9,9,9,9,4},E[]={9,8,7,7,3};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return (Endgame?E:P)[std::max(1,std::min(5,D.Level))-1];}
+inline int ParkedBodies(const Difficulty& D,bool Endgame,bool SoloHuman){static constexpr int P[]={9,9,9,9,5},E[]={9,8,7,7,3};const int Base=ParkedBodies(D,Endgame);if(!SoloHuman||ParkOverride()>=0)return Base;return (Endgame?E:P)[std::max(1,std::min(5,D.Level))-1];}
 inline float SoloAttackScale(const Difficulty& D,bool SoloHuman){static constexpr float S[]={1,1,1,1,1};return SoloHuman?S[std::max(1,std::min(5,D.Level))-1]:1.f;}
 // With a lone human, the helper falling must not turn the whole mannequin on that human: lower levels keep their
 // ordinary hunt (no endgame push, no extra bodies woken), higher levels still close the match.
