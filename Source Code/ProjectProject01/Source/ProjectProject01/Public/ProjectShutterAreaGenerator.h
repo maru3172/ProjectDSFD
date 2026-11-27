@@ -86,9 +86,23 @@ private:
 	// 단축 폭에 비례하는 후보별 생성 확률을 반환한다.
 	float GetSectionGenerationChance() const;
 	
-	// 단축 후보 위치에서 장축 방향의 첫 번째 셔터를 만든다.
+	// 지정된 단축, 장축 격자 좌표에서 장축 방향의 첫 셔터를 만든다.
 	FProjectShutterGridSegment MakeSectionStartSegment(
-		int32 ShortAxisCandidateIndex) const;
+		int32 ShortAxisCandidateIndex,
+		int32 LongAxisStartIndex) const;
+	
+	// 시작 셔터를 검증하고 장축으로 연장한 뒤 완성된 구간의 양 끝점을 기록한다.
+	bool TryAddSection(
+		const FProjectShutterGridSegment& StartSegment,
+		FRandomStream& RandomStream,
+		TArray<FProjectShutterGridSegment>& Segments,
+		TArray<TPair<FIntPoint, FIntPoint>>& SectionEndpoints) const;
+	
+	// 장축의 내부 구간을 순회하며 배치 가능한 위치에 추가 셔터 세트를 만든다.
+	int32 AddInteriorSections(
+		FRandomStream& RandomStream,
+		TArray<FProjectShutterGridSegment>& Segments,
+		TArray<TPair<FIntPoint, FIntPoint>>& SectionEndpoints) const;
 	
 	// 주 생성 구간 끝점에서 직각 방향의 셔터 한 개를 추가한다.
 	void TryAddPerpendicularEndSegment(
