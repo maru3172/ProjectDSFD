@@ -173,6 +173,7 @@ class PROJECTPROJECT01_API AMultiplayTestPlayerController : public APlayerContro
 public:
 	AMultiplayTestPlayerController();
     friend class UProjectMatchBots;
+    friend class FProjectRescueRulesTest;
     friend class AProjectOpenObserverController;
     void AdjustObserverViewStream(int32 Delta);
     /** Server: the match affixes this player sees (loading screen, notices). */

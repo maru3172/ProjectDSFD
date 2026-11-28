@@ -50,6 +50,18 @@ class PROJECTPROJECT01_API AProjectMultiplayerRescueGameMode : public AMultiplay
 
 public:
 	bool TryDetain(APlayerCharacter& Survivor, AMannequinAICharacter& Catcher);
+	/**
+	 * Who may come for this captive (user, 2026-11-28). A person needs another person still in play: a bot partner never
+	 * comes for a person, so with one person and a bot, the person caught is out. A bot is freed by a person if one is in
+	 * play (the helper beside a person), otherwise by its bot partner when only bots are left as survivors.
+	 */
+	bool HasRescuerFor(const AMultiplayTestPlayerController* Captive) const;
+	/** Bots free a partner only while no person is a survivor in play. */
+	bool MayRescue(const APlayerCharacter& Rescuer) const;
+	AProjectMultiplayerRescueStation* GetStation() const { return Station; }
+	/** A person for these rules: a human, or in the simulation a bot standing in for one. */
+	bool IsPerson(const AMultiplayTestPlayerController* PC) const;
+	bool HasOtherPersonInPlay(const AMultiplayTestPlayerController* Except) const;
 	bool CanFree(const AProjectMultiplayerRescueStation& Source, const APlayerCharacter& Rescuer) const;
 	void UseStation(AProjectMultiplayerRescueStation& Source, APlayerCharacter& Rescuer);
 	virtual void Logout(AController* Exiting) override;

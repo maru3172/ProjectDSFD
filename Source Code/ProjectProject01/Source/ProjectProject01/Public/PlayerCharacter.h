@@ -34,6 +34,7 @@ class PROJECTPROJECT01_API APlayerCharacter : public ACharacter
 	friend class AProjectTutorialTargetCharacter;
 	friend class AProjectMatchBotCharacter;
 	friend class AProjectMultiplayerRescueGameMode;
+	friend class FProjectRescueRulesTest;
 	friend class FProjectFreePracticeRuntimeTest;
 
 public:

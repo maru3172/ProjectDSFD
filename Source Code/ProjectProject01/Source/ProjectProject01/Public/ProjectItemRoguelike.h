@@ -94,6 +94,41 @@ namespace ProjectItemRoguelike
         for(const auto& A:ProjectAffixes::All())if(IsBuffFor(A.Id,bSurvivor)&&!ActiveBuffs.Contains(A.Id)&&!Owned.Contains(A.Id))Out.Add(A.Id);
         return Out;
     }
+    // Bot card choice (user, 2026-11-27): bots pick and reroll by their own judgment like players. Rough worth of each
+    // card to the picker's side: an item's help, or for a buff card how little the affix handed over hurts (survivors
+    // hand B to the mannequin, the mannequin hands A to the survivors). Starting values, not tuned by play data.
+    inline float BotCardValue(const FString& Id,bool bSurvivor,bool bPartner)
+    {
+        static const TMap<FString,float> Worth={
+            {TEXT("S01"),.5f},{TEXT("S02"),.4f},{TEXT("S03"),.9f},{TEXT("S04"),.6f},{TEXT("S05"),.6f},{TEXT("S06"),.5f},{TEXT("S07"),.6f},{TEXT("S08"),.5f},
+            {TEXT("S09"),.5f},{TEXT("S10"),.6f},{TEXT("S11"),.5f},{TEXT("S12"),.25f},{TEXT("S13"),.4f},{TEXT("S14"),.45f},{TEXT("S15"),.6f},
+            {TEXT("M01"),.5f},{TEXT("M02"),.6f},{TEXT("M03"),.4f},{TEXT("M04"),.6f},{TEXT("M05"),.3f},{TEXT("M06"),.6f},{TEXT("M07"),.5f},{TEXT("M08"),.4f},
+            {TEXT("M09"),.5f},{TEXT("M10"),.5f},{TEXT("M11"),.45f},{TEXT("M12"),.6f},{TEXT("M13"),.6f},{TEXT("M14"),.5f},{TEXT("M15"),.7f},
+            // Buffs: 1 - how much the affix helps the other side.
+            {TEXT("B01"),.6f},{TEXT("B02"),.7f},{TEXT("B03"),.65f},{TEXT("B04"),.4f},{TEXT("B05"),.65f},{TEXT("B06"),.4f},{TEXT("B07"),.75f},{TEXT("B08"),.4f},{TEXT("B09"),.5f},{TEXT("B10"),.4f},
+            {TEXT("A01"),.7f},{TEXT("A02"),.5f},{TEXT("A03"),.5f},{TEXT("A04"),.5f},{TEXT("A05"),.5f},{TEXT("A06"),.4f},{TEXT("A07"),.65f},{TEXT("A08"),.4f},{TEXT("A09"),.45f},{TEXT("A10"),.55f}};
+        if(!bPartner&&(Id==TEXT("S04")||Id==TEXT("S14")||Id==TEXT("M14")))return .1f; // Needs a partner (or two survivors) to do anything.
+        const float* V=Worth.Find(Id);return V?*V*(IsBuffFor(Id,bSurvivor)?.9f:1.f):.4f;
+    }
+    /**
+     * A bot's pick from Offer: higher Skill sees the real worth, lower picks more by feel (noise); Taste is its own leaning.
+     * Reroll (once a floor) when the best card looks weak, more readily the more skilled. Weak spot: a beginner keeps a
+     * bad hand or takes a card that does nothing for it.
+     */
+    struct FBotPick{int32 Index=0;bool bReroll=false;float Worth=0;};
+    inline FBotPick BotPick(const TArray<FString>& Offer,bool bSurvivor,bool bPartner,float Skill,bool bCanReroll,uint32 Taste,FRandomStream& Rng)
+    {
+        FBotPick Out;float Best=-1e9f;
+        for(int32 I=0;I<Offer.Num();++I)
+        {
+            const float Lean=float(HashCombineFast(Taste,GetTypeHash(Offer[I]))%1000u)/1000.f-.5f;
+            const float Seen=BotCardValue(Offer[I],bSurvivor,bPartner)+(Rng.FRand()-.5f)*.9f*(1.f-Skill)+.15f*Lean;
+            if(Seen>Best){Best=Seen;Out.Index=I;}
+        }
+        if(Offer.IsValidIndex(Out.Index))Out.Worth=BotCardValue(Offer[Out.Index],bSurvivor,bPartner);
+        Out.bReroll=bCanReroll&&Out.Worth<.45f+.1f*Skill&&Rng.FRand()<.25f+.65f*Skill;
+        return Out;
+    }
     /** Three distinct cards with at least one item and one buff while both kinds remain. Avoid excludes the last offer (reroll). */
     inline TArray<FString> Roll(bool bSurvivor,const TArray<FString>& Owned,const TArray<FString>& ActiveBuffs,FRandomStream& Rng,const TArray<FString>& Avoid={})
     {

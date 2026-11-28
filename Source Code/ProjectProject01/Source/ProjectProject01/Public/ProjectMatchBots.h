@@ -72,6 +72,14 @@ struct FProjectMatchBotBrain
     TWeakObjectPtr<AActor> ShutterRolled,ShutterToClose,ShutterLogged;double ShutterCloseSince=-1,ShutterScanAt=0;
     // Flickering reactive lights this bot can see (a crowd of bodies nearby), refreshed twice a second.
     TArray<FVector,TInlineAllocator<4>> FlickerSpots;double LightScanAt=0,TellLogAt=0;
+    // Own tells a survivor minds (B05 dust, B02 trail, B03 red light; see TickSurvivor).
+    FVector DustAnchor=FVector::ZeroVector,DustStepTo=FVector::ZeroVector;double DustAnchorSince=-1,DustStepUntil=0,TrailYieldUntil=0,TrailRolledAt=-100;
+    double ApartSince=-1,ApartRollAt=0,RegroupUntil=0;bool DustRolled=false,DryRolled=false,DryCare=false;float DryLast=1.f;
+    // Rescue mode: the detention it rolled for, whether it goes, the first press and when the second one lands.
+    // Basement side trip: the stairs it is heading for, roll timers, how long it stays below, and whether the way back
+    // up counts as its exit yet (read by ChooseObjective).
+    TWeakObjectPtr<AActor> TripTo;double TripRollAt=0,TripFollowAt=0,StayUntil=-1,BlockedSince=-1,TripLogAt=0;bool TripReady=false;
+    TWeakObjectPtr<AActor> RescueFor;bool RescueGoing=false;double RescuePressAt=-1,RescueSecondAt=-1,RescueRetryAt=0,RescueLogAt=0;
     // Cached environment-based tactic point and rest-spot hunt state.
     FVector TacticGoal=FVector::ZeroVector,TacticKnown=FVector::ZeroVector;
     double TacticAt=-100,SpotIgnoreUntil=0;
@@ -135,6 +143,18 @@ public:
     static uint8 StyleOf(const FProjectMatchBotSpec& Spec);
     /** A survivor's team ping (human or bot): bots look, learn the exit, or come to help. */
     void HearPing(class AMultiplayTestPlayerController* Sender,uint8 Type,const FVector& Location); // Type: EProjectProject01PingType
+    /** Rescue mode: the alarm every player hears; mannequin bots may send their body to look. */
+    void HearRescueAlarm(const FVector& Location);
+    /**
+     * Item roguelike: what a player sees from an info card or an item light reaches the bot too (the light the server
+     * sends a person goes to the bot's judgment instead). Survivor bots: a body near the spot counts as seen, else an
+     * exit there becomes known. Mannequin bots: the viewed body goes to look there.
+     */
+    void GiveRogueInfo(class AMultiplayTestPlayerController* PC,const FVector& At);
+    /** A bot's level by its match user id ("Bot:<id>"), 3 when unknown. */
+    int32 LevelOf(const FString& UserId)const;
+    /** Simulation only: this survivor bot stands in for a person (ladder M/P cells; not the P helper). Always false in play. */
+    bool StandsInForPerson(const class AMultiplayTestPlayerController* PC)const;
     /** A human survivor left mid-match while alive and a human teammate still plays: a helper bot plays on from where
      *  they were, with the lives they had. Not part of the frozen roster (claims never list it, experience skips it). */
     bool AddStandIn(const FMultiplayTestServerPlayerRecord& Leaver);
@@ -224,6 +244,8 @@ private:
         FVector LonePoint=FVector::ZeroVector;
         TWeakObjectPtr<AActor> LoneAvoid; // The guarded exit a detour stays away from.
         double StallLogAt=0; // Next diagnostic line while the match is stalled.
+        // Affix countdowns read this match (0 shift, 1 rush, 2 quake, 3 closing): showing last tick, and heeded.
+        bool ForecastWas[4]={},ForecastHeed[4]={};
         // Exits it could not find a way to (no path from here): skipped for a while so another exit is tried.
         TMap<TWeakObjectPtr<AActor>,double> UnreachableUntil;
         // Pair plays run on both partners: the starter holds the Director slot, the partner follows this.

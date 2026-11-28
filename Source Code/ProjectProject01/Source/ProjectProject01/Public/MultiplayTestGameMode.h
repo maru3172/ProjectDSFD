@@ -70,6 +70,7 @@ class PROJECTPROJECT01_API AMultiplayTestGameMode : public AGameModeBase
 	GENERATED_BODY()
 	friend class FProjectReviewMatchCarryoverTest;
 	friend class FProjectForfeitRulesTest;
+	friend class FProjectRescueRulesTest;
 	friend class FProjectCustomRulesInfiniteLivesTest;
 	friend class FProjectCustomRulesHideRevealTest;
 	friend class FProjectCustomRulesGhostsTest;

@@ -147,6 +147,21 @@ inline bool RearGuardRule(const Difficulty& D){return D.Team==BotTeam::Survivor&
 inline bool CanOperateShutters(const Difficulty& D){return D.Team!=BotTeam::SurvivorHelper;}
 inline float SurvivorShutterCloseChance(const Difficulty& D){static constexpr float S[]={.15f,.3f,.5f,.7f,.85f};return CanOperateShutters(D)?S[std::max(1,std::min(5,D.Level))-1]:0.f;}
 inline float MannequinShutterCloseChance(const Difficulty& D){static constexpr float S[]={.1f,.2f,.35f,.5f,.65f};return S[std::max(1,std::min(5,D.Level))-1];}
+// Affix reading (user, 2026-11-28): how readily a bot minds the cues its own body gives away (B05 dust, B02 trail,
+// B03 red light) and acts on the on-screen countdowns (C04, C05, C08, C06). Rolled once per episode or warning;
+// beginners (1) never do, so they keep standing in dust and running into a shift unprepared.
+inline float AffixCareChance(const Difficulty& D){static constexpr float S[]={0.f,.3f,.55f,.75f,.9f};return S[std::max(1,std::min(5,D.Level))-1];}
+// Rescue mode (user, 2026-11-28; only bots-only survivor teams free each other). Whether a survivor bot goes for its
+// detained partner (rolled once per detention; the rest head out alone), and how far its second press strays from the
+// middle of the timing window (0.72-1.46 s, middle 1.09 s; outside it the alarm sounds, as for players).
+inline float RescueChance(const Difficulty& D){static constexpr float S[]={.55f,.65f,.75f,.85f,.95f};return S[std::max(1,std::min(5,D.Level))-1];}
+inline float RescueTimingSpread(const Difficulty& D){static constexpr float S[]={.45f,.35f,.26f,.18f,.12f};return S[std::max(1,std::min(5,D.Level))-1];}
+// A mannequin bot that hears the rescue alarm sends its body to look (beginners are slower to react, still often go).
+// Basement side trip (user, 2026-11-28): taking the stairs down when it is the best option now (rolled once per
+// reason, every 20 s at most), and joining a partner already waiting on the stairs (re-rolled every 8 s).
+inline float DescendChance(const Difficulty& D){static constexpr float S[]={.2f,.4f,.6f,.75f,.9f};return S[std::max(1,std::min(5,D.Level))-1];}
+inline float TripFollowChance(const Difficulty& D){static constexpr float S[]={.6f,.7f,.8f,.9f,.95f};return S[std::max(1,std::min(5,D.Level))-1];}
+inline float RescueAlarmChance(const Difficulty& D){static constexpr float S[]={.35f,.5f,.65f,.8f,.9f};return S[std::max(1,std::min(5,D.Level))-1];}
 inline double GazeHoldLimit(const Difficulty& D,bool HumanAlly){return HumanAlly?2.+.5*D.Skill:(1.45+1.6*D.Skill)*(1.-.25*BeginnerWeight(D));}
 inline float LookAwaySeconds(const Difficulty& D){return std::max(.9f,D.Reaction*1.7f);}
 

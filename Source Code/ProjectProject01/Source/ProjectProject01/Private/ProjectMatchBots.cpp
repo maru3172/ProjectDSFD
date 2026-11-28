@@ -18,6 +18,7 @@
 #include "ProjectProject01Elevator.h"
 #include "MultiplayTestPlayerController.h"
 #include "ProjectAffixRuntime.h"
+#include "ProjectMultiplayerRescue.h"
 #include "VisualLogger/VisualLogger.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectBotDecision, Log, All);
@@ -69,6 +70,19 @@ namespace
             if(!Observer->GetWorld()->LineTraceSingleByChannel(Hit,Eye,Pulse.Location,ECC_Visibility,Query))return true;
         }
         return false;
+    }
+    // The C-group countdowns as players read them on screen (0 shift, 1 rush, 2 quake, 3 closing). As each warning
+    // shows, rolls once whether this bot heeds it; Soon says what is showing now.
+    template<typename RollFn>
+    void ReadForecasts(const UProjectAffixRuntime* Rules,bool (&Was)[4],bool (&Heed)[4],float Care,RollFn&& Roll,const TCHAR* Role,const FString& Id,bool (&Soon)[4])
+    {
+        static const TCHAR* Names[]={TEXT("shift"),TEXT("rush"),TEXT("quake"),TEXT("closing")};
+        Soon[0]=Rules&&Rules->ShiftSoonOrOn();Soon[1]=Rules&&Rules->RushSoonOrOn();Soon[2]=Rules&&Rules->QuakeSoonOrOn();Soon[3]=Rules&&Rules->ClosingWarned();
+        for(int32 K=0;K<4;++K)
+        {
+            if(Soon[K]&&!Was[K]){Heed[K]=Roll()<Care;UE_LOG(LogTemp,Display,TEXT("[BotForecast] %s=%s %s heed=%d"),Role,*Id.Left(8),Names[K],Heed[K]?1:0);}
+            Was[K]=Soon[K];
+        }
     }
 }
 void UProjectMatchBotMovement::TickComponent(float Delta,ELevelTick Kind,FActorComponentTickFunction* TickFunction)
@@ -716,10 +730,25 @@ bool UProjectMatchBots::ChooseExploreGoal(APawn* Pawn,FBotPlayState& State,doubl
     auto* Nav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(Pawn->GetWorld());if(!Nav)return false;
     // Wander like someone looking for the way out: somewhere a fair distance off, not where they have been.
     FVector Best=FVector::ZeroVector;float BestScore=-1;
+    // Never wander across the stairs to another floor (1F <-> rescue basement): people take those on purpose, not on
+    // the way somewhere (2026-11-28: bots below kept stepping onto the stairs up and pulling their partner along).
+    ScanObjectives();TArray<FBox,TInlineAllocator<2>> Trips;
+    for(const auto& Entry:Objectives)if(const auto* T=Cast<AProjectProject01LevelTransitionTrigger>(Entry.Get());T&&T->IsSideTrip())Trips.Add(T->GetComponentsBoundingBox(true).ExpandBy(120.f));
+    auto CrossesTrip=[&](const FVector& To)
+    {
+        if(Trips.IsEmpty())return false;
+        for(const FBox& Box:Trips)if(Box.IsInside(To))return true;
+        const auto* Path=UNavigationSystemV1::FindPathToLocationSynchronously(Pawn->GetWorld(),Here,To,Pawn);
+        if(!Path||!Path->IsValid())return false;
+        for(int32 I=1;I<Path->PathPoints.Num();++I)for(const FBox& Box:Trips)
+            if(FMath::LineBoxIntersection(Box,Path->PathPoints[I-1],Path->PathPoints[I],Path->PathPoints[I]-Path->PathPoints[I-1]))return true;
+        return false;
+    };
     for(int32 Try=0;Try<6;++Try)
     {
         FNavLocation Point;if(!Nav->GetRandomReachablePointInRadius(Here,3200.f,Point))continue;
         const float Far=FVector::Dist2D(Point.Location,Here);if(Far<1200.f)continue;
+        if(CrossesTrip(Point.Location))continue;
         float Nearest=MAX_flt;for(const FVector& Seen:State.Visited)Nearest=FMath::Min(Nearest,FVector::Dist2D(Seen,Point.Location));
         const float Score=FMath::Min(Nearest,2000.f)+.2f*Far;
         if(Score>BestScore){BestScore=Score;Best=Point.Location;}
@@ -731,6 +760,8 @@ void UProjectMatchBots::QueuePing(FBotPlayState& State,const ProjectBots::Diffic
 {
     // One call-out at a time, a few seconds apart; sometimes the bot simply does not think of it.
     if(Now<State.PingReadyAt||State.PingDueAt>=0||FMath::FRand()>ProjectBots::PingHabit(Level,Who))return;
+    // M11 glass eye (survivors are told at the floor start): a careful player pings less, the mannequin sees them.
+    if(const auto* GM=Mode();GM&&GM->GetAffixRuntime()&&GM->GetAffixRuntime()->MannequinSeesPings()&&FMath::FRand()<ProjectBots::AffixCareChance(Level))return;
     const float Error=ProjectBots::PingError(Level);
     State.PingKind=Kind;State.PingPoint=At+FVector(FMath::FRandRange(-Error,Error),FMath::FRandRange(-Error,Error),0);
     State.PingDueAt=Now+ProjectBots::PingDelay(Level,U);
@@ -745,6 +776,60 @@ float UProjectMatchBots::ConditionOf(const FProjectMatchBotSpec& Spec)const
 {
     const auto* GM=Mode();
     return ProjectBots::MatchCondition(HashCombineFast(GetTypeHash(Spec.BotId),GetTypeHash(MatchId)),GM?GM->GetElapsedMatchSeconds():0.);
+}
+void UProjectMatchBots::HearRescueAlarm(const FVector& Location)
+{
+    auto* GM=Mode();if(!GM)return;const double Now=GM->GetWorld()->GetTimeSeconds();
+    for(const auto& Spec:Specs)if(Spec.Role==TEXT("Mannequin"))
+        if(auto* PC=Controllers.FindRef(Spec.BotId).Get())if(auto* Body=PC->GetViewedMannequin())if(auto* B=Brains.Find(Body);B&&B->Initialized)
+        {
+            // Tell: the body turns and heads for the cell; weak spot: the rest of the floor goes unwatched meanwhile.
+            const bool Goes=FMath::FRand()<ProjectBots::RescueAlarmChance(B->Policy.Profile);
+            if(Goes){B->LostCheck=Location;B->LostCheckUntil=Now+10.0;}
+            UE_LOG(LogTemp,Display,TEXT("[BotRescue] Mannequin=%s alarm goes=%d"),*Spec.BotId.Left(8),Goes?1:0);
+        }
+}
+void UProjectMatchBots::GiveRogueInfo(AMultiplayTestPlayerController* PC,const FVector& At)
+{
+    auto* GM=Mode();if(!GM||!PC||!PC->IsServerControlledBot())return;
+    const double Now=GM->GetWorld()->GetTimeSeconds();
+    if(auto* Body=PC->GetViewedMannequin())
+    {
+        // Mannequin side (M02, M15, S06's lit exit): the body goes to look there, as a person would after the light.
+        if(auto* B=Brains.Find(Body);B&&B->Initialized){B->LostCheck=At;B->LostCheckUntil=Now+6.0;UE_LOG(LogTemp,Display,TEXT("[BotRogue] Mannequin info at %s"),*At.ToCompactString());}
+        return;
+    }
+    APawn* Pawn=PC->GetPawn();auto* B=Pawn?Brains.Find(Pawn):nullptr;if(!B||!B->Initialized)return;
+    // Survivor side (S04 shared target, S05 mirror): the body at that spot counts as just seen.
+    AMannequinAICharacter* Near=nullptr;float NearDist=250.f;
+    for(TActorIterator<AMannequinAICharacter> It(GM->GetWorld());It;++It)if(!It->IsHidden())
+        if(const float D=FVector::Dist2D(It->GetActorLocation(),At);D<NearDist){NearDist=D;Near=*It;}
+    if(Near)
+    {
+        auto* Slot=B->Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==Near;});
+        if(!Slot){Slot=&B->Threats.AddDefaulted_GetRef();Slot->Actor=Near;}
+        Slot->Position=Near->GetActorLocation();Slot->At=Now;
+        UE_LOG(LogTemp,Display,TEXT("[BotRogue] Survivor info body"));
+        return;
+    }
+    // S06 store map: the exit it points at becomes known.
+    ScanObjectives();
+    for(auto& Pair:Specs)if(Controllers.FindRef(Pair.BotId).Get()==PC)
+        for(const auto& Entry:Objectives)if(Entry.IsValid()&&FVector::Dist2D(Entry->GetActorLocation(),At)<500.f)
+        {Plays.FindOrAdd(Pair.BotId).KnownExits.Add(Entry);UE_LOG(LogTemp,Display,TEXT("[BotRogue] Survivor info exit"));return;}
+}
+int32 UProjectMatchBots::LevelOf(const FString& UserId)const
+{
+    for(const auto& Spec:Specs)if(UserId==Spec.BotId||UserId==TEXT("Bot:")+Spec.BotId)return Spec.Difficulty;
+    return 3;
+}
+bool UProjectMatchBots::StandsInForPerson(const AMultiplayTestPlayerController* PC)const
+{
+    using namespace ProjectBots;
+    if(!PC||!ReferenceStandIns()||ParkOverride()>=0)return false; // Ladder M/P cells: the survivors stand in for people.
+    for(const auto& Spec:Specs)if(Spec.Role==TEXT("Survivor")&&Controllers.FindRef(Spec.BotId).Get()==PC)
+        return !(HumanTeamOverride()&&Spec.DisplayName==TEXT("SimHelper"));
+    return false;
 }
 void UProjectMatchBots::HearPing(AMultiplayTestPlayerController* Sender,uint8 Type,const FVector& Location)
 {
@@ -807,14 +892,19 @@ AActor* UProjectMatchBots::ChooseObjective(APawn* Pawn,const FProjectMatchBotBra
     // Danger is the last real sighting of the mannequin, kept a little longer for route planning.
     const bool Danger=B.Target.IsValid()&&Now-B.SeenAt<15.;
     AActor* Best=nullptr;float BestScore=MAX_flt;auto& Knowledge=Plays.FindOrAdd(Spec.BotId);
+    // The rescue basement: the only way on is the stairs it came down (known: it just walked them), and only once its
+    // stay is over (TickSurvivor). The test arena's exit lies past those stairs, so it cannot be reached from below.
+    const bool Basement=Cast<AProjectMultiplayerRescueGameMode>(Mode())!=nullptr;
     for(const auto& Entry:Objectives)if(auto* Objective=Entry.Get())
     {
-        if(!KnowsExit(Knowledge,Spec,Objective,B.Policy.Profile))continue; // Only exits it has found.
-        if(const double* Until=Knowledge.UnreachableUntil.Find(Objective);Until&&Now<*Until)continue; // No way there just now.
         const auto* Transition=Cast<AProjectProject01LevelTransitionTrigger>(Objective);
+        const bool WayUp=Basement&&Transition&&Transition->IsSideTrip();
+        if(!WayUp&&!KnowsExit(Knowledge,Spec,Objective,B.Policy.Profile))continue; // Only exits it has found.
+        if(const double* Until=Knowledge.UnreachableUntil.Find(Objective);Until&&Now<*Until)continue; // No way there just now.
         auto* Elevator=Cast<AProjectProject01Elevator>(Objective);FVector Candidate=Objective->GetActorLocation(),Facing=Candidate;
+        if(Basement&&!Transition&&!Elevator)continue;
         if(Elevator){if(!Elevator->GetBotObjective(Pawn,Candidate,Facing))continue;}
-        else if(Transition&&!Transition->IsAutomaticBotObjective())continue;
+        else if(Transition&&!Transition->IsAutomaticBotObjective()&&!(WayUp&&B.TripReady))continue;
         // Volumes trigger on overlap: aim at a walkable point inside the box, not the centre snapped to the floor.
         if(!Elevator)Candidate=Facing=InsideGoal(Objective);
         float Score=FVector::Dist(Pawn->GetActorLocation(),Candidate);
@@ -867,6 +957,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
 {
     using namespace ProjectBots;
     auto* Pawn=Cast<AProjectMatchBotCharacter>(PC->GetPawn());if(!Pawn||Pawn->IsGameOver()||PC->GetSurvivorState()!=EMultiplayTestSurvivorState::Active)return;
+    if(Pawn->IsAwaitingMultiplayerRescue()){Pawn->SetBotSprint(false);return;} // Held in the rescue cell: wait for the partner.
     auto* GM=Mode();auto* World=GM->GetWorld();const double Now=World->GetTimeSeconds();auto& B=Brains.FindOrAdd(Pawn);
     InitializeBrain(B,Spec,0);
     // Today's form: a small swing inside the level's band (never reaching a neighbouring level).
@@ -887,7 +978,8 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     auto Want=[&](Play Kind){return FMath::FRand()<PlayAffinity(StyleId,Kind)*(1.f+(Kind==Play::RunForIt||Kind==Play::ZigZag?.5f*Urgency:Kind==Play::HideStill?-.5f*Urgency:0.f))*
         PlanAffinity(Script,false,Kind,PlanStrength)+Mine.Combos.FollowUp(Kind,Now,Level);};
     APlayerCharacter* Buddy=nullptr;AMultiplayTestPlayerController* BuddyPC=nullptr;bool HumanAlly=false,BotBuddy=false;FString BuddyBotId;
-    for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.Get()!=PC&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active&&Pair.Value.SurvivorPawn.IsValid())
+    for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Key.Get()!=PC&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active&&Pair.Value.SurvivorPawn.IsValid()&&
+        !Pair.Value.SurvivorPawn->IsAwaitingMultiplayerRescue()) // A partner held in the rescue cell plays no part until freed.
     {
         Buddy=Pair.Value.SurvivorPawn.Get();BuddyPC=Pair.Key.Get();HumanAlly=!Pair.Value.bServerBot;BotBuddy=Pair.Value.bServerBot;
         if(BotBuddy&&Pair.Value.UserId.StartsWith(TEXT("Bot:")))BuddyBotId=Pair.Value.UserId.RightChop(4);
@@ -917,6 +1009,16 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
         for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor")&&!Pair.Value.bReplacedByBot){++Survivors;ActiveSurvivors+=Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active;}
         Urgency=EndgameUrgency(Level,Survivors,ActiveSurvivors);B.Policy.Urgency=Urgency;
     }
+    // Countdowns (user, 2026-11-28): heeded from the warning on. Shift (no running for 10 s): keep 3 m more from bodies;
+    // rush (bodies 12% faster): 1.5 m more, and running is cheap, so it does not stop early to save stamina; quake
+    // (everyone slowed 1.5 s): 2 m more; closing stages (bodies faster each stage): hurry to an exit.
+    // Tell: it backs off or heads out right as the notice shows; weak spot: the exit waits, or the route is predictable.
+    bool Forecast[4];
+    ReadForecasts(GM->GetAffixRuntime(),Mine.ForecastWas,Mine.ForecastHeed,ProjectBots::AffixCareChance(Level),[&]{return B.Policy.Random();},TEXT("Survivor"),Spec.BotId,Forecast);
+    const float ForecastPad=(Forecast[0]&&Mine.ForecastHeed[0]?300.f:0.f)+(Forecast[1]&&Mine.ForecastHeed[1]?150.f:0.f)+(Forecast[2]&&Mine.ForecastHeed[2]?200.f:0.f);
+    const bool CheapRun=Mine.ForecastHeed[1]&&GM->GetAffixRuntime()&&GM->GetAffixRuntime()->IsRushActive();
+    if(Forecast[3]&&Mine.ForecastHeed[3]&&GM->GetAffixRuntime()->GetClosingStage()>0)
+    {Urgency=FMath::Max(Urgency,.15f*GM->GetAffixRuntime()->GetClosingStage());B.Policy.Urgency=Urgency;}
     const bool Rush=Urgency>0;
     // Deeper floors: firmer judgement and a little boldness all the time (the endgame rush stays separate).
     const float Resolve=FloorResolve(Level,FloorDepth);B.Policy.Resolve=Resolve;
@@ -975,10 +1077,10 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(Now>=B.SenseAt)
     {
         B.SenseAt=Now+.2;AMannequinAICharacter* Target=nullptr;float Best=MAX_flt;
-        for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(Sees(Pawn,*It)||NoticesGlow(Pawn,*It,It->GetAffixCue()))
+        for(TActorIterator<AMannequinAICharacter> It(World);It;++It)if(Sees(Pawn,*It)||NoticesGlow(Pawn,*It,It->GetAffixCue())||PulseGivesAway(GM,Pawn,*It)) // Lights under a body (M05 dust, M13 frost) give it away too.
         {
             // Diagnostics (grep "[BotTell]"): a body noticed only by its glow, at most every 5 s per bot.
-            if(Now>=B.TellLogAt&&!Sees(Pawn,*It)){B.TellLogAt=Now+5;UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s glow body=%s"),*Spec.BotId.Left(8),*GetNameSafe(*It));}
+            if(Now>=B.TellLogAt&&!Sees(Pawn,*It)){B.TellLogAt=Now+5;UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s %s body=%s"),*Spec.BotId.Left(8),NoticesGlow(Pawn,*It,It->GetAffixCue())?TEXT("glow"):TEXT("pulse"),*GetNameSafe(*It));}
             float D=FVector::DistSquared(Pawn->GetActorLocation(),It->GetActorLocation());if(D<Best){Best=D;Target=*It;}
             // Remember every mannequin in sight, not only the nearest.
             auto* Slot=B.Threats.FindByPredicate([&](const FProjectMatchBotBrain::FSeenThreat& T){return T.Actor.Get()==*It;});
@@ -1135,7 +1237,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     const bool LookingAway=Now<B.LookAwayUntil;
     const FVector ObjectiveAt=Mine.Objective.IsValid()?Mine.Objective->GetActorLocation():Pawn->GetActorLocation();
     // B10 hunt (players get "사냥의 열기" on screen): every body is faster for 10 s, so keep more room.
-    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+50.f*Level.Skill+(GM->GetAffixRuntime()&&GM->GetAffixRuntime()->IsHuntActive()?200.f:0.f);
+    const float DangerRadius=GM->MultiplayerDetectionRadius+250.f+50.f*Level.Skill+(GM->GetAffixRuntime()&&GM->GetAffixRuntime()->IsHuntActive()?200.f:0.f)+ForecastPad;
     // Experts (4+) know a frozen mannequin cannot chase: it only counts as danger within touching distance, so they
     // walk past one they keep in view (an exit guard included) instead of backing off until cornered. Weak spot: the
     // moment the stare breaks, that mannequin is already close.
@@ -1385,6 +1487,165 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
             PlayMove=true;break;
         }
     }
+    // Own tells (user, 2026-11-28): a player who knows the floor's rules avoids giving itself away. Rolled with
+    // AffixCareChance (beginners never), once per episode.
+    const float Care=AffixCareChance(Level);
+    // B05: 10 s in one spot drops dust over it. 7.5 s in, step out of the spot (a hide or a listen ends).
+    // Tell: it leaves a hiding place with nothing in sight; weak spot: the step is heard and the hide is given up.
+    bool DustStep=false;
+    if(GM->HasAffixRule(TEXT("B05"))&&!Danger)
+    {
+        if(B.DustAnchorSince<0||FVector::DistSquared2D(B.DustAnchor,Here)>FMath::Square(200.f)){B.DustAnchor=Here;B.DustAnchorSince=Now;B.DustRolled=false;}
+        else if(!B.DustRolled&&Now-B.DustAnchorSince>7.5)
+        {
+            B.DustRolled=true;FNavLocation Step;auto* StepNav=FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+            if(B.Policy.Random()<Care&&StepNav&&StepNav->GetRandomReachablePointInRadius(Here,450.f,Step)&&FVector::DistSquared2D(Step.Location,Here)>FMath::Square(250.f))
+            {
+                B.DustStepTo=Step.Location;B.DustStepUntil=Now+2.;
+                for(Play Kind:{Play::HideStill,Play::Listen})if(Dir.Active(Kind))Dir.Finish(Kind,Level,Now,ReliefNow);
+                UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s own dust step"),*Spec.BotId.Left(8));
+            }
+        }
+        DustStep=Now<B.DustStepUntil;
+        if(DustStep&&!PlayMove){Goal=B.DustStepTo;HasGoal=true;}
+    }
+    // B02: two survivors running side by side raise dust over the shelves. One of them (a bot beside a human, else the
+    // later id) walks for a second to open a gap. Tell: one runner drops back; weak spot: a slower second.
+    if(GM->HasAffixRule(TEXT("B02"))&&!Danger&&Buddy&&Now-B.TrailRolledAt>4.&&Pawn->IsSprintingForBreathing()&&Buddy->IsSprintingForBreathing()&&
+        (HumanAlly||Spec.BotId>BuddyBotId)&&FVector::DistSquared2D(Buddy->GetActorLocation(),Here)<FMath::Square(260.f))
+    {
+        B.TrailRolledAt=Now;
+        if(B.Policy.Random()<Care){B.TrailYieldUntil=Now+1.;UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s own trail yield"),*Spec.BotId.Left(8));}
+    }
+    // B03: over 12 m from the partner for 20 s lights a blinking red light. From 14 s apart, roll every 6 s to head back
+    // toward the partner for up to 10 s. Tell: it turns back toward the partner; weak spot: the exit waits.
+    if(GM->HasAffixRule(TEXT("B03"))&&Buddy&&!Buddy->IsGameOver())
+    {
+        if(ToBuddy>1200.f){if(B.ApartSince<0){B.ApartSince=Now;B.ApartRollAt=Now+14.;}}else{B.ApartSince=-1;B.RegroupUntil=0;}
+        if(B.ApartSince>=0&&Now>=B.ApartRollAt&&Now>=B.RegroupUntil)
+        {
+            B.ApartRollAt=Now+6.;
+            if(B.Policy.Random()<Care){B.RegroupUntil=Now+10.;UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s own apart regroup ToBuddy=%.0f"),*Spec.BotId.Left(8),ToBuddy);}
+        }
+        if(!Knows&&!Danger&&!PlayMove&&!DustStep&&Now<B.RegroupUntil&&ToBuddy>1000.f){Goal=Buddy->GetActorLocation();HasGoal=true;}
+    }
+    // Basement side trip (user, 2026-11-28). The whole server moves, so every living survivor has to step onto the
+    // stairs (a lone person takes the bots along). Follow: a partner already waiting on the stairs is joined
+    // (TripFollowChance, re-rolled every 8 s). Own choice, only when it is the best option now: someone on the last life
+    // who would be held for rescue down there instead of being out, or the way out blocked or guarded for 15 s. Never
+    // for a helper beside a person (the person decides), never with a body near the stairs or in danger, never when
+    // the exit is the closer escape. Below, it stays 30-60 s (longer while anyone is held), then heads back up.
+    // Tell: it walks to the stairs and waits on them; weak spot: a fixed spot, and a lone waiter stands still.
+    bool Tripping=false;
+    {
+        auto* RescueRules=Cast<AProjectMultiplayerRescueGameMode>(GM);const bool Basement=RescueRules!=nullptr;
+        ScanObjectives();
+        AProjectProject01LevelTransitionTrigger* Stairs=nullptr;float StairsDist=MAX_flt;
+        for(const auto& Entry:Objectives)if(auto* T=Cast<AProjectProject01LevelTransitionTrigger>(Entry.Get());T&&T->IsSideTrip()&&(Basement||KnowsExit(Mine,Spec,T,Level)))
+            if(const float D=FVector::Dist2D(Here,T->GetActorLocation());D<StairsDist){StairsDist=D;Stairs=T;}
+        // -BotSimForceBlocked (simulation only): 20 s into a floor with stairs down, every known way out counts as cut off,
+        // to check the blocked-route reason actually fires.
+        static const bool ForceBlocked=FParse::Param(FCommandLine::Get(),TEXT("BotSimForceBlocked"));
+        if(ForceBlocked&&!Basement&&Stairs&&GM->GetElapsedMatchSeconds()>20.)
+            for(const auto& Entry:Objectives)if(AActor* O=Entry.Get())
+                if(const auto* T=Cast<AProjectProject01LevelTransitionTrigger>(O);(!T||T->IsAutomaticBotObjective()))
+                {KnowsExit(Mine,Spec,O,Level);Mine.KnownExits.Add(Entry);Mine.UnreachableUntil.Add(O,Now+60.);} // Known and cut off.
+        bool PartnerWaiting=false;
+        if(Stairs)for(const auto& Pair:GM->MatchPlayerRecords)
+            if(Pair.Key.Get()!=PC&&Pair.Value.Role==TEXT("Survivor")&&Pair.Value.SurvivorState==EMultiplayTestSurvivorState::TransitionWaiting)
+                if(const auto* Other=Pair.Value.SurvivorPawn.Get();Other&&Stairs->GetComponentsBoundingBox(true).ExpandBy(150.f).IsInsideXY(Other->GetActorLocation()))PartnerWaiting=true;
+        const AProjectMultiplayerRescueStation* Cell=Basement?RescueRules->GetStation():nullptr;
+        const bool AnyoneHeld=Cell&&Cell->GetDetainedSurvivor();
+        if(Basement&&B.StayUntil<0)B.StayUntil=Now+30.+30.*B.Policy.Random();
+        if(Basement&&AnyoneHeld)B.StayUntil=FMath::Max(B.StayUntil,Now+10.);
+        B.TripReady=Basement&&Now>=B.StayUntil&&!AnyoneHeld;
+        const bool NearBody=Stairs&&B.Threats.ContainsByPredicate([&](const auto& T){return FVector::Dist2D(T.Position,Stairs->GetActorLocation())<900.f;});
+        if(B.TripTo.IsValid()&&(!Stairs||B.TripTo.Get()!=Stairs||(!Buddy&&!PartnerWaiting)||(Basement&&!B.TripReady&&!PartnerWaiting)))B.TripTo.Reset();
+        if(ForceBlocked&&!Basement&&Now>=B.TripLogAt)
+        {
+            B.TripLogAt=Now+10.;
+            UE_LOG(LogTemp,Display,TEXT("[BotTripDiag] Survivor=%s Stairs=%d StairsDist=%.0f Buddy=%d BuddyToStairs=%.0f Danger=%d Helper=%d Human=%d Since=%.0f"),*Spec.BotId.Left(8),Stairs?1:0,StairsDist<MAX_flt?StairsDist:-1.f,
+                Buddy?1:0,Buddy&&Stairs?FVector::Dist2D(Buddy->GetActorLocation(),Stairs->GetActorLocation()):-1.f,Danger?1:0,HelperTeam?1:0,HumanAlly?1:0,B.BlockedSince>=0?Now-B.BlockedSince:-1.);
+        }
+        if(Stairs&&!B.TripTo.IsValid()&&!Danger)
+        {
+            if(PartnerWaiting&&Now>=B.TripFollowAt)
+            {
+                B.TripFollowAt=Now+8.;
+                if(B.Policy.Random()<TripFollowChance(Level)){B.TripTo=Stairs;UE_LOG(LogTemp,Display,TEXT("[BotTrip] Survivor=%s L%d follow %s"),*Spec.BotId.Left(8),Level.Level,Basement?TEXT("up"):TEXT("down"));}
+            }
+            else if(Basement&&B.TripReady&&Buddy)
+            {B.TripTo=Stairs;UE_LOG(LogTemp,Display,TEXT("[BotTrip] Survivor=%s L%d back up"),*Spec.BotId.Left(8),Level.Level);}
+            // Just came back up from the basement (this floor was entered by its stairs): that trip is spent, head out.
+            else if(!Basement&&!GM->OptionsString.Contains(TEXT("ElevatorArrival=F1_FromB1"))&&Buddy&&!HelperTeam&&!HumanAlly&&!NearBody&&StairsDist<3000.f&&FVector::Dist2D(Buddy->GetActorLocation(),Stairs->GetActorLocation())<3500.f&&Now>=B.TripRollAt)
+            {
+                // Who would be held below instead of being out: a bot by anyone, a person only by another person.
+                const bool SelfPerson=StandsInForPerson(PC),PartnerPerson=HumanAlly||StandsInForPerson(BuddyPC);
+                const bool Safety=!ForceBlocked&&((Pawn->GetRemainingDeathCount()<=1&&(!SelfPerson||PartnerPerson))||(Buddy->GetRemainingDeathCount()<=1&&(!PartnerPerson||SelfPerson))); // The forced test checks the blocked reason alone.
+                const AActor* Exit=Mine.Objective.Get();
+                const bool Guarded=Exit&&B.SeenAt>=0&&Now-B.SeenAt<8.&&FVector::Dist2D(B.Known,InsideGoal(Exit))<1000.f;
+                int32 Known=0,Open=0;
+                for(const auto& Entry:Objectives)if(const AActor* O=Entry.Get())
+                    if(const auto* T=Cast<AProjectProject01LevelTransitionTrigger>(O);(!T||T->IsAutomaticBotObjective())&&KnowsExit(Mine,Spec,O,Level))
+                    {++Known;const double* Until=Mine.UnreachableUntil.Find(O);Open+=!(Until&&Now<*Until);}
+                if(Guarded||(Known>0&&Open==0)){if(B.BlockedSince<0)B.BlockedSince=Now;}else B.BlockedSince=-1;
+                const bool Blocked=B.BlockedSince>=0&&Now-B.BlockedSince>15.;
+                const bool ExitCloser=Exit&&FVector::Dist2D(Here,InsideGoal(Exit))<.7f*StairsDist;
+                if((Safety&&!ExitCloser)||Blocked)
+                {
+                    B.TripRollAt=Now+20.;
+                    if(B.Policy.Random()<DescendChance(Level))
+                    {B.TripTo=Stairs;UE_LOG(LogTemp,Display,TEXT("[BotTrip] Survivor=%s L%d down reason=%s"),*Spec.BotId.Left(8),Level.Level,Blocked?TEXT("blocked"):TEXT("safety"));}
+                }
+            }
+        }
+        if(B.TripTo.IsValid()&&!Danger&&!PlayMove){Goal=InsideGoal(B.TripTo.Get());HasGoal=true;Tripping=true;}
+    }
+    // Rescue mode, bots-only survivors (user, 2026-11-28): the partner is held at the station. Rolled once per detention
+    // (RescueChance); going means walking there for real, pressing once, then pressing again inside the timing window
+    // with a level-dependent spread; a miss sounds the alarm, as for players. Danger first: it backs off and comes back.
+    // Tell: it heads straight for the cell and stands at the station; weak spot: a known spot, and a miss alarms everyone.
+    bool Rescuing=false;FVector RescueAt=FVector::ZeroVector;
+    if(auto* RescueMode=Cast<AProjectMultiplayerRescueGameMode>(GM))if(auto* Station=RescueMode->GetStation())
+    {
+        APlayerCharacter* Held=Station->GetDetainedSurvivor();
+        if(!Held)B.RescueFor.Reset();
+        else if(Held!=Pawn&&RescueMode->MayRescue(*Pawn))
+        {
+            if(B.RescueFor.Get()!=Held)
+            {
+                B.RescueFor=Held;B.RescueGoing=B.Policy.Random()<RescueChance(Level);B.RescuePressAt=-1;B.RescueRetryAt=0;
+                UE_LOG(LogTemp,Display,TEXT("[BotRescue] Survivor=%s L%d goes=%d"),*Spec.BotId.Left(8),Level.Level,B.RescueGoing?1:0);
+            }
+            if(B.RescueGoing&&!Danger)
+            {
+                Rescuing=true;RescueAt=Station->GetActorLocation();Goal=RescueAt;HasGoal=true;
+                // Pressed the way a player presses F: from the eyes, the view ray must hit the panel within 3 m.
+                const FVector Eye=Pawn->GetPawnViewLocation(),Aim=Station->GetComponentsBoundingBox().GetCenter();
+                const bool AtStation=FVector::DistSquared(Eye,Aim)<FMath::Square(290.f);
+                auto Press=[&]{return Station->TryInteractFromView(Pawn,Eye,(Aim-Eye).GetSafeNormal());};
+                if(Now>=B.RescueLogAt){B.RescueLogAt=Now+5.;UE_LOG(LogTemp,Display,TEXT("[BotRescue] Survivor=%s going Dist=%.0f At=%d"),*Spec.BotId.Left(8),FVector::Dist(Eye,Aim),AtStation?1:0);}
+                if(AtStation&&!Station->IsAttemptInProgress()&&Now>=B.RescueRetryAt)
+                {
+                    if(Press()&&Station->IsAttemptInProgress())
+                    {
+                        // Second press: the middle of the window plus a normally spread error (Box-Muller).
+                        const float U1=FMath::Max(1e-4f,B.Policy.Random()),U2=B.Policy.Random();
+                        const float Error=FMath::Sqrt(-2.f*FMath::Loge(U1))*FMath::Cos(2.f*PI*U2)*RescueTimingSpread(Level);
+                        B.RescuePressAt=Now;B.RescueSecondAt=Now+FMath::Clamp(1.09f+Error,.15f,2.15f);
+                    }
+                }
+                else if(!AtStation&&Station->IsAttemptInProgress()&&B.RescuePressAt>=0&&Now>=B.RescueSecondAt&&Now>=B.RescueLogAt-4.)
+                {B.RescueLogAt=Now+5.;UE_LOG(LogTemp,Display,TEXT("[BotRescue] Survivor=%s out of reach at the second press Dist=%.0f"),*Spec.BotId.Left(8),FVector::Dist(Eye,Aim));}
+                else if(AtStation&&Station->IsAttemptInProgress()&&B.RescuePressAt>=0&&Now>=B.RescueSecondAt)
+                {
+                    const double Age=Station->GetAttemptAge();const bool Hit=Press();
+                    UE_LOG(LogTemp,Display,TEXT("[BotRescue] Survivor=%s L%d press Age=%.2f Hit=%d Freed=%d"),*Spec.BotId.Left(8),Level.Level,Age,Hit?1:0,Station->GetDetainedSurvivor()?0:1);
+                    B.RescuePressAt=-1;B.RescueRetryAt=Now+3.+3.*B.Policy.Random(); // After a miss: a breath before trying again.
+                }
+            }
+        }
+    }
     // Tells: freezes to listen; hiding keeps it frozen and silent (no footsteps) until the steps pass.
     const bool Listening=Dir.Signalling(Play::Listen,Now)||Dir.Active(Play::HideStill);
     const bool BaitTell=Baiting&&Dir.Signalling(Play::BaitRunner,Now);
@@ -1394,7 +1655,7 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // Danger overrides standing still: never hold position inside a mannequin's reach.
     // Catching breath after a scare is a short stop too.
     const bool Breathing=!Danger&&Now<B.BreatheUntil;
-    const bool Holding=PlayHold||Breathing||(!Danger&&(Listening||BaitTell||(!PlayMove&&!Progress&&!Rush&&!Stalled&&(Tactic==Action::Cover||Tactic==Action::Observe||Tactic==Action::Recover||Tactic==Action::Hold))));
+    const bool Holding=!DustStep&&!Rescuing&&!Tripping&&(PlayHold||Breathing||(!Danger&&(Listening||BaitTell||(!PlayMove&&!Progress&&!Rush&&!Stalled&&(Tactic==Action::Cover||Tactic==Action::Observe||Tactic==Action::Recover||Tactic==Action::Hold)))));
     if(Holding)Pawn->GetCharacterMovement()->StopMovementImmediately();
     // Look back while stopped (2+): a skilled survivor checks behind as it pulls up and again every few seconds while it
     // stays put, since a body can walk up from behind while it listens or hides. Tell: the head turning away; weak spot:
@@ -1495,8 +1756,25 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     if(Fidgeting&&Now<B.ShuffleUntil)Pawn->AddMovementInput((B.ShuffleTo-Here).GetSafeNormal2D(),.35f);
     // Stamina habit: greedy players run themselves dry, careful ones stop early. Cornered or panicking, everyone keeps running.
     const float StopAt=.01f+.12f*(1-Quirks.StaminaGreed),ResumeAt=.25f+.3f*(1-Quirks.StaminaGreed);
-    const bool Cornered=(Knows&&C.Range<.2f)||Panic>.4f||RushRun;
-    if(C.Stamina<.01f||(C.Stamina<StopAt&&!Cornered))B.Recovering=true;else if(C.Stamina>ResumeAt)B.Recovering=false;
+    const bool Cornered=(Knows&&C.Range<.2f)||Panic>.4f||RushRun||CheapRun;
+    // B01: running dry stalls recovery for 2 s (a grey breath). Each time stamina runs low (under 10%) a careful bot
+    // rolls once to stop short of empty, unless a body is right on it. This also overrides the endgame and rush runs.
+    // Tell: it drops to a walk with a little stamina left; weak spot: slower just then, and no run stretched to the end.
+    if(GM->HasAffixRule(TEXT("B01")))
+    {
+        if(C.Stamina>.3f)B.DryRolled=false;
+        else if(!B.DryRolled&&C.Stamina<.1f)
+        {
+            B.DryRolled=true;B.DryCare=B.Policy.Random()<Care;
+            UE_LOG(LogTemp,Display,TEXT("[BotDry] Survivor=%s L%d low Minded=%d"),*Spec.BotId.Left(8),Level.Level,B.DryCare?1:0);
+        }
+        // Diagnostics: each time it actually runs dry (the cue players see), with whether this episode was minded.
+        if(C.Stamina<.01f&&B.DryLast>=.01f)UE_LOG(LogTemp,Display,TEXT("[BotDry] Survivor=%s L%d dry Minded=%d"),*Spec.BotId.Left(8),Level.Level,B.DryCare?1:0);
+        B.DryLast=C.Stamina;
+    }
+    const bool StopShortOfDry=GM->HasAffixRule(TEXT("B01"))&&B.DryCare&&B.DryRolled&&!(Knows&&C.Range<.2f)&&Panic<=.4f&&C.Stamina<.06f;
+    if(StopShortOfDry&&!B.Recovering)UE_LOG(LogTemp,Display,TEXT("[BotTell] Survivor=%s own dry stop Stamina=%.2f"),*Spec.BotId.Left(8),C.Stamina);
+    if(C.Stamina<.01f||(C.Stamina<StopAt&&!Cornered)||StopShortOfDry)B.Recovering=true;else if(C.Stamina>ResumeAt)B.Recovering=false;
     const bool Dash=Dir.Executing(Play::PeekDash,Now)||Runner||Dir.Active(Play::ExitFeint)||Danger||Relay||
         Dir.Signalling(Play::FalseRetreat,Now)||Dir.Signalling(Play::NoiseLure,Now);
     // Backing away while watching is a walk: the stare keeps it frozen, the stamina is saved.
@@ -1517,13 +1795,14 @@ void UProjectMatchBots::TickSurvivor(AMultiplayTestPlayerController* PC,const FP
     // B09: a held mannequin wakes when someone sprints past it, so walk by unless fleeing.
     const bool PassingDisplay=!Danger&&GM->HasAffixRule(TEXT("B09"))&&[&]{for(TActorIterator<AMannequinAICharacter> It(World);It;++It)
         if(It->GetMultiplayCommand()==EMultiplayMannequinCommand::HoldPosition&&!It->IsManualControlEnabled()&&FVector::DistSquared2D(It->GetActorLocation(),Here)<FMath::Square(750.f))return true;return false;}();
-    Pawn->SetBotSprint(!PassingDisplay&&Moving&&!B.Recovering&&(PlayRun||(!WatchRetreating&&!(Progress&&Watching)&&((Knows&&Tactic!=Action::Search&&!Progress)||Dash))));
+    Pawn->SetBotSprint(!PassingDisplay&&Now>=B.TrailYieldUntil&&Moving&&!B.Recovering&&(PlayRun||(!WatchRetreating&&!(Progress&&Watching)&&((Knows&&Tactic!=Action::Search&&!Progress)||Dash))));
     FVector Look=Pawn->GetVelocity();
     if(Now<B.PauseUntil)Look=B.PeekDirection;
     else if(!Knows&&Now<B.GlanceUntil)Look=B.GlanceDirection;
     // Back to back: alternate between the route and the partner's blind side.
     if(!Knows&&Buddy&&Dir.Executing(Play::BackToBack,Now)&&FMath::Sin(static_cast<float>(Now)*1.1f+Quirks.Phase)>0.f)Look=-Buddy->GetActorForwardVector();
     if(!Knows&&(Dir.Active(Play::Listen)||Dir.Active(Play::HideStill)))Look=Mine.Point-Pawn->GetActorLocation();
+    if(Rescuing&&FVector::DistSquared2D(Here,RescueAt)<FMath::Square(400.f))Look=RescueAt-Pawn->GetActorLocation(); // Faces the station to press it.
     if(!Knows&&Holding&&Now<B.BackCheckUntil)Look=B.BackDirection;
     if(!LookingAway&&Knows&&(Tactic==Action::Cover||Tactic==Action::Observe||Tactic==Action::Lure||Baiting))Look=B.Known-Pawn->GetActorLocation();
     if(LookingAway&&Holding)Look=B.GlanceDirection;
@@ -1655,7 +1934,14 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     const float PlanStrength=MatchScript::Commit(Level)*MatchScript::Fit(Who,Blitz);
     // Stalemate: stop waiting it out (see the body settling and waiting-play endings below).
     const bool Stalled=IsStalled(Level,Now);
-    const float Drive=FMath::Max(FMath::Max3(Urgency,.3f*Resolve,.6f*ExitThreat),FMath::Max(Blitz?.1f*PlanStrength:0.f,Stalled?.6f:0.f));
+    // Countdowns from the mannequin side (user, 2026-11-28), heeded from the warning on: a shift stops survivors
+    // running, a rush and each closing stage speed the bodies up -> press harder. Tell: the bodies push in right as
+    // the notice shows; weak spot: they come in straighter, easier to stare down or bait.
+    bool Forecast[4];
+    ReadForecasts(GM->GetAffixRuntime(),Mine.ForecastWas,Mine.ForecastHeed,AffixCareChance(Level),[]{return FMath::FRand();},TEXT("Mannequin"),Spec.BotId,Forecast);
+    const float ForecastDrive=FMath::Max3(Forecast[0]&&Mine.ForecastHeed[0]?.4f:0.f,Forecast[1]&&Mine.ForecastHeed[1]?.2f:0.f,
+        Forecast[3]&&Mine.ForecastHeed[3]&&GM->GetAffixRuntime()?.1f*GM->GetAffixRuntime()->GetClosingStage():0.f);
+    const float Drive=FMath::Max3(FMath::Max3(Urgency,.3f*Resolve,.6f*ExitThreat),FMath::Max(Blitz?.1f*PlanStrength:0.f,Stalled?.6f:0.f),ForecastDrive);
     // Self-made combos add eagerness for the learned follow-up right after its opener.
     // In the endgame the direct plays come first; waiting plays less.
     // The pushes scale the style's own preference (multiplied, not added), so a disliked play stays disliked.
@@ -1668,7 +1954,7 @@ void UProjectMatchBots::TickMannequin(AMultiplayTestPlayerController* PC,const F
     struct FSurvivorView{APlayerCharacter* Pawn;AMultiplayTestPlayerController* Controller;};
     TArray<FSurvivorView,TInlineAllocator<4>> Survivors;
     for(const auto& Pair:GM->MatchPlayerRecords)if(Pair.Value.SurvivorState==EMultiplayTestSurvivorState::Active)
-        if(auto* Survivor=Pair.Value.SurvivorPawn.Get())Survivors.Add({Survivor,Pair.Key.Get()});
+        if(auto* Survivor=Pair.Value.SurvivorPawn.Get();Survivor&&!Survivor->IsAwaitingMultiplayerRescue())Survivors.Add({Survivor,Pair.Key.Get()}); // Not one held in the cell.
     // Who is freezing a mannequin close to another survivor, i.e. covering an ally (the game's closest thing to a rescue).
     if(Level.Level>=3&&Now>=CoverScanAt)
     {

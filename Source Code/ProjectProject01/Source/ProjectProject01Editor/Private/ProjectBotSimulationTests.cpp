@@ -3,12 +3,17 @@
 #include "ProjectProject01TutorialEditorLibrary.h"
 #include "ProjectMatchBots.h"
 #include "MultiplayTestGameMode.h"
+#include "ProjectMultiplayerRescue.h"
+#include "ProjectItemRoguelike.h"
+#include "ProjectItemRoguelikeRuntime.h"
 #include "ProjectOpenObserver.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/WorldSettings.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerStart.h"
+#include "EngineUtils.h"
 #include "NavigationSystem.h"
 #include "PlayInEditorDataTypes.h"
 #include "UObject/UnrealType.h"
@@ -57,12 +62,18 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
     float LimitSeconds=600.f;FParse::Value(FCommandLine::Get(),TEXT("BotSimLimit="),LimitSeconds);
     // Comparison runs: -BotSimEvolution=2 restores the earlier, slower habit growth (read by the bot adapter).
     const FString Previous=GEditor->UserEditedPlayWorldURL;
-    GEditor->UserEditedPlayWorldURL=TEXT("/Game/MyProject/Level/MultiplayTest?LobbyRole=Survivor");
+    // -BotSimRescue: the rescue map and its game mode (bots-only survivors free each other there).
+    const bool Rescue=FParse::Param(FCommandLine::Get(),TEXT("BotSimRescue"));
+    // -BotSimMap=MultiplayTest2: start on another floor of the store (e.g. the first floor with the basement stairs).
+    FString MapName;FParse::Value(FCommandLine::Get(),TEXT("BotSimMap="),MapName);
+    const FString MapPath=Rescue?FString(TEXT("/Game/MyProject/Level/MultiplayerRescueTest")):FString(TEXT("/Game/MyProject/Level/"))+(MapName.IsEmpty()?FString(TEXT("MultiplayTest")):MapName);
+    const TCHAR* Map=*MapPath;
+    GEditor->UserEditedPlayWorldURL=FString(Map)+TEXT("?LobbyRole=Survivor");
     auto Request=UProjectProject01TutorialEditorLibrary::MakePracticeRequest();
-    Request.GameModeOverride=AMultiplayTestGameMode::StaticClass();
-    Request.GlobalMapOverride=TEXT("/Game/MyProject/Level/MultiplayTest"); // The real first floor, not the practice map.
+    Request.GameModeOverride=Rescue?AProjectMultiplayerRescueGameMode::StaticClass():AMultiplayTestGameMode::StaticClass();
+    Request.GlobalMapOverride=Map; // The real first floor by default, not the practice map.
     GEditor->RequestPlaySession(Request);GEditor->StartQueuedPlaySessionRequest();GEditor->UserEditedPlayWorldURL=Previous;
-    struct FState{bool Initialized=false;FString Match;double WallStart=0;TWeakObjectPtr<AProjectOpenObserverController> Observer;};
+    struct FState{bool Initialized=false,Placed=false;TWeakObjectPtr<UWorld> RogueWorld;FString Match;double WallStart=0;TWeakObjectPtr<AProjectOpenObserverController> Observer;};
     const auto State=MakeShared<FState>();State->WallStart=FPlatformTime::Seconds();
     const double Deadline=FPlatformTime::Seconds()+90+LimitSeconds/Dilation;
     ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this,State,Deadline,Level,SurvivorLevel,Dilation,Parameter]()
@@ -100,6 +111,8 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
             // Solo stand-in: bot 3 is the helper partner (named so the bot code can tell), bot 2 plays the human.
             for(int32 I=0;I<3;++I)Specs.Add({FGuid::NewGuid().ToString(),I==2&&ProjectBots::HumanTeamOverride()?FString(TEXT("SimHelper")):FString::Printf(TEXT("봇 %d"),I+1),I==0?TEXT("Mannequin"):TEXT("Survivor"),I==0?Level:SurvivorLevel});
             FString Error;if(!Mode->MatchBots->AcceptRoster(Room,State->Match,Specs,Error)){AddError(Error);End();return true;}
+            // -BotSimRoguelike: the item roguelike mode (card picks on every floor; bots choose by their own judgment).
+            if(FParse::Param(FCommandLine::Get(),TEXT("BotSimRoguelike"))&&!Mode->AcceptMatchMode(State->Match,EProjectMatchMode::ItemRoguelike,Error)){AddError(Error);End();return true;}
             // -BotSimAffixes=A02,B09,C05: run the match with these affixes (custom affix mode).
             if(FString List;FParse::Value(FCommandLine::Get(),TEXT("BotSimAffixes="),List,false)&&!List.IsEmpty())
             {
@@ -108,6 +121,21 @@ bool FProjectBotSimulationTest::RunTest(const FString& Parameter)
             }
             State->Initialized=true;return false;
         }
+        // Rescue: once the match runs, put the survivor bots where the 1F stairs land them (B1_From1F), as survivors
+        // coming down would arrive. Test setup only; everything after this (a rescue included) is walked.
+        if(FParse::Param(FCommandLine::Get(),TEXT("BotSimRescue"))&&!State->Placed&&Mode->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)
+        {
+            TArray<AActor*> Spots;for(TActorIterator<APlayerStart> It(World);It;++It)if(It->PlayerStartTag.ToString().StartsWith(TEXT("B1_From1F")))Spots.Add(*It);
+            int32 Placed=0;
+            for(const auto& Pair:Mode->MatchPlayerRecords)if(Pair.Value.Role==TEXT("Survivor"))
+                if(auto* Pawn=Pair.Value.SurvivorPawn.Get();Pawn&&Spots.Num()&&Pawn->TeleportTo(Spots[Placed%Spots.Num()]->GetActorLocation(),Spots[Placed%Spots.Num()]->GetActorRotation()))++Placed;
+            State->Placed=Placed>=2||Spots.IsEmpty();
+            if(State->Placed)UE_LOG(LogTemp,Display,TEXT("[BotSim] Rescue start spots=%d placed=%d"),Spots.Num(),Placed);
+        }
+        // Item roguelike: a bot room skips the people's loading gate where the card round opens, so open it here once a
+        // floor (in play, bots stand in inside a person's match and pick in that gate; picking itself is the same code).
+        if(Mode->IsItemRoguelikeMatch()&&State->RogueWorld.Get()!=World&&Mode->AuthoritativeMatchPhase==EMultiplayTestMatchPhase::InProgress)
+        {State->RogueWorld=World;Mode->GetItemRoguelike()->HoldGate(Mode,FPlatformTime::Seconds());}
         const auto Phase=Mode->AuthoritativeMatchPhase;
         if(Phase!=EMultiplayTestMatchPhase::Ending&&Phase!=EMultiplayTestMatchPhase::Results)return false;
         int32 Escaped=0,Caught=0;

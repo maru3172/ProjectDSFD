@@ -47,6 +47,11 @@ public:
     double GetNow()const{return Now;}
     bool IsHuntActive()const{return Now<HuntUntil;}
     int32 GetClosingStage()const{return FMath::Max(0,ClosingStageShown);}
+    bool ClosingWarned()const{return ClosingStageShown>=0;}
+    // The C-group countdowns players read on screen: true from the warning notice until the effect ends.
+    bool ShiftSoonOrOn()const{return bShift||(Has(TEXT("C04"))&&Warned(ShiftPeriod,3.0));}
+    bool RushSoonOrOn()const{return bRush||(Has(TEXT("C05"))&&Warned(RushPeriod,RushWarning));}
+    bool QuakeSoonOrOn()const{return bQuake||(Has(TEXT("C08"))&&Warned(QuakePeriod,QuakeWarning));}
 
     // Item roguelike items (ProjectItemRoguelike.h, Docs/ItemRoguelikeMode.md). All 1 / false outside that mode.
     /** S13 narrows (-10%), S15 widens (+10%) this survivor's freezing gaze. */
@@ -141,7 +146,9 @@ private:
     TMap<TPair<TWeakObjectPtr<APlayerCharacter>,TWeakObjectPtr<AMannequinAICharacter>>,double> LastMet; // C01
     TMap<TWeakObjectPtr<class AMultiplayTestPlayerController>,TWeakObjectPtr<AMannequinAICharacter>> Viewed; // A01
     TWeakObjectPtr<AMultiplayTestGameMode> Owner;
-    double Now=0,HuntUntil=-1;
+    double Now=0,HuntUntil=-1,MatchNow=-1;
+    bool Warned(double Period,double Warning)const
+    {if(MatchNow<0)return false;const int32 Next=int32((MatchNow+Warning)/Period);return Next>=1&&MatchNow>=Next*Period-Warning&&MatchNow<Next*Period;}
     bool bRush=false,bShift=false,bQuake=false,bBroadcast=false,bLockedPicked=false;int32 ClosingStageShown=-1;
     TMap<FName,int32> Announced; // Which cycle each periodic notice last went out for.
     void Notify(const FString& Message,float Hold=2.f)const;

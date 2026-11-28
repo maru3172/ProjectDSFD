@@ -24,7 +24,7 @@ void UProjectAffixRuntime::Reset()
     for(auto& Pair:Survivors)if(auto* Survivor=Pair.Key.Get())
     {Survivor->SetAffixStaminaDrainScale(1.f);Survivor->SetAffixStaminaRecoveryScale(1.f);Survivor->SetAffixSpeedScale(1.f);Survivor->SetAffixSprintBlocked(false);Survivor->SetAffixCue(FLinearColor::Black,0.f);}
     Bodies.Reset();Survivors.Reset();LastMet.Reset();Viewed.Reset();Announced.Reset();
-    bRush=bShift=bQuake=bBroadcast=bLockedPicked=false;ClosingStageShown=-1;HuntUntil=-1;
+    bRush=bShift=bQuake=bBroadcast=bLockedPicked=false;ClosingStageShown=-1;HuntUntil=-1;MatchNow=-1;
     LastCatchAt=FeedCommandBlockUntil=BatonLockUntil=FeedUntil=BatonUntil=-1;BatonLast.Reset();FeedBody.Reset();ExitWatchCooldown.Reset();bLastStandNotified=false;
 }
 
@@ -130,8 +130,8 @@ void UProjectAffixRuntime::Tick(AMultiplayTestGameMode* Mode,float DeltaSeconds)
 {
     if(!Mode||DeltaSeconds<=0.f)return;
     Owner=Mode;
-    if(!Mode->AreAffixRulesActive())return;
-    UWorld* World=Mode->GetWorld();Now=World->GetTimeSeconds();const double Match=Mode->GetElapsedMatchSeconds();
+    if(!Mode->AreAffixRulesActive()){MatchNow=-1;return;}
+    UWorld* World=Mode->GetWorld();Now=World->GetTimeSeconds();const double Match=Mode->GetElapsedMatchSeconds();MatchNow=Match;
     RogueTickStart(Mode);
 
     // Floor-wide rules (C group): warned on screen, then on for a fixed time.

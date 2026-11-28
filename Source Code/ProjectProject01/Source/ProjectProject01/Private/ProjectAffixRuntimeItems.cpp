@@ -5,6 +5,7 @@
 // glow on the body or survivor, a light at a place, a louder or quieter footstep) and has a weak spot. Server only.
 #include "ProjectAffixRuntime.h"
 #include "ProjectItemRoguelikeRuntime.h"
+#include "ProjectMatchBots.h"
 #include "MultiplayTestGameMode.h"
 #include "MultiplayTestPlayerController.h"
 #include "MannequinAICharacter.h"
@@ -73,7 +74,12 @@ void UProjectAffixRuntime::NotifyRole(bool bMannequins,const FString& Message,fl
         if(ProjectItemRoguelike::IsMannequinRole(Pair.Value.Role)==bMannequins)NotifyTo(Pair.Key.Get(),Message,Hold);
 }
 void UProjectAffixRuntime::PulseTo(AMultiplayTestPlayerController* Controller,const FVector& Location,const FLinearColor& Color,float Seconds,float Radius)const
-{if(Controller&&!Controller->IsServerControlledBot())Controller->ClientAffixPulse(Location,Color.ToFColor(true),Seconds,Radius);}
+{
+    if(!Controller)return;
+    // A bot has no screen: the light it would see goes to its judgment (user, 2026-11-28: bots use info cards too).
+    if(Controller->IsServerControlledBot()){if(const auto* Mode=Owner.Get();Mode&&Mode->MatchBots)Mode->MatchBots->GiveRogueInfo(Controller,Location);return;}
+    Controller->ClientAffixPulse(Location,Color.ToFColor(true),Seconds,Radius);
+}
 void UProjectAffixRuntime::PulseRole(bool bMannequins,const FVector& Location,const FLinearColor& Color,float Seconds,float Radius)const
 {
     if(const auto* Mode=Owner.Get())for(const auto& Pair:Mode->MatchPlayerRecords)
@@ -161,6 +167,8 @@ void UProjectAffixRuntime::RogueTickStart(AMultiplayTestGameMode* Mode)
         {
             double& Until=ExitWatchCooldown.FindOrAdd(E,-1);if(Now<Until)continue;Until=Now+30.0;
             NotifyRole(true,TEXT("출구 지기: 생존자가 출구 가까이 왔습니다"),2.f);Pulse(E+FVector(0,0,180),Alarm,3.f,400.f);
+            if(Mode->MatchBots)for(const auto& Pair:Mode->MatchPlayerRecords) // Mannequin bots get the same report.
+                if(auto* C=Pair.Key.Get();C&&C->IsServerControlledBot()&&ProjectItemRoguelike::IsMannequinRole(Pair.Value.Role))Mode->MatchBots->GiveRogueInfo(C,E);
         }
     // M14: one survivor left of two or more: all bodies quicken; the last survivor is told once.
     if(MannequinItem(TEXT("M14"))&&!bLastStandNotified)
@@ -206,7 +214,11 @@ void UProjectAffixRuntime::RogueSurvivor(AMultiplayTestGameMode* Mode,APlayerCha
     {
         const FVector To=Body->GetActorLocation()-Here;
         if(Body->GetVelocity().Size2D()>60.f&&FVector::DotProduct(Survivor->GetActorForwardVector().GetSafeNormal2D(),To.GetSafeNormal2D())<-.3f)
-        {S.MirrorCooldownUntil=Now+3.0;S.GlintUntil=Now+.5;NotifyTo(PC,FString::Printf(TEXT("손거울: %s에서 움직임"),*Direction(Survivor->GetActorForwardVector(),To)),1.5f);break;}
+        {
+            S.MirrorCooldownUntil=Now+3.0;S.GlintUntil=Now+.5;NotifyTo(PC,FString::Printf(TEXT("손거울: %s에서 움직임"),*Direction(Survivor->GetActorForwardVector(),To)),1.5f);
+            if(PC&&PC->IsServerControlledBot()&&Mode->MatchBots)Mode->MatchBots->GiveRogueInfo(PC,Body->GetActorLocation()); // The bot hears the same warning.
+            break;
+        }
     }
     if(Now<S.GlintUntil)Raise(Cue,CueStrength,White,.6f);
     // S07 weak spot: a long stare (3 s) lights the starer's face.

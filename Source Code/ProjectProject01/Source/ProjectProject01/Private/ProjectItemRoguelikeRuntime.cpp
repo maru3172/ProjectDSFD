@@ -4,6 +4,8 @@
 #include "MultiplayTestGameMode.h"
 #include "MultiplayTestPlayerController.h"
 #include "ProjectRoguePick.h"
+#include "ProjectMatchBots.h"
+#include "ProjectAdaptiveBotPolicy.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectRogue,Log,All);
 
@@ -75,8 +77,26 @@ void UProjectItemRoguelikeRuntime::Open(AMultiplayTestGameMode* GM,const TArray<
         RollFor(Pair.Value,{});Pair.Value.FirstOffer=Pair.Value.Offer;
         if(Pair.Value.Offer.IsEmpty()){Pair.Value.bPicked=true;continue;} // Nothing left to offer.
     }
-    // Server bots pick at once (a random card), like a player who chose quickly.
-    for(auto& Pair:Players)if(!Pair.Value.bPicked&&Pair.Value.bBot)Choose(Pair.Value,Rng.RandRange(0,Pair.Value.Offer.Num()-1),false);
+    // Server bots pick at once by their own judgment (user, 2026-11-27): the card worth most to them as their level reads
+    // it, after one reroll when the hand looks weak (BotPick).
+    for(auto& Pair:Players)if(!Pair.Value.bPicked&&Pair.Value.bBot)
+    {
+        FProjectRoguePlayer& P=Pair.Value;const bool bSurvivor=ProjectItemRoguelike::IsSurvivorRole(P.Role);
+        int32 Partners=0;for(const auto* R:Records)if(R&&InPlay(*R)&&ProjectItemRoguelike::IsSurvivorRole(R->Role))++Partners;
+        const bool bPartner=Partners>=2; // Survivors: a partner in play (S04, S14). Mannequin: two survivors (M14).
+        const int32 Level=GM&&GM->MatchBots?GM->MatchBots->LevelOf(P.UserId):3;
+        const float Skill=ProjectBots::Difficulty::For(Level).Skill;const uint32 Taste=GetTypeHash(P.UserId);
+        ProjectItemRoguelike::FBotPick Pick=ProjectItemRoguelike::BotPick(P.Offer,bSurvivor,bPartner,Skill,!P.bRerollUsed,Taste,Rng);
+        const TArray<FString> First=P.Offer;
+        if(Pick.bReroll)
+        {
+            P.Offer.Reset();RollFor(P,First);P.bRerollUsed=true;if(P.Offer.IsEmpty())P.Offer=First;
+            Pick=ProjectItemRoguelike::BotPick(P.Offer,bSurvivor,bPartner,Skill,false,Taste,Rng);
+        }
+        UE_LOG(LogProjectRogue,Display,TEXT("[BotCard] %s L%d offer=%s reroll=%d picked=%s worth=%.2f"),*P.Name,Level,*FString::Join(First,TEXT(",")),P.bRerollUsed?1:0,
+            P.Offer.IsValidIndex(Pick.Index)?*P.Offer[Pick.Index]:TEXT("-"),Pick.Worth);
+        Choose(P,Pick.Index,false);
+    }
     UE_LOG(LogProjectRogue,Log,TEXT("Item roguelike round %d opened for %d player(s)."),Rounds,WaitingCount());
     if(GM)SendAll(GM,RealNow);
 }

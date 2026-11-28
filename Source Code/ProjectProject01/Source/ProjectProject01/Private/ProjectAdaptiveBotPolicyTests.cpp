@@ -322,6 +322,16 @@ static int RunAdaptiveBotChecks(const std::function<void(bool,const char*)>& Ver
         Check(!CanOperateShutters(Difficulty::For(3,0.f,BotTeam::SurvivorHelper))&&SurvivorShutterCloseChance(Difficulty::For(5,0.f,BotTeam::SurvivorHelper))==0.f&&
             CanOperateShutters(Difficulty::For(3,0.f,BotTeam::ReferenceSurvivor))&&CanOperateShutters(Difficulty::For(3,0.f,BotTeam::ReferenceMannequin)),
             "The helper beside a human never operates shutters; every other bot can");
+        Check(AffixCareChance(Difficulty::For(1))==0.f&&AffixCareChance(Difficulty::For(2))<AffixCareChance(Difficulty::For(3))&&
+            AffixCareChance(Difficulty::For(3))<AffixCareChance(Difficulty::For(5))&&AffixCareChance(Difficulty::For(5))<1.f,
+            "Beginners never mind affix cues or countdowns; higher levels mind them more, never always");
+        Check(RescueChance(Difficulty::For(1))>0.f&&RescueChance(Difficulty::For(1))<RescueChance(Difficulty::For(5))&&RescueChance(Difficulty::For(5))<1.f&&
+            RescueTimingSpread(Difficulty::For(1))>RescueTimingSpread(Difficulty::For(5))&&RescueTimingSpread(Difficulty::For(5))>0.f&&
+            RescueAlarmChance(Difficulty::For(1))<RescueAlarmChance(Difficulty::For(5)),
+            "Rescues: higher levels go more often and time the second press closer; every level can miss");
+        Check(DescendChance(Difficulty::For(1))>0.f&&DescendChance(Difficulty::For(1))<DescendChance(Difficulty::For(5))&&DescendChance(Difficulty::For(5))<1.f&&
+            TripFollowChance(Difficulty::For(1))<TripFollowChance(Difficulty::For(5))&&TripFollowChance(Difficulty::For(5))<1.f,
+            "Basement trips: higher levels see the option and join a waiting partner more readily");
         Check(Difficulty::For(3,.7f).Level==3&&Difficulty::For(3,.7f).TraitBudget()==Difficulty::For(3).TraitBudget(),"Condition keeps the level and its tables");
         Check(Difficulty::For(3,std::numeric_limits<float>::quiet_NaN()).Skill==Difficulty::For(3,0.f).Skill,"Invalid condition is neutral");
         int KnownExits=0;for(uint32_t H=0;H<1000;++H)KnownExits+=KnowsExitAtStart(Difficulty::For(5),H*2654435761u);

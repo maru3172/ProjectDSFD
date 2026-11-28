@@ -159,6 +159,23 @@ bool FProjectItemRoguelikeTest::RunTest(const FString&)
     TestTrue(TEXT("The result carries the picks and is unofficial"),Result.bCustomMatch&&Result.RoguePicks.Num()==1&&Result.RoguePicks[0].Ids.Num()==1);
     const FMultiplayTestMatchResult Plain=Mode->BuildFinalResult(nullptr,Escaped);
     TestTrue(TEXT("A normal result has no picks and stays official"),Plain.RoguePicks.IsEmpty()&&!Plain.bCustomMatch);
+
+    // Bot card judgment (user, 2026-11-27): skilled bots take the card that helps them, beginners go more by feel,
+    // and a weak hand is rerolled more readily by the skilled.
+    {
+        using namespace ProjectItemRoguelike;FRandomStream R(7);
+        const TArray<FString> Hand={TEXT("S12"),TEXT("S03"),TEXT("B04")};
+        int32 Expert=0,Beginner=0;
+        for(int32 I=0;I<200;++I){Expert+=BotPick(Hand,true,true,1.f,false,I,R).Index==1;Beginner+=BotPick(Hand,true,true,0.f,false,I,R).Index==1;}
+        TestTrue(TEXT("An expert bot always takes the fire suit over chalk"),Expert==200);
+        TestTrue(TEXT("A beginner sometimes takes something else"),Beginner<200&&Beginner>60);
+        TestTrue(TEXT("The radio is worth little without a partner"),BotCardValue(TEXT("S04"),true,false)<BotCardValue(TEXT("S04"),true,true));
+        const TArray<FString> Weak={TEXT("S12"),TEXT("B04"),TEXT("S13")};
+        int32 ExpertRolls=0,BeginnerRolls=0;
+        for(int32 I=0;I<200;++I){ExpertRolls+=BotPick(Weak,true,true,1.f,true,I,R).bReroll;BeginnerRolls+=BotPick(Weak,true,true,0.f,true,I,R).bReroll;}
+        TestTrue(TEXT("Experts reroll a weak hand more often than beginners"),ExpertRolls>BeginnerRolls&&BeginnerRolls>0);
+        TestFalse(TEXT("No reroll once it is used"),BotPick(Weak,true,true,1.f,false,1,R).bReroll);
+    }
     return true;
 }
 

@@ -37,6 +37,8 @@ public:
 
 	/** Bot routing may approach ordinary enabled overlap exits, never bypass button devices. */
 	bool IsAutomaticBotObjective() const { return bUseOverlapActivation && bBotObjective && !bTransitionStarted && IsDestinationAvailable(); }
+	/** A side trip (1F <-> rescue basement stairs): bots take it only by their own judgment (UProjectMatchBots). */
+	bool IsSideTrip() const { return bUseOverlapActivation && !bBotObjective && !bTransitionStarted && IsDestinationAvailable(); }
 	/** Custom game escort: this way out leads to another floor (buttons included; the round end presses it). */
 	bool IsEscortObjective() const { return !bTransitionStarted && IsDestinationAvailable(); }
 	/** Custom game escort: moves every survivor still in play to the next floor (the round is over). */

@@ -8,6 +8,7 @@
 #include "MultiplayTestPlayerController.h"
 #include "Net/UnrealNetwork.h"
 #include "PlayerCharacter.h"
+#include "ProjectMatchBots.h"
 #include "ProjectMiniGameSound.h"
 #include "ProjectProject01GameInstance.h"
 #include "ProjectProject01SpatialAudio.h"
@@ -93,7 +94,7 @@ bool AProjectMultiplayerRescueStation::CanInteract_Implementation(APawn* Interac
 {
 	const auto* Player = Cast<APlayerCharacter>(Interactor);
 	const auto* PC = Player ? Cast<AMultiplayTestPlayerController>(Player->GetController()) : nullptr;
-	if (!Super::CanInteract_Implementation(Interactor) || !Player || !PC || PC->IsServerControlledBot()
+	if (!Super::CanInteract_Implementation(Interactor) || !Player || !PC
 		|| PC->GetSurvivorState() != EMultiplayTestSurvivorState::Active || !DetainedSurvivor
 		|| Player == DetainedSurvivor || Player->IsGameOver() || Player->IsAwaitingMultiplayerRescue()) return false;
 	if (!HasAuthority()) return true;
@@ -151,8 +152,7 @@ bool AProjectMultiplayerRescueGameMode::TryDetain(APlayerCharacter& Survivor, AM
 		|| !IsAuthoritativeMatchInProgress() || !IsRegisteredActiveSurvivor(&Survivor)
 		|| PreviouslyDetained.Contains(&Survivor)) return false;
 	auto* CaptiveController = Cast<AMultiplayTestPlayerController>(Survivor.GetController());
-	if (!CaptiveController || CaptiveController->IsServerControlledBot() || !HasOtherHumanSurvivorInPlay(CaptiveController)
-		|| !FindLivingSurvivorSpectatorTarget(CaptiveController, 1)) return false;
+	if (!CaptiveController || !HasRescuerFor(CaptiveController) || !FindLivingSurvivorSpectatorTarget(CaptiveController, 1)) return false;
 	CaptureOrigin = Catcher.GetActorLocation();
 	LastCatcher = &Catcher;
 	PreviouslyDetained.Add(&Survivor);
@@ -182,7 +182,7 @@ void AProjectMultiplayerRescueGameMode::FinishCapturePresentation()
 	auto* Teammate = CaptiveController ? FindLivingSurvivorSpectatorTarget(CaptiveController, 1) : nullptr;
 	const FRotator Facing = Station->GetActorRotation();
 	const FVector Destination = Station->GetActorTransform().TransformPositionNoScale(Station->DetentionOffset);
-	if (!Teammate || !HasOtherHumanSurvivorInPlay(CaptiveController) || !Survivor->TeleportTo(Destination, Facing))
+	if (!Teammate || !HasRescuerFor(CaptiveController) || !Survivor->TeleportTo(Destination, Facing))
 	{
 		Survivor->SetAwaitingMultiplayerRescue(false);
 		float Pitch = 0.f, Roll = 0.f;
@@ -193,19 +193,58 @@ void AProjectMultiplayerRescueGameMode::FinishCapturePresentation()
 	Station->SetGateOpen(false);
 	Station->DetainedSurvivor = Survivor;
 	Station->ForceNetUpdate();
-	CaptiveController->EnterSurvivorSpectator(Teammate, true);
-	CaptiveController->ClientShowAffixNotice(TEXT("붙잡혔습니다. 동료의 구출을 기다리세요."), 4.f);
+	// A bot has no screen: it just waits in the cell (movement is off while detained).
+	if (!CaptiveController->IsServerControlledBot())
+	{
+		CaptiveController->EnterSurvivorSpectator(Teammate, true);
+		CaptiveController->ClientShowAffixNotice(TEXT("붙잡혔습니다. 동료의 구출을 기다리세요."), 4.f);
+	}
 	GetWorldTimerManager().SetTimer(RescuerCheckTimer, this,
 		&AProjectMultiplayerRescueGameMode::ResolveDetentionWithoutRescuer, .25f, true);
-	if (auto* PC = Cast<AMultiplayTestPlayerController>(Teammate->GetController()); PC && !PC->IsServerControlledBot())
-		PC->ClientShowAffixNotice(TEXT("동료가 붙잡혔습니다. 감금 지점에서 구출할 수 있습니다."), 4.f);
+	for (const auto& Pair : MatchPlayerRecords)
+		if (auto* PC = Pair.Key.Get(); PC && PC != CaptiveController && !PC->IsServerControlledBot() && Pair.Value.Role == TEXT("Survivor")
+			&& Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active)
+			PC->ClientShowAffixNotice(TEXT("동료가 붙잡혔습니다. 감금 지점에서 구출할 수 있습니다."), 4.f);
+	UE_LOG(LogTemp, Display, TEXT("[Rescue] Detained Bot=%d"), CaptiveController->IsServerControlledBot() ? 1 : 0);
+}
+
+bool AProjectMultiplayerRescueGameMode::HasRescuerFor(const AMultiplayTestPlayerController* Captive) const
+{
+	if (!Captive) return false;
+	if (IsPerson(Captive)) return HasOtherPersonInPlay(Captive);
+	// A bot captive: anyone else still free in play (a person first, else its bot partner).
+	for (const auto& Pair : MatchPlayerRecords)
+		if (Pair.Key.Get() != Captive && Pair.Value.Role == TEXT("Survivor") && !Pair.Value.bForfeited && !Pair.Value.bDisconnected
+			&& (Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active || Pair.Value.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting))
+			if (const auto* Pawn = Pair.Value.SurvivorPawn.Get(); Pawn && !Pawn->IsAwaitingMultiplayerRescue()) return true;
+	return false;
+}
+
+bool AProjectMultiplayerRescueGameMode::MayRescue(const APlayerCharacter& Rescuer) const
+{
+	const auto* PC = Cast<AMultiplayTestPlayerController>(Rescuer.GetController());
+	return PC && (IsPerson(PC) || !HasOtherPersonInPlay(nullptr));
+}
+
+bool AProjectMultiplayerRescueGameMode::IsPerson(const AMultiplayTestPlayerController* PC) const
+{
+	return PC && (!PC->IsServerControlledBot() || (MatchBots && MatchBots->StandsInForPerson(PC)));
+}
+
+bool AProjectMultiplayerRescueGameMode::HasOtherPersonInPlay(const AMultiplayTestPlayerController* Except) const
+{
+	for (const auto& Pair : MatchPlayerRecords)
+		if (Pair.Key.Get() != Except && Pair.Value.Role == TEXT("Survivor") && IsPerson(Pair.Key.Get()) && !Pair.Value.bForfeited && !Pair.Value.bDisconnected
+			&& (Pair.Value.SurvivorState == EMultiplayTestSurvivorState::Active || Pair.Value.SurvivorState == EMultiplayTestSurvivorState::TransitionWaiting))
+			return true;
+	return false;
 }
 
 bool AProjectMultiplayerRescueGameMode::CanFree(const AProjectMultiplayerRescueStation& Source, const APlayerCharacter& Rescuer) const
 {
 	return HasAuthority() && IsAuthoritativeMatchInProgress() && &Source == Station && Source.DetainedSurvivor
 		&& Source.DetainedSurvivor != &Rescuer && Source.DetainedSurvivor->IsAwaitingMultiplayerRescue()
-		&& !Rescuer.IsGameOver() && IsRegisteredActiveSurvivor(&Rescuer);
+		&& !Rescuer.IsGameOver() && IsRegisteredActiveSurvivor(&Rescuer) && MayRescue(Rescuer);
 }
 
 void AProjectMultiplayerRescueGameMode::UseStation(AProjectMultiplayerRescueStation& Source, APlayerCharacter& Rescuer)
@@ -230,6 +269,7 @@ void AProjectMultiplayerRescueGameMode::UseStation(AProjectMultiplayerRescueStat
 void AProjectMultiplayerRescueGameMode::ExpireAttempt()
 {
 	auto* Rescuer = Station ? Station->AttemptingSurvivor.Get() : nullptr;
+	UE_LOG(LogTemp, Display, TEXT("[Rescue] Expired Dist=%.0f"), Rescuer && Station ? FVector::Dist(Rescuer->GetPawnViewLocation(), Station->GetActorLocation()) : -1.f);
 	ClearAttempt();
 	if (Station && Station->DetainedSurvivor && IsAuthoritativeMatchInProgress()) RaiseAlarm(Rescuer);
 }
@@ -249,6 +289,8 @@ void AProjectMultiplayerRescueGameMode::RaiseAlarm(APlayerCharacter* Rescuer)
 	++Station->AlarmCount;
 	Station->MulticastRescueAlarm();
 	BroadcastMatchNotice(TEXT("감금 구역에서 구출 경보가 울렸습니다."), true, 3.f);
+	if (MatchBots) MatchBots->HearRescueAlarm(Station->GetActorLocation()); // Mannequin bots hear it as players do.
+	UE_LOG(LogTemp, Display, TEXT("[Rescue] Alarm Count=%d"), Station->AlarmCount);
 	if (Rescuer)
 		if (auto* PC = Cast<AMultiplayTestPlayerController>(Rescuer->GetController()))
 			PC->ClientShowAffixNotice(TEXT("구출 실패"), 2.f);
@@ -264,7 +306,10 @@ void AProjectMultiplayerRescueGameMode::Free(AProjectMultiplayerRescueStation& S
 	if (auto* Record = FindSurvivorRecord(&Rescuer)) ++Record->RescueCount;
 	if (auto* PC = Cast<AMultiplayTestPlayerController>(Rescuer.GetController()))
 		PC->ClientShowAffixNotice(TEXT("동료를 구출했습니다."), 3.f);
-	if (auto* PC = Cast<AMultiplayTestPlayerController>(Captive->GetController()))
+	UE_LOG(LogTemp, Display, TEXT("[Rescue] Freed"));
+	if (auto* PC = Cast<AMultiplayTestPlayerController>(Captive->GetController()); PC && PC->IsServerControlledBot())
+		PC->SetControlRotation(Source.GetActorRotation()); // A bot walks back out on its own.
+	else if (PC)
 	{
 		PC->ResumeAfterRescue(Source.GetActorRotation());
 		PC->ClientShowAffixNotice(TEXT("구출되었습니다. 통로를 따라 1층으로 돌아가세요."), 4.f);
@@ -284,7 +329,7 @@ void AProjectMultiplayerRescueGameMode::ResolveDetentionWithoutRescuer()
 {
 	auto* Captive = Station ? Station->DetainedSurvivor.Get() : nullptr;
 	if (IsValid(Captive) && IsAuthoritativeMatchInProgress()
-		&& HasOtherHumanSurvivorInPlay(Cast<AMultiplayTestPlayerController>(Captive->GetController()))) return;
+		&& HasRescuerFor(Cast<AMultiplayTestPlayerController>(Captive->GetController()))) return;
 	ClearDetention();
 	if (!IsValid(Captive)) return;
 	Captive->SetAwaitingMultiplayerRescue(false);
